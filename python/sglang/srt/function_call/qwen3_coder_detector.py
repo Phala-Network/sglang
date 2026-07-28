@@ -1,4 +1,3 @@
-import ast
 import json
 import logging
 import math
@@ -12,7 +11,11 @@ from sglang.srt.function_call.core_types import (
     ToolCallItem,
     _GetInfoFunc,
 )
-from sglang.srt.function_call.utils import is_json_finite
+from sglang.srt.function_call.utils import (
+    infer_type_from_json_schema,
+    is_json_finite,
+    safe_literal_eval,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +179,7 @@ class Qwen3CoderDetector(BaseFormatDetector):
                         return param_value
                     return parsed
             try:
-                parsed = ast.literal_eval(param_value)  # safer
+                parsed = safe_literal_eval(param_value)
             except Exception:
                 logger.warning(
                     f"Parsed value '{param_value}' of parameter '{param_name}' cannot be converted via Python `ast.literal_eval()` in tool '{func_name}', degenerating to string."

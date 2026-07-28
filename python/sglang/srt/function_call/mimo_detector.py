@@ -12,7 +12,6 @@
 # limitations under the License.
 # ==============================================================================
 
-import ast
 import html
 import json
 import logging
@@ -24,7 +23,7 @@ from sglang.srt.entrypoints.openai.protocol import Tool
 from sglang.srt.environ import envs
 from sglang.srt.function_call.base_format_detector import BaseFormatDetector
 from sglang.srt.function_call.core_types import StreamingParseResult, _GetInfoFunc
-from sglang.srt.function_call.utils import is_json_finite
+from sglang.srt.function_call.utils import is_json_finite, safe_literal_eval
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +137,7 @@ def _convert_param_value(
                     return param_value
                 return parsed
         try:
-            parsed = ast.literal_eval(param_value)  # safer
+            parsed = safe_literal_eval(param_value)
         except (ValueError, SyntaxError, TypeError):
             logger.warning(
                 "Parsed value '%s' of parameter '%s' cannot be "

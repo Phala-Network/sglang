@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import copy
 import json
 import logging
@@ -8,6 +9,7 @@ import time
 import uuid
 from enum import Enum
 from http import HTTPStatus
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union
 
 
@@ -80,6 +82,73 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MEDIA_CONTENT_PART_TYPES = frozenset({"image_url", "video_url", "audio_url"})
+_DSV4_REASONING_EFFORT_ENCODER = "encoding/encoding_dsv4.py"
+_DSV4_REASONING_EFFORT_PROFILE_OVERRIDE = "dsv4_reasoning_effort_profile"
+_MAX_DSV4_ENCODER_BYTES = 1 << 20
+
+
+def _detect_dsv4_reasoning_effort_profile(
+    model_path: str, revision: Optional[str] = None
+) -> Optional[str]:
+    encoder_path = Path(model_path) / _DSV4_REASONING_EFFORT_ENCODER
+    try:
+        if not encoder_path.is_file():
+            from huggingface_hub import hf_hub_download
+
+            encoder_path = Path(
+                hf_hub_download(
+                    model_path,
+                    _DSV4_REASONING_EFFORT_ENCODER,
+                    revision=revision,
+                )
+            )
+        if encoder_path.stat().st_size > _MAX_DSV4_ENCODER_BYTES:
+            return None
+        tree = ast.parse(encoder_path.read_text(encoding="utf-8"))
+    except Exception as error:
+        logger.debug(
+            "Could not inspect DeepSeek-V4 checkpoint encoder at %s: %s",
+            encoder_path,
+            error,
+        )
+        return None
+
+    prompt_keys = set()
+    default_effort = None
+    has_legacy_max = False
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+            value = node.value
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+            value = node.value
+        else:
+            continue
+
+        for target in targets:
+            if not isinstance(target, ast.Name):
+                continue
+            if target.id == "REASONING_EFFORT_PROMPTS" and isinstance(value, ast.Dict):
+                prompt_keys = {
+                    key.value
+                    for key in value.keys
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str)
+                }
+            elif (
+                target.id == "DEFAULT_REASONING_EFFORT"
+                and isinstance(value, ast.Constant)
+                and isinstance(value.value, str)
+            ):
+                default_effort = value.value
+            elif target.id == "REASONING_EFFORT_MAX":
+                has_legacy_max = True
+
+    if default_effort == "low" and {"low", "high", "max"} <= prompt_keys:
+        return "0731"
+    if has_legacy_max:
+        return "legacy"
+    return None
 
 
 def normalize_tool_content(role: str, content):
@@ -251,6 +320,15 @@ class OpenAIServingChat(OpenAIServingBase):
         # Which Python-based chat encoder (if any) bypasses apply_chat_template.
         # Values: "dsv32", "dsv4", or custom values set by subclass. None for default.
         self.chat_encoding_spec = self._resolve_chat_encoding_spec()
+        self._dsv4_reasoning_effort_profile_override = (
+            self.tokenizer_manager.model_config.hf_config.to_dict().get(
+                _DSV4_REASONING_EFFORT_PROFILE_OVERRIDE
+            )
+        )
+        self._dsv4_reasoning_effort_profile_model_path = None
+        self._dsv4_reasoning_effort_profile = None
+        if self.chat_encoding_spec == "dsv4":
+            self._get_dsv4_reasoning_effort_profile()
 
         # Resolve the env-configured Inkling effort default once: the env var is
         # frozen for the server's lifetime, and a misconfigured value should
@@ -346,6 +424,71 @@ class OpenAIServingChat(OpenAIServingBase):
             tokenizer=self.tokenizer_manager.tokenizer,
             tool_call_parser=self.tool_call_parser,
         )
+
+    @staticmethod
+    def _resolve_dsv4_reasoning_effort_profile(
+        model_path: str,
+        revision: Optional[str] = None,
+        override: Optional[str] = None,
+    ) -> str:
+        if override is not None:
+            if override not in encoding_dsv4.REASONING_EFFORT_PROFILES:
+                raise ValueError(
+                    f"Invalid {_DSV4_REASONING_EFFORT_PROFILE_OVERRIDE}: {override!r}; "
+                    f"expected one of {list(encoding_dsv4.REASONING_EFFORT_PROFILES)}"
+                )
+            return override
+
+        normalized_path = model_path.rstrip("/").lower()
+        is_local = Path(model_path).is_dir()
+        if is_local:
+            detected_profile = _detect_dsv4_reasoning_effort_profile(
+                model_path=model_path,
+                revision=revision,
+            )
+            if detected_profile is not None:
+                return detected_profile
+        if "deepseek-v4-flash-0731" in normalized_path:
+            return "0731"
+        if (
+            normalized_path.rsplit("/", 1)[-1]
+            in {
+                "deepseek-v4-flash",
+                "deepseek-v4-flash-dspark",
+            }
+            and not is_local
+        ):
+            return "legacy"
+        if is_local:
+            return "legacy"
+
+        return (
+            _detect_dsv4_reasoning_effort_profile(
+                model_path=model_path,
+                revision=revision,
+            )
+            or "legacy"
+        )
+
+    def _get_dsv4_reasoning_effort_profile(self) -> str:
+        model_path = self.tokenizer_manager.model_path
+        if model_path != self._dsv4_reasoning_effort_profile_model_path:
+            self._dsv4_reasoning_effort_profile = (
+                self._resolve_dsv4_reasoning_effort_profile(
+                    model_path=model_path,
+                    revision=self.tokenizer_manager.server_args.revision,
+                    override=self._dsv4_reasoning_effort_profile_override,
+                )
+            )
+            self._dsv4_reasoning_effort_profile_model_path = model_path
+            logger.info(
+                "Resolved DeepSeek-V4 reasoning effort profile %r for %s",
+                self._dsv4_reasoning_effort_profile,
+                model_path,
+            )
+        if self._dsv4_reasoning_effort_profile is None:
+            raise RuntimeError("DeepSeek-V4 reasoning effort profile was not resolved")
+        return self._dsv4_reasoning_effort_profile
 
     def _request_id_prefix(self) -> str:
         return "chatcmpl-"
@@ -1134,13 +1277,31 @@ class OpenAIServingChat(OpenAIServingBase):
         template_content_format = self.template_manager.jinja_template_content_format
 
         # Try custom encoding first (override in subclass for custom renderers)
-        thinking_requested = (request.chat_template_kwargs or {}).get(
+        chat_template_kwargs = request.chat_template_kwargs or {}
+        thinking_requested = chat_template_kwargs.get(
             "thinking", envs.SGLANG_DEFAULT_THINKING.get()
         )
         thinking_mode = (
             ThinkingMode.THINKING if thinking_requested else ThinkingMode.CHAT
         )
+        # Match the DeepSeek reference encoder and upstream SGLang PR #33212 by
+        # forwarding the explicit history-drop policy.  DSV4 history replay is
+        # handled independently below so it cannot silently enable reasoning
+        # for the current assistant turn.
+        drop_thinking = chat_template_kwargs.get("drop_thinking", True)
         messages = [msg.model_dump() for msg in request.messages]
+        has_reasoning_history = any(
+            msg.get("role") == "assistant" and msg.get("reasoning_content")
+            for msg in messages
+        )
+        preserve_dsv4_history_only = (
+            self.chat_encoding_spec == "dsv4"
+            and has_reasoning_history
+            and not thinking_requested
+            and chat_template_kwargs.get("drop_thinking") is not True
+        )
+        if preserve_dsv4_history_only:
+            drop_thinking = False
         for message in messages:
             normalize_assistant_tool_call_arguments(
                 message, strict=self.chat_encoding_spec != "kimi_k3"
@@ -1202,34 +1363,74 @@ class OpenAIServingChat(OpenAIServingBase):
                 # insert an empty system prompt to help render tool system prompt
                 messages.insert(0, {"role": "system", "content": ""})
             if request.tools:
-                messages[0]["tools"] = [tool.model_dump() for tool in request.tools]
+                # Preserve whether optional fields (notably ``strict``) were
+                # actually present in the request, matching the DSV4/DSV32
+                # checkpoint reference encoders.
+                messages[0]["tools"] = [
+                    tool.model_dump(exclude_unset=True, by_alias=True)
+                    for tool in request.tools
+                ]
 
             # Default encoding (dsv4/dsv32)
             if self.chat_encoding_spec == "dsv4":
-                # V4 encoder only accepts "max" / "high" / None.
-                # OpenAI protocol defaults to "medium" which V4 rejects; drop it.
-                # Fallback: if request didn't set it, try env SGLANG_DSV4_REASONING_EFFORT.
+                # Backport SGLang PR #33140: resolve the checkpoint-specific
+                # DSV4 effort profile instead of treating all V4 checkpoints
+                # as the legacy two-tier encoder.
                 effort_source = request.reasoning_effort
                 if effort_source is None:
                     env_val = envs.SGLANG_DSV4_REASONING_EFFORT.get()
                     if env_val:
                         effort_source = env_val
+                reasoning_effort_profile = self._get_dsv4_reasoning_effort_profile()
+                accepted_efforts = encoding_dsv4.REASONING_EFFORT_PROFILES[
+                    reasoning_effort_profile
+                ]
+                # OpenRouter exposes its highest tier as xhigh while the 0731
+                # checkpoint names the corresponding encoder tier max.
+                if reasoning_effort_profile == "0731" and effort_source == "xhigh":
+                    effort_source = "max"
                 v4_reasoning_effort = (
-                    effort_source if effort_source in ("max", "high") else None
+                    effort_source if effort_source in accepted_efforts else None
                 )
                 if request.task is not None:
                     encoding_dsv4.attach_task_to_last_user_message(
                         messages, request.task
                     )
+                # The DSV4 reference encoder couples historical reasoning
+                # retention to thinking mode.  For OpenAI/OpenRouter history
+                # replay, render the history in thinking mode, then replace
+                # only the final generation marker with the chat marker.  This
+                # preserves prior reasoning without starting a new reasoning
+                # block that can run until a large max_tokens limit.
+                dsv4_encoding_mode = (
+                    ThinkingMode.THINKING
+                    if preserve_dsv4_history_only
+                    else thinking_mode
+                )
                 real_input = encoding_dsv4.encode_messages(
                     messages,
-                    thinking_mode=thinking_mode,
+                    thinking_mode=dsv4_encoding_mode,
+                    drop_thinking=drop_thinking,
                     reasoning_effort=v4_reasoning_effort,
+                    reasoning_effort_profile=reasoning_effort_profile,
                 )
+                if preserve_dsv4_history_only:
+                    thinking_start = encoding_dsv4.thinking_start_token
+                    if not real_input.endswith(thinking_start):
+                        raise ValueError(
+                            "DSV4 history replay prompt did not end with the "
+                            "expected thinking marker"
+                        )
+                    real_input = (
+                        real_input[: -len(thinking_start)]
+                        + encoding_dsv4.thinking_end_token
+                    )
                 prompt_ids = self.tokenizer_manager.tokenizer.encode(real_input)
             else:
                 real_input = encoding_dsv32.encode_messages(
-                    messages, thinking_mode=thinking_mode
+                    messages,
+                    thinking_mode=thinking_mode,
+                    drop_thinking=drop_thinking,
                 )
                 prompt_ids = self.tokenizer_manager.tokenizer.encode(real_input)
 

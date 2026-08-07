@@ -12,6 +12,7 @@
 #include <sgl_kernel/tensor.h>
 #include <sgl_kernel/utils.h>
 
+#include <sgl_kernel/runtime.cuh>
 #include <sgl_kernel/utils.cuh>
 
 #include <sgl_kernel/deepseek_v4/topk_impl.cuh>
@@ -220,8 +221,13 @@ CLUSTER_TOPK_KERNEL void topk_small_batch_kernel(const __grid_constant__ TopKLau
     if (blockIdx.y == worker_rank) Streaming::forward<kPDL>(problem, &smem);
   } else {
     auto cluster = cooperative_groups::this_cluster();
-    problem.out = cluster.map_shared_rank(topk_indices, worker_rank);
-    Cluster::forward<kPDL>(problem, &smem);  // write to peer's output shared memory
+    // The mapped alias stays in a copy: the elected rank reads the very same
+    // bytes back through `topk_indices` below, and letting a shared::cluster
+    // address reach the `problem.out` that problem_transform loads makes cicc
+    // segfault on CUDA 13.x (issue #32830).
+    auto peer_problem = problem;
+    peer_problem.out = cluster.map_shared_rank(topk_indices, worker_rank);
+    Cluster::forward<kPDL>(peer_problem, &smem);  // write to peer's output shared memory
     cluster.sync();
   }
 
@@ -425,8 +431,12 @@ struct TopKKernel {
 
     const bool use_cluster = (max_seq_len > params.cluster_floor) && (batch_size <= kClusterMaxBatch);
     constexpr bool kUsePDL = true;
+    // The fused small-batch DSMEM path is tuned and validated on SM100. On
+    // Hopper it can leave output slots unwritten; keep the correct
+    // persistent-cluster + main-kernel path there.
+    static const bool kUseFusedSmallBatch = host::runtime::get_sm_version(device.device_id) >= 100;
     if (use_cluster) {
-      if (batch_size <= kNumPersistentClusters) {
+      if (kUseFusedSmallBatch && batch_size <= kNumPersistentClusters) {
         LaunchKernel({batch_size, kClusterSize}, kBlockSize, device)
             .config({.use_pdl = kUsePDL, .cluster_dim = dim3{1, kClusterSize}})
             .launch(topk_small_batch_kernel<kUsePDL>, params);

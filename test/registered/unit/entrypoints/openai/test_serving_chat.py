@@ -40,8 +40,12 @@ class _MockTokenizerManager:
     """Minimal mock that satisfies OpenAIServingChat."""
 
     def __init__(self):
+        # The live DeepSeek-V4 reasoning-effort overlay resolves its checkpoint
+        # profile from TokenizerManager.model_path during construction.
+        self.model_path = "deepseek-ai/DeepSeek-V4-Flash-0731"
         self.model_config = Mock(is_multimodal=False)
         self.server_args = Mock(
+            revision=None,
             enable_cache_report=False,
             tool_call_parser="hermes",
             reasoning_parser=None,
@@ -51,6 +55,7 @@ class _MockTokenizerManager:
         # Mock hf_config for _resolve_chat_encoding_spec check
         mock_hf_config = Mock()
         mock_hf_config.architectures = ["LlamaForCausalLM"]
+        mock_hf_config.to_dict.return_value = {}
         self.model_config.hf_config = mock_hf_config
 
         self.chat_template_name: Optional[str] = "llama-3"
@@ -1066,6 +1071,39 @@ class ServingChatTestCase(unittest.TestCase):
 
                 self.chat._process_messages(req, is_multimodal=False)
 
+    def test_dsv4_tool_injection_excludes_unset_defaults(self):
+        """DSV4 receives only fields set in the request tool schema."""
+        from sglang.srt.entrypoints.openai import encoding_dsv4
+
+        self.template_manager.chat_template_name = None
+        self.template_manager.jinja_template_content_format = "string"
+        self.chat.chat_encoding_spec = "dsv4"
+        self.chat._dsv4_reasoning_effort_profile = "preview"
+        tool = {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Get the weather.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                },
+            },
+        }
+        req = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "What is the weather?"}],
+            tools=[tool],
+        )
+
+        with patch.object(
+            encoding_dsv4, "encode_messages", return_value="prompt"
+        ) as mock_encode_messages:
+            self.chat._process_messages(req, is_multimodal=False)
+
+        injected_tools = mock_encode_messages.call_args.args[0][0]["tools"]
+        self.assertEqual(injected_tools, [tool])
+
     def test_stop_str_isolation_between_requests(self):
         """Test that stop strings from one request don't affect subsequent requests.
 
@@ -1510,6 +1548,7 @@ class ServingChatTestCase(unittest.TestCase):
 
         mock_hf_config = Mock()
         mock_hf_config.architectures = ["DeepseekV32ForCausalLM"]
+        mock_hf_config.to_dict.return_value = {}
         tm.model_config.hf_config = mock_hf_config
 
         # Case 1: No chat template + DeepSeek V3.2 arch -> should use dsv32 encoding

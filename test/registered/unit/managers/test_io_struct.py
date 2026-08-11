@@ -656,6 +656,21 @@ class TestGenerateReqInputNormalization(CustomTestCase):
         self.assertEqual(item0.return_hidden_states, True)
         self.assertEqual(req[1].return_hidden_states, "last")
 
+    def test_getitem_preserves_reasoning_metadata_for_parallel_sampling(self):
+        """Request-scoped reasoning metadata must survive n > 1 slicing."""
+        req = GenerateReqInput(
+            text="Return a JSON object.",
+            sampling_params={"n": 2},
+            require_reasoning=True,
+            routing_key="test-key",
+        )
+        req.normalize_batch_and_arguments()
+
+        self.assertFalse(req.is_single)
+        for i in range(2):
+            self.assertTrue(req[i].require_reasoning)
+            self.assertEqual(req[i].routing_key, "test-key")
+
     def test_getitem_preserves_return_prompt_token_ids(self):
         """Batch subrequests must keep the prompt-token-id return flag."""
         req = GenerateReqInput(

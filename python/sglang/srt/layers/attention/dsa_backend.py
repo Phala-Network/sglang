@@ -221,6 +221,10 @@ class DSAMetadata:
     dsa_max_seqlen_q: Literal[1] = 1  # always 1 for decode, variable for extend
 
     flashmla_metadata: Optional[DSAFlashMLAMetadata] = None
+    # Populated only when the final FlashMLA execution batch differs from the
+    # batch used to plan metadata. Keeping the repaired view here avoids
+    # rebuilding scheduler metadata once per attention layer.
+    flashmla_kv_cache_seqlens: Optional[torch.Tensor] = None
     # DeepGEMM schedule metadata for paged MQA logits (decode/target_verify/draft_extend only).
     # Precomputed once per forward batch and reused across layers.
     paged_mqa_schedule_metadata: Optional[torch.Tensor] = None
@@ -2789,6 +2793,95 @@ class DeepseekSparseAttnBackend(
             skip_softmax_threshold_scale_factor=skip_softmax_threshold_scale_factor,
         )
 
+    def _prepare_flashmla_kv_contract(
+        self,
+        q: torch.Tensor,
+        indices: torch.Tensor,
+        metadata: DSAMetadata,
+    ) -> Tuple[torch.Tensor, DSAFlashMLAMetadata]:
+        flashmla_metadata = metadata.flashmla_metadata
+        assert flashmla_metadata is not None
+
+        cache_seqlens = metadata.flashmla_kv_cache_seqlens
+        if cache_seqlens is None:
+            cache_seqlens = metadata.dsa_cache_seqlens_int32
+
+        q_rows = q.shape[0]
+        indices_rows = indices.shape[0]
+        cache_rows = cache_seqlens.shape[0]
+        num_splits_rows = flashmla_metadata.num_splits.shape[0] - 1
+
+        if (
+            indices_rows == q_rows
+            and cache_rows == q_rows
+            and num_splits_rows == q_rows
+        ):
+            return cache_seqlens, flashmla_metadata
+
+        shape_details = (
+            f"q={tuple(q.shape)}, indices={tuple(indices.shape)}, "
+            f"cache_seqlens={tuple(cache_seqlens.shape)}, "
+            f"num_splits={tuple(flashmla_metadata.num_splits.shape)}, "
+            "tile_scheduler_metadata="
+            f"{tuple(flashmla_metadata.flashmla_metadata.shape)}"
+        )
+        if indices_rows != q_rows:
+            raise RuntimeError(
+                "FlashMLA KV batch contract violation: q and indices rows differ; "
+                + shape_details
+            )
+
+        if cache_rows < q_rows:
+            trailing_indices = indices[cache_rows:]
+            if trailing_indices.numel() > 0:
+                if (
+                    trailing_indices.device.type == "cuda"
+                    and torch.cuda.is_current_stream_capturing()
+                ):
+                    raise RuntimeError(
+                        "FlashMLA KV batch contract violation during CUDA graph "
+                        "capture: short cache metadata cannot be validated; "
+                        + shape_details
+                    )
+                if not bool(torch.all(trailing_indices == -1).item()):
+                    raise RuntimeError(
+                        "FlashMLA KV batch contract violation: short cache metadata "
+                        "covers real (non-padding) indices; "
+                        + shape_details
+                    )
+            cache_seqlens = torch.cat(
+                [
+                    cache_seqlens,
+                    cache_seqlens.new_zeros(q_rows - cache_rows),
+                ]
+            )
+        elif cache_rows > q_rows:
+            cache_seqlens = cache_seqlens[:q_rows].contiguous()
+
+        repaired_metadata = self._compute_flashmla_metadata(
+            cache_seqlens=cache_seqlens,
+            seq_len_q=1,
+        )
+        if repaired_metadata.num_splits.shape[0] != q_rows + 1:
+            raise RuntimeError(
+                "FlashMLA KV metadata rebuild did not satisfy num_splits=(b+1); "
+                + shape_details
+                + f", rebuilt_num_splits={tuple(repaired_metadata.num_splits.shape)}"
+            )
+
+        object.__setattr__(
+            metadata, "flashmla_kv_cache_seqlens", cache_seqlens
+        )
+        object.__setattr__(metadata, "flashmla_metadata", repaired_metadata)
+        logger.warning(
+            "Rebuilt stale FlashMLA KV scheduler metadata for final batch: %s -> "
+            "cache_seqlens=%s, num_splits=%s",
+            shape_details,
+            tuple(cache_seqlens.shape),
+            tuple(repaired_metadata.num_splits.shape),
+        )
+        return cache_seqlens, repaired_metadata
+
     def _forward_flashmla_kv(
         self,
         q_all: torch.Tensor,
@@ -2801,7 +2894,6 @@ class DeepseekSparseAttnBackend(
     ) -> torch.Tensor:
         from sgl_kernel.flash_mla import flash_mla_with_kvcache
 
-        cache_seqlens = metadata.dsa_cache_seqlens_int32
         assert metadata.flashmla_metadata is not None
 
         # TODO the 2nd dim is seq_len_q, need to be >1 when MTP
@@ -2829,13 +2921,19 @@ class DeepseekSparseAttnBackend(
             indices.shape[-1] == self.dsa_index_topk
         )  # requirement of FlashMLA decode kernel
 
+        cache_seqlens, flashmla_metadata = self._prepare_flashmla_kv_contract(
+            q=q_input,
+            indices=indices,
+            metadata=metadata,
+        )
+
         o, _ = flash_mla_with_kvcache(
             q=q_input,
             k_cache=kv_cache,
             cache_seqlens=cache_seqlens,
             head_dim_v=v_head_dim,
-            tile_scheduler_metadata=metadata.flashmla_metadata.flashmla_metadata,
-            num_splits=metadata.flashmla_metadata.num_splits,
+            tile_scheduler_metadata=flashmla_metadata.flashmla_metadata,
+            num_splits=flashmla_metadata.num_splits,
             softmax_scale=sm_scale,
             indices=indices,
             # doc says it is not used, but if pass in None then error

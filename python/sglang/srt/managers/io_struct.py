@@ -827,6 +827,7 @@ class GenerateReqInput:
             max_thinking_tokens=self.max_thinking_tokens,
             priority=self.priority,
             extra_key=self.extra_key[i] if self.extra_key is not None else None,
+            routing_key=self.routing_key,
             no_logs=self.no_logs,
             custom_labels=self.custom_labels,
             return_bytes=self.return_bytes,

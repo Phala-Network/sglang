@@ -1,9 +1,12 @@
 import json
 import logging
+import math
 import re
 from enum import Enum
 from functools import lru_cache
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+
+from jsonschema import Draft202012Validator
 
 from sglang.srt.entrypoints.openai.protocol import Tool, ToolChoice
 from sglang.srt.environ import envs
@@ -50,18 +53,59 @@ class StreamState(str, Enum):
     IN_VALUE = "IN_VALUE"
 
 
-def get_argument_type(
-    func_name: str, arg_key: str, defined_tools: List[Tool]
-) -> Optional[str]:
-    """Get the expected type of a function argument from tool definitions.
+def _find_argument_schema(parameters: Dict[str, Any], arg_key: str) -> Optional[dict]:
+    """Find a parameter schema, including schemas nested below top-level unions."""
+    properties = parameters.get("properties")
+    if isinstance(properties, dict):
+        arg_schema = properties.get(arg_key)
+        if isinstance(arg_schema, dict):
+            return arg_schema
 
-    Supports complex JSON Schema definitions including:
-    - Direct type field (including type arrays)
-    - anyOf/oneOf: parameter can be any of multiple types
-    - enum: parameter must be one of enum values
-    - allOf: parameter must satisfy all type definitions
-    - properties: inferred as object type
-    - items: inferred as array type
+    for keyword in ("anyOf", "oneOf"):
+        choices = parameters.get(keyword)
+        if not isinstance(choices, list):
+            continue
+        matches = [
+            match
+            for choice in choices
+            if isinstance(choice, dict)
+            for match in [_find_argument_schema(choice, arg_key)]
+            if match is not None
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            # A value cannot decide which complete top-level object branch won.
+            # For value conversion, accepting any matching property schema is the
+            # safe equivalent of the MiniMax-M3 top-level oneOf lookup in #32299.
+            return {"anyOf": matches}
+
+    all_of = parameters.get("allOf")
+    if isinstance(all_of, list):
+        matches = [
+            match
+            for choice in all_of
+            if isinstance(choice, dict)
+            for match in [_find_argument_schema(choice, arg_key)]
+            if match is not None
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            return {"allOf": matches}
+
+    return None
+
+
+def get_argument_schema(
+    func_name: str, arg_key: str, defined_tools: List[Tool]
+) -> Optional[dict]:
+    """Get the complete schema of a function argument from tool definitions.
+
+    Local ``$defs``/``definitions`` are copied beside the parameter schema so
+    local references keep resolving when the parameter is validated in
+    isolation. Top-level ``anyOf``/``oneOf``/``allOf`` parameter containers are
+    also searched instead of requiring a direct ``properties`` dictionary.
 
     Args:
         func_name: Name of the function/tool
@@ -69,7 +113,7 @@ def get_argument_type(
         defined_tools: List of available tools
 
     Returns:
-        The type string (e.g., 'string', 'number', 'object') or None if not found
+        The parameter schema or None if the tool/parameter is not found.
     """
     name2tool = {tool.function.name: tool for tool in defined_tools}
 
@@ -83,17 +127,262 @@ def get_argument_type(
     if not isinstance(params, dict):
         return None
 
-    # Navigate to the type using dict.get() for safe access
-    properties = params.get("properties")
-    if not isinstance(properties, dict):
+    arg_schema = _find_argument_schema(params, arg_key)
+    if arg_schema is None:
         return None
 
-    arg_spec = properties.get(arg_key)
-    if isinstance(arg_spec, dict):
-        # Use the new type inference function for complex JSON Schema support
-        return infer_type_from_json_schema(arg_spec)
+    schema_with_definitions = dict(arg_schema)
+    for definitions_key in ("$defs", "definitions"):
+        definitions = params.get(definitions_key)
+        if definitions_key not in schema_with_definitions and isinstance(
+            definitions, dict
+        ):
+            schema_with_definitions[definitions_key] = definitions
+    return schema_with_definitions
+
+
+def get_argument_type(
+    func_name: str, arg_key: str, defined_tools: List[Tool]
+) -> Optional[str]:
+    """Get the legacy single-type hint for streaming formatting/fallbacks."""
+    arg_schema = get_argument_schema(func_name, arg_key, defined_tools)
+    if arg_schema is not None:
+        return infer_type_from_json_schema(arg_schema)
 
     return None
+
+
+def _json_type_name(value: Any) -> Optional[str]:
+    """Return the JSON Schema type name for a JSON-compatible Python value."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return None
+
+
+def _schema_candidate_types(schema: Any) -> List[str]:
+    """Collect candidate JSON types without collapsing heterogeneous schemas."""
+    candidates: List[str] = []
+
+    def add(candidate: Optional[str]) -> None:
+        if candidate is not None and candidate not in candidates:
+            candidates.append(candidate)
+
+    def visit(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+
+        type_value = node.get("type")
+        if isinstance(type_value, str):
+            add(type_value)
+        elif isinstance(type_value, list):
+            for item in type_value:
+                if isinstance(item, str):
+                    add(item)
+
+        if "const" in node:
+            add(_json_type_name(node["const"]))
+
+        enum_values = node.get("enum")
+        if isinstance(enum_values, list):
+            for item in enum_values:
+                add(_json_type_name(item))
+
+        for keyword in ("anyOf", "oneOf", "allOf"):
+            choices = node.get(keyword)
+            if isinstance(choices, list):
+                for choice in choices:
+                    visit(choice)
+
+        if "properties" in node or "additionalProperties" in node:
+            add("object")
+        if "items" in node or "prefixItems" in node:
+            add("array")
+
+    visit(schema)
+    return candidates
+
+
+def _is_finite_json_value(value: Any) -> bool:
+    """Reject Python values that cannot be emitted as portable JSON."""
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, list):
+        return all(_is_finite_json_value(item) for item in value)
+    if isinstance(value, dict):
+        return all(
+            isinstance(key, str) and _is_finite_json_value(item)
+            for key, item in value.items()
+        )
+    return value is None or isinstance(value, (str, bool, int))
+
+
+def _has_external_schema_ref(schema: Any) -> bool:
+    """Do not let untrusted tool schemas trigger remote reference retrieval."""
+    if isinstance(schema, dict):
+        ref = schema.get("$ref")
+        if isinstance(ref, str) and not ref.startswith("#"):
+            return True
+        return any(_has_external_schema_ref(value) for value in schema.values())
+    if isinstance(schema, list):
+        return any(_has_external_schema_ref(value) for value in schema)
+    return False
+
+
+def _schema_value_candidates(raw_value: str, schema: dict) -> List[Any]:
+    """Build conservative value candidates from raw GLM XML argument text."""
+    stripped = raw_value.strip()
+    candidates: List[Any] = []
+    candidate_keys = set()
+
+    def add(value: Any) -> None:
+        if not _is_finite_json_value(value):
+            return
+        try:
+            serialized = json.dumps(
+                value,
+                ensure_ascii=False,
+                sort_keys=True,
+                allow_nan=False,
+                separators=(",", ":"),
+            )
+        except (TypeError, ValueError):
+            return
+        key = (type(value).__name__, serialized)
+        if key not in candidate_keys:
+            candidate_keys.add(key)
+            candidates.append(value)
+
+    parsed_json: Any = None
+    parsed_json_ok = False
+    try:
+        parsed_json = json.loads(stripped)
+        parsed_json_ok = True
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    parsed_literal: Any = None
+    parsed_literal_ok = False
+    try:
+        parsed_literal = safe_literal_eval(stripped)
+        parsed_literal_ok = True
+    except (ValueError, SyntaxError):
+        pass
+
+    # Preserve unquoted XML text as the first candidate. If the model emitted an
+    # explicitly quoted string, use its decoded value rather than retaining the
+    # quote characters. This is the #30253 guard against over-coercing IDs.
+    if parsed_json_ok and isinstance(parsed_json, str):
+        add(parsed_json)
+    elif parsed_literal_ok and isinstance(parsed_literal, str) and stripped[:1] in {
+        '"',
+        "'",
+    }:
+        add(parsed_literal)
+    else:
+        add(raw_value)
+
+    if parsed_json_ok:
+        add(parsed_json)
+    if parsed_literal_ok:
+        add(parsed_literal)
+
+    scalar_text = stripped
+    if parsed_json_ok and isinstance(parsed_json, str):
+        scalar_text = parsed_json.strip()
+    elif parsed_literal_ok and isinstance(parsed_literal, str) and stripped[:1] in {
+        '"',
+        "'",
+    }:
+        scalar_text = parsed_literal.strip()
+
+    candidate_types = _schema_candidate_types(schema)
+    if "integer" in candidate_types and re.fullmatch(r"[+-]?\d+", scalar_text):
+        try:
+            add(int(scalar_text))
+        except ValueError:
+            pass
+
+    if "number" in candidate_types:
+        try:
+            number = float(scalar_text)
+            if math.isfinite(number):
+                if number.is_integer() and not any(
+                    char in scalar_text for char in ".eE"
+                ):
+                    add(int(number))
+                else:
+                    add(number)
+        except ValueError:
+            pass
+
+    if "boolean" in candidate_types:
+        lowered = scalar_text.lower()
+        if lowered == "true":
+            add(True)
+        elif lowered == "false":
+            add(False)
+
+    if "null" in candidate_types and scalar_text.lower() == "null":
+        add(None)
+
+    if "array" in candidate_types and parsed_literal_ok and isinstance(
+        parsed_literal, tuple
+    ):
+        add(list(parsed_literal))
+
+    return candidates
+
+
+def _coerce_argument_to_schema(raw_value: str, schema: dict) -> Tuple[Any, bool]:
+    """Return a schema-valid candidate without fabricating a requested const.
+
+    Ambiguous schemas deliberately preserve a valid string candidate. A value is
+    converted only when the complete Draft 2020-12 parameter schema eliminates
+    the string form (for example ``const: 7`` or a mixed enum containing
+    ``false`` but not ``"False"``).
+    """
+    if _has_external_schema_ref(schema):
+        return raw_value, False
+
+    try:
+        Draft202012Validator.check_schema(schema)
+        validator = Draft202012Validator(schema)
+        valid_candidates = [
+            candidate
+            for candidate in _schema_value_candidates(raw_value, schema)
+            if validator.is_valid(candidate)
+        ]
+    except Exception:
+        # Tool schemas are request-controlled. Invalid/unresolvable schemas must
+        # fall back to the legacy parser instead of breaking the serving worker.
+        logger.debug("Unable to validate GLM tool argument schema", exc_info=True)
+        return raw_value, False
+
+    if not valid_candidates:
+        return raw_value, False
+    if len(valid_candidates) == 1:
+        return valid_candidates[0], True
+
+    # The first candidate is the conservative decoded/original string form.
+    # Prefer it whenever the schema genuinely admits both string and non-string
+    # values; const/enum constraints naturally remove it when conversion is
+    # required for schema validity.
+    for candidate in valid_candidates:
+        if isinstance(candidate, str):
+            return candidate, True
+    return valid_candidates[0], True
 
 
 def _convert_to_number(value: str) -> Any:
@@ -775,6 +1064,15 @@ class Glm47MoeDetector(BaseFormatDetector):
         arguments = {}
         for arg_key, arg_value in pairs:
             arg_key = arg_key.strip()
+            arg_schema = get_argument_schema(func_name, arg_key, tools)
+            if arg_schema is not None:
+                schema_value, schema_matched = _coerce_argument_to_schema(
+                    arg_value, arg_schema
+                )
+                if schema_matched:
+                    arguments[arg_key] = schema_value
+                    continue
+
             arg_type = get_argument_type(func_name, arg_key, tools)
             parsed_value, is_good_json = parse_arguments(arg_value, arg_type)
 

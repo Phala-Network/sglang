@@ -181,6 +181,159 @@ def test_complex_arguments_remain_valid_json(tools, chunk_size):
     }
 
 
+def _schema_incident_tool():
+    return _tool(
+        "record_union_values",
+        {
+            "retry": {"type": ["integer", "null"], "const": None},
+            "payload": {
+                "oneOf": [{"type": "string"}, {"type": "integer"}],
+                "const": 7,
+            },
+            "state": {"const": "ready"},
+            "selector": {"enum": ["alpha", 2, False], "const": False},
+            "mode": {"enum": ["safe", "fast"], "const": "safe"},
+        },
+    )
+
+
+def _schema_incident_call():
+    return _call(
+        "record_union_values",
+        ("retry", "null"),
+        ("payload", "7"),
+        ("state", "ready"),
+        ("selector", "False"),
+        ("mode", "safe"),
+    )
+
+
+def test_non_streaming_schema_coercion_matches_incident_contract():
+    result = Glm47MoeDetector().detect_and_parse(
+        _schema_incident_call(), [_schema_incident_tool()]
+    )
+
+    assert len(result.calls) == 1
+    assert json.loads(result.calls[0].parameters) == {
+        "retry": None,
+        "payload": 7,
+        "state": "ready",
+        "selector": False,
+        "mode": "safe",
+    }
+
+
+@pytest.mark.parametrize("chunk_size", [1, 7, 4096])
+def test_atomic_streaming_schema_coercion_matches_incident_contract(chunk_size):
+    calls, normal_text = _stream(
+        Glm47MoeDetector(),
+        _schema_incident_call(),
+        [_schema_incident_tool()],
+        chunk_size,
+    )
+
+    [call] = _group(calls)
+    assert normal_text == ""
+    assert call["name"] == "record_union_values"
+    assert json.loads(call["parameters"]) == {
+        "retry": None,
+        "payload": 7,
+        "state": "ready",
+        "selector": False,
+        "mode": "safe",
+    }
+
+
+def test_mixed_enum_without_const_uses_only_schema_valid_candidate():
+    tool = _tool(
+        "record_mixed_enum",
+        {"selector": {"enum": ["alpha", 2, False]}},
+    )
+    result = Glm47MoeDetector().detect_and_parse(
+        _call("record_mixed_enum", ("selector", "False")), [tool]
+    )
+
+    assert json.loads(result.calls[0].parameters) == {"selector": False}
+
+
+def test_ambiguous_union_preserves_genuine_numeric_string():
+    tool = _tool(
+        "lookup",
+        {
+            "union_id": {
+                "oneOf": [{"type": "string"}, {"type": "integer"}]
+            },
+            "enum_id": {"enum": ["7", 7]},
+            "quoted_id": {
+                "oneOf": [{"type": "string"}, {"type": "integer"}]
+            },
+            "quoted_const": {
+                "oneOf": [{"type": "string"}, {"type": "integer"}],
+                "const": 7,
+            },
+            "integer_id": {"type": "integer"},
+        },
+    )
+    result = Glm47MoeDetector().detect_and_parse(
+        _call(
+            "lookup",
+            ("union_id", "7"),
+            ("enum_id", "7"),
+            ("quoted_id", '"7"'),
+            ("quoted_const", '"7"'),
+            ("integer_id", "7"),
+        ),
+        [tool],
+    )
+
+    assert json.loads(result.calls[0].parameters) == {
+        "union_id": "7",
+        "enum_id": "7",
+        "quoted_id": "7",
+        "quoted_const": 7,
+        "integer_id": 7,
+    }
+
+
+def test_invalid_value_is_not_replaced_with_schema_const():
+    tool = _tool("record_const", {"payload": {"type": "integer", "const": 7}})
+    result = Glm47MoeDetector().detect_and_parse(
+        _call("record_const", ("payload", "8")), [tool]
+    )
+
+    assert json.loads(result.calls[0].parameters) == {"payload": 8}
+
+
+def test_local_defs_and_top_level_oneof_parameter_lookup():
+    tool = Tool(
+        type="function",
+        function=Function(
+            name="resolve_branch",
+            description="Resolve a top-level schema branch",
+            parameters={
+                "$defs": {"seven": {"type": "integer", "const": 7}},
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": {"payload": {"$ref": "#/$defs/seven"}},
+                        "required": ["payload"],
+                    },
+                    {
+                        "type": "object",
+                        "properties": {"message": {"type": "string"}},
+                        "required": ["message"],
+                    },
+                ],
+            },
+        ),
+    )
+    result = Glm47MoeDetector().detect_and_parse(
+        _call("resolve_branch", ("payload", "7")), [tool]
+    )
+
+    assert json.loads(result.calls[0].parameters) == {"payload": 7}
+
+
 @pytest.mark.parametrize("chunk_size", [1, 7])
 def test_normal_text_is_preserved_around_atomic_call(tools, chunk_size):
     text = "before <not-a-tool> " + _call("known") + " after"

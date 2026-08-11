@@ -69,6 +69,7 @@ _arange_cache = {}
 _MQA_LOGITS_BYTES_PER_ELEM = 4  # fp32 logits
 _MQA_LOGITS_STATIC_SKIP_ELEMS = 8_000_000  # below this, never chunk
 _MQA_LOGITS_TOTAL_MEM_FRACTION = 0.3  # cap relative to total device memory
+_MQA_LOGITS_MIN_CHUNK_ROWS = 128
 _mqa_logits_budget_bytes: Dict[int, int] = {}
 
 
@@ -718,14 +719,13 @@ class C4IndexerBackendMixin:
             max_seqlen_k=plan.max_seqlen_k,
         )
 
-    def _forward_oversize_varlen_chunked(
+    def _forward_oversize_paged_chunked(
         self,
         *,
-        q_indexer: IndexerQuery,
+        q: IndexerQuery,
         weights: torch.Tensor,
         c4_indexer: C4Indexer,
         token_to_kv_pool: DeepSeekV4TokenToKVPool,
-        forward_batch: ForwardBatch,
         indexer_metadata: PagedIndexerMetadata,
         page_table: torch.Tensor,
         c4_seq_lens: torch.Tensor,
@@ -733,49 +733,25 @@ class C4IndexerBackendMixin:
         raw_indices: Optional[torch.Tensor],
         budget_bytes: int,
         max_c4_seq_len: int,
-        use_fp4_indexer: bool,
         query_rows: int,
+        paged_mqa_logits_fn: Callable[..., torch.Tensor],
     ) -> None:
-        """Process oversize prefill via varlen non-paged path with query-axis chunking.
+        """Process oversize prefill with bounded paged-kernel query chunks.
 
-        Each request is processed independently.  Within a request, the query
-        axis (M) is sliced into chunks so that no single logits tensor exceeds
-        *budget_bytes*.  Per-chunk logits are consumed by ``topk_transform_512``
-        immediately and discarded before the next chunk.
+        The paged DeepGEMM path is the normal H100/H200 fast path.  Rebuild its
+        schedule metadata for each query-row slice so that no single fp32
+        logits tensor exceeds the memory budget.  This keeps the peak-memory
+        guard from PR #33288 without falling back to its much slower contiguous
+        KV gather plus varlen kernel.
         """
-        import deep_gemm
+        q_rows = q[0].shape[0] if isinstance(q, tuple) else q.shape[0]
+        assert q_rows == query_rows
+        assert weights.shape[0] == query_rows
+        assert page_table.shape[0] == query_rows
+        assert c4_seq_lens.shape[0] == query_rows
+        assert c4_sparse_page_indices.shape[0] == query_rows
 
-        if use_fp4_indexer:
-            assert isinstance(q_indexer, tuple)
-            q_fp4, q_sf = q_indexer
-            device = q_fp4.device
-        else:
-            assert isinstance(q_indexer, torch.Tensor)
-            device = q_indexer.device
-
-        c4_page_size = indexer_metadata.c4_page_size
-        batch_size = forward_batch.batch_size
-
-        # Determine per-request query-row ranges.
-        if batch_size == 1:
-            request_ranges: List[Tuple[int, int, int]] = [(0, 0, query_rows)]
-        else:
-            extend_start_loc = forward_batch.extend_start_loc
-            extend_seq_lens = forward_batch.extend_seq_lens
-            if extend_start_loc is None or extend_seq_lens is None:
-                return
-            request_ranges = []
-            for i in range(batch_size):
-                start = int(extend_start_loc[i].item())
-                end = start + int(extend_seq_lens[i].item())
-                request_ranges.append((i, start, end))
-
-        # Use the caller-provided budget (from _should_chunk_mqa_logits) as
-        # the primary chunking limit.  On CUDA, also clamp by real-time free
-        # memory to avoid OOM when KV cache has grown since the budget was
-        # computed.  On CPU (test mode) or during CUDA-graph capture, use
-        # budget_bytes directly — mem_get_info is unavailable or would stall
-        # the capture.
+        device = q[0].device if isinstance(q, tuple) else q.device
         if get_is_capture_mode() or device.type != "cuda":
             realtime_budget = budget_bytes
         else:
@@ -787,93 +763,66 @@ class C4IndexerBackendMixin:
             realtime_budget = max(1, realtime_budget)
 
         bytes_per_row = max_c4_seq_len * _MQA_LOGITS_BYTES_PER_ELEM
+        budget_rows = realtime_budget // max(bytes_per_row, 1)
+        max_rows = min(
+            query_rows,
+            max(_MQA_LOGITS_MIN_CHUNK_ROWS, budget_rows),
+        )
 
-        for req_idx, req_start, req_end in request_ranges:
-            req_query_rows = req_end - req_start
-            if req_query_rows <= 0:
-                continue
+        c4_indexer_kv_cache = token_to_kv_pool.get_index_k_with_scale_buffer(
+            layer_id=c4_indexer.layer_id,
+        )
+        assert c4_indexer_kv_cache.dim() == 2
+        head_dim_with_sf = 68 if c4_indexer.use_fp4_indexer else 132
+        c4_indexer_kv_cache = c4_indexer_kv_cache.view(
+            c4_indexer_kv_cache.shape[0], 64, 1, head_dim_with_sf
+        )
 
-            # Per-request sequence length (C4-compressed).
-            if forward_batch.seq_lens_cpu is not None:
-                seq_len_val = int(forward_batch.seq_lens_cpu[req_idx])
-            else:
-                seq_len_val = int(forward_batch.seq_lens[req_idx].item())
-            final_c4_len = seq_len_val // 4
-            if final_c4_len <= 0:
-                continue
-
-            request_page_table = page_table[req_start : req_start + 1].contiguous()
-            req_ke = (
-                c4_seq_lens[req_start:req_end].reshape(-1).to(torch.int32).contiguous()
+        q_offset = 0
+        while q_offset < query_rows:
+            q_end = min(q_offset + max_rows, query_rows)
+            chunk_c4_seq_lens = c4_seq_lens[q_offset:q_end].contiguous()
+            chunk_page_table = page_table[q_offset:q_end].contiguous()
+            chunk_metadata = PagedIndexerMetadata(
+                page_size=indexer_metadata.page_size,
+                page_table=chunk_page_table,
+                c4_seq_lens=chunk_c4_seq_lens,
+                force_deep_gemm_metadata=indexer_metadata.force_deep_gemm_metadata,
+                use_prefill_cuda_graph=False,
             )
-            gather_seq_lens = req_ke[-1:]
-            req_ks = torch.zeros_like(req_ke)
-            max_seqlen_k = (
-                (final_c4_len + c4_page_size - 1) // c4_page_size * c4_page_size
+            chunk_c4sl_arg = chunk_c4_seq_lens
+            if chunk_c4sl_arg.dim() == 1:
+                chunk_c4sl_arg = chunk_c4sl_arg.unsqueeze(-1)
+
+            q_chunk = (
+                (q[0][q_offset:q_end], q[1][q_offset:q_end])
+                if isinstance(q, tuple)
+                else q[q_offset:q_end]
+            )
+            logits_chunk = paged_mqa_logits_fn(
+                q_chunk,
+                c4_indexer_kv_cache,
+                weights[q_offset:q_end],
+                chunk_c4sl_arg,
+                chunk_page_table,
+                chunk_metadata.deep_gemm_metadata,
+                chunk_metadata.max_c4_seq_len,
+                False,
             )
 
-            # Gather contiguous KV for this request.
-            k_u8, scale_u8 = token_to_kv_pool.get_index_k_scale_buffer(
-                layer_id=c4_indexer.layer_id,
-                seq_len_tensor=gather_seq_lens,
-                page_indices=request_page_table,
-                seq_len_sum=final_c4_len,
-                max_seq_len=final_c4_len,
+            chunk_out = c4_sparse_page_indices[q_offset:q_end]
+            chunk_raw = raw_indices[q_offset:q_end] if raw_indices is not None else None
+            self._run_topk_transform(
+                logits_chunk,
+                chunk_c4_seq_lens,
+                chunk_page_table,
+                chunk_out,
+                chunk_metadata,
+                chunk_raw,
             )
-            k_fp8 = k_u8.view(FP8_DTYPE)
-            k_scale = scale_u8.view(torch.float32).squeeze(-1)
 
-            # Query-axis chunk loop — use the real-time budget so the
-            # chunk size adapts to current GPU free memory.
-            max_rows = max(1, realtime_budget // max(bytes_per_row, 1))
-            max_rows = min(max_rows, req_query_rows)
-
-            q_offset = 0
-            while q_offset < req_query_rows:
-                q_end = min(q_offset + max_rows, req_query_rows)
-                abs_start = req_start + q_offset
-                abs_end = req_start + q_end
-
-                if use_fp4_indexer:
-                    assert isinstance(q_indexer, tuple)
-                    q_fp4_chunk = q_indexer[0][abs_start:abs_end]
-                    q_sf_chunk = q_indexer[1][abs_start:abs_end]
-                    q_arg: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]] = (
-                        q_fp4_chunk,
-                        q_sf_chunk,
-                    )
-                else:
-                    assert isinstance(q_indexer, torch.Tensor)
-                    q_arg = (q_indexer[abs_start:abs_end], None)
-
-                logits_chunk = deep_gemm.fp8_fp4_mqa_logits(
-                    q_arg,
-                    (k_fp8, k_scale),
-                    weights[abs_start:abs_end],
-                    req_ks[q_offset:q_end],
-                    req_ke[q_offset:q_end],
-                    clean_logits=False,
-                    max_seqlen_k=max_seqlen_k,
-                )
-
-                chunk_c4_seq_lens = c4_seq_lens[abs_start:abs_end]
-                chunk_page_table = page_table[abs_start:abs_end]
-                chunk_out = c4_sparse_page_indices[abs_start:abs_end]
-                chunk_raw = (
-                    raw_indices[abs_start:abs_end] if raw_indices is not None else None
-                )
-
-                self._run_topk_transform(
-                    logits_chunk,
-                    chunk_c4_seq_lens,
-                    chunk_page_table,
-                    chunk_out,
-                    indexer_metadata,
-                    chunk_raw,
-                )
-
-                del logits_chunk
-                q_offset = q_end
+            del logits_chunk
+            q_offset = q_end
 
     def _run_topk_transform(
         self,
@@ -1048,19 +997,16 @@ class C4IndexerBackendMixin:
         if _c4sl.dim() == 1 and not _use_tilelang and not _use_aiter:
             _c4sl = _c4sl.unsqueeze(-1)
 
-        # --- Budget detection: route oversize prefill to varlen chunked path ---
-        # deep_gemm's varlen kernels (fp8_mqa_logits / fp8_fp4_mqa_logits)
-        # assert arch_major >= 9 (Hopper/Blackwell).  Ampere (sm80/sm89) can
-        # import deep_gemm but the kernel refuses at runtime, so the varlen
-        # routing must not fire there.  See sgl-project/sglang#33246.
-        _varlen_arch_ok = is_cuda() and torch.cuda.get_device_capability()[0] >= 9
-        # FP4 is excluded from the oversize varlen path for the same reason
-        # it is rejected in _can_use_nonpaged_indexer: get_index_k_scale_buffer
-        # reads K at FP8 strides (128 B/token), but FP4 buffers pack only
-        # 68 B/token — silent data corruption.
-        _is_deep_gemm_path = _varlen_arch_ok and (
-            not use_fp4_indexer
-            and not envs.SGLANG_OPT_USE_TILELANG_INDEXER.get()
+        # --- Budget detection: route oversize prefill to bounded paged chunks ---
+        # This path relies on DeepGEMM's paged kernel and metadata planner.
+        # Keep the original Hopper/Blackwell gate used by PR #33288 rather
+        # than changing dispatch behavior on Ampere or non-CUDA backends.
+        _paged_chunk_arch_ok = is_cuda() and torch.cuda.get_device_capability()[0] >= 9
+        # Unlike PR #33288's varlen gather, this path keeps the normal paged
+        # cache layout, so both the FP8 (132 B/token) and FP4 (68 B/token)
+        # DeepGEMM indexers can be chunked without changing their K strides.
+        _is_deep_gemm_path = _paged_chunk_arch_ok and (
+            not envs.SGLANG_OPT_USE_TILELANG_INDEXER.get()
             and not envs.SGLANG_OPT_USE_AITER_INDEXER.get()
             and not envs.SGLANG_FP8_PAGED_MQA_LOGITS_TORCH.get()
             and not is_xpu()
@@ -1073,8 +1019,8 @@ class C4IndexerBackendMixin:
         # that _can_use_nonpaged_indexer enforces for the normal non-paged
         # path (review comment 1 on PR #33288).  Without SGLANG_OPT_DSV4_NONPAGED_INDEXER
         # the operator has disabled the feature; TBO / hisparse / piecewise /
-        # breakable graph / non-EXTEND contexts are incompatible with the
-        # varlen gather.
+        # breakable graph / non-EXTEND contexts are excluded until their
+        # metadata-copy contracts are validated for per-chunk replanning.
         need_chunk = False
         budget_bytes = 0
         if (
@@ -1088,10 +1034,7 @@ class C4IndexerBackendMixin:
             and not is_in_tc_piecewise_cuda_graph()
             and not is_in_breakable_cuda_graph()
         ):
-            # FP4 is excluded by _is_deep_gemm_path above; q_indexer is a
-            # plain tensor here.
-            assert isinstance(q_indexer, torch.Tensor)
-            device = q_indexer.device
+            device = q[0].device if isinstance(q, tuple) else q.device
             device_index = device.index
             if device_index is not None:
                 need_chunk, budget_bytes = self._should_chunk_mqa_logits(
@@ -1123,12 +1066,11 @@ class C4IndexerBackendMixin:
             elif core_metadata.c4_sparse_raw_indices is not None:
                 raw_indices = core_metadata.c4_sparse_raw_indices
 
-            self._forward_oversize_varlen_chunked(
-                q_indexer=q_indexer,
+            self._forward_oversize_paged_chunked(
+                q=q,
                 weights=weights,
                 c4_indexer=c4_indexer,
                 token_to_kv_pool=token_to_kv_pool,
-                forward_batch=forward_batch,
                 indexer_metadata=indexer_metadata,
                 page_table=page_table,
                 c4_seq_lens=c4_seq_lens,
@@ -1136,8 +1078,8 @@ class C4IndexerBackendMixin:
                 raw_indices=raw_indices,
                 budget_bytes=budget_bytes,
                 max_c4_seq_len=max_c4_seq_len,
-                use_fp4_indexer=use_fp4_indexer,
                 query_rows=query_rows,
+                paged_mqa_logits_fn=fn,
             )
 
             if hisparse_coordinator is not None:

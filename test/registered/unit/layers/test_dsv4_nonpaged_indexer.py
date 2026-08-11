@@ -368,273 +368,153 @@ class TestDSV4BudgetDetection(CustomTestCase):
             self.assertEqual(b, logits_bytes - 1)
 
 
-class TestDSV4OversizeVarlenChunked(CustomTestCase):
-    """Tests for the oversize varlen chunked path (tasks 4.2, 4.4, 4.5)."""
+class TestDSV4OversizePagedChunked(CustomTestCase):
+    """Tests for bounded query chunks on the paged DeepGEMM path."""
 
-    def _make_mocks(self, query_rows, use_fp4=False):
-        """Create mock objects for _forward_oversize_varlen_chunked."""
+    def _run_chunked_path(self, query_rows, max_c4_seq_len, budget_rows, use_fp4=False):
         if use_fp4:
-            q_indexer = (
-                torch.zeros((query_rows, 2, 128), dtype=torch.uint8),
-                torch.zeros((query_rows, 2), dtype=torch.float32),
+            q = (
+                torch.zeros((query_rows, 1, 2, 64), dtype=torch.uint8),
+                torch.zeros((query_rows, 1, 2, 4), dtype=torch.uint8),
             )
         else:
-            q_indexer = torch.zeros((query_rows, 2, 128), dtype=torch.uint8).view(
-                FP8_DTYPE
-            )
+            q = torch.zeros((query_rows, 1, 2, 128), dtype=torch.float32)
         weights = torch.ones((query_rows, 2), dtype=torch.float32)
+        for row in range(query_rows):
+            weights[row] = float(row)
+
         c4_indexer = SimpleNamespace(layer_id=17, use_fp4_indexer=use_fp4)
-        k_u8 = torch.zeros((1000, 128), dtype=torch.uint8)
-        scale_u8 = torch.zeros((1000, 4), dtype=torch.uint8)
-        token_to_kv_pool = MagicMock()
-        token_to_kv_pool.get_index_k_scale_buffer.return_value = (k_u8, scale_u8)
-        return q_indexer, weights, c4_indexer, token_to_kv_pool
-
-    def _run_chunked_path(
-        self, query_rows, max_c4_seq_len, budget_bytes, use_fp4=False
-    ):
-        """Helper: run _forward_oversize_varlen_chunked and return outputs."""
-        q_indexer, weights, c4_indexer, token_to_kv_pool = self._make_mocks(
-            query_rows, use_fp4=use_fp4
-        )
-        # Use unique weights per row so the mock can identify the starting row.
-        for i in range(query_rows):
-            weights[i] = float(i)
-
         c4_seq_lens = torch.full((query_rows,), max_c4_seq_len, dtype=torch.int32)
-        page_table = torch.zeros((query_rows, 2), dtype=torch.int32)
-        c4_sparse_page_indices = torch.full((query_rows, 512), -1, dtype=torch.int32)
-
-        forward_batch = SimpleNamespace(
-            batch_size=1,
-            seq_lens_cpu=[max_c4_seq_len * 4],
-            seq_lens=torch.tensor([max_c4_seq_len * 4], dtype=torch.int32),
-            extend_start_loc=torch.tensor([0], dtype=torch.int32),
-            extend_seq_lens=torch.tensor([query_rows], dtype=torch.int32),
-        )
+        num_pages = (max_c4_seq_len + 63) // 64
+        page_table = torch.zeros((query_rows, num_pages), dtype=torch.int32)
+        output = torch.full((query_rows, 512), -1, dtype=torch.int32)
         indexer_metadata = SimpleNamespace(
-            c4_page_size=64,
-            topk_metadata=torch.empty((0,)),
+            page_size=256,
+            force_deep_gemm_metadata=False,
         )
 
-        # Pre-compute deterministic logits: row i has values [0..N) shifted by i.
-        # The mock uses weights[0] to identify the starting row and returns the
-        # corresponding slice so chunked and unchunked runs see identical logits.
+        cache_width = 68 if use_fp4 else 132
+        kv_cache = torch.zeros((num_pages, 64 * cache_width), dtype=torch.uint8)
+        token_to_kv_pool = MagicMock()
+        token_to_kv_pool.get_index_k_with_scale_buffer.return_value = kv_cache
+
         precomputed = torch.stack(
             [
-                torch.arange(max_c4_seq_len, dtype=torch.float32) + i * 0.1
-                for i in range(query_rows)
+                torch.arange(max_c4_seq_len, dtype=torch.float32) + row * 0.1
+                for row in range(query_rows)
             ]
         )
+        paged_calls = []
+        metadata_rows = []
 
-        def mock_logits(q_arg, kv, w, ks, ke, **kw):
-            rows = ke.shape[0]
+        def mock_paged_logits(q_chunk, kv, w, seq_lens, pages, metadata, *args):
+            rows = (
+                q_chunk[0].shape[0] if isinstance(q_chunk, tuple) else q_chunk.shape[0]
+            )
             start = int(w[0, 0].item())
+            paged_calls.append(
+                (
+                    rows,
+                    seq_lens.shape,
+                    pages.shape,
+                    metadata,
+                    isinstance(q_chunk, tuple),
+                    kv.shape[-1],
+                )
+            )
             return precomputed[start : start + rows].clone()
 
-        deep_gemm = SimpleNamespace(fp8_fp4_mqa_logits=mock_logits)
+        def mock_metadata(**kwargs):
+            rows = kwargs["c4_seq_lens"].shape[0]
+            metadata_rows.append(rows)
+            return SimpleNamespace(
+                page_size=kwargs["page_size"],
+                c4_page_size=kwargs["page_size"] // 4,
+                page_table=kwargs["page_table"],
+                c4_seq_lens=kwargs["c4_seq_lens"],
+                deep_gemm_metadata=("chunk", rows),
+                topk_metadata=torch.empty((0,)),
+                max_c4_seq_len=kwargs["page_table"].shape[1] * 64,
+            )
+
         backend = SimpleNamespace(dsa_topk_backend=DSATopKBackend.SGL_KERNEL)
         backend._run_topk_transform = C4IndexerBackendMixin._run_topk_transform.__get__(
             backend
         )
-
-        out = c4_sparse_page_indices.clone()
+        budget_bytes = max_c4_seq_len * 4 * budget_rows
         with (
-            patch.dict(sys.modules, {"deep_gemm": deep_gemm}),
+            patch(f"{_INDEXER}.PagedIndexerMetadata", side_effect=mock_metadata),
             envs.SGLANG_TOPK_TRANSFORM_512_TORCH.override(True),
             envs.SGLANG_OPT_USE_TOPK_V2.override(False),
         ):
-            C4IndexerBackendMixin._forward_oversize_varlen_chunked(
+            C4IndexerBackendMixin._forward_oversize_paged_chunked(
                 backend,
-                q_indexer=q_indexer,
+                q=q,
                 weights=weights,
                 c4_indexer=c4_indexer,
                 token_to_kv_pool=token_to_kv_pool,
-                forward_batch=forward_batch,
                 indexer_metadata=indexer_metadata,
                 page_table=page_table,
                 c4_seq_lens=c4_seq_lens,
-                c4_sparse_page_indices=out,
+                c4_sparse_page_indices=output,
                 raw_indices=None,
                 budget_bytes=budget_bytes,
                 max_c4_seq_len=max_c4_seq_len,
-                use_fp4_indexer=use_fp4,
                 query_rows=query_rows,
+                paged_mqa_logits_fn=mock_paged_logits,
             )
-        return out, token_to_kv_pool
+        return output, token_to_kv_pool, paged_calls, metadata_rows
 
-    def test_single_request_chunked_topk_matches_unchunked(self):
-        """Chunked topk output matches single-pass baseline from same logits.
-
-        With the budget_bytes fix, the unchunked run (budget = all rows)
-        processes everything in one iteration while the chunked run
-        (budget = 3 rows) iterates 4 times (3+3+3+1).  topk is per-row,
-        so chunking must not change results.
-        """
-        query_rows = 10
-        max_c4_seq_len = 100
-
-        # Unchunked: budget allows all rows in one chunk.
-        unchunked_out, _ = self._run_chunked_path(
-            query_rows,
-            max_c4_seq_len,
-            budget_bytes=max_c4_seq_len * 4 * query_rows,
+    def test_chunked_topk_matches_single_paged_pass(self):
+        query_rows = 300
+        max_c4_seq_len = 640
+        unchunked, _, unchunked_calls, _ = self._run_chunked_path(
+            query_rows, max_c4_seq_len, budget_rows=query_rows
+        )
+        chunked, _, chunked_calls, metadata_rows = self._run_chunked_path(
+            query_rows, max_c4_seq_len, budget_rows=128
         )
 
-        # Chunked: budget allows only 3 rows per chunk.
-        chunked_out, _ = self._run_chunked_path(
-            query_rows,
-            max_c4_seq_len,
-            budget_bytes=max_c4_seq_len * 4 * 3,
+        torch.testing.assert_close(chunked, unchunked)
+        self.assertEqual(len(unchunked_calls), 1)
+        self.assertEqual([call[0] for call in chunked_calls], [128, 128, 44])
+        self.assertEqual(metadata_rows, [128, 128, 44])
+
+    def test_uses_paged_cache_once_and_rebuilds_chunk_metadata(self):
+        output, token_to_kv_pool, paged_calls, metadata_rows = self._run_chunked_path(
+            query_rows=257,
+            max_c4_seq_len=640,
+            budget_rows=128,
         )
 
-        # topk is per-row; chunking must not change results.
-        torch.testing.assert_close(chunked_out, unchunked_out)
-
-    def test_multi_request_oversize_per_request_processing(self):
-        """Task 4.4: Multi-request batch, each request processed independently."""
-        req1_rows = 5
-        req2_rows = 5
-        query_rows = req1_rows + req2_rows
-        max_c4_seq_len = 100
-        budget_bytes = max_c4_seq_len * 4 * 2  # 2 rows per chunk
-
-        q_indexer, weights, c4_indexer, token_to_kv_pool = self._make_mocks(query_rows)
-        c4_seq_lens = torch.full((query_rows,), max_c4_seq_len, dtype=torch.int32)
-        page_table = torch.zeros((query_rows, 2), dtype=torch.int32)
-        c4_sparse_page_indices = torch.full((query_rows, 512), -1, dtype=torch.int32)
-
-        forward_batch = SimpleNamespace(
-            batch_size=2,
-            seq_lens_cpu=[max_c4_seq_len * 4, max_c4_seq_len * 4],
-            seq_lens=torch.tensor(
-                [max_c4_seq_len * 4, max_c4_seq_len * 4], dtype=torch.int32
-            ),
-            extend_start_loc=torch.tensor([0, req1_rows], dtype=torch.int32),
-            extend_seq_lens=torch.tensor([req1_rows, req2_rows], dtype=torch.int32),
+        token_to_kv_pool.get_index_k_with_scale_buffer.assert_called_once_with(
+            layer_id=17
         )
-        indexer_metadata = SimpleNamespace(
-            c4_page_size=64,
-            topk_metadata=torch.empty((0,)),
+        token_to_kv_pool.get_index_k_scale_buffer.assert_not_called()
+        self.assertEqual([call[0] for call in paged_calls], [128, 128, 1])
+        self.assertEqual(metadata_rows, [128, 128, 1])
+        self.assertTrue((output != -1).all())
+
+    def test_minimum_chunk_rows_prevents_one_row_degradation(self):
+        _, _, paged_calls, _ = self._run_chunked_path(
+            query_rows=257,
+            max_c4_seq_len=640,
+            budget_rows=1,
         )
 
-        def mock_logits(q_arg, kv, w, ks, ke, **kw):
-            rows = ke.shape[0]
-            return torch.randn(rows, max_c4_seq_len, dtype=torch.float32)
+        self.assertEqual([call[0] for call in paged_calls], [128, 128, 1])
 
-        deep_gemm = SimpleNamespace(fp8_fp4_mqa_logits=mock_logits)
-        backend = SimpleNamespace(dsa_topk_backend=DSATopKBackend.SGL_KERNEL)
-        backend._run_topk_transform = C4IndexerBackendMixin._run_topk_transform.__get__(
-            backend
+    def test_fp4_keeps_native_paged_cache_layout(self):
+        _, _, paged_calls, _ = self._run_chunked_path(
+            query_rows=257,
+            max_c4_seq_len=640,
+            budget_rows=128,
+            use_fp4=True,
         )
 
-        chunked_out = c4_sparse_page_indices.clone()
-        with (
-            patch.dict(sys.modules, {"deep_gemm": deep_gemm}),
-            envs.SGLANG_TOPK_TRANSFORM_512_TORCH.override(True),
-            envs.SGLANG_OPT_USE_TOPK_V2.override(False),
-        ):
-            C4IndexerBackendMixin._forward_oversize_varlen_chunked(
-                backend,
-                q_indexer=q_indexer,
-                weights=weights,
-                c4_indexer=c4_indexer,
-                token_to_kv_pool=token_to_kv_pool,
-                forward_batch=forward_batch,
-                indexer_metadata=indexer_metadata,
-                page_table=page_table,
-                c4_seq_lens=c4_seq_lens,
-                c4_sparse_page_indices=chunked_out,
-                raw_indices=None,
-                budget_bytes=budget_bytes,
-                max_c4_seq_len=max_c4_seq_len,
-                use_fp4_indexer=False,
-                query_rows=query_rows,
-            )
-
-        # Two requests → two KV gathers
-        self.assertEqual(token_to_kv_pool.get_index_k_scale_buffer.call_count, 2)
-        # Output was written for all rows
-        self.assertTrue((chunked_out[:req1_rows] != -1).any())
-        self.assertTrue((chunked_out[req1_rows:] != -1).any())
-
-    def test_fp4_varlen_routing_uses_fp8_fp4_kernel(self):
-        """Task 4.5: FP4 oversize triggers fp8_fp4_mqa_logits with q_sf.
-
-        Note: FP4 is currently excluded from the oversize routing in
-        production (get_index_k_scale_buffer uses FP8 strides, see PR
-        #33288 review comment 2).  This test verifies the query-side FP4
-        handling inside _forward_oversize_varlen_chunked in isolation,
-        guarding the code path for when K-gather FP4 support is added.
-        """
-        query_rows = 6
-        max_c4_seq_len = 100
-        budget_bytes = max_c4_seq_len * 4 * 2
-
-        q_indexer, weights, c4_indexer, token_to_kv_pool = self._make_mocks(
-            query_rows, use_fp4=True
-        )
-        c4_seq_lens = torch.full((query_rows,), max_c4_seq_len, dtype=torch.int32)
-        page_table = torch.zeros((query_rows, 2), dtype=torch.int32)
-        c4_sparse_page_indices = torch.full((query_rows, 512), -1, dtype=torch.int32)
-
-        forward_batch = SimpleNamespace(
-            batch_size=1,
-            seq_lens_cpu=[max_c4_seq_len * 4],
-            seq_lens=torch.tensor([max_c4_seq_len * 4], dtype=torch.int32),
-            extend_start_loc=torch.tensor([0], dtype=torch.int32),
-            extend_seq_lens=torch.tensor([query_rows], dtype=torch.int32),
-        )
-        indexer_metadata = SimpleNamespace(
-            c4_page_size=64,
-            topk_metadata=torch.empty((0,)),
-        )
-
-        captured_calls = []
-
-        def mock_logits(q_arg, kv, w, ks, ke, **kw):
-            captured_calls.append(q_arg)
-            rows = ke.shape[0]
-            return torch.randn(rows, max_c4_seq_len, dtype=torch.float32)
-
-        deep_gemm = SimpleNamespace(fp8_fp4_mqa_logits=mock_logits)
-        backend = SimpleNamespace(dsa_topk_backend=DSATopKBackend.SGL_KERNEL)
-        backend._run_topk_transform = C4IndexerBackendMixin._run_topk_transform.__get__(
-            backend
-        )
-
-        chunked_out = c4_sparse_page_indices.clone()
-        with (
-            patch.dict(sys.modules, {"deep_gemm": deep_gemm}),
-            envs.SGLANG_TOPK_TRANSFORM_512_TORCH.override(True),
-            envs.SGLANG_OPT_USE_TOPK_V2.override(False),
-        ):
-            C4IndexerBackendMixin._forward_oversize_varlen_chunked(
-                backend,
-                q_indexer=q_indexer,
-                weights=weights,
-                c4_indexer=c4_indexer,
-                token_to_kv_pool=token_to_kv_pool,
-                forward_batch=forward_batch,
-                indexer_metadata=indexer_metadata,
-                page_table=page_table,
-                c4_seq_lens=c4_seq_lens,
-                c4_sparse_page_indices=chunked_out,
-                raw_indices=None,
-                budget_bytes=budget_bytes,
-                max_c4_seq_len=max_c4_seq_len,
-                use_fp4_indexer=True,
-                query_rows=query_rows,
-            )
-
-        # Verify fp8_fp4_mqa_logits was called with (q_fp4, q_sf) tuples
-        self.assertTrue(len(captured_calls) > 0)
-        for q_arg in captured_calls:
-            self.assertIsInstance(q_arg, tuple)
-            self.assertEqual(len(q_arg), 2)
-            # q_sf should be a tensor (not None) for FP4
-            self.assertIsNotNone(q_arg[1])
-        self.assertTrue((chunked_out != -1).any())
+        self.assertEqual([call[0] for call in paged_calls], [128, 128, 1])
+        self.assertTrue(all(call[4] for call in paged_calls))
+        self.assertTrue(all(call[5] == 68 for call in paged_calls))
 
 
 class TestDSV4TopkV2MetadataRegeneration(CustomTestCase):
@@ -643,8 +523,6 @@ class TestDSV4TopkV2MetadataRegeneration(CustomTestCase):
     def test_v2_metadata_regenerates_for_chunked_path(self):
         """When topk_metadata shape (N+1,2) mismatches c4_seq_lens shape (M,),
         plan_topk_v2 is called to regenerate before topk_transform_512_v2."""
-        from sglang.kernels.ops.attention.dsv4 import plan_topk_v2
-
         chunk_rows = 3
         full_rows = 10
         max_c4_seq_len = 100
@@ -666,13 +544,16 @@ class TestDSV4TopkV2MetadataRegeneration(CustomTestCase):
         def fake_v2(scores, seq_lens, pt, out, ps, metadata, **kw):
             captured_meta.append(metadata)
 
+        def fake_plan(seq_lens):
+            return torch.empty((seq_lens.numel() + 1, 2), dtype=torch.int32)
+
         backend = SimpleNamespace(dsa_topk_backend=DSATopKBackend.SGL_KERNEL)
 
         with (
             envs.SGLANG_TOPK_TRANSFORM_512_TORCH.override(False),
             envs.SGLANG_OPT_USE_TOPK_V2.override(True),
             patch(f"{_INDEXER}.topk_transform_512_v2", side_effect=fake_v2),
-            patch(f"{_INDEXER}.plan_topk_v2", wraps=plan_topk_v2) as mock_plan,
+            patch(f"{_INDEXER}.plan_topk_v2", side_effect=fake_plan) as mock_plan,
         ):
             C4IndexerBackendMixin._run_topk_transform(
                 backend,
@@ -791,10 +672,8 @@ class TestDSV4RoutingConditions(CustomTestCase):
                 side_effect=AssertionError("must not be called on non-deep-gemm path"),
             ),
         ):
-            use_fp4_indexer = False
             _is_deep_gemm_path = (
-                not use_fp4_indexer
-                and not envs.SGLANG_OPT_USE_TILELANG_INDEXER.get()
+                not envs.SGLANG_OPT_USE_TILELANG_INDEXER.get()
                 and not envs.SGLANG_OPT_USE_AITER_INDEXER.get()
                 and not envs.SGLANG_FP8_PAGED_MQA_LOGITS_TORCH.get()
             )
@@ -803,25 +682,20 @@ class TestDSV4RoutingConditions(CustomTestCase):
             if _is_deep_gemm_path and not _is_cp and not _is_capture:
                 C4IndexerBackendMixin._should_chunk_mqa_logits(1, 1, 0)
 
-    def test_fp4_prevents_deep_gemm_path(self):
-        """FP4 must never enter the oversize varlen path: get_index_k_scale_buffer
-        reads K at FP8 strides (128 B/token) but FP4 buffers pack 68 B/token,
-        silently corrupting the gathered K."""
+    def test_fp4_allows_paged_chunk_path(self):
+        """FP4 keeps its native 68-byte paged-cache layout while chunking."""
+        should_chunk = MagicMock(return_value=(True, 1))
         with (
             patch(f"{_INDEXER}.is_cuda", return_value=True),
             patch("torch.cuda.get_device_capability", return_value=(9, 0)),
             patch.object(
                 C4IndexerBackendMixin,
                 "_should_chunk_mqa_logits",
-                side_effect=AssertionError(
-                    "must not be called with FP4 indexer active"
-                ),
+                should_chunk,
             ),
         ):
-            use_fp4_indexer = True
             _is_deep_gemm_path = (
-                not use_fp4_indexer
-                and not envs.SGLANG_OPT_USE_TILELANG_INDEXER.get()
+                not envs.SGLANG_OPT_USE_TILELANG_INDEXER.get()
                 and not envs.SGLANG_OPT_USE_AITER_INDEXER.get()
                 and not envs.SGLANG_FP8_PAGED_MQA_LOGITS_TORCH.get()
             )
@@ -829,9 +703,10 @@ class TestDSV4RoutingConditions(CustomTestCase):
             _is_capture = False
             if _is_deep_gemm_path and not _is_cp and not _is_capture:
                 C4IndexerBackendMixin._should_chunk_mqa_logits(1, 1, 0)
+        should_chunk.assert_called_once_with(1, 1, 0)
 
     def test_breakable_graph_prevents_chunking(self):
-        """When inside a breakable CUDA graph, the oversize varlen path must
+        """When inside a breakable CUDA graph, the oversize paged path must
         not be entered — mirroring the is_in_breakable_cuda_graph guard in
         _can_use_nonpaged_indexer."""
         with (
@@ -857,35 +732,36 @@ class TestDSV4RoutingConditions(CustomTestCase):
             ):
                 C4IndexerBackendMixin._should_chunk_mqa_logits(1, 1, 0)
 
-    def test_sm80_prevents_varlen_routing(self):
-        """On sm80/sm89 (Ampere), deep_gemm varlen kernels assert arch_major
-        >= 9.  The routing guard must prevent varlen routing there."""
+    def test_sm80_prevents_paged_chunk_routing(self):
+        """Keep this new metadata-replanning path scoped to Hopper or newer."""
         with (
-            patch(f"{_INDEXER}.is_cuda", return_value=True),
+            patch(f"{__name__}.is_cuda", return_value=True),
             patch("torch.cuda.get_device_capability", return_value=(8, 0)),
             patch.object(
                 C4IndexerBackendMixin,
                 "_should_chunk_mqa_logits",
-                side_effect=AssertionError(
-                    "must not be called on sm80 — varlen kernel asserts arch >= 9"
-                ),
+                side_effect=AssertionError("must not be called on sm80"),
             ),
         ):
-            _varlen_arch_ok = is_cuda() and (torch.cuda.get_device_capability()[0] >= 9)
-            _is_deep_gemm_path = _varlen_arch_ok
+            _paged_chunk_arch_ok = is_cuda() and (
+                torch.cuda.get_device_capability()[0] >= 9
+            )
+            _is_deep_gemm_path = _paged_chunk_arch_ok
             _is_cp = False
             _is_capture = False
             if _is_deep_gemm_path and not _is_cp and not _is_capture:
                 C4IndexerBackendMixin._should_chunk_mqa_logits(1, 1, 0)
 
-    def test_sm90_allows_varlen_routing(self):
-        """On sm90+ (Hopper/Blackwell), varlen kernels are supported."""
+    def test_sm90_allows_paged_chunk_routing(self):
+        """On sm90+ the bounded paged path is enabled."""
         with (
-            patch(f"{_INDEXER}.is_cuda", return_value=True),
+            patch(f"{__name__}.is_cuda", return_value=True),
             patch("torch.cuda.get_device_capability", return_value=(9, 0)),
         ):
-            _varlen_arch_ok = is_cuda() and (torch.cuda.get_device_capability()[0] >= 9)
-            self.assertTrue(_varlen_arch_ok)
+            _paged_chunk_arch_ok = is_cuda() and (
+                torch.cuda.get_device_capability()[0] >= 9
+            )
+            self.assertTrue(_paged_chunk_arch_ok)
 
 
 if __name__ == "__main__":

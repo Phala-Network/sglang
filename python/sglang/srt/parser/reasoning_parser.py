@@ -194,6 +194,8 @@ class BaseReasoningFormatDetector:
         # Strip `<think>` token if present
         if not self.stripped_think_start and think_start_text in current_text:
             current_text = current_text.replace(think_start_text, "", 1)
+            # Write back, or stream_reasoning=False carries the token into finish().
+            self._buffer = current_text
             self.stripped_think_start = True
             self._in_reasoning = True
 
@@ -213,7 +215,8 @@ class BaseReasoningFormatDetector:
 
         # Continue with reasoning content
         if self._in_reasoning:
-            # Check for tool_start_token interruption
+            # Check for tool_start_token interruption. Streaming cannot see a
+            # think_end_token that has not arrived yet; see the chunk_dependent test.
             if self.tool_start_token and self.tool_start_token in current_text:
                 tool_idx = current_text.find(self.tool_start_token)
                 reasoning_text = current_text[:tool_idx]
@@ -225,9 +228,21 @@ class BaseReasoningFormatDetector:
                     normal_text=normal_text, reasoning_text=reasoning_text
                 )
             if self.stream_reasoning:
-                # Stream the content immediately
-                self._buffer = ""
-                return StreamingParseResult(reasoning_text=current_text)
+                # Minus any trailing slice that could be a token split across chunks.
+                holdback_tokens = [self.think_end_token]
+                if self.tool_start_token:
+                    holdback_tokens.append(self.tool_start_token)
+                if not self.stripped_think_start:
+                    # force_reasoning never saw the opening token; it can still split.
+                    holdback_tokens.append(think_start_text)
+                holdback = max(
+                    self._ends_with_partial_token(current_text, token)
+                    for token in holdback_tokens
+                )
+                self._buffer = current_text[len(current_text) - holdback :]
+                return StreamingParseResult(
+                    reasoning_text=current_text[: len(current_text) - holdback]
+                )
             else:
                 return StreamingParseResult()
 
@@ -244,15 +259,30 @@ class BaseReasoningFormatDetector:
             return text[len(think_start_text) :]
         return text
 
+    @staticmethod
+    def _ends_with_partial_token(buffer: str, token: str) -> int:
+        """Length of the longest trailing slice of `buffer` that is a strict prefix
+        of `token`. Longest, so a token whose prefix repeats inside itself does not
+        get cut short and leak the rest of the marker."""
+        for i in range(min(len(buffer), len(token) - 1), 0, -1):
+            if token.startswith(buffer[-i:]):
+                return i
+        return 0
+
     def finish(self) -> StreamingParseResult:
-        """Flush reasoning buffered under stream_reasoning=False when the stream ends
-        before the end token (e.g. max_tokens cut it short), instead of dropping it.
+        """Flush reasoning still buffered when the stream ends before the end token
+        (e.g. max_tokens cut it short), instead of dropping it: the whole block under
+        stream_reasoning=False, the held-back token suffix under stream_reasoning=True.
         force_nonempty_content emits it as normal_text, else as reasoning_text."""
         if not self._in_reasoning:
-            return StreamingParseResult()
+            # Same as the reasoning-side flush below: a held-back slice that never
+            # became a token is content.
+            leftover = self._buffer
+            self._buffer = ""
+            return StreamingParseResult(normal_text=leftover)
 
-        # stream_reasoning=False never clears _buffer, so the opening think token
-        # (stripped only from the base class's local view) survives here.
+        # Defensive: subclasses that fill _buffer themselves may not have stripped
+        # the opening think token that _parse_streaming_increment_impl removes.
         buffer = self._strip_leading_think_start(self._buffer)
         self._buffer = ""
 
@@ -263,7 +293,7 @@ class BaseReasoningFormatDetector:
                 return StreamingParseResult(normal_text=normal_text)
             return StreamingParseResult()
 
-        if not self.stream_reasoning and buffer:
+        if buffer:
             return StreamingParseResult(reasoning_text=buffer)
 
         return StreamingParseResult()
@@ -1103,137 +1133,7 @@ class _DeepSeekV3Detector(Qwen3Detector):
         self.reasoning_default = "explicit_thinking"
 
 
-class DeepSeekBaseDetector(BaseReasoningFormatDetector):
-    """DeepSeek reasoning detector with explicit thinking opt-in."""
-
-    THINK_START_TOKEN = "<think>"
-    THINK_END_TOKEN = "</think>"
-
-    def __init__(
-        self,
-        stream_reasoning: bool = True,
-        force_reasoning: bool = False,
-        continue_final_message: bool = False,
-        previous_content: str = "",
-        force_nonempty_content: bool = False,
-        think_excluded_tokens: Optional[List[str]] = None,
-        thinks_internally: bool = True,
-        reasoning_default: str = "explicit_thinking",
-    ):
-        BaseReasoningFormatDetector.__init__(
-            self,
-            self.THINK_START_TOKEN,
-            self.THINK_END_TOKEN,
-            think_excluded_tokens=think_excluded_tokens,
-            force_reasoning=force_reasoning,
-            stream_reasoning=stream_reasoning,
-            continue_final_message=continue_final_message,
-            previous_content=previous_content,
-            thinks_internally=thinks_internally,
-            reasoning_default=reasoning_default,
-            force_nonempty_content=force_nonempty_content,
-        )
-
-        self.tool_start_tokens: List[str] = []
-
-    def _tool_token_max_partial_overlap(self, text: str) -> int:
-        max_overlap_len = 0
-        for tool_start_token in self.tool_start_tokens:
-            for i in range(1, len(tool_start_token)):
-                if text.endswith(tool_start_token[:i]):
-                    max_overlap_len = max(max_overlap_len, i)
-        return max_overlap_len
-
-    def _parse_streaming_increment_impl(self, new_text: str) -> StreamingParseResult:
-        self._buffer += new_text
-        current_text = self._buffer
-
-        think_start_text = self.think_start_token + self.think_start_self_label
-
-        # If the current text is a prefix of the think token, keep buffering
-        tokens_to_check = [
-            think_start_text,
-            self.think_end_token,
-            *self.tool_start_tokens,
-        ]
-        if any(
-            token.startswith(current_text) and token != current_text
-            for token in tokens_to_check
-        ):
-            return StreamingParseResult()
-
-        # Strip `<think>` token if present
-        if not self.stripped_think_start and think_start_text in current_text:
-            current_text = current_text.replace(think_start_text, "", 1)
-            self.stripped_think_start = True
-            self._in_reasoning = True
-
-        # Handle end of reasoning block
-        if self._in_reasoning and self.think_end_token in current_text:
-            end_idx = current_text.find(self.think_end_token)
-
-            reasoning_text = current_text[:end_idx]
-
-            self._buffer = ""
-            self._in_reasoning = False
-            normal_text = current_text[end_idx + len(self.think_end_token) :]
-
-            return StreamingParseResult(
-                normal_text=normal_text, reasoning_text=reasoning_text
-            )
-
-        # Continue with reasoning content
-        if self._in_reasoning:
-            tool_hits = [
-                current_text.find(tool_start_token)
-                for tool_start_token in self.tool_start_tokens
-                if tool_start_token and tool_start_token in current_text
-            ]
-            if tool_hits:
-                tool_idx = min(tool_hits)
-                reasoning_text = current_text[:tool_idx]
-                # Preserve tool_start_token in normal text
-                normal_text = current_text[tool_idx:]
-                self._buffer = ""
-                self._in_reasoning = False
-                return StreamingParseResult(
-                    normal_text=normal_text, reasoning_text=reasoning_text
-                )
-            # Check for any partial tool start tokens in the current delta
-            max_overlap_len = self._tool_token_max_partial_overlap(current_text)
-            if max_overlap_len > 0:
-                if not self.stream_reasoning:
-                    return StreamingParseResult()
-                self._buffer = current_text[-max_overlap_len:]
-                reasoning_text = current_text[:-max_overlap_len]
-                think_start_text = self.think_start_token + self.think_start_self_label
-                if not self.stripped_think_start and think_start_text in reasoning_text:
-                    reasoning_text = reasoning_text.replace(think_start_text, "", 1)
-                    self.stripped_think_start = True
-                    self._in_reasoning = True
-                return StreamingParseResult(reasoning_text=reasoning_text)
-            if self.stream_reasoning:
-                # Stream the content immediately
-                self._buffer = ""
-                return StreamingParseResult(reasoning_text=current_text)
-            else:
-                return StreamingParseResult()
-
-        # If we're not in a reasoning block return as normal text
-        if not self._in_reasoning:
-            self._buffer = ""
-            return StreamingParseResult(normal_text=current_text)
-
-        return StreamingParseResult()
-
-
-class DeepSeekV4Detector(DeepSeekBaseDetector):
-    THINK_START_TOKEN = dsv4_thinking_start_token
-    THINK_END_TOKEN = dsv4_thinking_end_token
-    DSML_TOKEN = dsv4_dsml_token
-    DEEPSEEK_TOOL_CALLS_BLOCK_NAME = "tool_calls"
-    DEEPSEEK_INVOKE_BLOCK_NAME = "invoke name="
-
+class DeepSeekV4Detector(BaseReasoningFormatDetector):
     def __init__(
         self,
         stream_reasoning: bool = True,
@@ -1243,7 +1143,11 @@ class DeepSeekV4Detector(DeepSeekBaseDetector):
         force_nonempty_content: bool = False,
     ):
         super().__init__(
+            dsv4_thinking_start_token,
+            dsv4_thinking_end_token,
             think_excluded_tokens=[dsv4_eos_token, dsv4_dsml_token],
+            # Leading "<" included: has_tool_call() matches on it.
+            tool_start_token=f"<{dsv4_dsml_token}",
             force_reasoning=force_reasoning,
             stream_reasoning=stream_reasoning,
             continue_final_message=continue_final_message,
@@ -1252,11 +1156,6 @@ class DeepSeekV4Detector(DeepSeekBaseDetector):
             reasoning_default="explicit_thinking",
             force_nonempty_content=force_nonempty_content,
         )
-
-        self.tool_start_tokens: List[str] = [
-            f"<{self.DSML_TOKEN}{self.DEEPSEEK_TOOL_CALLS_BLOCK_NAME}>",
-            f"<{self.DSML_TOKEN}{self.DEEPSEEK_INVOKE_BLOCK_NAME}",
-        ]
 
 
 class _MimoDetector(Qwen3Detector):
@@ -1306,13 +1205,6 @@ class Apertus2509Detector(BaseReasoningFormatDetector):
         self._tool_end_token = "<|tools_suffix|>"
         self._reasoning_acc: str = ""
         self._in_inner_tool: bool = False
-
-    @staticmethod
-    def _ends_with_partial_token(buffer: str, token: str) -> int:
-        for i in range(1, min(len(buffer) + 1, len(token))):
-            if token.startswith(buffer[-i:]):
-                return i
-        return 0
 
     def detect_and_parse(self, text: str) -> StreamingParseResult:
         blocks = self.detect_and_parse_block_sequence(text)

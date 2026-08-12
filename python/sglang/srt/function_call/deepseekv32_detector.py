@@ -180,7 +180,7 @@ class DeepSeekV32Detector(BaseFormatDetector):
                         parameters[param_name] = _partial_json_loads(
                             param_value, Allow.ALL
                         )[0]
-                    except (json.JSONDecodeError, MalformedJSON):
+                    except (json.JSONDecodeError, MalformedJSON, ValueError):
                         parameters[param_name] = param_value.strip()
 
         return json.dumps(parameters, ensure_ascii=False)
@@ -200,60 +200,31 @@ class DeepSeekV32Detector(BaseFormatDetector):
 
         calls = []
         try:
-            # Extract content between function_calls tags
-            function_calls_match = re.search(
-                self.function_calls_regex,
-                text,
-                re.DOTALL,
-            )
-            if not function_calls_match:
+            sections = re.findall(self.function_calls_regex, text, re.DOTALL)
+            if not sections:
                 return StreamingParseResult(normal_text=normal_text, calls=[])
 
-            function_calls_content = function_calls_match.group(1)
-
             # Find all invoke blocks
-            for invoke_match in re.finditer(
-                self.invoke_regex, function_calls_content, re.DOTALL
-            ):
-                func_name, invoke_content, _ = self._unpack_invoke_match(invoke_match)
-                func_args = self._parse_parameters_from_xml(invoke_content)
-                # construct match_result for parse_base_json
-                match_result = {"name": func_name, "parameters": json.loads(func_args)}
-                calls.extend(self.parse_base_json(match_result, tools))
+            for function_calls_content in sections:
+                for invoke_match in re.finditer(
+                    self.invoke_regex, function_calls_content, re.DOTALL
+                ):
+                    func_name, invoke_content, _ = self._unpack_invoke_match(
+                        invoke_match
+                    )
+                    func_args = self._parse_parameters_from_xml(invoke_content)
+                    # construct match_result for parse_base_json
+                    match_result = {
+                        "name": func_name,
+                        "parameters": json.loads(func_args),
+                    }
+                    calls.extend(self.parse_base_json(match_result, tools))
 
             return StreamingParseResult(normal_text=normal_text, calls=calls)
         except Exception as e:
             logger.error(f"Error in detect_and_parse: {e}")
             # return the normal text if parsing fails
             return StreamingParseResult(normal_text=text)
-
-    def _dsml_section_start(self, text: str) -> int:
-        """Index where the (possibly partial) DSML tool-call section starts.
-
-        -1 when the text carries no marker. Looking for ``bot_token`` alone is
-        not enough: DeepSeek-V4 frequently opens with ``<｜DSML｜invoke`` (no
-        enclosing ``tool_calls`` wrapper) and, with speculative decoding, a
-        single delta can carry both the tail of the preamble and a partial
-        tag — so search every marker form and treat a trailing tag prefix as
-        the boundary too.
-        """
-        positions = [
-            i
-            for i in (
-                text.find(self.bot_token),
-                text.find("<｜DSML｜invoke"),
-                text.find("<｜DSML｜"),
-                text.find("｜DSML｜"),
-            )
-            if i != -1
-        ]
-        if positions:
-            return min(positions)
-        stripped = text.rstrip()
-        for prefix in ("</｜", "<｜", "</", "<"):
-            if stripped.endswith(prefix):
-                return len(stripped) - len(prefix)
-        return -1
 
     def parse_streaming_increment(
         self, new_text: str, tools: list[Tool]
@@ -287,21 +258,10 @@ class DeepSeekV32Detector(BaseFormatDetector):
                     current_text = current_text.replace(e_token, "")
             return StreamingParseResult(normal_text=current_text)
 
-        # Preserve assistant prose that shares a delta with the tool-call
-        # opener: without this, everything before the DSML marker in
-        # current_text is silently dropped. V4 emits bare ``<｜DSML｜invoke``
-        # (no wrapper token), which is what actually bites under speculative
-        # decoding's multi-token deltas. Guarded to the first tool call so
-        # text between consecutive invokes is not re-emitted.
-        normal_text = ""
-        if self.current_tool_id == -1:
-            split_at = self._dsml_section_start(current_text)
-            if split_at > 0:
-                normal_text = current_text[:split_at]
-                self._buffer = current_text[split_at:]
-                current_text = self._buffer
-
         all_calls: list[ToolCallItem] = []
+        # Only recovered for the first call: the DSML guard above never releases a
+        # buffer that still holds a marker, so later prose stays buffered.
+        preamble = ""
         try:
             # Loop to handle multiple consecutive invoke blocks
             while True:
@@ -323,6 +283,12 @@ class DeepSeekV32Detector(BaseFormatDetector):
                     self.current_tool_id = 0
                     self.prev_tool_call_arr = []
                     self.streamed_args_for_tool = [""]
+                    call_start = invoke_match.start()
+                    bot_pos = current_text.rfind(self.bot_token, 0, call_start)
+                    if bot_pos != -1:
+                        call_start = bot_pos
+                    # Same trailing-newline trim as detect_and_parse, so both agree.
+                    preamble = current_text[:call_start].removesuffix("\n\n")
 
                 # Ensure arrays are large enough for current tool
                 while len(self.prev_tool_call_arr) <= self.current_tool_id:
@@ -398,14 +364,18 @@ class DeepSeekV32Detector(BaseFormatDetector):
                     break
 
             # No more invoke blocks found
-            return StreamingParseResult(normal_text=normal_text, calls=all_calls)
+            return StreamingParseResult(normal_text=preamble, calls=all_calls)
 
         except Exception as e:
             logger.error(f"Error in parse_streaming_increment: {e}")
-            # Reset state: without this the failed buffer is re-parsed and
-            # re-emitted on every subsequent chunk (infinite duplicated text).
+            # Re-emit verbatim rather than swallowing the turn; the preamble is
+            # still inside current_text unless a completed call advanced past it.
+            # Calls are dropped on purpose: the failure can land between a tool's
+            # name and its arguments, and a half-formed call is worse than none.
             self._buffer = ""
-            return StreamingParseResult(normal_text=normal_text + current_text)
+            if not current_text.startswith(preamble):
+                current_text = preamble + current_text
+            return StreamingParseResult(normal_text=current_text)
 
     def structure_info(self) -> _GetInfoFunc:
         return lambda name: StructureInfo(

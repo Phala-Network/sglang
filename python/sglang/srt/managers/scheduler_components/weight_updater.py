@@ -157,7 +157,13 @@ class SchedulerWeightUpdaterManager:
                 worker = self.tp_worker
             else:
                 worker = self.draft_worker or self.tp_worker
-            success, message = worker.update_weights_from_tensor(recv_req)
+            try:
+                success, message = worker.update_weights_from_tensor(recv_req)
+            except Exception as e:
+                # Malformed serialized input is a request-level failure. Never let an
+                # invalid administrative payload terminate the scheduler event loop.
+                logger.error("Failed to update weights from tensor: %s", e)
+                success, message = False, str(e)
             if success:
                 self.flush_cache_after_weight_update(recv_req)
             else:

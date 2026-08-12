@@ -6,10 +6,14 @@ operator.attrgetter + pickletools.sys) into os.system() even though
 ("os", "system") was on the deny-list.
 """
 
+import ast
 import io
 import operator
 import pickle
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from sglang.srt.utils.common import (
     SafeUnpickler,
@@ -47,35 +51,35 @@ _PROTO = b"\x80\x04"
 _T1, _T2, _REDUCE, _STOP = b"\x85", b"\x86", b"R", b"."
 
 
-def _build_rce_chain(cmd):
-    """Full CVE-2026-15969 chain: getattr(__import__('os'), 'system')(cmd)."""
+def _build_reflection_chain(value):
+    """Exercise the CVE reflection primitives without executing a command."""
     return (
         _PROTO
         + _pglob("builtins", "getattr")
         + _pglob("builtins", "__import__")
-        + _pstr("os")
+        + _pstr("builtins")
         + _T1
         + _REDUCE
-        + _pstr("system")
+        + _pstr("len")
         + _T2
         + _REDUCE
-        + _pstr(cmd)
+        + _pstr(value)
         + _T1
         + _REDUCE
         + _STOP
     )
 
 
-def _build_operator_bypass_chain(cmd):
-    """operator.attrgetter/itemgetter + pickletools.sys chain."""
+def _build_operator_bypass_chain(value):
+    """Exercise the operator/pickletools bypass without executing a command."""
     return (
         _PROTO
         + _pglob("operator", "attrgetter")
-        + _pstr("system")
+        + _pstr("len")
         + _T1
         + _REDUCE
         + _pglob("operator", "itemgetter")
-        + _pstr("os")
+        + _pstr("builtins")
         + _T1
         + _REDUCE
         + _pglob("operator", "attrgetter")
@@ -89,7 +93,7 @@ def _build_operator_bypass_chain(cmd):
         + _REDUCE
         + _T1
         + _REDUCE
-        + _pstr(cmd)
+        + _pstr(value)
         + _T1
         + _REDUCE
         + _STOP
@@ -150,14 +154,12 @@ class TestSafeUnpickler(CustomTestCase):
 
     def test_full_rce_chain_blocked(self):
         with self.assertRaises(RuntimeError):
-            SafeUnpickler(
-                io.BytesIO(_build_rce_chain("touch /tmp/sglang_pwned"))
-            ).load()
+            SafeUnpickler(io.BytesIO(_build_reflection_chain("not evaluated"))).load()
 
     def test_full_operator_bypass_chain_blocked(self):
         with self.assertRaises(RuntimeError):
             SafeUnpickler(
-                io.BytesIO(_build_operator_bypass_chain("touch /tmp/sglang_pwned2"))
+                io.BytesIO(_build_operator_bypass_chain("not evaluated"))
             ).load()
 
     def test_dynamic_import_blocked(self):
@@ -197,7 +199,7 @@ class TestSafeUnpickler(CustomTestCase):
         # Nested unrestricted pickle.loads bypass: outer GLOBALs to
         # io_struct._maybe_unwrap_pickle / PickleWrapper must be rejected now
         # that sglang.srt.managers. is not prefix-trusted.
-        evil = _build_rce_chain("touch /tmp/sglang_pwned_nested")
+        evil = _build_reflection_chain("not evaluated")
         with self.assertRaises(RuntimeError):
             SafeUnpickler(io.BytesIO(_build_io_struct_nested_pickle_chain(evil))).load()
 
@@ -289,6 +291,57 @@ class TestSafeUnpickler(CustomTestCase):
         blob = pickle.dumps({"x": t})
         restored = deserialize_tensor_payload(blob)
         torch.testing.assert_close(restored["x"], t)
+
+    def test_serialized_management_routes_require_admin_key(self):
+        """The two attacker-controlled deserialization routes must fail closed."""
+        source = (
+            Path(__file__).resolve().parents[4]
+            / "python"
+            / "sglang"
+            / "srt"
+            / "entrypoints"
+            / "http_server.py"
+        ).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        functions = {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        for name in (
+            "update_weights_from_tensor",
+            "load_lora_adapter_from_tensors",
+        ):
+            decorators = ast.dump(functions[name], include_attributes=False)
+            self.assertIn("ADMIN_FORCE", decorators, name)
+
+    def test_malformed_weight_payload_is_request_level_failure(self):
+        """A worker decode/type failure must not escape into the scheduler loop."""
+        import torch
+
+        from sglang.srt.managers.scheduler_components.weight_updater import (
+            SchedulerWeightUpdaterManager,
+        )
+
+        class RejectingWorker:
+            def update_weights_from_tensor(self, _request):
+                raise TypeError("serialized tensor payload is not an iterable")
+
+        manager = SchedulerWeightUpdaterManager(
+            tp_worker=RejectingWorker(),
+            draft_worker=None,
+            tp_cpu_group=object(),
+            memory_saver_adapter=None,
+            flush_cache=lambda **_kwargs: True,
+            is_fully_idle=lambda: True,
+        )
+        request = SimpleNamespace(disable_draft_model=False)
+        with patch.object(torch.distributed, "barrier") as barrier:
+            result = manager.update_weights_from_tensor(request)
+
+        self.assertFalse(result.success)
+        self.assertIn("not an iterable", result.message)
+        barrier.assert_called_once_with(group=manager.tp_cpu_group)
 
 
 if __name__ == "__main__":

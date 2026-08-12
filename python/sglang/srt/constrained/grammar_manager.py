@@ -150,6 +150,13 @@ class GrammarManager:
                 elif req.sampling_params.structural_tag is not None:
                     key = ("structural_tag", req.sampling_params.structural_tag)
 
+                if not isinstance(key[1], str):
+                    req.set_finish_with_abort(
+                        f"{key[0]} grammar must be a string, got "
+                        f"{type(key[1]).__name__}."
+                    )
+                    return False
+
                 value, cache_hit = self.grammar_backend.get_cached_or_future_value(
                     key, req.require_reasoning
                 )

@@ -198,12 +198,19 @@ class SamplingParams(msgspec.Struct, kw_only=True, array_like=True):
                         f"{token_id}."
                     )
 
-        grammars = [
-            self.json_schema,
-            self.regex,
-            self.ebnf,
-            self.structural_tag,
-        ]  # since mutually exclusive, only one can be set
+        grammar_fields = {
+            "json_schema": self.json_schema,
+            "regex": self.regex,
+            "ebnf": self.ebnf,
+            "structural_tag": self.structural_tag,
+        }
+        for name, value in grammar_fields.items():
+            if value is not None and not isinstance(value, str):
+                raise ValueError(
+                    f"{name} must be a string, got {type(value).__name__}."
+                )
+
+        grammars = list(grammar_fields.values())  # mutually exclusive
         if sum(x is not None for x in grammars) > 1:
             raise ValueError(
                 "Only one of json_schema, regex, ebnf, or structural_tag can be set."

@@ -204,6 +204,30 @@ class TestProcessReqWithGrammar(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(req.grammar_key, ("structural_tag", ""))
 
+    def test_non_string_constraint_aborts_without_cache_lookup(self):
+        """A malformed constraint must fail one request, not the scheduler."""
+        constraints = {
+            "json_schema": {"type": "object"},
+            "regex": ["[a-z]+"],
+            "ebnf": {"root": "hello"},
+            "structural_tag": {"structures": [], "triggers": []},
+        }
+        for field, value in constraints.items():
+            with self.subTest(field=field):
+                mgr = self._make_mgr()
+                req = _make_req(**{field: value})
+
+                result = mgr.process_req_with_grammar(req)
+
+                self.assertFalse(result)
+                self.assertEqual(len(mgr.grammar_queue), 0)
+                mgr.grammar_backend.get_cached_or_future_value.assert_not_called()
+                req.set_finish_with_abort.assert_called_once()
+                self.assertIn(
+                    "grammar must be a string",
+                    req.set_finish_with_abort.call_args[0][0],
+                )
+
     def test_cache_hit_returns_false(self):
         """Cache hit should NOT add to grammar queue."""
         mgr = self._make_mgr()

@@ -309,6 +309,18 @@ class TestSamplingParamsVerify(CustomTestCase):
             with self.subTest(grammar=grammar):
                 self._make(**{grammar: value}).verify(self.VOCAB_SIZE)
 
+    def test_non_string_grammar_raises(self):
+        """Reject values that cannot safely become grammar cache keys."""
+        invalid_values = ({"type": "object"}, ["abc"], 7, True)
+        for grammar in self.GRAMMAR_VALUES:
+            for value in invalid_values:
+                with self.subTest(grammar=grammar, value=value):
+                    sp = self._make(**{grammar: value})
+                    with self.assertRaisesRegex(
+                        ValueError, rf"^{grammar} must be a string"
+                    ):
+                        sp.verify(self.VOCAB_SIZE)
+
 
 class TestSamplingParamsNormalize(CustomTestCase):
 

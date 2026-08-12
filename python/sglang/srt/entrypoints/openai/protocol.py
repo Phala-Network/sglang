@@ -828,6 +828,7 @@ class ChatCompletionRequest(BaseModel):
     session_params: Optional[Dict] = None
     separate_reasoning: bool = True
     stream_reasoning: bool = True
+    include_reasoning: Optional[bool] = None
     chat_template_kwargs: Optional[Dict] = None
 
     # SGLang multimodal controls (extensions)
@@ -939,8 +940,11 @@ class ChatCompletionRequest(BaseModel):
             )
             if isinstance(enabled, str):
                 enabled = enabled.strip().lower() in {"1", "true", "yes", "y", "on"}
-            if enabled:
-                thinking = True
+            if r.get("enabled") is not None or r.get("enable") is not None:
+                thinking = bool(enabled)
+
+            if r.get("exclude") is True:
+                values["include_reasoning"] = False
 
         effort = values.get("reasoning_effort")
         if effort is not None:
@@ -955,6 +959,12 @@ class ChatCompletionRequest(BaseModel):
             # - "enable_thinking" for qwen3, glm45, nemotron_3, interns1
             ctk.setdefault("thinking", thinking)
             ctk.setdefault("enable_thinking", thinking)
+            # Muse-Glimmer's checkpoint template uses reasoning_strength rather
+            # than the common boolean toggles.
+            if isinstance(effort, str) and effort != "minimal":
+                ctk.setdefault("reasoning_strength", effort)
+            elif thinking is False:
+                ctk.setdefault("reasoning_strength", "none")
             values["chat_template_kwargs"] = ctk
 
         return values

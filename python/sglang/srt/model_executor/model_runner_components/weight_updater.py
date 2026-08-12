@@ -327,6 +327,29 @@ class WeightUpdater:
 
         monkey_patch_torch_reductions()
         self._assert_weight_cache_inactive("update_weights_from_tensor")
+        validation_error = _validate_update_weights_from_tensor_payload(
+            named_tensors, load_format, tp_rank=self.tp_rank
+        )
+        if validation_error is not None:
+            logger.error(validation_error)
+            return False, validation_error
+
+        if load_format not in (None, "direct", "flattened_bucket"):
+            if not isinstance(load_format, str):
+                message = (
+                    "Invalid update_weights_from_tensor payload: "
+                    "load_format must be a string or null"
+                )
+                logger.error(message)
+                return False, message
+            if load_format not in self.custom_weight_loaders:
+                message = (
+                    "Invalid update_weights_from_tensor payload: "
+                    f"unknown load_format={load_format}"
+                )
+                logger.error(message)
+                return False, message
+
         if load_format == "flattened_bucket":
             # Handle flattened bucket format
             return self._update_weights_from_flattened_bucket(
@@ -337,10 +360,23 @@ class WeightUpdater:
         device_module = torch.get_device_module(self.device)
         infered_device = device_module.current_device()
 
-        named_tensors = [
-            (name, _unwrap_tensor(tensor, tp_rank=self.tp_rank, device=infered_device))
-            for name, tensor in named_tensors
-        ]
+        try:
+            named_tensors = [
+                (
+                    name,
+                    _unwrap_tensor(
+                        tensor, tp_rank=self.tp_rank, device=infered_device
+                    ),
+                )
+                for name, tensor in named_tensors
+            ]
+        except Exception as exc:
+            message = (
+                "Invalid update_weights_from_tensor payload: failed to unwrap "
+                f"tensor: {type(exc).__name__}: {exc}"
+            )
+            logger.error(message)
+            return False, message
         if load_format == "direct":
             _model_load_weights_direct(self.get_model(), named_tensors)
         elif load_format in self.custom_weight_loaders:
@@ -428,3 +464,89 @@ class LocalSerializedTensor:
 
     def get(self, rank: int):
         return MultiprocessingSerializer.deserialize(self.values[rank])
+
+
+def _validate_update_weights_from_tensor_payload(
+    named_tensors, load_format, tp_rank=None
+):
+    """Reject malformed payloads before any model parameter can be modified."""
+    error_prefix = "Invalid update_weights_from_tensor payload"
+    if load_format == "flattened_bucket":
+        if not isinstance(named_tensors, dict):
+            return f"{error_prefix}: flattened_bucket payload must be a mapping"
+        if not {"flattened_tensor", "metadata"}.issubset(named_tensors):
+            return (
+                f"{error_prefix}: flattened_bucket payload requires "
+                "flattened_tensor and metadata"
+            )
+        if not isinstance(named_tensors["flattened_tensor"], torch.Tensor):
+            return f"{error_prefix}: flattened_tensor must be a torch.Tensor"
+        if not isinstance(named_tensors["metadata"], (list, tuple)):
+            return f"{error_prefix}: metadata must be a list or tuple"
+        flattened_numel = named_tensors["flattened_tensor"].numel()
+        for index, metadata in enumerate(named_tensors["metadata"]):
+            if not isinstance(metadata, FlattenedTensorMetadata):
+                return (
+                    f"{error_prefix}: metadata entry {index} must be a "
+                    "FlattenedTensorMetadata"
+                )
+            if not isinstance(metadata.name, str) or not metadata.name:
+                return f"{error_prefix}: metadata entry {index} has an invalid name"
+            if not isinstance(metadata.shape, (list, tuple, torch.Size)) or any(
+                not isinstance(dimension, int) or dimension < 0
+                for dimension in metadata.shape
+            ):
+                return f"{error_prefix}: metadata entry {index} has an invalid shape"
+            if not isinstance(metadata.dtype, torch.dtype):
+                return f"{error_prefix}: metadata entry {index} has an invalid dtype"
+            offsets = (metadata.start_idx, metadata.end_idx, metadata.numel)
+            if any(not isinstance(value, int) or value < 0 for value in offsets):
+                return (
+                    f"{error_prefix}: metadata entry {index} has invalid offsets"
+                )
+            if (
+                metadata.end_idx < metadata.start_idx
+                or metadata.end_idx > flattened_numel
+                or metadata.end_idx - metadata.start_idx != metadata.numel
+            ):
+                return (
+                    f"{error_prefix}: metadata entry {index} is outside the "
+                    "flattened tensor"
+                )
+        return None
+
+    if not isinstance(named_tensors, (list, tuple)):
+        return f"{error_prefix}: named_tensors must be a list or tuple"
+
+    for index, item in enumerate(named_tensors):
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            return f"{error_prefix}: entry {index} must be a (name, tensor) pair"
+        name, tensor = item
+        if not isinstance(name, str) or not name:
+            return f"{error_prefix}: entry {index} has an invalid tensor name"
+        if not isinstance(tensor, (torch.Tensor, LocalSerializedTensor)):
+            return f"{error_prefix}: entry {index} has an invalid tensor value"
+        if isinstance(tensor, LocalSerializedTensor):
+            if not isinstance(tensor.values, (list, tuple)) or not tensor.values:
+                return (
+                    f"{error_prefix}: entry {index} has invalid serialized "
+                    "tensor values"
+                )
+            if any(
+                not isinstance(value, (bytes, bytearray, memoryview))
+                for value in tensor.values
+            ):
+                return (
+                    f"{error_prefix}: entry {index} has a non-bytes serialized "
+                    "tensor value"
+                )
+            if tp_rank is not None and (
+                not isinstance(tp_rank, int)
+                or tp_rank < 0
+                or tp_rank >= len(tensor.values)
+            ):
+                return (
+                    f"{error_prefix}: entry {index} has no serialized tensor "
+                    f"for TP rank {tp_rank}"
+                )
+    return None

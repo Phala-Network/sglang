@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "release": "muse-glimmer-30b-sglang-r5-20260812",
+  "source": {
+    "repository": "https://github.com/Phala-Network/sglang",
+    "branch": "codex/muse-glimmer-30b-sglang-r5-20260812",
+    "base_commit": "38a1bc5d2f21bddff8865c54c8f7e0b12b87c4f2",
+    "runtime_source_archive": {
+      "name": "runtime-source-r5-release-20260812.tgz",
+      "sha256": "f2f8274257f7a8da78fe66889e64b61e55751cd546bdb4b64a0a888530265cff"
+    }
+  },
+  "runtime_image": {
+    "local_reference": "local/sglang:muse-glimmer-service-candidate-r5",
+    "image_id": "sha256:1bca1ac3a7b18f9b0a780bb5beb794c983df1859535c07b7b7cf848356dc26ea",
+    "base_image": "lmsysorg/sglang:dev-muse-glimmer@sha256:951b7a14f2279fac122e7198a2eb64d793348ce29969ea0a64e7ea57501b5e33"
+  },
+  "upstream_patches": [
+    {
+      "pull_request": "https://github.com/sgl-project/sglang/pull/31692",
+      "head_commit": "95289a09f3b82c9927b38c32146ee372c3ddc967",
+      "purpose": "named tool choice JSON schema definitions"
+    },
+    {
+      "pull_request": "https://github.com/sgl-project/sglang/pull/33061",
+      "head_commit": "adb20a144cc81971abdbd6947d66c19da932f522",
+      "purpose": "llguidance reasoning grammar support"
+    }
+  ],
+  "local_patches": {
+    "muse_reasoning_contract": "local-20260812",
+    "tool_schema_object_type": "local-20260812-r1",
+    "weight_update_payload_validation": "local-20260812-r1"
+  },
+  "files": {
+    "python/sglang/srt/constrained/llguidance_backend.py": "94b694c3b27c2b520f8531540a476300f0a146bdbf9e7225c8d579163ecb4710",
+    "python/sglang/srt/entrypoints/openai/protocol.py": "eac6b9c6cc36c957d0460ae3bccb079ad9812761eb9b7e29af2857e3622803f8",
+    "python/sglang/srt/entrypoints/openai/serving_chat.py": "47d30575c81a8b4489e94c8d05ff5a8516ff639de5ef393b7c9ee0d10f978699",
+    "python/sglang/srt/function_call/utils.py": "17d0ef34417c457659a782fad69c897336d85f63f2b00b456e8b343f1c905710",
+    "python/sglang/srt/managers/tp_worker.py": "df8de1c42eba37e57c37ddf38356a8ca62fe2be82e1cf4d654532c8ec811d77b",
+    "python/sglang/srt/model_executor/model_runner_components/weight_updater.py": "e83000d7f79e419a9c877c29429205bf84bd8d2e66f274851875a969a22b8da6",
+    "release/muse-glimmer-r5/chat_template.jinja": "7a73fa1e06c6645dc5e2e6bd1643094bbccc417312f13242e7cb1cab3ddcdd2f",
+    "test/registered/unit/managers/test_malformed_weight_update_payload.py": "cb192b9a3f549e0eaa6943fe6b4a80c9f50e7d346bc53e39e0da7025be8ce0e2"
+  },
+  "validation": {
+    "structured_output": {
+      "passed": 360,
+      "total": 360,
+      "retries": 0
+    },
+    "tool_call": {
+      "passed": 80,
+      "total": 80,
+      "retries": 0
+    },
+    "combined_stability": {
+      "passed": 440,
+      "total": 440,
+      "retries": 0
+    },
+    "post_persist": {
+      "chain": "20/20",
+      "historical_structured": "6/6",
+      "tool_call": "4/4",
+      "vision": "4/4",
+      "runtime_state": "running",
+      "runtime_health": "healthy",
+      "restart_count": 0,
+      "oom_killed": false
+    },
+    "public_max_model_len": 131072
+  }
+}

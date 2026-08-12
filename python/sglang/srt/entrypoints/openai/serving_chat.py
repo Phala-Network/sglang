@@ -706,7 +706,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 request,
                 finish_reason_type,
             )
-            if reasoning_text:
+            if reasoning_text and request.include_reasoning is not False:
                 usage = None
                 if continuous_usage_stats:
                     usage = UsageProcessor.calculate_token_usage(
@@ -1866,7 +1866,11 @@ class OpenAIServingChat(OpenAIServingBase):
                     role="assistant",
                     content=text if text else "",
                     tool_calls=tool_calls,
-                    reasoning_content=reasoning_text if reasoning_text else None,
+                    reasoning_content=(
+                        reasoning_text
+                        if reasoning_text and request.include_reasoning is not False
+                        else None
+                    ),
                 ),
                 logprobs=choice_logprobs,
                 finish_reason=finish_reason["type"] if finish_reason else None,
@@ -2332,6 +2336,13 @@ class OpenAIServingChat(OpenAIServingBase):
         """
         if not self.reasoning_parser:
             return False
+
+        if self.reasoning_parser == "muse":
+            # Muse-Glimmer uses reasoning_strength and a direct-final prompt for
+            # reasoning-off requests. This also activates grammar from token 1.
+            return (request.chat_template_kwargs or {}).get(
+                "reasoning_strength"
+            ) != "none"
 
         if self.reasoning_parser == "minimax-m3":
             # M3 template prefills <mm:think> for thinking_mode=enabled, so it never

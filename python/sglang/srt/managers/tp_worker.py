@@ -206,8 +206,20 @@ class BaseTpWorker(ABC):
         )
 
     def update_weights_from_tensor(self, recv_req: UpdateWeightsFromTensorReqInput):
+        try:
+            named_tensors = self._deserialize_own_rank(
+                recv_req.serialized_named_tensors
+            )
+        except Exception as exc:
+            message = (
+                "Invalid update_weights_from_tensor serialized payload: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            logger.error(message)
+            return False, message
+
         success, message = self.model_runner.weight_updater.update_weights_from_tensor(
-            named_tensors=self._deserialize_own_rank(recv_req.serialized_named_tensors),
+            named_tensors=named_tensors,
             load_format=recv_req.load_format,
         )
         return success, message

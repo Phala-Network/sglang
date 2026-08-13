@@ -118,6 +118,52 @@ class TestMuseGlimmerDetector(CustomTestCase):
         self.assertIn("It is sunny.", normal)
         self.assert_streaming_matches(text)
 
+    def test_required_json_array_in_tool_channel(self):
+        """Regression for the live required-tool failure: the grammar-shaped
+        JSON body retains Muse's channel header and must still become a call."""
+        raw = (
+            " to=self<|message|>Need weather.<|eom|>"
+            '<|start|>assistant to=get_weather<|message|>'
+            '[{"name":"get_weather","parameters":{"city":"Paris"}}]'
+        )
+        reasoning, remainder = ReasoningParser(
+            "muse", tool_call_parser_active=True
+        ).parse_non_stream(raw)
+        parser = FunctionCallParser(self.tools, "muse")
+        self.assertTrue(parser.detector.parses_required_natively())
+        self.assertTrue(parser.has_tool_call(remainder))
+        content, calls = parser.parse_non_stream(remainder)
+        self.assertEqual(reasoning, "Need weather.")
+        self.assertEqual(content, "")
+        self.assertEqual(
+            [(call.name, json.loads(call.parameters)) for call in calls],
+            [("get_weather", {"city": "Paris"})],
+        )
+        for chunk_size in (1, 7, 100):
+            s_reasoning, s_content, s_calls = self.pipeline_stream(raw, chunk_size)
+            self.assertEqual(s_reasoning, "Need weather.")
+            self.assertEqual(s_content, "")
+            self.assertEqual(s_calls, [("get_weather", {"city": "Paris"})])
+
+    def test_required_json_array_quoted_in_answer_is_not_a_call(self):
+        """The broader header detector must not activate a quoted tool frame."""
+        quoted = (
+            '<|start|>assistant to=get_weather<|message|>'
+            '[{"name":"get_weather","parameters":{"city":"X"}}]'
+        )
+        raw = (
+            " to=self<|message|>r<|eom|>"
+            f"<|start|>assistant to=user<|message|>Example: {quoted}"
+        )
+        _, remainder = ReasoningParser(
+            "muse", tool_call_parser_active=True
+        ).parse_non_stream(raw)
+        parser = FunctionCallParser(self.tools, "muse")
+        self.assertTrue(parser.has_tool_call(remainder))
+        content, calls = parser.parse_non_stream(remainder)
+        self.assertEqual(calls, [])
+        self.assertIn(quoted, content)
+
     def test_namespaced_name_passes_through(self):
         tools = [
             Tool(

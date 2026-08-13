@@ -367,6 +367,10 @@ class BaseFormatDetector(ABC):
         constraints and parse the model's native output format instead."""
         return False
 
+    def parses_constrained_output_natively(self) -> bool:
+        """Whether the detector parses JSON-constrained output in native framing."""
+        return False
+
     @abstractmethod
     def structure_info(self) -> _GetInfoFunc:
         """

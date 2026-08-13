@@ -4,6 +4,7 @@ import copy
 import json
 import logging
 import math
+import re
 import time
 import uuid
 from enum import Enum
@@ -82,6 +83,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MEDIA_CONTENT_PART_TYPES = frozenset({"image_url", "video_url", "audio_url"})
+_COMPLETE_THINK_CONTENT_RE = re.compile(
+    r"\A\s*<think>(?P<reasoning>.*?)</think>\s*\Z", re.DOTALL
+)
 
 
 def normalize_tool_content(role: str, content):
@@ -142,6 +146,56 @@ def normalize_assistant_tool_call_arguments(
             except ValueError:
                 if strict:
                     raise
+
+
+def normalize_muse_history(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Normalize OpenRouter history into the Muse Jinja contract.
+
+    Developer instructions are control messages, so move them into the system
+    instruction prefix instead of leaving them interleaved where the Muse
+    template would silently drop them. OpenRouter's legacy ``reasoning`` alias
+    and whole-content ``<think>`` history become ``reasoning_content``.
+    """
+    control_messages: List[Dict[str, Any]] = []
+    normalized: List[Dict[str, Any]] = []
+
+    for source in messages:
+        message = copy.deepcopy(source)
+        role = message.get("role")
+        if role in ("system", "developer"):
+            message["role"] = "system"
+            control_messages.append(message)
+            continue
+
+        if role == "assistant":
+            reasoning = message.get("reasoning_content")
+            if reasoning is None:
+                reasoning = message.get("reasoning")
+            if reasoning and not message.get("reasoning_content"):
+                message["reasoning_content"] = reasoning
+            if reasoning is None and isinstance(message.get("content"), str):
+                match = _COMPLETE_THINK_CONTENT_RE.fullmatch(message["content"])
+                if match is not None:
+                    message["reasoning_content"] = match.group("reasoning")
+                    message["content"] = ""
+            message.pop("reasoning", None)
+        normalized.append(message)
+
+    if control_messages and all(
+        isinstance(message.get("content"), str) for message in control_messages
+    ):
+        normalized.insert(
+            0,
+            {
+                "role": "system",
+                "content": "\n\n".join(
+                    message.get("content", "") for message in control_messages
+                ),
+            },
+        )
+    else:
+        normalized[0:0] = control_messages
+    return normalized
 
 
 def _extract_max_dynamic_patch(request: ChatCompletionRequest):
@@ -1177,6 +1231,8 @@ class OpenAIServingChat(OpenAIServingBase):
             ThinkingMode.THINKING if thinking_requested else ThinkingMode.CHAT
         )
         messages = [msg.model_dump() for msg in request.messages]
+        if self.tool_call_parser == "muse":
+            messages = normalize_muse_history(messages)
         for message in messages:
             normalize_assistant_tool_call_arguments(
                 message, strict=self.chat_encoding_spec != "kimi_k3"
@@ -2009,11 +2065,15 @@ class OpenAIServingChat(OpenAIServingBase):
         # as constraint (mirrors the streaming path). For auto: always try.
         if self.tool_call_parser:
             parser = FunctionCallParser(
-                tools, self.tool_call_parser, tokenizer=self.tokenizer_manager.tokenizer
+                tools,
+                self.tool_call_parser,
+                tokenizer=self.tokenizer_manager.tokenizer,
+                constrained_output=is_required,
             )
             detector_owns_format = (
                 parser.detector.supports_structural_tag()
                 or parser.detector.parses_required_natively()
+                or parser.detector.parses_constrained_output_natively()
             )
             should_try_parser = not is_required or detector_owns_format
             if should_try_parser and parser.has_tool_call(text):
@@ -2447,10 +2507,12 @@ class OpenAIServingChat(OpenAIServingBase):
                         tools=effective_tools,
                         tool_call_parser=self.tool_call_parser,
                         tokenizer=self.tokenizer_manager.tokenizer,
+                        constrained_output=True,
                     )
                     use_native_parser = (
                         probe.detector.supports_structural_tag()
                         or probe.detector.parses_required_natively()
+                        or probe.detector.parses_constrained_output_natively()
                     )
                 if use_native_parser:
                     parser_dict[index] = probe

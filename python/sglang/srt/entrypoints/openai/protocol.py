@@ -637,6 +637,9 @@ class ChatCompletionMessageGenericParam(BaseModel):
     tool_call_id: Optional[str] = None
     name: Optional[str] = None
     reasoning_content: Optional[str] = None
+    # OpenRouter historically used ``reasoning`` for assistant history while
+    # SGLang and the OpenAI-compatible response use ``reasoning_content``.
+    reasoning: Optional[str] = Field(default=None, exclude=True)
     tool_calls: Optional[List[ToolCall]] = Field(default=None, examples=[None])
     tools: Optional[List[Tool]] = Field(default=None, examples=[None])
 
@@ -653,6 +656,14 @@ class ChatCompletionMessageGenericParam(BaseModel):
 
     @model_validator(mode="after")
     def validate_thinking_parts_role(self):
+        if self.reasoning_content is None and self.reasoning is not None:
+            self.reasoning_content = self.reasoning
+        if self.role != "assistant" and (
+            self.reasoning_content is not None or self.reasoning is not None
+        ):
+            raise ValueError(
+                "reasoning and reasoning_content are only valid in assistant messages"
+            )
         if self.role != "assistant" and isinstance(self.content, list):
             for part in self.content:
                 if isinstance(part, ChatCompletionMessageContentThinkingPart):

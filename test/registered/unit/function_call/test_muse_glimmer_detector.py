@@ -9,7 +9,12 @@ must never become a real tool call.
 
 import json
 
-from sglang.srt.entrypoints.openai.protocol import Function, Tool
+from sglang.srt.entrypoints.openai.protocol import (
+    Function,
+    Tool,
+    ToolChoice,
+    ToolChoiceFuncName,
+)
 from sglang.srt.function_call.function_call_parser import FunctionCallParser
 from sglang.srt.function_call.muse_glimmer_detector import MuseGlimmerDetector
 from sglang.srt.parser.reasoning_parser import ReasoningParser
@@ -129,8 +134,14 @@ class TestMuseGlimmerDetector(CustomTestCase):
         reasoning, remainder = ReasoningParser(
             "muse", tool_call_parser_active=True
         ).parse_non_stream(raw)
-        parser = FunctionCallParser(self.tools, "muse")
-        self.assertTrue(parser.detector.parses_required_natively())
+        parser = FunctionCallParser(
+            self.tools, "muse", constrained_output=True
+        )
+        self.assertFalse(parser.detector.parses_required_natively())
+        self.assertTrue(parser.detector.parses_constrained_output_natively())
+        constraint = parser.get_structure_constraint("required")
+        self.assertEqual(constraint[0], "json_schema")
+        self.assertEqual(constraint[1]["minItems"], 1)
         self.assertTrue(parser.has_tool_call(remainder))
         content, calls = parser.parse_non_stream(remainder)
         self.assertEqual(reasoning, "Need weather.")
@@ -140,7 +151,9 @@ class TestMuseGlimmerDetector(CustomTestCase):
             [("get_weather", {"city": "Paris"})],
         )
         for chunk_size in (1, 7, 100):
-            s_reasoning, s_content, s_calls = self.pipeline_stream(raw, chunk_size)
+            s_reasoning, s_content, s_calls = self.pipeline_stream(
+                raw, chunk_size, constrained_output=True
+            )
             self.assertEqual(s_reasoning, "Need weather.")
             self.assertEqual(s_content, "")
             self.assertEqual(s_calls, [("get_weather", {"city": "Paris"})])
@@ -163,6 +176,68 @@ class TestMuseGlimmerDetector(CustomTestCase):
         content, calls = parser.parse_non_stream(remainder)
         self.assertEqual(calls, [])
         self.assertIn(quoted, content)
+
+    def test_required_json_array_without_tool_channel_header(self):
+        parser = FunctionCallParser(
+            self.tools, "muse", constrained_output=True
+        )
+        raw = '[{"name":"get_weather","parameters":{"city":"Paris"}}]'
+        content, calls = parser.parse_non_stream(raw)
+        self.assertEqual(content, "")
+        self.assertEqual(
+            [(call.name, json.loads(call.parameters)) for call in calls],
+            [("get_weather", {"city": "Paris"})],
+        )
+        for chunk_size in (1, 7, 100):
+            streaming_parser = FunctionCallParser(
+                self.tools, "muse", constrained_output=True
+            )
+            content_parts = []
+            streamed_calls = []
+            for start in range(0, len(raw), chunk_size):
+                content, chunk_calls = streaming_parser.parse_stream_chunk(
+                    raw[start : start + chunk_size]
+                )
+                content_parts.append(content)
+                streamed_calls.extend(chunk_calls)
+            end_content, end_calls = streaming_parser.parse_stream_end()
+            content_parts.append(end_content)
+            streamed_calls.extend(end_calls)
+            self.assertEqual("".join(content_parts), "")
+            self.assertEqual(
+                [
+                    (call.name, json.loads(call.parameters))
+                    for call in streamed_calls
+                    if call.name
+                ],
+                [("get_weather", {"city": "Paris"})],
+            )
+
+    def test_named_tool_choice_constraint_only_allows_selected_function(self):
+        tools = self.tools + [
+            Tool(
+                type="function",
+                function=Function(
+                    name="calculate",
+                    description="Calculate",
+                    parameters={
+                        "type": "object",
+                        "properties": {"expression": {"type": "string"}},
+                        "required": ["expression"],
+                    },
+                ),
+            )
+        ]
+        choice = ToolChoice(function=ToolChoiceFuncName(name="calculate"))
+        constraint = FunctionCallParser(
+            tools, "muse", constrained_output=True
+        ).get_structure_constraint(choice)
+        self.assertEqual(constraint[0], "json_schema")
+        schema = constraint[1]
+        self.assertEqual(schema["minItems"], 1)
+        self.assertEqual(
+            schema["items"]["properties"]["name"]["enum"], ["calculate"]
+        )
 
     def test_namespaced_name_passes_through(self):
         tools = [
@@ -316,10 +391,14 @@ class TestMuseGlimmerDetector(CustomTestCase):
         self.assertEqual(calls, [])
         self.assertIn("<atem:invoke", content)
 
-    def pipeline_stream(self, raw, chunk_size, tool_call_parser_active=True):
+    def pipeline_stream(
+        self, raw, chunk_size, tool_call_parser_active=True, constrained_output=False
+    ):
         """The real streaming order: reasoning deltas feed the tool parser."""
         rp = ReasoningParser("muse", tool_call_parser_active=tool_call_parser_active)
-        fp = FunctionCallParser(self.tools, "muse")
+        fp = FunctionCallParser(
+            self.tools, "muse", constrained_output=constrained_output
+        )
         reasoning_parts, content_parts, calls = [], [], []
         chunks = [raw[i : i + chunk_size] for i in range(0, len(raw), chunk_size)]
         for i, chunk in enumerate(chunks):

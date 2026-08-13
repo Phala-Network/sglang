@@ -1202,6 +1202,9 @@ class Envs:
     SGLANG_PATCH_TOKENIZER = EnvBool(True)
     SGLANG_REQUEST_STATE_WAIT_TIMEOUT = EnvInt(4)
     SGLANG_DEFAULT_THINKING = EnvBool(False)
+    # Fail-safe for model-written channel headers before guided decoding resumes.
+    # Negative means unlimited.
+    SGLANG_MAX_CHANNEL_HEADER_TOKENS = EnvInt(16)
 
     # ===================================================================
     # Encoder pipeline and disaggregation

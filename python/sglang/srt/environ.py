@@ -1054,6 +1054,9 @@ class Envs:
 
     # Think tokens budget: negative means unlimited, >= 0 caps thinking tokens
     SGLANG_MAX_THINK_TOKENS = EnvInt(-1)
+    # Fail-safe for model-written channel headers before guided decoding resumes.
+    # Negative means unlimited.
+    SGLANG_MAX_CHANNEL_HEADER_TOKENS = EnvInt(16)
 
     # Ngram
     SGLANG_NGRAM_FORCE_GREEDY_VERIFY = EnvBool(False)

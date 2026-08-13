@@ -200,12 +200,20 @@ class PromptTokensDetails(BaseModel):
         return data
 
 
+class CompletionTokensDetails(BaseModel):
+    """Details about completion tokens, following the OpenAI usage schema."""
+
+    reasoning_tokens: Optional[int] = None
+
+
 class UsageInfo(BaseModel):
     prompt_tokens: int = 0
     total_tokens: int = 0
     completion_tokens: Optional[int] = 0
     # Used to return cached tokens info when --enable-cache-report is set
     prompt_tokens_details: Optional[PromptTokensDetails] = None
+    completion_tokens_details: Optional[CompletionTokensDetails] = None
+    # Deprecated: kept for backward compatibility.
     reasoning_tokens: Optional[int] = 0
 
 

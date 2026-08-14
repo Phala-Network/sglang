@@ -127,6 +127,11 @@ class GrammarManager:
             return
         if isinstance(req.grammar, ReasonerGrammarObject):
             req.grammar.max_think_tokens = thinking_budget
+            # The backend can start without a global thinking limit. In that
+            # case, activate its retained token-filter hook only for requests
+            # that explicitly carry a non-negative budget.
+            if thinking_budget >= 0 and req.grammar.token_filter_fn is not None:
+                req.grammar.enable_token_filter = True
 
     def process_req_with_grammar(self, req: Req) -> bool:
         # Init grammar cache for this request

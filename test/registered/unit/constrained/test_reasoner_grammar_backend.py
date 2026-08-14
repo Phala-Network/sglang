@@ -356,6 +356,23 @@ class TestReasonerGrammarBackend(unittest.TestCase):
         self.assertEqual(obj.max_think_tokens, 2)
         self.assertEqual(obj.think_excluded_token_ids, [3, 4])
 
+    def test_non_strict_backend_retains_hook_for_request_budget(self):
+        os.environ.pop("SGLANG_MAX_THINK_TOKENS", None)
+        backend = _DummyGrammarBackend(support_token_filter=True)
+        backend._dispatch_result = MagicMock()
+        reasoner = ReasonerGrammarBackend(
+            backend,
+            self._make_parser(),
+            self._make_tokenizer(),
+            enable_strict_thinking=False,
+        )
+
+        obj = reasoner._init_value_dispatch(("json", "{}"), reasoning=True)
+
+        self.assertIsInstance(obj, ReasonerGrammarObject)
+        self.assertFalse(obj.enable_token_filter)
+        self.assertIsNotNone(obj.token_filter_fn)
+
     def test_kimi_k3_excluded_tokens_spare_the_xtml_control_tokens(self):
         """Kimi K3 bans bare channel names, never the marker-composing tokens.
 

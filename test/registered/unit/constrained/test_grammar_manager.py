@@ -288,7 +288,11 @@ class TestProcessReqWithGrammar(unittest.TestCase):
     def test_cache_hit_applies_request_thinking_budget(self):
         mgr = self._make_mgr()
         grammar_obj = ReasonerGrammarObject(
-            grammar=None, think_end_ids=[0], max_think_tokens=99
+            grammar=None,
+            think_end_ids=[0],
+            max_think_tokens=99,
+            enable_token_filter=False,
+            token_filter_fn=MagicMock(),
         )
         mgr.grammar_backend.get_cached_or_future_value.return_value = (
             grammar_obj,
@@ -302,6 +306,7 @@ class TestProcessReqWithGrammar(unittest.TestCase):
         mgr.process_req_with_grammar(req)
 
         self.assertEqual(req.grammar.max_think_tokens, 7)
+        self.assertTrue(req.grammar.enable_token_filter)
 
     def test_strict_reasoning_grammar_applies_request_thinking_budget(self):
         mgr = self._make_mgr()
@@ -317,6 +322,28 @@ class TestProcessReqWithGrammar(unittest.TestCase):
 
         self.assertIs(req.grammar, grammar_obj)
         self.assertEqual(req.grammar.max_think_tokens, 3)
+
+    def test_negative_request_thinking_budget_does_not_enable_filter(self):
+        mgr = self._make_mgr()
+        grammar_obj = ReasonerGrammarObject(
+            grammar=None,
+            think_end_ids=[0],
+            enable_token_filter=False,
+            token_filter_fn=MagicMock(),
+        )
+        mgr.grammar_backend.get_cached_or_future_value.return_value = (
+            grammar_obj,
+            True,
+        )
+
+        req = _make_req(
+            json_schema="schema",
+            custom_params={"thinking_budget": -1},
+        )
+        mgr.process_req_with_grammar(req)
+
+        self.assertEqual(req.grammar.max_think_tokens, -1)
+        self.assertFalse(req.grammar.enable_token_filter)
 
 
 class TestAbortRequests(unittest.TestCase):

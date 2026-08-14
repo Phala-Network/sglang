@@ -962,6 +962,19 @@ class ChatCompletionRequest(BaseModel):
             if r.get("enabled") is not None or r.get("enable") is not None:
                 thinking = bool(enabled)
 
+            reasoning_max_tokens = r.get("max_tokens")
+            if reasoning_max_tokens is not None:
+                if isinstance(reasoning_max_tokens, bool) or not isinstance(
+                    reasoning_max_tokens, int
+                ) or reasoning_max_tokens < 0:
+                    raise ValueError("reasoning.max_tokens must be a non-negative integer")
+                custom_params = values.get("custom_params")
+                if custom_params is None:
+                    custom_params = {}
+                if isinstance(custom_params, dict):
+                    custom_params.setdefault("thinking_budget", reasoning_max_tokens)
+                    values["custom_params"] = custom_params
+
             if r.get("exclude") is True:
                 values["include_reasoning"] = False
 
@@ -1019,6 +1032,39 @@ class ChatCompletionRequest(BaseModel):
 
         return values
 
+    def _structured_output_thinking_budget(self) -> Optional[int]:
+        """Reserve visible-token capacity for a grammar-constrained answer."""
+        if self.response_format is None or self.response_format.type not in {
+            "json_schema",
+            "json_object",
+        }:
+            return None
+
+        if self.reasoning_effort == "none":
+            return None
+        chat_template_kwargs = self.chat_template_kwargs or {}
+        if chat_template_kwargs.get("thinking") is False:
+            return None
+        if chat_template_kwargs.get("enable_thinking") is False:
+            return None
+        if chat_template_kwargs.get("reasoning_strength") in {
+            "none",
+            "off",
+            "no_think",
+        }:
+            return None
+
+        max_new_tokens = (
+            self.max_completion_tokens
+            if self.max_completion_tokens is not None
+            else self.max_tokens
+        )
+        if not isinstance(max_new_tokens, int) or max_new_tokens <= 0:
+            return None
+
+        visible_reserve = min(1024, max(64, max_new_tokens // 4))
+        return max(0, max_new_tokens - min(max_new_tokens, visible_reserve))
+
     def to_sampling_params(
         self,
         stop: List[str],
@@ -1066,7 +1112,9 @@ class ChatCompletionRequest(BaseModel):
             "ignore_eos": self.ignore_eos,
             "skip_special_tokens": self.skip_special_tokens,
             "logit_bias": self.logit_bias,
-            "custom_params": self.custom_params,
+            "custom_params": (
+                dict(self.custom_params) if self.custom_params is not None else None
+            ),
             "sampling_seed": self.seed,
             "spaces_between_special_tokens": spaces_between_special_tokens,
         }
@@ -1110,6 +1158,20 @@ class ChatCompletionRequest(BaseModel):
                 )
             else:
                 sampling_params[constraint_type] = constraint_value
+
+        # Reasoning and the visible answer share max_new_tokens. Without a
+        # request-local cap, a reasoning model can spend the entire completion
+        # budget before the structured grammar ever receives a token.
+        if (
+            self.response_format is not None
+            and self.response_format.type in {"json_schema", "json_object"}
+            and sampling_params.get("json_schema") is not None
+        ):
+            thinking_budget = self._structured_output_thinking_budget()
+            if thinking_budget is not None:
+                custom_params = sampling_params["custom_params"] or {}
+                custom_params.setdefault("thinking_budget", thinking_budget)
+                sampling_params["custom_params"] = custom_params
 
         return sampling_params
 

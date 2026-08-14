@@ -207,7 +207,11 @@ class TestChatCompletionRequest(unittest.TestCase):
         self.assertEqual(request.reasoning_effort, "high")
         self.assertEqual(
             request.chat_template_kwargs,
-            {"thinking": True, "enable_thinking": True},
+            {
+                "thinking": True,
+                "enable_thinking": True,
+                "reasoning_strength": "high",
+            },
         )
 
     def test_chat_completion_reasoning_effort_high_enables_thinking(self):
@@ -221,7 +225,11 @@ class TestChatCompletionRequest(unittest.TestCase):
         self.assertEqual(request.reasoning_effort, "high")
         self.assertEqual(
             request.chat_template_kwargs,
-            {"thinking": True, "enable_thinking": True},
+            {
+                "thinking": True,
+                "enable_thinking": True,
+                "reasoning_strength": "high",
+            },
         )
 
     def test_chat_completion_reasoning_effort_none(self):
@@ -499,6 +507,119 @@ class TestChatCompletionRequest(unittest.TestCase):
             renderer_handles_response_format=True,
         )
         self.assertNotIn("json_schema", sampling_params)
+        self.assertIsNone(sampling_params["custom_params"])
+
+    def test_structured_output_reserves_visible_completion_budget(self):
+        schema_request = ChatCompletionRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "Return JSON"}],
+            max_tokens=256,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "answer",
+                    "schema": {"type": "object"},
+                    "strict": True,
+                },
+            },
+        )
+        object_request = ChatCompletionRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "Return JSON"}],
+            max_tokens=512,
+            response_format={"type": "json_object"},
+        )
+
+        schema_params = schema_request.to_sampling_params([], {})
+        object_params = object_request.to_sampling_params([], {})
+
+        self.assertEqual(schema_params["custom_params"]["thinking_budget"], 192)
+        self.assertEqual(object_params["custom_params"]["thinking_budget"], 384)
+
+    def test_structured_output_budget_uses_max_completion_tokens(self):
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "Return JSON"}],
+            max_tokens=256,
+            max_completion_tokens=512,
+            response_format={"type": "json_object"},
+        )
+
+        params = request.to_sampling_params([], {})
+
+        self.assertEqual(params["custom_params"]["thinking_budget"], 384)
+
+    def test_structured_output_budget_preserves_explicit_budget(self):
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "Return JSON"}],
+            max_tokens=256,
+            custom_params={"thinking_budget": 17, "trace": "keep"},
+            response_format={"type": "json_object"},
+        )
+
+        params = request.to_sampling_params([], {})
+
+        self.assertEqual(
+            params["custom_params"], {"thinking_budget": 17, "trace": "keep"}
+        )
+        self.assertEqual(
+            request.custom_params, {"thinking_budget": 17, "trace": "keep"}
+        )
+
+    def test_reasoning_max_tokens_maps_to_explicit_thinking_budget(self):
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "Return JSON"}],
+            max_tokens=256,
+            reasoning={"enabled": True, "max_tokens": 23},
+            response_format={"type": "json_object"},
+        )
+
+        params = request.to_sampling_params([], {})
+
+        self.assertEqual(params["custom_params"]["thinking_budget"], 23)
+
+    def test_reasoning_max_tokens_validation(self):
+        for value in (-1, 1.5, True, "32"):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ValidationError, "reasoning.max_tokens must be a non-negative integer"
+            ):
+                ChatCompletionRequest(
+                    model="test-model",
+                    messages=[{"role": "user", "content": "Return JSON"}],
+                    reasoning={"max_tokens": value},
+                )
+
+    def test_structured_output_budget_skips_disabled_reasoning(self):
+        for reasoning_kwargs in (
+            {"reasoning_effort": "none"},
+            {"reasoning": {"enabled": False}},
+            {"chat_template_kwargs": {"reasoning_strength": "none"}},
+        ):
+            with self.subTest(reasoning_kwargs=reasoning_kwargs):
+                request = ChatCompletionRequest(
+                    model="test-model",
+                    messages=[{"role": "user", "content": "Return JSON"}],
+                    max_tokens=256,
+                    response_format={"type": "json_object"},
+                    **reasoning_kwargs,
+                )
+
+                params = request.to_sampling_params([], {})
+
+                self.assertIsNone(params["custom_params"])
+
+    def test_non_structured_request_does_not_get_automatic_budget(self):
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=256,
+        )
+
+        params = request.to_sampling_params([], {})
+
+        self.assertIsNone(params["custom_params"])
 
 
 class TestModelSerialization(unittest.TestCase):

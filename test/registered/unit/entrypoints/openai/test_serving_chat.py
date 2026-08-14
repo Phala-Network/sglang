@@ -220,8 +220,9 @@ class ServingChatTestCase(unittest.TestCase):
                 )
                 error = json.loads(response.body)
                 self.assertEqual(response.status_code, HTTPStatus.BAD_REQUEST)
-                self.assertEqual(error["type"], "BadRequestError")
-                self.assertIn(media_type, error["message"])
+                self.assertEqual(list(error), ["error"])
+                self.assertEqual(error["error"]["type"], "BadRequestError")
+                self.assertIn(media_type, error["error"]["message"])
         self.tm.generate_request.assert_not_called()
 
     def test_media_validation_does_not_reject_supported_content(self):

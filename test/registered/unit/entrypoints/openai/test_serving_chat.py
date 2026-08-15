@@ -1417,6 +1417,40 @@ class ServingChatTestCase(unittest.TestCase):
         tool_calls = chunk["choices"][0]["delta"]["tool_calls"]
         self.assertEqual(tool_calls[0]["function"]["arguments"], ', "unit": "celsius"}')
 
+    def test_unstreamed_tool_args_atomic_parser_skips_pending_state(self):
+        """An atomic parser's unclosed call must not become an arguments-only delta."""
+
+        mock_parser = Mock()
+        mock_detector = Mock()
+        mock_detector.emits_tool_calls_atomically = True
+        mock_detector.prev_tool_call_arr = [
+            {
+                "name": "get_weather",
+                "arguments": '{"location": "San Francisco"}',
+            }
+        ]
+        mock_detector.streamed_args_for_tool = [""]
+        mock_parser.detector = mock_detector
+
+        content = {"meta_info": {"id": "chatcmpl-test123"}}
+        request = ChatCompletionRequest(
+            model="test",
+            messages=[{"role": "user", "content": "What's the weather?"}],
+            tools=[{"type": "function", "function": {"name": "get_weather"}}],
+        )
+
+        result = self.chat._check_for_unstreamed_tool_args(
+            parser=mock_parser,
+            content=content,
+            request=request,
+            index=0,
+        )
+
+        self.assertIsNone(
+            result,
+            "Atomic parsers must not expose unpublished pending calls at stream end",
+        )
+
     def test_unstreamed_tool_args_no_parser_data(self):
         """Test that no completion chunk is sent when parser has no tool call data."""
 

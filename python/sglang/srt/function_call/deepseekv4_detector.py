@@ -65,6 +65,10 @@ class DeepSeekV4Detector(DeepSeekV32Detector):
     Reference: DeepSeek V4 format specification
     """
 
+    # Complete calls are emitted once, with both name and arguments. Serving
+    # must not synthesize argument deltas from the parent's pending state.
+    emits_tool_calls_atomically = True
+
     def __init__(self):
         super().__init__()
         self.bot_token = "<｜DSML｜tool_calls>"

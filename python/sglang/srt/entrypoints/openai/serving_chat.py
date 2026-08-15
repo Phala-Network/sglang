@@ -2536,6 +2536,13 @@ class OpenAIServingChat(OpenAIServingBase):
         # Get the detector - either from FunctionCallParser or directly if json detector
         detector = parser.detector if hasattr(parser, "detector") else parser
 
+        # Atomic detectors publish a complete name-and-arguments call in one
+        # delta. Their incremental parent state may still contain an unclosed
+        # call, but turning that state into an arguments-only delta would
+        # invent a tool call that the detector deliberately did not publish.
+        if getattr(detector, "emits_tool_calls_atomically", False) is True:
+            return None
+
         # Only check if we have tool calls and the detector has tracked data
         if (
             not hasattr(detector, "prev_tool_call_arr")

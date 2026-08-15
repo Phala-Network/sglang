@@ -2,7 +2,12 @@ import logging
 from typing import Any, List, Literal, Optional, Union
 
 from sglang.srt.entrypoints.openai.protocol import Tool, ToolChoice
+from sglang.srt.environ import envs
 from sglang.srt.function_call.base_format_detector import StructuralTag
+from sglang.srt.function_call.core_types import (
+    StreamingParseResult,
+    ToolCallItem,
+)
 from sglang.srt.function_call.deepseekv32_detector import DeepSeekV32Detector
 
 logger = logging.getLogger(__name__)
@@ -65,6 +70,67 @@ class DeepSeekV4Detector(DeepSeekV32Detector):
         self.bot_token = "<｜DSML｜tool_calls>"
         self.eot_token = "</｜DSML｜tool_calls>"
         self.function_calls_regex = r"<｜DSML｜tool_calls>(.*?)</｜DSML｜tool_calls>"
+        self._atomic_internal_tool_count = 0
+        self._atomic_wire_tool_count = 0
+
+    def parse_streaming_increment(
+        self, new_text: str, tools: list[Tool]
+    ) -> StreamingParseResult:
+        """Emit only complete DSV4 calls.
+
+        The V3.2 parser incrementally builds DSML arguments.  DSV4 requests
+        can be cut off by an output budget or cancellation, so forwarding
+        those intermediate fragments would expose a name-only or malformed
+        call that cannot be retracted.  Keep the parent's parsing state, but
+        publish one complete item only after ``</｜DSML｜invoke>`` arrives.
+        """
+        parsed = super().parse_streaming_increment(new_text, tools)
+
+        # The parent resets its internal arrays after a parse error.  Start a
+        # fresh internal ordinal while preserving already published wire
+        # ordinals for this response.
+        if self.current_tool_id < 0:
+            if not self.prev_tool_call_arr:
+                self._atomic_internal_tool_count = 0
+            return StreamingParseResult(normal_text=parsed.normal_text)
+
+        completed = min(self.current_tool_id, len(self.prev_tool_call_arr))
+        known_tool_names = {
+            tool.function.name
+            for tool in tools
+            if getattr(tool, "function", None) is not None and tool.function.name
+        }
+        calls = []
+        while self._atomic_internal_tool_count < completed:
+            state = self.prev_tool_call_arr[self._atomic_internal_tool_count]
+            name = state.get("name")
+            parameters = state.get("arguments") or "{}"
+            self._atomic_internal_tool_count += 1
+
+            if (
+                name not in known_tool_names
+                and not envs.SGLANG_FORWARD_UNKNOWN_TOOLS.get()
+            ):
+                logger.warning("Model attempted to call undefined function: %s", name)
+                continue
+
+            calls.append(
+                ToolCallItem(
+                    tool_index=self._atomic_wire_tool_count,
+                    name=name,
+                    parameters=parameters,
+                )
+            )
+            self._atomic_wire_tool_count += 1
+
+        return StreamingParseResult(normal_text=parsed.normal_text, calls=calls)
+
+    def finish(self, tools: list[Tool]) -> StreamingParseResult:
+        """Drop any unclosed pending call and flush only ordinary text."""
+        parsed = super().finish(tools)
+        self._atomic_internal_tool_count = 0
+        self._atomic_wire_tool_count = 0
+        return StreamingParseResult(normal_text=parsed.normal_text)
 
     def get_structural_tag_name(self) -> str:
         return "deepseek_v4"

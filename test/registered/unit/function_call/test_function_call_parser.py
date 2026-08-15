@@ -2106,7 +2106,8 @@ class TestDeepSeekV4Detector(unittest.TestCase):
                             "parameters"
                         ] += call.parameters
 
-        self.assertGreater(num_tool_call_chunks, 8)
+        # DSV4 publishes one complete call only after the invoke closes.
+        self.assertEqual(num_tool_call_chunks, 1)
 
         self.assertEqual(len(tool_calls_by_index), 1)
         self.assertEqual(tool_calls_by_index[0]["name"], "get_favorite_tourist_spot")

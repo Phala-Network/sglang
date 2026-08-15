@@ -1,8 +1,10 @@
 """Unit tests for DeepSeekV4Detector DSML streaming — no server, no model loading."""
 
+import json
 from unittest.mock import patch
 
 from sglang.srt.entrypoints.openai.protocol import Function, Tool
+from sglang.srt.environ import envs
 from sglang.srt.function_call.deepseekv4_detector import DeepSeekV4Detector
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
@@ -92,7 +94,8 @@ class TestDeepSeekV4Streaming(CustomTestCase):
             self.tools,
         )
 
-        self.assertEqual([c.name for c in result.calls if c.name], ["get_weather"])
+        self.assertEqual(result.calls, [])
+        self.assertNotEqual(detector._buffer, "")
 
     def test_non_streaming_parses_every_tool_calls_section(self):
         """A turn with two tool_calls sections must yield both calls."""
@@ -147,6 +150,71 @@ class TestDeepSeekV4Streaming(CustomTestCase):
         parallel_flags = stop_flags(parallel_tag.model_dump().get("format"))
         self.assertTrue(parallel_flags)
         self.assertTrue(all(flag is False for flag in parallel_flags))
+
+    def test_streaming_call_is_atomic_for_chunk_sizes(self):
+        text = _weather_call("Paris")
+        close = f"</{DSML}invoke>"
+        prefix, suffix = text.split(close, 1)
+
+        for chunk_size in (1, 7, len(prefix)):
+            detector = DeepSeekV4Detector()
+            for offset in range(0, len(prefix), chunk_size):
+                result = detector.parse_streaming_increment(
+                    prefix[offset : offset + chunk_size], self.tools
+                )
+                self.assertEqual(result.calls, [])
+
+            result = detector.parse_streaming_increment(close + suffix, self.tools)
+            self.assertEqual(len(result.calls), 1)
+            self.assertEqual(result.calls[0].tool_index, 0)
+            self.assertEqual(result.calls[0].name, "get_weather")
+            self.assertEqual(json.loads(result.calls[0].parameters), {"city": "Paris"})
+
+    def test_truncated_call_emits_no_tool_delta(self):
+        detector = DeepSeekV4Detector()
+        text = _weather_call("Paris")
+        prefix = text.split(f"</{DSML}invoke>", 1)[0]
+
+        incremental = detector.parse_streaming_increment(prefix, self.tools)
+        terminal = detector.finish(self.tools)
+
+        self.assertEqual(incremental.calls, [])
+        self.assertEqual(terminal.calls, [])
+
+    def test_streaming_drops_unknown_then_parses_known(self):
+        text = _wrapped(
+            _invoke("missing", _param("city", "true", "bad"))
+            + _invoke("get_weather", _param("city", "true", "Paris"))
+        )
+        result = DeepSeekV4Detector().parse_streaming_increment(text, self.tools)
+
+        self.assertEqual([call.name for call in result.calls], ["get_weather"])
+        self.assertEqual([call.tool_index for call in result.calls], [0])
+        self.assertEqual(json.loads(result.calls[0].parameters), {"city": "Paris"})
+
+    def test_streaming_forwards_unknown_when_enabled(self):
+        text = _wrapped(
+            _invoke("missing", _param("city", "true", "bad"))
+            + _invoke("get_weather", _param("city", "true", "Paris"))
+        )
+        with envs.SGLANG_FORWARD_UNKNOWN_TOOLS.override(True):
+            result = DeepSeekV4Detector().parse_streaming_increment(text, self.tools)
+
+        self.assertEqual(
+            [call.name for call in result.calls], ["missing", "get_weather"]
+        )
+        self.assertEqual([call.tool_index for call in result.calls], [0, 1])
+
+    def test_streaming_repeated_calls_use_sequential_indices(self):
+        text = _wrapped(
+            "".join(
+                _invoke("get_weather", _param("city", "true", city))
+                for city in ("SF", "NY", "LA")
+            )
+        )
+        result = DeepSeekV4Detector().parse_streaming_increment(text, self.tools)
+
+        self.assertEqual([call.tool_index for call in result.calls], [0, 1, 2])
 
     def test_parse_error_neither_swallows_nor_duplicates(self):
         """An unexpected parse error must retain the buffer for retry; only

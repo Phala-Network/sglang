@@ -525,9 +525,9 @@ def _anthropic_error_response(*, status_code: int, error_type: str, message: str
 async def validation_exception_handler(request: Request, exc: HTTPException):
     """Enrich HTTP exception with status code and other details.
 
-    For /v1/responses, emit OpenAI-style nested error envelope:
+    For OpenAI-compatible /v1 routes, emit the nested error envelope:
     {"error": {"message": "...", "type": "...", "param": null, "code": <status>}}
-    For /v1/messages, emit Anthropic-style envelope so SDK clients can parse it.
+    /v1/messages keeps the Anthropic-style envelope its SDK expects.
     """
     if request.url.path.startswith("/v1/messages"):
         # Map HTTP status to Anthropic error.type; fall back to api_error.
@@ -556,8 +556,8 @@ async def validation_exception_handler(request: Request, exc: HTTPException):
             message=message,
         )
 
-    # adjust fmt for responses api
-    if request.url.path.startswith("/v1/responses"):
+    # All OpenAI-compatible v1 routes use the standard nested error envelope.
+    if request.url.path.startswith("/v1/"):
         nested_error = {
             "message": exc.detail,
             "type": HTTPStatus(exc.status_code).phrase,
@@ -584,8 +584,8 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
     For /v1/messages, emit Anthropic-style envelope and scrub the message so
     file paths or Python internals from the default ``str(exc)`` representation
-    never reach the client. For /v1/responses, keep OpenAI-style. Otherwise
-    use the legacy ErrorResponse shape.
+    never reach the client. All other /v1 routes use the OpenAI-compatible
+    nested envelope. Non-v1 endpoints keep the legacy ErrorResponse shape.
     """
     if request.url.path.startswith("/v1/messages"):
         return _anthropic_error_response(
@@ -602,8 +602,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     else:
         message = exc_str
 
-    if request.url.path.startswith("/v1/responses"):
-        # adapt specially, for v1/responses API only (notice the error key is different)
+    if request.url.path.startswith("/v1/"):
         nested_error = {
             "message": message,
             "type": HTTPStatus.BAD_REQUEST.phrase,

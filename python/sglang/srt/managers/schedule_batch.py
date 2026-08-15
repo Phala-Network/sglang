@@ -1222,6 +1222,14 @@ class Req(ReqDllmMixin):
             return self.output_ids[: self.finished_len]
         return self.output_ids
 
+    @property
+    def reasoning_tokens_through_stop(self) -> int:
+        """Report reasoning usage only for completion tokens visible to clients."""
+        # A speculative verify step can accept several tokens beyond either a
+        # stop or max_new_tokens. output_ids_through_stop trims that overshoot;
+        # reasoning usage must follow the same committed boundary.
+        return min(self.reasoning_tokens, len(self.output_ids_through_stop))
+
     def needs_host_load_back(self) -> bool:
         """Whether any cache layer has a host hit that needs L2 H2D load_back."""
         return (

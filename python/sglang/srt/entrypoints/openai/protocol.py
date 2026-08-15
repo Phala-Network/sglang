@@ -719,6 +719,59 @@ class ToolChoice(BaseModel):
     type: Literal["function"] = Field(default="function", examples=["function"])
 
 
+class AllowedToolFunction(BaseModel):
+    """A function name referenced by an allowed-tools choice."""
+
+    name: str
+
+
+class AllowedToolReference(BaseModel):
+    """A tool reference, not a duplicate tool definition."""
+
+    type: Literal["function"] = "function"
+    function: AllowedToolFunction
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_router_shape(cls, values):
+        # The Rust gRPC router historically accepted {"type":"function",
+        # "name":"..."}.  Accept that shape as an alias while preserving the
+        # nested OpenAI wire shape used by provider conformance tests.
+        if isinstance(values, dict) and "function" not in values and "name" in values:
+            values = dict(values)
+            values["function"] = {"name": values.pop("name")}
+        return values
+
+
+class AllowedToolsConfig(BaseModel):
+    mode: Literal["auto", "required"]
+    tools: List[AllowedToolReference] = Field(min_length=1)
+
+
+class ToolChoiceAllowedTools(BaseModel):
+    """Restrict auto/required tool choice to a named subset of request tools."""
+
+    type: Literal["allowed_tools"] = "allowed_tools"
+    allowed_tools: AllowedToolsConfig
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_router_shape(cls, values):
+        # Keep compatibility with the older flattened gRPC-router spelling:
+        # {"type":"allowed_tools","mode":"required","tools":[...]}.
+        if (
+            isinstance(values, dict)
+            and "allowed_tools" not in values
+            and ("mode" in values or "tools" in values)
+        ):
+            values = dict(values)
+            values["allowed_tools"] = {
+                "mode": values.pop("mode", None),
+                "tools": values.pop("tools", None),
+            }
+        return values
+
+
 # OpenAI-spec string tiers for reasoning effort (current Responses/Chat API):
 # none/minimal/low/medium/high/xhigh/max. Used as-is by /v1/responses.
 ReasoningEffortTier = Literal[
@@ -784,7 +837,11 @@ class ChatCompletionRequest(BaseModel):
     top_p: Optional[float] = None
     user: Optional[str] = None
     tools: Optional[List[Tool]] = Field(default=None, examples=[None])
-    tool_choice: Union[ToolChoice, Literal["auto", "required", "none"]] = Field(
+    tool_choice: Union[
+        ToolChoice,
+        ToolChoiceAllowedTools,
+        Literal["auto", "required", "none"],
+    ] = Field(
         default="auto", examples=["none"]
     )  # noqa
     parallel_tool_calls: bool = True
@@ -901,6 +958,49 @@ class ChatCompletionRequest(BaseModel):
                 values["tool_choice"] = "auto"
         return values
 
+    @model_validator(mode="after")
+    def normalize_allowed_tools_choice(self):
+        """Filter tools once, then reuse the existing auto/required paths.
+
+        Keeping the internal representation as auto/required means prompt
+        construction, strict constraints, native parsers, streaming assembly,
+        and finish-reason handling all operate on the already-filtered subset.
+        """
+        if not isinstance(self.tool_choice, ToolChoiceAllowedTools):
+            return self
+
+        config = self.tool_choice.allowed_tools
+        names = [item.function.name for item in config.tools]
+        if len(names) != len(set(names)):
+            raise ValueError("allowed_tools contains duplicate function names")
+        allowed_names = set(names)
+
+        available_names = {tool.function.name for tool in (self.tools or [])}
+        for message in self.messages:
+            message_tools = getattr(message, "tools", None) or []
+            available_names.update(tool.function.name for tool in message_tools)
+        missing = sorted(allowed_names - available_names)
+        if missing:
+            raise ValueError(
+                "allowed_tools references tools not present in the request: "
+                + ", ".join(missing)
+            )
+
+        if self.tools is not None:
+            self.tools = [
+                tool for tool in self.tools if tool.function.name in allowed_names
+            ]
+        for message in self.messages:
+            message_tools = getattr(message, "tools", None)
+            if message_tools is not None:
+                message.tools = [
+                    tool
+                    for tool in message_tools
+                    if tool.function.name in allowed_names
+                ]
+        self.tool_choice = config.mode
+        return self
+
     @field_validator("reasoning_effort", mode="before")
     @classmethod
     def validate_reasoning_effort_type(cls, value):
@@ -908,11 +1008,41 @@ class ChatCompletionRequest(BaseModel):
             raise ValueError("reasoning_effort must not be a boolean")
         return value
 
+    @staticmethod
+    def _normalize_thinking_toggle(value, field_name: str) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "y", "on", "enabled"}:
+                return True
+            if normalized in {"0", "false", "no", "n", "off", "disabled"}:
+                return False
+        raise ValueError(f"invalid {field_name}: {value!r}")
+
     @model_validator(mode="before")
     @classmethod
     def normalize_reasoning_inputs(cls, values: Dict):
         r = values.get("reasoning")
         thinking = None
+
+        # PR #33155 identified that top-level enable_thinking is otherwise
+        # silently dropped by Pydantic.  The supplier API also uses an
+        # Anthropic-style top-level thinking.type alias.
+        top_enable_thinking = values.get("enable_thinking")
+        if top_enable_thinking is not None:
+            thinking = cls._normalize_thinking_toggle(
+                top_enable_thinking, "enable_thinking"
+            )
+        top_thinking = values.get("thinking")
+        if top_thinking is not None:
+            if isinstance(top_thinking, dict):
+                thinking_type = top_thinking.get("type")
+                thinking = cls._normalize_thinking_toggle(
+                    thinking_type, "thinking.type"
+                )
+            else:
+                thinking = cls._normalize_thinking_toggle(top_thinking, "thinking")
 
         if r is not None and isinstance(r, dict):
             effort = r.get("effort")
@@ -940,15 +1070,18 @@ class ChatCompletionRequest(BaseModel):
             elif effort is not None:
                 raise ValueError(f"invalid reasoning effort: {effort!r}")
 
-            enabled = (
-                r.get("enabled")
-                if r.get("enabled") is not None
-                else r.get("enable", False)
-            )
-            if isinstance(enabled, str):
-                enabled = enabled.strip().lower() in {"1", "true", "yes", "y", "on"}
-            if enabled:
-                thinking = True
+            if "enabled" in r or "enable" in r:
+                enabled = r.get("enabled") if "enabled" in r else r.get("enable")
+                thinking = cls._normalize_thinking_toggle(enabled, "reasoning.enabled")
+
+        ctk = values.get("chat_template_kwargs")
+        if isinstance(ctk, dict):
+            ctk = dict(ctk)
+            if "thinking" not in ctk and isinstance(ctk.get("enable_thinking"), bool):
+                ctk["thinking"] = ctk["enable_thinking"]
+            if "enable_thinking" not in ctk and isinstance(ctk.get("thinking"), bool):
+                ctk["enable_thinking"] = ctk["thinking"]
+            values["chat_template_kwargs"] = ctk
 
         effort = values.get("reasoning_effort")
         if effort is not None:

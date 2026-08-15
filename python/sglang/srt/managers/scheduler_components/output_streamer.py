@@ -421,7 +421,7 @@ class _GenerationStreamAccumulator:
                 req.sampling_params.spaces_between_special_tokens
             )
             self.no_stop_trim.append(req.sampling_params.no_stop_trim)
-            self.reasoning_tokens.append(req.reasoning_tokens)
+            self.reasoning_tokens.append(req.reasoning_tokens_through_stop)
             self.completion_tokens.append(len(output_ids_))
             self.cached_tokens.append(req.cached_tokens)
 

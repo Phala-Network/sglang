@@ -114,11 +114,19 @@ class TestFinishLengthSpeculative(CustomTestCase):
         # Negative branch: a run crossing the cap with no stop anywhere must
         # still finish as FINISH_LENGTH at the cap.
         req = _make_req([10, 11, 12, 20, 21], max_new_tokens=4)
+        req.reasoning_tokens = 5
         req.update_finish_state(new_accepted_len=3)
         self.assertTrue(req.finished())
         self.assertIsInstance(req.finished_reason, FINISH_LENGTH)
         self.assertEqual(req.finished_len, 4)
         self.assertEqual(list(req.output_ids_through_stop), [10, 11, 12, 20])
+        self.assertEqual(req.reasoning_tokens_through_stop, 4)
+
+    def test_reasoning_usage_below_committed_output_is_not_inflated(self):
+        req = _make_req([10, 11, 12, 20, 21], max_new_tokens=4)
+        req.reasoning_tokens = 3
+        req.update_finish_state(new_accepted_len=3)
+        self.assertEqual(req.reasoning_tokens_through_stop, 3)
 
     def test_missing_vocab_size_still_finishes_by_length(self):
         # Prefill-only embedding and scoring requests do not set vocab_size.

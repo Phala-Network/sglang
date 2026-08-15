@@ -53,6 +53,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
     field_serializer,
     field_validator,
     model_serializer,
@@ -865,6 +866,16 @@ class ChatCompletionRequest(BaseModel):
         "models that expose a maximum-effort tier above 'high'; models that don't "
         "support it treat it the same as 'high'.",
     )
+    include_reasoning: Optional[StrictBool] = Field(
+        default=None,
+        description="Legacy OpenRouter-compatible control for returning reasoning. "
+        "False is equivalent to reasoning.exclude=true. True preserves reasoning "
+        "visibility and, when no explicit reasoning control is present, enables "
+        "the model's default reasoning mode for backward compatibility.",
+    )
+    # Normalized response-only policy. This is deliberately excluded from model
+    # dumps so it never becomes an accidental wire-level SGLang extension.
+    reasoning_exclude: bool = Field(default=False, exclude=True, repr=False)
     task: Optional[
         Literal["action", "query", "authority", "domain", "title", "read_url"]
     ] = Field(
@@ -1026,6 +1037,24 @@ class ChatCompletionRequest(BaseModel):
         r = values.get("reasoning")
         thinking = None
 
+        include_reasoning = values.get("include_reasoning")
+        if include_reasoning is not None and not isinstance(include_reasoning, bool):
+            raise ValueError("include_reasoning must be a boolean")
+
+        # OpenRouter's nested reasoning.exclude is the authoritative response
+        # visibility control. The legacy include_reasoning spelling is only
+        # consulted when nested exclude is absent, so a unified config always
+        # wins a mixed legacy/new request.
+        reasoning_exclude = False
+        if isinstance(r, dict) and "exclude" in r:
+            exclude = r["exclude"]
+            if not isinstance(exclude, bool):
+                raise ValueError("reasoning.exclude must be a boolean")
+            reasoning_exclude = exclude
+        elif include_reasoning is not None:
+            reasoning_exclude = not include_reasoning
+        values["reasoning_exclude"] = reasoning_exclude
+
         # PR #33155 identified that top-level enable_thinking is otherwise
         # silently dropped by Pydantic.  The supplier API also uses an
         # Anthropic-style top-level thinking.type alias.
@@ -1073,6 +1102,15 @@ class ChatCompletionRequest(BaseModel):
             if "enabled" in r or "enable" in r:
                 enabled = r.get("enabled") if "enabled" in r else r.get("enable")
                 thinking = cls._normalize_thinking_toggle(enabled, "reasoning.enabled")
+
+        # OpenRouter documents include_reasoning=true as the legacy visible-
+        # reasoning request. Some local chat templates default reasoning off;
+        # preserve legacy provider behavior by enabling their default mode only
+        # when no stronger top-level/nested thinking control has already won.
+        # Explicit effort (including "none"), enabled, thinking aliases, or
+        # chat_template_kwargs still take precedence below.
+        if thinking is None and include_reasoning is True:
+            thinking = True
 
         ctk = values.get("chat_template_kwargs")
         if isinstance(ctk, dict):

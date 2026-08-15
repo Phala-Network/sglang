@@ -3,6 +3,7 @@
 import unittest
 
 from sglang.srt.constrained.xgrammar_backend import (
+    XGrammarGrammarBackend,
     has_xgrammar_unsupported_json_features,
 )
 from sglang.test.ci.ci_register import register_cpu_ci
@@ -76,6 +77,51 @@ class TestHasXGrammarUnsupportedJsonFeatures(unittest.TestCase):
             },
         }
         self.assertFalse(has_xgrammar_unsupported_json_features(schema))
+
+    def test_new_structural_tag_rejects_unsupported_tool_schema(self):
+        structural_format = {
+            "type": "tag",
+            "begin": '<invoke name="assign_reviewers">',
+            "content": {
+                "type": "json_schema",
+                "json_schema": {
+                    "type": "object",
+                    "properties": {
+                        "reviewers": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "uniqueItems": True,
+                        }
+                    },
+                },
+            },
+            "end": "</invoke>",
+        }
+        with self.assertRaisesRegex(RuntimeError, "unsupported by xgrammar"):
+            XGrammarGrammarBackend._sanitize_structural_format(structural_format)
+
+    def test_new_structural_tag_accepts_supported_tool_schema(self):
+        structural_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+            },
+        }
+        XGrammarGrammarBackend._sanitize_structural_format(structural_format)
+
+    def test_legacy_structural_tag_rejects_unsupported_tool_schema(self):
+        structural_tag = {
+            "structures": [
+                {
+                    "begin": "<invoke>",
+                    "schema": {"type": "integer", "multipleOf": 2},
+                    "end": "</invoke>",
+                }
+            ]
+        }
+        with self.assertRaisesRegex(RuntimeError, "unsupported by xgrammar"):
+            XGrammarGrammarBackend._sanitize_structural_tag_structures(structural_tag)
 
 
 if __name__ == "__main__":

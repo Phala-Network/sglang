@@ -68,6 +68,15 @@ def _allocate_token_bitmask(vocab_size: int, batch_size: int) -> torch.Tensor:
         dtype=bitmask_dtype,
         pin_memory=is_pin_memory_available(),
     )
+
+
+_UNSUPPORTED_JSON_SCHEMA_MESSAGE = (
+    "JSON schema uses features unsupported by xgrammar "
+    "(e.g. multipleOf, uniqueItems, contains, patternProperties, "
+    "propertyNames); the constraint would otherwise be silently ignored"
+)
+
+
 def has_xgrammar_unsupported_json_features(schema: dict) -> bool:
     """Whether the JSON schema uses keywords xgrammar silently ignores.
 
@@ -371,6 +380,11 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
         if fmt_type in {"json_schema", "qwen_xml_parameter"}:
             if structural_format.get("json_schema") is None:
                 structural_format["json_schema"] = {}
+            schema = structural_format.get("json_schema")
+            if isinstance(schema, dict) and has_xgrammar_unsupported_json_features(
+                schema
+            ):
+                raise RuntimeError(_UNSUPPORTED_JSON_SCHEMA_MESSAGE)
 
         if fmt_type == "tag":
             XGrammarGrammarBackend._sanitize_structural_format(
@@ -388,6 +402,11 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
         for structure in structural_tag.get("structures", []):
             if structure.get("schema") is None:
                 structure["schema"] = {}
+            schema = structure.get("schema")
+            if isinstance(schema, dict) and has_xgrammar_unsupported_json_features(
+                schema
+            ):
+                raise RuntimeError(_UNSUPPORTED_JSON_SCHEMA_MESSAGE)
 
     def _from_context(
         self, ctx: CompiledGrammar, key_string: str, grammar_stats: GrammarStats
@@ -416,12 +435,7 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
                 if isinstance(schema, dict) and has_xgrammar_unsupported_json_features(
                     schema
                 ):
-                    raise RuntimeError(
-                        "JSON schema uses features unsupported by xgrammar "
-                        "(e.g. multipleOf, uniqueItems, contains, "
-                        "patternProperties, propertyNames); the constraint "
-                        "would otherwise be silently ignored"
-                    )
+                    raise RuntimeError(_UNSUPPORTED_JSON_SCHEMA_MESSAGE)
                 ctx = self.grammar_compiler.compile_json_schema(
                     schema=key_string, any_whitespace=self.any_whitespace
                 )

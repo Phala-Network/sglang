@@ -102,6 +102,42 @@ class TestDeepSeekV4Streaming(CustomTestCase):
 
         self.assertEqual(len(result.calls), 2)
 
+    def test_structural_tag_honors_parallel_tool_calls_false(self):
+        import xgrammar as xgr
+
+        structural_tag = DeepSeekV4Detector().get_structural_tag(
+            self.tools,
+            tool_choice="required",
+            parallel_tool_calls=False,
+        )
+        self.assertIsInstance(structural_tag, xgr.StructuralTag)
+        xgr.Grammar.from_structural_tag(structural_tag)
+
+        def stop_flags(node):
+            flags = []
+            if isinstance(node, dict):
+                if node.get("type") == "tags_with_separator":
+                    flags.append(node.get("stop_after_first"))
+                for child in node.values():
+                    flags.extend(stop_flags(child))
+            elif isinstance(node, list):
+                for child in node:
+                    flags.extend(stop_flags(child))
+            return flags
+
+        flags = stop_flags(structural_tag.model_dump().get("format"))
+        self.assertTrue(flags)
+        self.assertTrue(all(flags))
+
+        parallel_tag = DeepSeekV4Detector().get_structural_tag(
+            self.tools,
+            tool_choice="required",
+            parallel_tool_calls=True,
+        )
+        parallel_flags = stop_flags(parallel_tag.model_dump().get("format"))
+        self.assertTrue(parallel_flags)
+        self.assertTrue(all(flag is False for flag in parallel_flags))
+
     def test_parse_error_neither_swallows_nor_duplicates(self):
         """An unexpected parse error must retain the buffer for retry; only
         the preamble (text before the first DSML tag) is emitted as

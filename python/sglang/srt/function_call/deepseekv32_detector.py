@@ -216,7 +216,7 @@ class DeepSeekV32Detector(BaseFormatDetector):
         if self.bot_token not in text:
             return StreamingParseResult(normal_text=normal_text, calls=[])
 
-        calls = []
+        actions = []
         try:
             sections = re.findall(self.function_calls_regex, text, re.DOTALL)
             if not sections:
@@ -236,8 +236,10 @@ class DeepSeekV32Detector(BaseFormatDetector):
                         "name": func_name,
                         "parameters": json.loads(func_args),
                     }
-                    calls.extend(self.parse_base_json(match_result, tools))
+                    actions.append(match_result)
 
+            # Assign dense call-order indices across every invoke in the turn.
+            calls = self.parse_base_json(actions, tools)
             return StreamingParseResult(normal_text=normal_text, calls=calls)
         except Exception as e:
             logger.error(f"Error in detect_and_parse: {e}")

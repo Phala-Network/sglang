@@ -102,6 +102,16 @@ class TestDeepSeekV4Streaming(CustomTestCase):
 
         self.assertEqual(len(result.calls), 2)
 
+    def test_non_streaming_repeated_calls_use_sequential_indices(self):
+        """Repeated calls to one tool use response ordinals, not tool slots."""
+        result = DeepSeekV4Detector().detect_and_parse(
+            "\n".join(_weather_call(city) for city in ("SF", "NY", "LA")),
+            self.tools,
+        )
+
+        self.assertEqual([call.name for call in result.calls], ["get_weather"] * 3)
+        self.assertEqual([call.tool_index for call in result.calls], [0, 1, 2])
+
     def test_structural_tag_honors_parallel_tool_calls_false(self):
         import xgrammar as xgr
 

@@ -74,7 +74,9 @@ def test_unknown_tool_name_forwarded(caplog):
         )
         assert len(result.calls) == 1
         assert result.calls[0].name == "unknown_tool"
-        assert result.calls[0].tool_index == -1
+        # Forwarded calls still occupy a valid response position; -1 is not a
+        # valid OpenAI tool_calls[].index value.
+        assert result.calls[0].tool_index == 0
         assert json.loads(result.calls[0].parameters)["city"] == "Paris"
 
 

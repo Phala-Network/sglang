@@ -1194,6 +1194,48 @@ class ServingChatTestCase(unittest.TestCase):
         injected_tools = mock_encode_messages.call_args.args[0][0]["tools"]
         self.assertEqual(injected_tools, [tool])
 
+    def test_dsv_tool_choice_none_does_not_inject_tools(self):
+        """DSV encoders must not see request tools when tool_choice is none."""
+        from sglang.srt.entrypoints.openai import encoding_dsv4, encoding_dsv32
+
+        self.template_manager.chat_template_name = None
+        self.template_manager.jinja_template_content_format = "string"
+        self.chat._dsv4_reasoning_effort_profile = "preview"
+        tool = {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Get the weather.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                },
+            },
+        }
+
+        for chat_encoding_spec, encoding_module in (
+            ("dsv4", encoding_dsv4),
+            ("dsv32", encoding_dsv32),
+        ):
+            with self.subTest(chat_encoding_spec=chat_encoding_spec):
+                self.chat.chat_encoding_spec = chat_encoding_spec
+                request = ChatCompletionRequest(
+                    model="x",
+                    messages=[
+                        {"role": "user", "content": "What is the weather?"}
+                    ],
+                    tools=[tool],
+                    tool_choice="none",
+                )
+
+                with patch.object(
+                    encoding_module, "encode_messages", return_value="prompt"
+                ) as mock_encode_messages:
+                    self.chat._process_messages(request, is_multimodal=False)
+
+                encoded_messages = mock_encode_messages.call_args.args[0]
+                self.assertNotIn("tools", encoded_messages[0])
+
     def test_stop_str_isolation_between_requests(self):
         """Test that stop strings from one request don't affect subsequent requests.
 

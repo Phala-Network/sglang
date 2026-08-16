@@ -1076,16 +1076,23 @@ class OpenAIServingChat(OpenAIServingBase):
         tool_call_stop = None
         required_parsed_natively = False
         effective_tools = self._effective_tools(request)
+        tool_dump_kwargs = (
+            {"exclude_unset": True, "by_alias": True}
+            if self.chat_encoding_spec in ("dsv4", "dsv32")
+            else {}
+        )
         if effective_tools and request.tool_choice != "none":
             request.skip_special_tokens = False
             if not isinstance(request.tool_choice, str):
                 tools = [
-                    item.model_dump()
+                    item.model_dump(**tool_dump_kwargs)
                     for item in request.tools or []
                     if item.function.name == request.tool_choice.function.name
                 ] or None
             elif request.tools:
-                tools = [item.model_dump() for item in request.tools]
+                tools = [
+                    item.model_dump(**tool_dump_kwargs) for item in request.tools
+                ]
             if self.tool_call_parser:
                 parser = FunctionCallParser(
                     effective_tools,
@@ -1236,14 +1243,10 @@ class OpenAIServingChat(OpenAIServingBase):
             if messages[0]["role"] != "system":
                 # insert an empty system prompt to help render tool system prompt
                 messages.insert(0, {"role": "system", "content": ""})
-            if request.tools:
-                # exclude_unset keeps protocol-model defaults (e.g. strict=False)
-                # out of the rendered tool schemas so the prompt matches the
-                # checkpoint's reference encoding exactly.
-                messages[0]["tools"] = [
-                    tool.model_dump(exclude_unset=True, by_alias=True)
-                    for tool in request.tools
-                ]
+            if tools:
+                # This list is already filtered by tool_choice. In particular,
+                # tool_choice="none" must not expose tools to the encoder.
+                messages[0]["tools"] = tools
 
             # Default encoding (dsv4/dsv32)
             if self.chat_encoding_spec == "dsv4":

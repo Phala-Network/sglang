@@ -414,7 +414,10 @@ def render_message(
         # Check if previous message has a task - if so, this is a task output (no thinking)
         prev_has_task = index - 1 >= 0 and messages[index - 1].get("task") is not None
 
-        if thinking_mode == "thinking" and not prev_has_task:
+        # Historical reasoning is part of the assistant message, independent of
+        # whether reasoning is enabled for the response currently being generated.
+        has_reasoning_content = reasoning_content is not None
+        if (thinking_mode == "thinking" or has_reasoning_content) and not prev_has_task:
             if not drop_thinking or index > last_user_idx:
                 thinking_part = (
                     thinking_template.format(reasoning_content=rc) + thinking_end_token
@@ -467,8 +470,15 @@ def render_message(
 
     elif messages[index].get("role") in ["user", "developer"]:
         # Normal generation: append Assistant + thinking token
+        next_assistant_has_reasoning = (
+            index + 1 < len(messages)
+            and messages[index + 1].get("role") == "assistant"
+            and messages[index + 1].get("reasoning_content") is not None
+        )
         prompt += ASSISTANT_SP_TOKEN
-        if not drop_thinking and thinking_mode == "thinking":
+        if next_assistant_has_reasoning:
+            prompt += thinking_start_token
+        elif not drop_thinking and thinking_mode == "thinking":
             prompt += thinking_start_token
         elif drop_thinking and thinking_mode == "thinking" and index >= last_user_idx:
             prompt += thinking_start_token

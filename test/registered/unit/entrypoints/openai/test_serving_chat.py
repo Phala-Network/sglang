@@ -1161,6 +1161,80 @@ class ServingChatTestCase(unittest.TestCase):
 
                 self.chat._process_messages(req, is_multimodal=False)
 
+    def test_dsv4_preserves_openrouter_reasoning_history_in_chat_mode(self):
+        """OpenRouter reasoning history survives an assistant tool round trip."""
+        from sglang.srt.entrypoints.openai import encoding_dsv4
+
+        tool = {
+            "type": "function",
+            "function": {
+                "name": "get_time",
+                "description": "Get the current time",
+                "strict": True,
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                    "required": [],
+                },
+            },
+        }
+        user_content = (
+            "Call the get_time tool. While thinking, choose a secret word. "
+            "After the tool returns, use the secret word from your thinking."
+        )
+
+        for reasoning_field, secret in (
+            ("reasoning_content", "zeppelin"),
+            ("reasoning", "jacaranda"),
+        ):
+            with self.subTest(reasoning_field=reasoning_field):
+                reasoning = (
+                    f'The secret word is "{secret}". After the get_time tool '
+                    f"returns, I must reply with exactly: SECRET: {secret}"
+                )
+                request = ChatCompletionRequest(
+                    model="x",
+                    messages=[
+                        {"role": "user", "content": user_content},
+                        {
+                            "role": "assistant",
+                            "content": None,
+                            reasoning_field: reasoning,
+                            "tool_calls": [
+                                {
+                                    "id": "call_get_time_1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "get_time",
+                                        "arguments": "{}",
+                                    },
+                                }
+                            ],
+                        },
+                        {
+                            "role": "tool",
+                            "tool_call_id": "call_get_time_1",
+                            "content": "12:00",
+                        },
+                    ],
+                    tools=[tool],
+                )
+                messages = [message.model_dump() for message in request.messages]
+                messages.insert(
+                    0,
+                    {
+                        "role": "system",
+                        "content": "",
+                        "tools": [tool],
+                    },
+                )
+
+                prompt = encoding_dsv4.encode_messages(messages, thinking_mode="chat")
+
+                self.assertIn(f"<think>{reasoning}</think>", prompt)
+                self.assertTrue(prompt.endswith("<｜Assistant｜></think>"))
+
     def test_dsv4_tool_injection_excludes_unset_defaults(self):
         """DSV4 receives only fields set in the request tool schema."""
         from sglang.srt.entrypoints.openai import encoding_dsv4

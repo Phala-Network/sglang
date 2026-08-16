@@ -161,6 +161,90 @@ class TestChatCompletionRequest(unittest.TestCase):
         )
         self.assertEqual(request2.tool_choice, "auto")
 
+    def test_chat_completion_allowed_tools_nested_supplier_shape(self):
+        tools = [
+            {
+                "type": "function",
+                "function": {"name": "get_weather", "parameters": {}},
+            },
+            {
+                "type": "function",
+                "function": {"name": "search_web", "parameters": {}},
+            },
+        ]
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "Weather, please"}],
+            tools=tools,
+            tool_choice={
+                "type": "allowed_tools",
+                "allowed_tools": {
+                    "mode": "required",
+                    "tools": [
+                        {
+                            "type": "function",
+                            "function": {"name": "get_weather"},
+                        }
+                    ],
+                },
+            },
+        )
+
+        self.assertEqual(request.tool_choice, "required")
+        self.assertEqual(
+            [tool.function.name for tool in request.tools], ["get_weather"]
+        )
+
+    def test_chat_completion_allowed_tools_flat_openai_shape(self):
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "Search, if useful"}],
+            tools=[
+                {"type": "function", "function": {"name": "search_web"}},
+                {"type": "function", "function": {"name": "get_weather"}},
+            ],
+            tool_choice={
+                "type": "allowed_tools",
+                "mode": "auto",
+                "tools": [{"type": "function", "name": "search_web"}],
+            },
+        )
+
+        self.assertEqual(request.tool_choice, "auto")
+        self.assertEqual(
+            [tool.function.name for tool in request.tools], ["search_web"]
+        )
+
+    def test_chat_completion_allowed_tools_fail_closed(self):
+        base = {
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "tools": [{"type": "function", "function": {"name": "known"}}],
+        }
+        invalid_choices = [
+            {
+                "type": "allowed_tools",
+                "mode": "required",
+                "tools": [{"type": "function", "name": "unknown"}],
+            },
+            {"type": "allowed_tools", "mode": "sometimes", "tools": []},
+            {"type": "allowed_tools", "mode": "required", "tools": []},
+            {
+                "type": "allowed_tools",
+                "mode": "required",
+                "tools": [
+                    {"type": "function", "name": "known"},
+                    {"type": "function", "name": "known"},
+                ],
+            },
+        ]
+
+        for tool_choice in invalid_choices:
+            with self.subTest(tool_choice=tool_choice), self.assertRaises(
+                ValidationError
+            ):
+                ChatCompletionRequest(**base, tool_choice=tool_choice)
+
     def test_chat_completion_sglang_extensions(self):
         """Test chat completion with SGLang extensions"""
         messages = [{"role": "user", "content": "Hello"}]

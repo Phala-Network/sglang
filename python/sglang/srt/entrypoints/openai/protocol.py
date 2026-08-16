@@ -734,6 +734,85 @@ def _has_message_level_tools(messages: Any) -> bool:
     )
 
 
+def _normalize_allowed_tools_choice(values: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize OpenAI ``allowed_tools`` into the existing tool-choice path.
+
+    OpenAI's flat shape places ``mode`` and ``tools`` beside
+    ``type=allowed_tools``.  Some supplier conformance suites use the older
+    nested ``allowed_tools={mode, tools}`` shape.  Both mean the same thing:
+    expose only the named subset to the model, then apply ordinary ``auto`` or
+    ``required`` behavior to that subset.
+
+    Keeping the normalization at the protocol boundary lets every downstream
+    chat template, grammar builder, and model-specific parser reuse its tested
+    ``auto``/``required`` implementation.  Invalid or unknown references fail
+    closed before tokenization instead of silently widening back to all tools.
+    """
+
+    choice = values.get("tool_choice")
+    if not isinstance(choice, dict) or choice.get("type") != "allowed_tools":
+        return values
+
+    nested = choice.get("allowed_tools")
+    payload = nested if nested is not None else choice
+    if not isinstance(payload, dict):
+        raise ValueError("tool_choice.allowed_tools must be an object")
+
+    mode = payload.get("mode")
+    if mode not in ("auto", "required"):
+        raise ValueError("allowed_tools.mode must be 'auto' or 'required'")
+
+    references = payload.get("tools")
+    if not isinstance(references, list) or not references:
+        raise ValueError("allowed_tools.tools must be a non-empty list")
+
+    allowed_names: List[str] = []
+    for reference in references:
+        if not isinstance(reference, dict) or reference.get("type") != "function":
+            raise ValueError("allowed_tools entries must have type='function'")
+        name = reference.get("name")
+        function = reference.get("function")
+        if name is None and isinstance(function, dict):
+            name = function.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError("allowed_tools function references require a name")
+        if name in allowed_names:
+            raise ValueError(f"duplicate allowed_tools function name: {name!r}")
+        allowed_names.append(name)
+
+    request_tools = values.get("tools")
+    if not isinstance(request_tools, list) or not request_tools:
+        raise ValueError("tool_choice='allowed_tools' requires request tools")
+
+    def request_tool_name(tool: Any) -> Optional[str]:
+        if isinstance(tool, Tool):
+            return tool.function.name
+        if not isinstance(tool, dict):
+            return None
+        function = tool.get("function")
+        if isinstance(function, dict):
+            name = function.get("name")
+            return name if isinstance(name, str) else None
+        return None
+
+    available_names = {
+        name for tool in request_tools if (name := request_tool_name(tool)) is not None
+    }
+    missing = [name for name in allowed_names if name not in available_names]
+    if missing:
+        raise ValueError(
+            "allowed_tools references unknown request tools: " + ", ".join(missing)
+        )
+
+    allowed_name_set = set(allowed_names)
+    normalized = dict(values)
+    normalized["tools"] = [
+        tool for tool in request_tools if request_tool_name(tool) in allowed_name_set
+    ]
+    normalized["tool_choice"] = mode
+    return normalized
+
+
 class ChatCompletionRequest(BaseModel):
     # Ordered by official OpenAI API documentation
     # https://platform.openai.com/docs/api-reference/chat/create
@@ -875,6 +954,7 @@ class ChatCompletionRequest(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def set_tool_choice_default(cls, values):
+        values = _normalize_allowed_tools_choice(values)
         if values.get("tool_choice") is None:
             if values.get("tools") is None and not _has_message_level_tools(
                 values.get("messages")

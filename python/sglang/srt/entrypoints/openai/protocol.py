@@ -926,6 +926,12 @@ class ChatCompletionRequest(BaseModel):
         r = values.get("reasoning")
         thinking = None
 
+        # Compatibility aliases used by OpenAI-compatible providers. Keep them
+        # below the standard reasoning fields in the precedence order, but
+        # consume them before pydantic discards unknown top-level keys.
+        top_level_enable_thinking = values.pop("enable_thinking", None)
+        thinking_config = values.pop("thinking", None)
+
         if r is not None and isinstance(r, dict):
             effort = r.get("effort")
             if effort is None:
@@ -968,6 +974,46 @@ class ChatCompletionRequest(BaseModel):
         effort = values.get("reasoning_effort")
         if effort is not None:
             thinking = effort != "none"
+
+        if thinking is None and isinstance(thinking_config, dict):
+            thinking_type = thinking_config.get("type")
+            if isinstance(thinking_type, str):
+                normalized_type = thinking_type.strip().lower()
+                if normalized_type == "disabled":
+                    thinking = False
+                elif normalized_type in {"enabled", "adaptive"}:
+                    thinking = True
+
+        if thinking is None and top_level_enable_thinking is not None:
+            if isinstance(top_level_enable_thinking, str):
+                thinking = top_level_enable_thinking.strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "y",
+                    "on",
+                }
+            else:
+                thinking = bool(top_level_enable_thinking)
+
+        if thinking is None:
+            ctk = values.get("chat_template_kwargs")
+            if isinstance(ctk, dict):
+                for alias in ("enable_thinking", "thinking"):
+                    if alias not in ctk:
+                        continue
+                    alias_value = ctk[alias]
+                    if isinstance(alias_value, str):
+                        thinking = alias_value.strip().lower() in {
+                            "1",
+                            "true",
+                            "yes",
+                            "y",
+                            "on",
+                        }
+                    else:
+                        thinking = bool(alias_value)
+                    break
 
         if thinking is not None:
             ctk = values.get("chat_template_kwargs")

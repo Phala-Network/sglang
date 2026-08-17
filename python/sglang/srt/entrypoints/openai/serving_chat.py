@@ -244,6 +244,39 @@ def neutralize_kimi_k3_image_placeholder_value(value: Any) -> Any:
     return value
 
 
+def apply_muse_structured_output_reasoning_default(
+    request: ChatCompletionRequest, reasoning_parser: Optional[str]
+) -> None:
+    """Reserve the completion budget for Muse structured output by default.
+
+    Muse-Glimmer's reasoning and final answer share ``max_tokens``. Small
+    OpenRouter JSON requests can otherwise spend the entire budget in the
+    analysis channel and return an empty final body. This is deliberately a
+    Muse-only request default: explicit reasoning controls always win, normal
+    chat keeps checkpoint-default reasoning, and other model families are not
+    changed.
+    """
+
+    if reasoning_parser != "muse" or request.response_format is None:
+        return
+    if request.response_format.type not in {"json_object", "json_schema"}:
+        return
+    if request.reasoning_effort is not None:
+        return
+    if request.include_reasoning is True:
+        return
+
+    chat_template_kwargs = dict(request.chat_template_kwargs or {})
+    if any(
+        key in chat_template_kwargs
+        for key in ("reasoning_strength", "enable_thinking", "thinking")
+    ):
+        return
+
+    chat_template_kwargs["reasoning_strength"] = "none"
+    request.chat_template_kwargs = chat_template_kwargs
+
+
 class OpenAIServingChat(OpenAIServingBase):
     """Handler for /v1/chat/completions requests"""
 
@@ -968,6 +1001,9 @@ class OpenAIServingChat(OpenAIServingBase):
         request: ChatCompletionRequest,
         raw_request: Request = None,
     ) -> tuple[GenerateReqInput, ChatCompletionRequest]:
+        apply_muse_structured_output_reasoning_default(
+            request, reasoning_parser=self.reasoning_parser
+        )
         reasoning_effort = (
             request.chat_template_kwargs.pop("reasoning_effort", None)
             if request.chat_template_kwargs

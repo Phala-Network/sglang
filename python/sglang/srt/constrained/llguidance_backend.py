@@ -41,6 +41,7 @@ from sglang.srt.constrained.torch_ops.token_filter_torch_ops import (
 )
 from sglang.srt.constrained.utils import is_legacy_structural_tag
 from sglang.srt.utils import get_int_env_var, is_hip
+from sglang.srt.utils.common import is_pin_memory_available
 
 logger = logging.getLogger(__name__)
 _LLGUIDANCE_LOG_LEVEL = get_int_env_var("LLGUIDANCE_LOG_LEVEL", 1)
@@ -97,6 +98,14 @@ def _normalize_eos_token_ids(
     if eos_token_ids is None or isinstance(eos_token_ids, int):
         return eos_token_ids
     return list(eos_token_ids)
+
+
+def _allocate_token_bitmask(batch_size: int, vocab_size: int, device) -> torch.Tensor:
+    """Allocate a host mask suitable for a genuinely asynchronous H2D copy."""
+    vocab_mask = allocate_token_bitmask(batch_size, vocab_size)
+    if is_pin_memory_available(device):
+        vocab_mask = vocab_mask.pin_memory()
+    return vocab_mask
 
 
 class GuidanceGrammar(BaseGrammarObject):
@@ -173,7 +182,9 @@ class GuidanceGrammar(BaseGrammarObject):
     def allocate_vocab_mask(
         self, vocab_size: int, batch_size: int, device
     ) -> torch.Tensor:
-        return allocate_token_bitmask(batch_size, self.llguidance_tokenizer.vocab_size)
+        return _allocate_token_bitmask(
+            batch_size, self.llguidance_tokenizer.vocab_size, device
+        )
 
     @staticmethod
     def move_vocab_mask(vocab_mask: torch.Tensor, device) -> torch.Tensor:
@@ -243,8 +254,8 @@ class GuidanceBackend(BaseGrammarBackend):
         max_rows: int,
         device,
     ) -> torch.Tensor:
-        vocab_mask = allocate_token_bitmask(
-            max_rows, self.llguidance_tokenizer.vocab_size
+        vocab_mask = _allocate_token_bitmask(
+            max_rows, self.llguidance_tokenizer.vocab_size, device
         )
         return register_vocab_mask_buffer(name, vocab_mask, max_rows)
 
@@ -255,7 +266,9 @@ class GuidanceBackend(BaseGrammarBackend):
     def allocate_vocab_mask(
         self, vocab_size: int, batch_size: int, device
     ) -> torch.Tensor:
-        return allocate_token_bitmask(batch_size, self.llguidance_tokenizer.vocab_size)
+        return _allocate_token_bitmask(
+            batch_size, self.llguidance_tokenizer.vocab_size, device
+        )
 
     @staticmethod
     def move_vocab_mask(vocab_mask: torch.Tensor, device) -> torch.Tensor:

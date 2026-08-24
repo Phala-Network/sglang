@@ -310,6 +310,33 @@ class TestChatCompletionRequest(unittest.TestCase):
         self.assertFalse(request.chat_template_kwargs.get("thinking"))
         self.assertFalse(request.chat_template_kwargs.get("enable_thinking"))
 
+    def test_chat_completion_nested_reasoning_enabled_false_disables_thinking(self):
+        messages = [{"role": "user", "content": "Hello"}]
+        for key in ("enabled", "enable"):
+            for value in (False, 0, "false"):
+                with self.subTest(key=key, value=value):
+                    request = ChatCompletionRequest(
+                        model="test-model",
+                        messages=messages,
+                        reasoning={key: value},
+                    )
+                    self.assertIsNone(request.reasoning_effort)
+                    self.assertFalse(request.chat_template_kwargs.get("thinking"))
+                    self.assertFalse(
+                        request.chat_template_kwargs.get("enable_thinking")
+                    )
+
+    def test_chat_completion_nested_effort_overrides_enabled_false(self):
+        messages = [{"role": "user", "content": "Hello"}]
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=messages,
+            reasoning={"enabled": False, "effort": "low"},
+        )
+        self.assertEqual(request.reasoning_effort, "low")
+        self.assertTrue(request.chat_template_kwargs.get("thinking"))
+        self.assertTrue(request.chat_template_kwargs.get("enable_thinking"))
+
     def test_chat_completion_extended_reasoning_effort_levels(self):
         """Extended effort levels work in both supported request forms."""
         from pydantic import ValidationError

@@ -103,6 +103,28 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_QWEN35_REASONING_EFFORT_GUIDANCE = {
+    "low": (
+        "For this low-effort request, reason briefly in one compact internal "
+        "step. Do only the essential calculation. Do not restate the problem, "
+        "justify the method, verify the result, or explore alternatives. Stop "
+        "thinking as soon as you have a candidate answer."
+    ),
+    "medium": (
+        "For this medium-effort request, reason step by step and perform one "
+        "independent verification before answering. Use enough internal detail "
+        "to catch arithmetic or logical errors, but avoid exhaustive alternatives."
+    ),
+    "xhigh": (
+        "For this xhigh-effort request, perform a thorough multi-stage analysis. "
+        "Decompose the task, check assumptions, solve it, independently verify "
+        "it with a different method, and inspect the result for contradictions "
+        "before answering. Do not skip these phases even for a simple-looking "
+        "task; use substantially more reasoning than medium when the output "
+        "budget permits."
+    ),
+}
+
 _MEDIA_CONTENT_PART_TYPES = frozenset({"image_url", "video_url", "audio_url"})
 
 
@@ -539,6 +561,31 @@ class OpenAIServingChat(OpenAIServingBase):
             message for message in messages if message.get("role") != "system"
         ]
         return [folded_system, *non_system_messages]
+
+    def _apply_qwen35_reasoning_effort_guidance(
+        self,
+        messages: List[Dict[str, Any]],
+        reasoning_effort: Optional[str],
+    ) -> List[Dict[str, Any]]:
+        """Make explicit Qwen3.5 effort tiers behaviorally distinguishable."""
+        if not self._uses_qwen35_chat_template():
+            return messages
+
+        guidance = _QWEN35_REASONING_EFFORT_GUIDANCE.get(reasoning_effort)
+        if guidance is None:
+            return messages
+
+        guided_messages = copy.deepcopy(messages)
+        if guided_messages and guided_messages[0].get("role") == "system":
+            content = guided_messages[0].get("content")
+            if not isinstance(content, str):
+                return messages
+            guided_messages[0]["content"] = (
+                f"{guidance}\n\n{content}" if content else guidance
+            )
+        else:
+            guided_messages.insert(0, {"role": "system", "content": guidance})
+        return guided_messages
 
     def _expose_qwen35_reasoning_tool_history(
         self, messages: List[Dict[str, Any]]
@@ -1392,6 +1439,9 @@ class OpenAIServingChat(OpenAIServingBase):
         )
         messages = [msg.model_dump() for msg in request.messages]
         messages = self._fold_qwen35_system_messages(messages)
+        messages = self._apply_qwen35_reasoning_effort_guidance(
+            messages, request.reasoning_effort
+        )
         self._expose_qwen35_reasoning_tool_history(messages)
         self._filter_message_tools_for_prompt(messages, request)
         for message in messages:

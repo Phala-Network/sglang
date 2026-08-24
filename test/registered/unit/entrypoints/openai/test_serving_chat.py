@@ -379,6 +379,97 @@ class ServingChatTestCase(unittest.TestCase):
             [message["role"] for message in rendered_messages].count("system"), 1
         )
 
+    def test_qwen35_reasoning_effort_guidance_is_model_and_request_scoped(self):
+        messages = [{"role": "user", "content": "What is 2+2?"}]
+
+        self.tm.model_config.hf_config.model_type = "llama"
+        self.assertIs(
+            self.chat._apply_qwen35_reasoning_effort_guidance(messages, "low"),
+            messages,
+        )
+
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        for effort in (None, "none", "minimal", "high", "max"):
+            with self.subTest(effort=effort):
+                self.assertIs(
+                    self.chat._apply_qwen35_reasoning_effort_guidance(messages, effort),
+                    messages,
+                )
+
+    def test_qwen35_reasoning_effort_guidance_inserts_one_system_message(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        messages = [{"role": "user", "content": "What is 2+2?"}]
+
+        expected_markers = {
+            "low": "reason briefly in one compact internal step",
+            "medium": "perform one independent verification",
+            "xhigh": "perform a thorough multi-stage analysis",
+        }
+        for effort, marker in expected_markers.items():
+            with self.subTest(effort=effort):
+                guided = self.chat._apply_qwen35_reasoning_effort_guidance(
+                    messages, effort
+                )
+                self.assertEqual(
+                    [message["role"] for message in guided], ["system", "user"]
+                )
+                self.assertIn(marker, guided[0]["content"])
+                self.assertEqual(guided[1], messages[0])
+
+        self.assertEqual(messages, [{"role": "user", "content": "What is 2+2?"}])
+
+    def test_qwen35_reasoning_effort_guidance_preserves_user_system_prompt(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        messages = [
+            {"role": "system", "content": "Always answer in JSON."},
+            {"role": "user", "content": "What is 2+2?"},
+        ]
+
+        guided = self.chat._apply_qwen35_reasoning_effort_guidance(messages, "medium")
+
+        self.assertEqual([message["role"] for message in guided], ["system", "user"])
+        self.assertTrue(
+            guided[0]["content"].startswith("For this medium-effort request")
+        )
+        self.assertTrue(guided[0]["content"].endswith("Always answer in JSON."))
+        self.assertEqual(messages[0]["content"], "Always answer in JSON.")
+
+    def test_qwen35_reasoning_effort_guidance_fails_closed_for_parts_system(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        messages = [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": "Always answer in JSON."}],
+            },
+            {"role": "user", "content": "What is 2+2?"},
+        ]
+
+        self.assertIs(
+            self.chat._apply_qwen35_reasoning_effort_guidance(messages, "low"),
+            messages,
+        )
+
+    def test_qwen35_nested_reasoning_effort_guidance_reaches_template(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        self.template_manager.chat_template_name = None
+        self.template_manager.jinja_template_content_format = "string"
+        self.tm.tokenizer.apply_chat_template.return_value = "rendered"
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "What is 2+2?"}],
+            reasoning={"effort": "low"},
+        )
+
+        self.chat._process_messages(request, is_multimodal=False)
+
+        self.assertEqual(request.reasoning_effort, "low")
+        rendered_messages = self.tm.tokenizer.apply_chat_template.call_args.args[0]
+        self.assertEqual(rendered_messages[0]["role"], "system")
+        self.assertIn(
+            "reason briefly in one compact internal step",
+            rendered_messages[0]["content"],
+        )
+
     def test_qwen35_exposes_reasoning_for_empty_tool_history_turns(self):
         self.tm.model_config.hf_config.model_type = "qwen3_5"
         messages = [

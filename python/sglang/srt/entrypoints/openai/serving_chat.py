@@ -540,6 +540,26 @@ class OpenAIServingChat(OpenAIServingBase):
         ]
         return [folded_system, *non_system_messages]
 
+    def _expose_qwen35_reasoning_tool_history(
+        self, messages: List[Dict[str, Any]]
+    ) -> None:
+        """Keep client-provided reasoning visible across Qwen3.5 tool turns."""
+        if not self._uses_qwen35_chat_template():
+            return
+
+        for message in messages:
+            reasoning_content = message.get("reasoning_content")
+            if (
+                message.get("role") != "assistant"
+                or not message.get("tool_calls")
+                or not isinstance(reasoning_content, str)
+                or not reasoning_content.strip()
+                or message.get("content") not in (None, "")
+            ):
+                continue
+            message["content"] = f"Prior reasoning:\n{reasoning_content.strip()}"
+            message["reasoning_content"] = None
+
     def _prepare_kimi_k3_messages(
         self,
         messages: List[Dict[str, Any]],
@@ -1372,6 +1392,7 @@ class OpenAIServingChat(OpenAIServingBase):
         )
         messages = [msg.model_dump() for msg in request.messages]
         messages = self._fold_qwen35_system_messages(messages)
+        self._expose_qwen35_reasoning_tool_history(messages)
         self._filter_message_tools_for_prompt(messages, request)
         for message in messages:
             normalize_assistant_tool_call_arguments(

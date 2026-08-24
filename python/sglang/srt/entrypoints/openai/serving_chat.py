@@ -1256,6 +1256,11 @@ class OpenAIServingChat(OpenAIServingBase):
             if processed_messages.require_reasoning
             else None
         )
+        if self._uses_qwen35_chat_template() and request.reasoning_effort is None:
+            sampling_params = dict(sampling_params)
+            custom_params = dict(sampling_params.get("custom_params") or {})
+            custom_params["disable_strict_thinking_grammar"] = True
+            sampling_params["custom_params"] = custom_params
 
         # Handle single vs multiple requests
         if request.input_ids is not None:

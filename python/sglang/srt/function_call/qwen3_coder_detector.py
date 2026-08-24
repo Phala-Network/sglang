@@ -1,22 +1,59 @@
 import json
 import logging
 import re
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional, Union
 
-from sglang.srt.entrypoints.openai.protocol import Tool
-from sglang.srt.function_call.base_format_detector import BaseFormatDetector
+from sglang.srt.entrypoints.openai.protocol import Tool, ToolChoice
+from sglang.srt.function_call.base_format_detector import (
+    BaseFormatDetector,
+    StructuralTag,
+)
 from sglang.srt.function_call.core_types import (
     StreamingParseResult,
     ToolCallItem,
     _GetInfoFunc,
 )
 from sglang.srt.function_call.utils import (
+    coerce_argument_to_schema,
+    get_argument_schema,
     get_schema_properties,
     infer_type_from_json_schema,
     safe_literal_eval,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _align_required_tool_call_repetition(
+    structural_tag: StructuralTag, parallel_tool_calls: bool
+) -> StructuralTag:
+    """Match Qwen's trained separator and enforce the request's call limit."""
+
+    value = structural_tag.model_dump()
+    repetitions = []
+
+    def visit(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "tags_with_separator":
+                repetitions.append(node)
+            for child in node.values():
+                visit(child)
+        elif isinstance(node, list):
+            for child in node:
+                visit(child)
+
+    visit(value)
+    if len(repetitions) != 1:
+        raise ValueError(
+            "Qwen3 Coder required structural tag must contain one repeated-tag format"
+        )
+
+    # The official Qwen3.8 chat template places one newline between adjacent
+    # </tool_call> and <tool_call> blocks. XGrammar 0.2.1 uses an empty
+    # separator, which forces the model to stop after its first call.
+    repetitions[0]["separator"] = "\n"
+    repetitions[0]["stop_after_first"] = not parallel_tool_calls
+    return StructuralTag.model_validate(value)
 
 
 class Qwen3CoderDetector(BaseFormatDetector):
@@ -99,9 +136,22 @@ class Qwen3CoderDetector(BaseFormatDetector):
         return str(inferred_type).strip().lower()
 
     def _convert_param_value(
-        self, param_value: str, param_name: str, param_config: dict, func_name: str
+        self,
+        param_value: str,
+        param_name: str,
+        param_config: dict,
+        func_name: str,
+        tools: Optional[List[Tool]] = None,
     ) -> Any:
         """Convert parameter value based on its type in the schema."""
+        argument_schema = get_argument_schema(func_name, param_name, tools or [])
+        if argument_schema is not None:
+            converted, schema_valid = coerce_argument_to_schema(
+                param_value, argument_schema
+            )
+            if schema_valid:
+                return converted
+
         # Handle null value for any type
         if param_value.lower() == "null":
             return None
@@ -219,7 +269,7 @@ class Qwen3CoderDetector(BaseFormatDetector):
                             p_val = p_val[:-1]
 
                         parsed_params[p_name] = self._convert_param_value(
-                            p_val, p_name, param_config, func_name
+                            p_val, p_name, param_config, func_name, tools
                         )
 
                     calls.append(
@@ -359,7 +409,11 @@ class Qwen3CoderDetector(BaseFormatDetector):
                             self.current_func_name, tools
                         )
                         converted_val = self._convert_param_value(
-                            raw_value, param_name, param_config, self.current_func_name
+                            raw_value,
+                            param_name,
+                            param_config,
+                            self.current_func_name,
+                            tools,
                         )
 
                         # Construct JSON fragment: "key": value
@@ -475,6 +529,25 @@ class Qwen3CoderDetector(BaseFormatDetector):
 
     def supports_structural_tag(self) -> bool:
         return True
+
+    def get_structural_tag(
+        self,
+        tools: Union[List[Tool], None] = None,
+        tool_choice: Union[ToolChoice, Literal["auto", "required"]] = "auto",
+        thinking_mode: bool = False,
+        parallel_tool_calls: bool = True,
+    ) -> Optional[StructuralTag]:
+        structural_tag = super().get_structural_tag(
+            tools=tools,
+            tool_choice=tool_choice,
+            thinking_mode=thinking_mode,
+            parallel_tool_calls=parallel_tool_calls,
+        )
+        if structural_tag is None or tool_choice != "required":
+            return structural_tag
+        return _align_required_tool_call_repetition(
+            structural_tag, parallel_tool_calls=parallel_tool_calls
+        )
 
     def structure_info(self) -> _GetInfoFunc:
         raise NotImplementedError

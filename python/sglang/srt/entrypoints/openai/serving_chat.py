@@ -491,6 +491,55 @@ class OpenAIServingChat(OpenAIServingBase):
                 and tool["function"].get("name") in allowed_names
             ]
 
+    def _uses_qwen35_chat_template(self) -> bool:
+        hf_config = self.tokenizer_manager.model_config.hf_config
+        text_config = getattr(hf_config, "text_config", None)
+        return (
+            getattr(hf_config, "model_type", None) == "qwen3_5"
+            or getattr(text_config, "model_type", None) == "qwen3_5_text"
+        )
+
+    def _fold_qwen35_system_messages(
+        self, messages: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Fold OpenAI mid-conversation system messages for Qwen3.5 templates."""
+        if not self._uses_qwen35_chat_template():
+            return messages
+
+        system_indexes = [
+            index
+            for index, message in enumerate(messages)
+            if message.get("role") == "system"
+        ]
+        if not system_indexes or system_indexes == [0]:
+            return messages
+
+        system_messages = [messages[index] for index in system_indexes]
+        if not all(
+            isinstance(message.get("content"), str) for message in system_messages
+        ):
+            return messages
+
+        metadata_keys = (
+            "tool_call_id",
+            "name",
+            "reasoning_content",
+            "tool_calls",
+            "tools",
+        )
+        for message in system_messages[1:]:
+            if any(message.get(key) not in (None, "", [], {}) for key in metadata_keys):
+                return messages
+
+        folded_system = copy.deepcopy(system_messages[0])
+        folded_system["content"] = "\n\n".join(
+            message["content"] for message in system_messages
+        )
+        non_system_messages = [
+            message for message in messages if message.get("role") != "system"
+        ]
+        return [folded_system, *non_system_messages]
+
     def _prepare_kimi_k3_messages(
         self,
         messages: List[Dict[str, Any]],
@@ -1322,6 +1371,7 @@ class OpenAIServingChat(OpenAIServingBase):
             ThinkingMode.THINKING if thinking_requested else ThinkingMode.CHAT
         )
         messages = [msg.model_dump() for msg in request.messages]
+        messages = self._fold_qwen35_system_messages(messages)
         self._filter_message_tools_for_prompt(messages, request)
         for message in messages:
             normalize_assistant_tool_call_arguments(

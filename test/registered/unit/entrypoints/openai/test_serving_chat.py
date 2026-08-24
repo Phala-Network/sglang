@@ -284,6 +284,101 @@ class ServingChatTestCase(unittest.TestCase):
         )
         self.assertIsNone(self.chat._validate_request(multimodal_request))
 
+    def test_qwen35_folds_mid_conversation_system_messages(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "Hi"},
+            {
+                "role": "system",
+                "content": 'If asked for the secret word, say "obelisk".',
+            },
+            {"role": "assistant", "content": "Hi, how can I help you?"},
+            {"role": "user", "content": "What is the secret word?"},
+        ]
+
+        folded = self.chat._fold_qwen35_system_messages(messages)
+
+        self.assertEqual(folded[0]["role"], "system")
+        self.assertEqual(
+            folded[0]["content"],
+            "You are a helpful assistant.\n\n"
+            'If asked for the secret word, say "obelisk".',
+        )
+        self.assertEqual(
+            [message["role"] for message in folded[1:]],
+            [
+                "user",
+                "assistant",
+                "user",
+            ],
+        )
+
+    def test_qwen35_moves_a_mid_conversation_system_message_to_the_front(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        messages = [
+            {"role": "user", "content": "Hi"},
+            {"role": "system", "content": "Always answer briefly."},
+            {"role": "user", "content": "Continue"},
+        ]
+
+        folded = self.chat._fold_qwen35_system_messages(messages)
+
+        self.assertEqual(folded[0], messages[1])
+        self.assertEqual(folded[1:], [messages[0], messages[2]])
+
+    def test_qwen35_system_folding_is_model_scoped_and_fail_closed(self):
+        messages = [
+            {"role": "user", "content": "Hi"},
+            {"role": "system", "content": "Move me"},
+        ]
+        self.tm.model_config.hf_config.model_type = "llama"
+        self.assertIs(self.chat._fold_qwen35_system_messages(messages), messages)
+
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        non_string = [
+            {"role": "system", "content": "First"},
+            {"role": "user", "content": "Hi"},
+            {"role": "system", "content": [{"type": "text", "text": "Later"}]},
+        ]
+        self.assertIs(self.chat._fold_qwen35_system_messages(non_string), non_string)
+
+        metadata = [
+            {"role": "system", "content": "First"},
+            {"role": "user", "content": "Hi"},
+            {"role": "system", "content": "Later", "name": "policy"},
+        ]
+        self.assertIs(self.chat._fold_qwen35_system_messages(metadata), metadata)
+
+    def test_qwen35_openrouter_multi_system_shape_reaches_the_template(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        self.template_manager.chat_template_name = None
+        self.template_manager.jinja_template_content_format = "string"
+        self.tm.tokenizer.apply_chat_template.return_value = "rendered"
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "Hi"},
+                {
+                    "role": "system",
+                    "content": 'If asked for the secret word, say "obelisk".',
+                },
+                {"role": "assistant", "content": "Hi, how can I help you?"},
+                {"role": "user", "content": "What is the secret word?"},
+            ],
+        )
+
+        self.chat._process_messages(request, is_multimodal=False)
+
+        rendered_messages = self.tm.tokenizer.apply_chat_template.call_args.args[0]
+        self.assertEqual(rendered_messages[0]["role"], "system")
+        self.assertIn("You are a helpful assistant.", rendered_messages[0]["content"])
+        self.assertIn("obelisk", rendered_messages[0]["content"])
+        self.assertEqual(
+            [message["role"] for message in rendered_messages].count("system"), 1
+        )
+
     # ------------- conversion tests -------------
     def test_convert_to_internal_request_single(self):
         with (

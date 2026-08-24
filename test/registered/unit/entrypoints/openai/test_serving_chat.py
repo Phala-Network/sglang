@@ -429,6 +429,51 @@ class ServingChatTestCase(unittest.TestCase):
         self.assertTrue(guided[0]["content"].endswith("Always answer in JSON."))
         self.assertEqual(messages[0]["content"], "Always answer in JSON.")
 
+    def test_qwen35_reasoning_effort_guidance_uses_completed_tool_result(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        messages = [
+            {"role": "system", "content": "Answer in one sentence."},
+            {"role": "user", "content": "What is the weather in Boston?"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_weather",
+                        "type": "function",
+                        "function": {
+                            "name": "get_current_weather",
+                            "arguments": '{"location":"Boston, MA"}',
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_weather",
+                "content": '{"temperature":72,"condition":"sunny"}',
+            },
+        ]
+
+        guided = self.chat._apply_qwen35_reasoning_effort_guidance(messages, "xhigh")
+
+        self.assertIn(
+            "Do not repeat the completed tool call",
+            guided[0]["content"],
+        )
+        self.assertTrue(guided[0]["content"].endswith("Answer in one sentence."))
+        self.assertEqual(guided[1:], messages[1:])
+        self.assertNotIn("Do not repeat", messages[0]["content"])
+
+    def test_qwen35_reasoning_effort_guidance_does_not_change_initial_tool_turn(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        messages = [{"role": "user", "content": "What is the weather in Boston?"}]
+
+        guided = self.chat._apply_qwen35_reasoning_effort_guidance(messages, "xhigh")
+
+        self.assertNotIn("completed tool result", guided[0]["content"])
+        self.assertEqual(guided[1], messages[0])
+
     def test_qwen35_reasoning_effort_guidance_fails_closed_for_parts_system(self):
         self.tm.model_config.hf_config.model_type = "qwen3_5"
         messages = [

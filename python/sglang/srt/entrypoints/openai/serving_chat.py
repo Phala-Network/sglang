@@ -121,6 +121,15 @@ _QWEN35_REASONING_EFFORT_GUIDANCE = {
     ),
 }
 
+_QWEN35_COMPLETED_TOOL_RESULT_GUIDANCE = (
+    "A completed tool result is already available. Use that result as the "
+    "authoritative source and produce the requested final answer. Do not "
+    "repeat the completed tool call merely to satisfy the verification "
+    "instruction; verify the existing result by checking its internal "
+    "consistency. Call another tool only if the user requested information "
+    "that the available result does not contain."
+)
+
 _QWEN35_REASONING_EFFORT_TOKEN_RANGES = {
     "low": (32, 64),
     "medium": (128, 256),
@@ -546,6 +555,13 @@ class OpenAIServingChat(OpenAIServingBase):
         guidance = _QWEN35_REASONING_EFFORT_GUIDANCE.get(reasoning_effort)
         if guidance is None:
             return messages
+
+        if (
+            reasoning_effort in ("medium", "xhigh")
+            and messages
+            and messages[-1].get("role") == "tool"
+        ):
+            guidance = f"{guidance}\n\n{_QWEN35_COMPLETED_TOOL_RESULT_GUIDANCE}"
 
         guided_messages = copy.deepcopy(messages)
         if guided_messages and guided_messages[0].get("role") == "system":

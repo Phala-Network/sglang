@@ -37,6 +37,9 @@ from sglang.srt.constrained.base_grammar_backend import (
     InvalidGrammarObject,
 )
 from sglang.srt.constrained.utils import is_legacy_structural_tag
+from sglang.srt.constrained.xgrammar_schema import (
+    has_xgrammar_unsupported_json_features,
+)
 from sglang.srt.utils import is_hip
 from sglang.srt.utils.common import is_pin_memory_available
 
@@ -340,6 +343,14 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
                 # Note: This builtin JSON grammar includes *all* valid JSON (including, for example, arrays at the root)
                 ctx = self.grammar_compiler.compile_builtin_json_grammar()
             else:
+                schema = json.loads(key_string)
+                if isinstance(schema, dict) and has_xgrammar_unsupported_json_features(
+                    schema
+                ):
+                    raise RuntimeError(
+                        "JSON schema uses features unsupported by xgrammar; "
+                        "the constraint would otherwise be silently ignored"
+                    )
                 ctx = self.grammar_compiler.compile_json_schema(
                     schema=key_string, any_whitespace=self.any_whitespace
                 )

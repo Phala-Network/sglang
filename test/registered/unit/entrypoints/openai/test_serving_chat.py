@@ -525,6 +525,36 @@ class ServingChatTestCase(unittest.TestCase):
 
         self.assertEqual(adapted.min_thinking_tokens, 128)
         self.assertEqual(adapted.max_thinking_tokens, 256)
+        self.assertNotIn(
+            "disable_strict_thinking_grammar",
+            adapted.sampling_params.get("custom_params") or {},
+        )
+
+    def test_qwen35_unbounded_request_skips_strict_thinking_grammar(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        self.tm.server_args.enable_strict_thinking = True
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "What is 2+2?"}],
+            max_tokens=1024,
+        )
+        processed = MessageProcessingResult(
+            prompt="",
+            prompt_ids=[1, 2, 3],
+            image_data=None,
+            audio_data=None,
+            video_data=None,
+            modalities=[],
+            stop=[],
+            require_reasoning=True,
+        )
+
+        with patch.object(self.chat, "_process_messages", return_value=processed):
+            adapted, _ = self.chat._convert_to_internal_request(request)
+
+        self.assertTrue(
+            adapted.sampling_params["custom_params"]["disable_strict_thinking_grammar"]
+        )
 
     def test_qwen35_nested_reasoning_effort_guidance_reaches_template(self):
         self.tm.model_config.hf_config.model_type = "qwen3_5"

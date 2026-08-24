@@ -320,6 +320,17 @@ class TestProcessReqWithGrammar(unittest.TestCase):
         self.assertEqual(req.grammar.min_think_tokens, 2)
         self.assertEqual(req.grammar.max_think_tokens, 3)
 
+    def test_strict_reasoning_grammar_can_be_disabled_per_request(self):
+        mgr = self._make_mgr()
+        mgr._enable_strict_thinking = True
+        req = _make_req(custom_params={"disable_strict_thinking_grammar": True})
+        req.require_reasoning = True
+
+        mgr.process_req_with_grammar(req)
+
+        self.assertIsNone(req.grammar)
+        mgr.grammar_backend.init_strict_reasoning_grammar.assert_not_called()
+
 
 class TestAbortRequests(unittest.TestCase):
     """Test abort_requests handling."""

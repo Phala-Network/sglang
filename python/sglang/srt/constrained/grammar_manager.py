@@ -133,6 +133,13 @@ class GrammarManager:
             if thinking_budget is not None:
                 req.grammar.max_think_tokens = thinking_budget
 
+    def _strict_thinking_grammar_disabled(self, req: Req) -> bool:
+        custom_params = req.sampling_params.custom_params
+        return (
+            isinstance(custom_params, dict)
+            and custom_params.get("disable_strict_thinking_grammar") is True
+        )
+
     def process_req_with_grammar(self, req: Req) -> bool:
         # Init grammar cache for this request
         add_to_grammar_queue = False
@@ -173,7 +180,10 @@ class GrammarManager:
                         req.set_finish_with_abort(error_msg)
                     else:
                         self._apply_request_reasoning_budget(req)
-        elif self._enable_strict_thinking:
+        elif (
+            self._enable_strict_thinking
+            and not self._strict_thinking_grammar_disabled(req)
+        ):
             grammar_obj = self.grammar_backend.init_strict_reasoning_grammar(
                 req.require_reasoning
             )

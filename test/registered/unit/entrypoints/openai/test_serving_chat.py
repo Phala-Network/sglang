@@ -444,6 +444,83 @@ class ServingChatTestCase(unittest.TestCase):
             messages,
         )
 
+    def test_qwen35_reasoning_effort_token_ranges_are_strict_and_scaled(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        self.tm.server_args.enable_strict_thinking = True
+
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("low", 1024),
+            (32, 64),
+        )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("medium", 1024),
+            (128, 256),
+        )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("xhigh", 1024),
+            (384, 768),
+        )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("low", 128),
+            (4, 8),
+        )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("medium", 128),
+            (16, 32),
+        )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("xhigh", 128),
+            (48, 96),
+        )
+        self.assertEqual(
+            [
+                self.chat._qwen35_reasoning_effort_token_range(effort, 4)
+                for effort in ("low", "medium", "xhigh")
+            ],
+            [(1, 1), (2, 2), (3, 3)],
+        )
+
+    def test_qwen35_reasoning_effort_token_ranges_are_narrowly_scoped(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        self.tm.server_args.enable_strict_thinking = False
+        self.assertIsNone(self.chat._qwen35_reasoning_effort_token_range("low", 1024))
+
+        self.tm.server_args.enable_strict_thinking = True
+        for effort in (None, "none", "minimal", "high", "max"):
+            with self.subTest(effort=effort):
+                self.assertIsNone(
+                    self.chat._qwen35_reasoning_effort_token_range(effort, 1024)
+                )
+
+        self.tm.model_config.hf_config.model_type = "llama"
+        self.assertIsNone(self.chat._qwen35_reasoning_effort_token_range("low", 1024))
+
+    def test_qwen35_reasoning_effort_bounds_reach_internal_request(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        self.tm.server_args.enable_strict_thinking = True
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "What is 2+2?"}],
+            reasoning_effort="medium",
+            max_tokens=1024,
+        )
+        processed = MessageProcessingResult(
+            prompt="",
+            prompt_ids=[1, 2, 3],
+            image_data=None,
+            audio_data=None,
+            video_data=None,
+            modalities=[],
+            stop=[],
+            require_reasoning=True,
+        )
+
+        with patch.object(self.chat, "_process_messages", return_value=processed):
+            adapted, _ = self.chat._convert_to_internal_request(request)
+
+        self.assertEqual(adapted.min_thinking_tokens, 128)
+        self.assertEqual(adapted.max_thinking_tokens, 256)
+
     def test_qwen35_nested_reasoning_effort_guidance_reaches_template(self):
         self.tm.model_config.hf_config.model_type = "qwen3_5"
         self.template_manager.chat_template_name = None

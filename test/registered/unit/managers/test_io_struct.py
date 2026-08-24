@@ -311,6 +311,7 @@ class TestGenerateReqInputNormalization(CustomTestCase):
             rid="single",
             sampling_params={"n": 3},
             require_reasoning=True,
+            min_thinking_tokens=64,
             max_thinking_tokens=128,
         )
         single.normalize_batch_and_arguments()
@@ -321,6 +322,10 @@ class TestGenerateReqInputNormalization(CustomTestCase):
             ["single_0", "single_1", "single_2"],
         )
         self.assertTrue(all(single[i].require_reasoning for i in range(3)))
+        self.assertEqual(
+            [single[i].min_thinking_tokens for i in range(3)],
+            [64] * 3,
+        )
         self.assertEqual(
             [single[i].max_thinking_tokens for i in range(3)],
             [128] * 3,

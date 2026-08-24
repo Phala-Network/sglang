@@ -114,19 +114,24 @@ class GrammarManager:
                     req.grammar.cancel()
                 req.set_finish_with_abort("Aborted by AbortReq.")
 
-    def _get_request_thinking_budget(self, req: Req) -> int | None:
+    def _get_request_thinking_bounds(self, req: Req) -> tuple[int | None, int | None]:
         custom_params = req.sampling_params.custom_params
         if not isinstance(custom_params, dict):
-            return None
+            return None, None
+        min_thinking_budget = custom_params.get("min_thinking_budget")
         thinking_budget = custom_params.get("thinking_budget")
-        return thinking_budget if isinstance(thinking_budget, int) else None
+        return (
+            min_thinking_budget if isinstance(min_thinking_budget, int) else None,
+            thinking_budget if isinstance(thinking_budget, int) else None,
+        )
 
     def _apply_request_reasoning_budget(self, req: Req) -> None:
-        thinking_budget = self._get_request_thinking_budget(req)
-        if thinking_budget is None:
-            return
+        min_thinking_budget, thinking_budget = self._get_request_thinking_bounds(req)
         if isinstance(req.grammar, ReasonerGrammarObject):
-            req.grammar.max_think_tokens = thinking_budget
+            if min_thinking_budget is not None:
+                req.grammar.min_think_tokens = min_thinking_budget
+            if thinking_budget is not None:
+                req.grammar.max_think_tokens = thinking_budget
 
     def process_req_with_grammar(self, req: Req) -> bool:
         # Init grammar cache for this request

@@ -121,6 +121,14 @@ _QWEN35_REASONING_EFFORT_GUIDANCE = {
     ),
 }
 
+_QWEN35_REASONING_EFFORT_TOKEN_RANGES = {
+    "low": (32, 64),
+    "medium": (128, 256),
+    "xhigh": (384, 768),
+}
+_QWEN35_REASONING_EFFORT_FULL_BUDGET = 768
+_QWEN35_REASONING_ANSWER_RESERVE_CAP = 256
+
 _MEDIA_CONTENT_PART_TYPES = frozenset({"image_url", "video_url", "audio_url"})
 
 
@@ -550,6 +558,56 @@ class OpenAIServingChat(OpenAIServingBase):
         else:
             guided_messages.insert(0, {"role": "system", "content": guidance})
         return guided_messages
+
+    def _qwen35_reasoning_effort_token_range(
+        self,
+        reasoning_effort: Optional[str],
+        max_new_tokens: Optional[int],
+    ) -> Optional[tuple[int, int]]:
+        """Return strict, non-overlapping reasoning bounds for Qwen3.5."""
+        if (
+            not self._uses_qwen35_chat_template()
+            or reasoning_effort not in _QWEN35_REASONING_EFFORT_TOKEN_RANGES
+            or getattr(
+                self.tokenizer_manager.server_args,
+                "enable_strict_thinking",
+                False,
+            )
+            is not True
+        ):
+            return None
+
+        if max_new_tokens is None:
+            available_tokens = _QWEN35_REASONING_EFFORT_FULL_BUDGET
+        else:
+            if type(max_new_tokens) is not int or max_new_tokens <= 1:
+                return None
+            answer_reserve = min(
+                max(1, max_new_tokens // 4),
+                _QWEN35_REASONING_ANSWER_RESERVE_CAP,
+            )
+            available_tokens = max_new_tokens - answer_reserve
+
+        # Three disjoint integer intervals require at least three reasoning tokens.
+        if available_tokens < 3:
+            return None
+
+        scale = min(
+            1.0,
+            available_tokens / _QWEN35_REASONING_EFFORT_FULL_BUDGET,
+        )
+        low_min = min(max(1, int(32 * scale)), available_tokens - 2)
+        low_max = min(max(low_min, int(64 * scale)), available_tokens - 2)
+        medium_min = min(max(low_max + 1, int(128 * scale)), available_tokens - 1)
+        medium_max = min(max(medium_min, int(256 * scale)), available_tokens - 1)
+        xhigh_min = min(max(medium_max + 1, int(384 * scale)), available_tokens)
+        xhigh_max = min(max(xhigh_min, int(768 * scale)), available_tokens)
+        ranges = {
+            "low": (low_min, low_max),
+            "medium": (medium_min, medium_max),
+            "xhigh": (xhigh_min, xhigh_max),
+        }
+        return ranges[reasoning_effort]
 
     def _expose_qwen35_reasoning_tool_history(
         self, messages: List[Dict[str, Any]]
@@ -1190,6 +1248,14 @@ class OpenAIServingChat(OpenAIServingBase):
             tool_call_constraint=processed_messages.tool_call_constraint,
             renderer_handles_response_format=self.chat_encoding_spec == "kimi_k3",
         )
+        reasoning_token_range = (
+            self._qwen35_reasoning_effort_token_range(
+                request.reasoning_effort,
+                sampling_params.get("max_new_tokens"),
+            )
+            if processed_messages.require_reasoning
+            else None
+        )
 
         # Handle single vs multiple requests
         if request.input_ids is not None:
@@ -1256,6 +1322,12 @@ class OpenAIServingChat(OpenAIServingBase):
             extra_key=request.extra_key,
             cache_salt=request.cache_salt,
             require_reasoning=processed_messages.require_reasoning,
+            min_thinking_tokens=(
+                reasoning_token_range[0] if reasoning_token_range is not None else None
+            ),
+            max_thinking_tokens=(
+                reasoning_token_range[1] if reasoning_token_range is not None else None
+            ),
             priority=request.priority,
             routing_key=self.extract_routing_key(raw_request),
             custom_labels=custom_labels,

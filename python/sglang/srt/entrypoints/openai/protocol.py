@@ -788,6 +788,42 @@ class ToolChoice(BaseModel):
     type: Literal["function"] = Field(default="function", examples=["function"])
 
 
+class AllowedToolChoiceFunction(BaseModel):
+    """A function reference inside an allowed-tools choice."""
+
+    name: str = Field(min_length=1)
+
+
+class AllowedToolChoiceTool(BaseModel):
+    """A typed tool reference inside an allowed-tools choice."""
+
+    type: Literal["function"] = Field(default="function", examples=["function"])
+    function: AllowedToolChoiceFunction
+
+
+class AllowedToolsConfig(BaseModel):
+    """The mode and subset selected by an allowed-tools choice."""
+
+    mode: Literal["auto", "required"]
+    tools: List[AllowedToolChoiceTool] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_unique_tool_names(self) -> AllowedToolsConfig:
+        names = [tool.function.name for tool in self.tools]
+        if len(names) != len(set(names)):
+            raise ValueError("allowed_tools contains duplicate function names")
+        return self
+
+
+class AllowedToolsChoice(BaseModel):
+    """Restrict auto or required tool choice to a named subset."""
+
+    type: Literal["allowed_tools"] = Field(
+        default="allowed_tools", examples=["allowed_tools"]
+    )
+    allowed_tools: AllowedToolsConfig
+
+
 # OpenAI-spec string tiers for reasoning effort (current Responses/Chat API):
 # none/minimal/low/medium/high/xhigh/max. Used as-is by /v1/responses.
 ReasoningEffortTier = Literal[
@@ -853,7 +889,11 @@ class ChatCompletionRequest(BaseModel):
     top_p: Optional[float] = None
     user: Optional[str] = None
     tools: Optional[List[Tool]] = Field(default=None, examples=[None])
-    tool_choice: Union[ToolChoice, Literal["auto", "required", "none"]] = Field(
+    tool_choice: Union[
+        ToolChoice,
+        AllowedToolsChoice,
+        Literal["auto", "required", "none"],
+    ] = Field(
         default="auto", examples=["none"]
     )  # noqa
     parallel_tool_calls: bool = True
@@ -971,6 +1011,14 @@ class ChatCompletionRequest(BaseModel):
             else:
                 values["tool_choice"] = "auto"
         return values
+
+    def effective_tool_choice(
+        self,
+    ) -> Union[ToolChoice, Literal["auto", "required", "none"]]:
+        """Reduce allowed-tools to the mode understood by format detectors."""
+        if isinstance(self.tool_choice, AllowedToolsChoice):
+            return self.tool_choice.allowed_tools.mode
+        return self.tool_choice
 
     @field_validator("reasoning_effort", mode="before")
     @classmethod
@@ -1147,11 +1195,13 @@ class ChatCompletionRequest(BaseModel):
         )
 
         if tool_call_constraint and has_existing_constraints:
-            if self.tool_choice == "required" or isinstance(
-                self.tool_choice, ToolChoice
+            effective_tool_choice = self.effective_tool_choice()
+            if effective_tool_choice == "required" or isinstance(
+                effective_tool_choice, ToolChoice
             ):
                 raise ValueError(
-                    "tool_choice 'required' or a named tool cannot be combined with "
+                    "tool_choice 'required', allowed_tools mode 'required', or a "
+                    "named tool cannot be combined with "
                     "response_format, regex, or ebnf: the tool-call constraint and the "
                     "output constraint cannot both be honored."
                 )
@@ -1449,9 +1499,13 @@ class TokenizeRequest(BaseModel):
     prompt: Optional[Union[str, List[str]]] = None
     messages: Optional[List[ChatCompletionMessageParam]] = None
     tools: Optional[List[Tool]] = Field(default=None, examples=[None])
-    tool_choice: Optional[Union[ToolChoice, Literal["auto", "required", "none"]]] = (
-        Field(default=None, examples=["auto"])
-    )
+    tool_choice: Optional[
+        Union[
+            ToolChoice,
+            AllowedToolsChoice,
+            Literal["auto", "required", "none"],
+        ]
+    ] = Field(default=None, examples=["auto"])
     reasoning_effort: ReasoningEffortType = None
     continue_final_message: bool = False
     chat_template_kwargs: Optional[Dict] = None

@@ -447,6 +447,7 @@ def _make_generate_obj(rid, is_single):
     obj.received_time = 0.0
     obj.external_trace_header = None
     obj.bootstrap_room = None
+    obj.min_thinking_tokens = None
     obj.max_thinking_tokens = None
     obj.normalize_batch_and_arguments = Mock()
     if not is_single:
@@ -601,6 +602,7 @@ class TestGenerateRequestCleanupOnDispatchFailure(CustomTestCase):
             text="hello",
             rid="thinking-budget",
             sampling_params={},
+            min_thinking_tokens=16,
             max_thinking_tokens=32,
         )
 
@@ -608,6 +610,25 @@ class TestGenerateRequestCleanupOnDispatchFailure(CustomTestCase):
             await tm.generate_request(obj).__anext__()
 
         with self.assertRaisesRegex(ValueError, "--enable-strict-thinking"):
+            asyncio.run(drive())
+
+        self.assertFalse(tm.rid_to_state)
+
+    def test_invalid_thinking_bounds_are_rejected_before_dispatch(self):
+        tm = _make_tm_for_generate(self)
+        tm.server_args.enable_strict_thinking = True
+        obj = GenerateReqInput(
+            text="hello",
+            rid="invalid-thinking-bounds",
+            sampling_params={},
+            min_thinking_tokens=33,
+            max_thinking_tokens=32,
+        )
+
+        async def drive():
+            await tm.generate_request(obj).__anext__()
+
+        with self.assertRaisesRegex(ValueError, "must not exceed"):
             asyncio.run(drive())
 
         self.assertFalse(tm.rid_to_state)

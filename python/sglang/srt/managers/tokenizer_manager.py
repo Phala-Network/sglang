@@ -777,15 +777,27 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         # Normalize the request
         obj.normalize_batch_and_arguments()
         self._set_default_priority(obj)
-        if (
-            isinstance(obj, GenerateReqInput)
-            and obj.max_thinking_tokens is not None
-            and not get_serving().enable_strict_thinking
-        ):
+        has_thinking_bounds = isinstance(obj, GenerateReqInput) and (
+            obj.min_thinking_tokens is not None or obj.max_thinking_tokens is not None
+        )
+        if has_thinking_bounds and not get_serving().enable_strict_thinking:
             raise ValueError(
-                "max_thinking_tokens requires the server to be launched with "
+                "thinking token bounds require the server to be launched with "
                 "--enable-strict-thinking"
             )
+        if has_thinking_bounds:
+            if obj.min_thinking_tokens is not None and obj.min_thinking_tokens < 0:
+                raise ValueError("min_thinking_tokens must be non-negative")
+            if obj.max_thinking_tokens is not None and obj.max_thinking_tokens < 0:
+                raise ValueError("max_thinking_tokens must be non-negative")
+            if (
+                obj.min_thinking_tokens is not None
+                and obj.max_thinking_tokens is not None
+                and obj.min_thinking_tokens > obj.max_thinking_tokens
+            ):
+                raise ValueError(
+                    "min_thinking_tokens must not exceed max_thinking_tokens"
+                )
 
         if isinstance(obj, GenerateReqInput) and obj.routed_dp_rank is not None:
             dp_size = self.elastic_worker_count
@@ -1353,10 +1365,15 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             sampling_kwargs = {**self.preferred_sampling_params, **obj.sampling_params}
         else:
             sampling_kwargs = obj.sampling_params
-        if isinstance(obj, GenerateReqInput) and obj.max_thinking_tokens is not None:
+        if isinstance(obj, GenerateReqInput) and (
+            obj.min_thinking_tokens is not None or obj.max_thinking_tokens is not None
+        ):
             sampling_kwargs = dict(sampling_kwargs)
             custom_params = dict(sampling_kwargs.get("custom_params") or {})
-            custom_params["thinking_budget"] = obj.max_thinking_tokens
+            if obj.min_thinking_tokens is not None:
+                custom_params["min_thinking_budget"] = obj.min_thinking_tokens
+            if obj.max_thinking_tokens is not None:
+                custom_params["thinking_budget"] = obj.max_thinking_tokens
             sampling_kwargs["custom_params"] = custom_params
         sampling_params = self.sampling_params_class(**sampling_kwargs)
         sampling_params.normalize(self.tokenizer)

@@ -139,6 +139,51 @@ class TestReasonerGrammarObject(unittest.TestCase):
         obj.fill_vocab_mask(second_mask, 0)
         self.assertEqual(_allowed_token_ids(second_mask, [7, 8, 10]), [8])
 
+    def test_minimum_budget_blocks_think_end_until_reached(self):
+        obj = ReasonerGrammarObject(
+            grammar=None,
+            think_end_ids=[7],
+            think_excluded_token_ids=[3, 5],
+            min_think_tokens=2,
+            max_think_tokens=4,
+            enable_token_filter=True,
+            token_filter_fn=set_token_filter_torch,
+        )
+        obj.maybe_init_reasoning(True)
+
+        before_min = torch.zeros((1, 2), dtype=torch.int32)
+        obj.fill_vocab_mask(before_min, 0)
+        self.assertEqual(
+            _allowed_token_ids(before_min, [3, 5, 7, 10]),
+            [10],
+        )
+
+        obj.accept_token(10)
+        obj.accept_token(11)
+        after_min = torch.zeros((1, 2), dtype=torch.int32)
+        obj.fill_vocab_mask(after_min, 0)
+        self.assertEqual(
+            _allowed_token_ids(after_min, [3, 5, 7, 10]),
+            [7, 10],
+        )
+
+    def test_minimum_budget_tracks_partial_multi_token_end(self):
+        obj = ReasonerGrammarObject(
+            grammar=None,
+            think_end_ids=[7, 8],
+            min_think_tokens=2,
+            max_think_tokens=4,
+            enable_token_filter=True,
+            token_filter_fn=set_token_filter_torch,
+        )
+        obj.maybe_init_reasoning(True)
+        obj.accept_token(7)
+
+        mask = torch.zeros((1, 2), dtype=torch.int32)
+        obj.fill_vocab_mask(mask, 0)
+
+        self.assertEqual(_allowed_token_ids(mask, [7, 8, 10]), [7, 10])
+
 
 class TestReasonerGrammarBackend(unittest.TestCase):
     def setUp(self):
@@ -438,6 +483,22 @@ class TestReasonerGrammarObjectRollback(unittest.TestCase):
         obj.rollback(1)
         self.assertTrue(obj._is_thinking())
         self.assertEqual(obj._matched_think_end_tokens, 1)
+
+    def test_copy_preserves_reasoning_bounds(self):
+        obj = ReasonerGrammarObject(
+            grammar=None,
+            think_end_ids=[7],
+            min_think_tokens=2,
+            max_think_tokens=4,
+        )
+        obj.maybe_init_reasoning(True)
+        obj.accept_token(10)
+
+        copied = obj.copy()
+
+        self.assertEqual(copied.min_think_tokens, 2)
+        self.assertEqual(copied.max_think_tokens, 4)
+        self.assertEqual(copied.tokens_in_think, 1)
 
     def test_self_overlapping_marker_is_matched(self):
         obj = ReasonerGrammarObject(grammar=None, think_end_ids=[2, 2, 3])

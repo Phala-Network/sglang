@@ -303,8 +303,9 @@ class GenerateReqInput:
     background: bool = False
     # Require reasoning for the request (hybrid reasoning model only)
     require_reasoning: bool = False
-    # Per-request thinking budget. Requires strict thinking so the runtime can
-    # enforce the limit rather than silently treating it as metadata.
+    # Per-request thinking bounds. Require strict thinking so the runtime can
+    # enforce them rather than silently treating them as metadata.
+    min_thinking_tokens: Optional[int] = None
     max_thinking_tokens: Optional[int] = None
 
     # Priority for the request
@@ -948,6 +949,7 @@ class GenerateReqInput:
             conversation_id=self.conversation_id,
             http_worker_ipc=self.http_worker_ipc,
             require_reasoning=self.require_reasoning,
+            min_thinking_tokens=self.min_thinking_tokens,
             max_thinking_tokens=self.max_thinking_tokens,
             priority=self.priority,
             extra_key=self.extra_key[i] if self.extra_key is not None else None,

@@ -2249,6 +2249,47 @@ class ServingChatTestCase(unittest.TestCase):
             tool_calls = payload["choices"][0]["delta"]["tool_calls"]
             self.assertEqual(tool_calls[0]["id"], "functions.get_weather:1")
 
+    def test_streaming_drops_orphan_tool_call_delta(self):
+        """An argument delta without a named first delta is not a tool call."""
+
+        self.chat.tool_call_parser = "qwen3_coder"
+        req = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "Weather in Boston?"}],
+            tools=[{"type": "function", "function": {"name": "get_weather"}}],
+            stream=True,
+        )
+
+        with patch(
+            "sglang.srt.entrypoints.openai.serving_chat.FunctionCallParser"
+        ) as parser_mock:
+            orphan_delta = Mock()
+            orphan_delta.tool_index = 0
+            orphan_delta.name = ""
+            orphan_delta.parameters = "{}"
+            parser_mock.return_value.parse_stream_chunk.return_value = (
+                "",
+                [orphan_delta],
+            )
+            has_tool_calls = {}
+
+            async def collect_chunks():
+                return [
+                    chunk
+                    async for chunk in self.chat._process_tool_call_stream(
+                        index=0,
+                        delta="<function=>",
+                        parser_dict={},
+                        content={"meta_info": {"id": "chatcmpl-test"}},
+                        request=req,
+                        has_tool_calls=has_tool_calls,
+                    )
+                ]
+
+            chunks = get_or_create_event_loop().run_until_complete(collect_chunks())
+            self.assertEqual(chunks, [])
+            self.assertNotIn(0, has_tool_calls)
+
     def test_dpsk_v32_encoding_path(self):
         """Test DeepSeek V3.2 encoding path detection and application."""
         from sglang.srt.parser.template_manager import TemplateManager

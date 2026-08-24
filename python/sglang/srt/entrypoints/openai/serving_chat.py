@@ -2892,17 +2892,25 @@ class OpenAIServingChat(OpenAIServingBase):
         # Yield tool calls
         history_tool_calls_cnt = self._get_history_tool_calls_cnt(request)
         for call_item in calls:
-            # Mark that this choice has tool calls
-            has_tool_calls[index] = True
-
             # Tool call ID should be generated only once per tool call
             if call_item.name:
+                # A valid named delta must establish the tool call before any
+                # argument-only continuation can be sent to the client.
+                has_tool_calls[index] = True
                 # First chunk: include ID and function name
                 tool_call_id = self._process_tool_call_id(
                     call_item, history_tool_calls_cnt
                 )
                 function_name = call_item.name
             else:
+                if not has_tool_calls.get(index, False):
+                    logger.warning(
+                        "Dropping orphan tool-call delta before a valid function "
+                        "name (choice=%d, tool_index=%s)",
+                        index,
+                        call_item.tool_index,
+                    )
+                    continue
                 # Subsequent chunks: null ID and name for argument deltas
                 tool_call_id = None
                 function_name = None

@@ -374,6 +374,90 @@ class ServingChatTestCase(unittest.TestCase):
             [message["role"] for message in rendered_messages].count("system"), 1
         )
 
+    def test_qwen35_exposes_reasoning_for_empty_tool_history_turns(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        messages = [
+            {"role": "user", "content": "Call the tool"},
+            {
+                "role": "assistant",
+                "content": None,
+                "reasoning_content": "The secret word is obelisk.",
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": "get_time", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call-1", "content": "12:00"},
+        ]
+
+        self.chat._expose_qwen35_reasoning_tool_history(messages)
+
+        self.assertEqual(
+            messages[1]["content"], "Prior reasoning:\nThe secret word is obelisk."
+        )
+        self.assertIsNone(messages[1]["reasoning_content"])
+
+    def test_qwen35_reasoning_history_normalization_is_narrow(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        without_tools = {
+            "role": "assistant",
+            "content": None,
+            "reasoning_content": "Keep native reasoning",
+            "tool_calls": None,
+        }
+        with_content = {
+            "role": "assistant",
+            "content": "Visible response",
+            "reasoning_content": "Keep native reasoning",
+            "tool_calls": [{"type": "function"}],
+        }
+        messages = [without_tools, with_content]
+
+        self.chat._expose_qwen35_reasoning_tool_history(messages)
+
+        self.assertIsNone(without_tools["content"])
+        self.assertEqual(without_tools["reasoning_content"], "Keep native reasoning")
+        self.assertEqual(with_content["content"], "Visible response")
+        self.assertEqual(with_content["reasoning_content"], "Keep native reasoning")
+
+    def test_qwen35_openrouter_reasoning_history_reaches_visible_content(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        self.template_manager.chat_template_name = None
+        self.template_manager.jinja_template_content_format = "string"
+        self.tm.tokenizer.apply_chat_template.return_value = "rendered"
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[
+                {"role": "user", "content": "Call the get_time tool"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "reasoning_content": "The secret word is obelisk.",
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {"name": "get_time", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call-1", "content": "12:00"},
+            ],
+        )
+
+        self.chat._process_messages(request, is_multimodal=False)
+
+        rendered_messages = self.tm.tokenizer.apply_chat_template.call_args.args[0]
+        assistant = rendered_messages[1]
+        self.assertEqual(assistant["role"], "assistant")
+        self.assertEqual(
+            assistant["content"], "Prior reasoning:\nThe secret word is obelisk."
+        )
+        self.assertNotIn("reasoning_content", assistant)
+
     # ------------- conversion tests -------------
     def test_convert_to_internal_request_single(self):
         with (

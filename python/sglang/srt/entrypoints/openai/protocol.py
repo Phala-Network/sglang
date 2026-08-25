@@ -919,6 +919,12 @@ class ChatCompletionRequest(BaseModel):
         "models that expose a maximum-effort tier above 'high'; models that don't "
         "support it treat it the same as 'high'.",
     )
+    reasoning_max_tokens: Optional[int] = Field(
+        default=None,
+        ge=1,
+        exclude=True,
+        description="Maximum reasoning tokens normalized from reasoning.max_tokens.",
+    )
     task: Optional[
         Literal["action", "query", "authority", "domain", "title", "read_url"]
     ] = Field(
@@ -1034,6 +1040,12 @@ class ChatCompletionRequest(BaseModel):
         thinking = None
 
         if r is not None and isinstance(r, dict):
+            if "max_tokens" in r:
+                max_tokens = r["max_tokens"]
+                if isinstance(max_tokens, bool) or not isinstance(max_tokens, int):
+                    raise ValueError("reasoning.max_tokens must be a positive integer")
+                values["reasoning_max_tokens"] = max_tokens
+
             effort = r.get("effort")
             if effort is None:
                 effort = r.get("reasoning_effort")

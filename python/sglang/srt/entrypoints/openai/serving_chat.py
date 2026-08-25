@@ -136,6 +136,7 @@ _QWEN35_REASONING_EFFORT_TOKEN_RANGES = {
     "xhigh": (384, 768),
 }
 _QWEN35_REASONING_EFFORT_FULL_BUDGET = 768
+_QWEN35_DEFAULT_REASONING_BUDGET = 3072
 _QWEN35_REASONING_ANSWER_RESERVE_CAP = 256
 
 _MEDIA_CONTENT_PART_TYPES = frozenset({"image_url", "video_url", "audio_url"})
@@ -579,11 +580,11 @@ class OpenAIServingChat(OpenAIServingBase):
         self,
         reasoning_effort: Optional[str],
         max_new_tokens: Optional[int],
+        reasoning_max_tokens: Optional[int] = None,
     ) -> Optional[tuple[int, int]]:
         """Return strict, non-overlapping reasoning bounds for Qwen3.5."""
         if (
             not self._uses_qwen35_chat_template()
-            or reasoning_effort not in _QWEN35_REASONING_EFFORT_TOKEN_RANGES
             or getattr(
                 self.tokenizer_manager.server_args,
                 "enable_strict_thinking",
@@ -591,6 +592,15 @@ class OpenAIServingChat(OpenAIServingBase):
             )
             is not True
         ):
+            return None
+
+        # Qwen3.8's native default can remain in the reasoning phase until the
+        # request limit on a subset of prompts. Use the GPQA-validated default
+        # budget while preserving explicit effort and reasoning.max_tokens.
+        if reasoning_effort is None and reasoning_max_tokens is None:
+            reasoning_max_tokens = _QWEN35_DEFAULT_REASONING_BUDGET
+        reasoning_effort = reasoning_effort or "xhigh"
+        if reasoning_effort not in _QWEN35_REASONING_EFFORT_TOKEN_RANGES:
             return None
 
         if max_new_tokens is None:
@@ -604,8 +614,13 @@ class OpenAIServingChat(OpenAIServingBase):
             )
             available_tokens = max_new_tokens - answer_reserve
 
+        if reasoning_max_tokens is not None:
+            available_tokens = min(available_tokens, reasoning_max_tokens)
+
         # Three disjoint integer intervals require at least three reasoning tokens.
         if available_tokens < 3:
+            if reasoning_max_tokens is not None:
+                return (available_tokens, available_tokens)
             return None
 
         scale = min(
@@ -617,7 +632,11 @@ class OpenAIServingChat(OpenAIServingBase):
         medium_min = min(max(low_max + 1, int(128 * scale)), available_tokens - 1)
         medium_max = min(max(medium_min, int(256 * scale)), available_tokens - 1)
         xhigh_min = min(max(medium_max + 1, int(384 * scale)), available_tokens)
-        xhigh_max = min(max(xhigh_min, int(768 * scale)), available_tokens)
+        xhigh_max = (
+            available_tokens
+            if reasoning_max_tokens is not None
+            else min(max(xhigh_min, int(768 * scale)), available_tokens)
+        )
         ranges = {
             "low": (low_min, low_max),
             "medium": (medium_min, medium_max),
@@ -1268,16 +1287,11 @@ class OpenAIServingChat(OpenAIServingBase):
             self._qwen35_reasoning_effort_token_range(
                 request.reasoning_effort,
                 sampling_params.get("max_new_tokens"),
+                request.reasoning_max_tokens,
             )
             if processed_messages.require_reasoning
             else None
         )
-        if self._uses_qwen35_chat_template() and request.reasoning_effort is None:
-            sampling_params = dict(sampling_params)
-            custom_params = dict(sampling_params.get("custom_params") or {})
-            custom_params["disable_strict_thinking_grammar"] = True
-            sampling_params["custom_params"] = custom_params
-
         # Handle single vs multiple requests
         if request.input_ids is not None:
             prompt_kwargs = {"input_ids": processed_messages.prompt_ids}

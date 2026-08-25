@@ -1,0 +1,11 @@
+FROM ghcr.io/phala-network/sglang:qwen38-27b-sglang-aa7c39381c-r8b-20260825@sha256:1f5464e6a4b42b556ff807470b6040130a92dbd1331ed3ab8e9f012f1f9dc25f
+
+RUN echo "495a60c5641131622e970b0b864d8f680143a629f6a4ac18b714b0bd098818d2  /sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/protocol.py" | sha256sum -c - \
+    && echo "ac766a04291b3a2754c906c7a79f907279458db0ea0a05a5403128a0df9c2b48  /sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_chat.py" | sha256sum -c -
+
+COPY python/sglang/srt/entrypoints/openai/protocol.py /sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/protocol.py
+COPY python/sglang/srt/entrypoints/openai/serving_chat.py /sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_chat.py
+
+ARG SOURCE_REVISION
+LABEL org.opencontainers.image.source="https://github.com/Phala-Network/sglang"
+LABEL org.opencontainers.image.revision="$SOURCE_REVISION"

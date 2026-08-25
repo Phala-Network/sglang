@@ -261,6 +261,26 @@ class TestChatCompletionRequest(unittest.TestCase):
             {"thinking": True, "enable_thinking": True},
         )
 
+    def test_chat_completion_reasoning_max_tokens(self):
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "Hello"}],
+            reasoning={"max_tokens": 1536},
+        )
+
+        self.assertEqual(request.reasoning_max_tokens, 1536)
+        self.assertNotIn("reasoning_max_tokens", request.model_dump())
+
+        from pydantic import ValidationError
+
+        for value in (0, -1, True, 1.5, "1536"):
+            with self.subTest(value=value), self.assertRaises(ValidationError):
+                ChatCompletionRequest(
+                    model="test-model",
+                    messages=[{"role": "user", "content": "Hello"}],
+                    reasoning={"max_tokens": value},
+                )
+
     def test_chat_completion_reasoning_effort_high_enables_thinking(self):
         """Top-level reasoning_effort='high' enables thinking."""
         messages = [{"role": "user", "content": "Hello"}]

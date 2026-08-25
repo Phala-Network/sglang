@@ -634,6 +634,7 @@ class ServingChatTestCase(unittest.TestCase):
             image_data=None,
             video_data=None,
             audio_data=None,
+            modalities=[],
             stop=[],
             require_reasoning=True,
         )

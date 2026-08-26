@@ -202,7 +202,8 @@ REASONING_MODE_RULES = (
             r"enable_thinking\s+is\s+defined\s+and\s+(?:enable_thinking\s+is\s+false|not\s+enable_thinking)"
         )
         or ctx.has_pattern(
-            r"enable_thinking\s+is\s+not\s+defined\s+or\s+enable_thinking"
+            r"enable_thinking\s+is\s+(?:not\s+defined|undefined)\s+or\s+"
+            r"enable_thinking(?:\s+is\s+(?:true|True))?"
         )
         or ctx.has_pattern(r"namespace\([^)]*enable_thinking\s*=\s*true")
         or _has_toggle_default_assignment(ctx, "enable_thinking", True),

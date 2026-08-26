@@ -61,6 +61,37 @@ class TestTemplateManagerReasoningDetection(unittest.TestCase):
         )
         self.assertEqual(parser, "qwen3")
 
+    def test_qwen38_flash_next_template_auto_detects_parsers(self):
+        # Qwen3.8-Flash-Next uses Jinja's ``undefined`` test and an explicit
+        # ``is true`` check instead of the older ``is not defined`` spelling.
+        # The template also uses the Qwen3-Coder XML tool-call wire format.
+        template = """
+        {%- if enable_thinking is undefined or enable_thinking is true %}
+            {%- set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}
+        {%- endif %}
+        <think>{{ reasoning_content }}</think>
+        <tool_call>
+        <function=example_function_name>
+        <parameter=example_parameter>value</parameter>
+        </function>
+        </tool_call>
+        """
+        force, config = detect_reasoning_pattern(template)
+        tokenizer = _DummyTokenizer(["<tool_call>", "<think>", "</think>"])
+
+        self.assertFalse(force)
+        self.assertEqual(
+            config,
+            ReasoningToggleConfig(toggle_param="enable_thinking", default_enabled=True),
+        )
+        self.assertEqual(
+            detect_reasoning_parser(template, tokenizer, config, force), "qwen3"
+        )
+        self.assertEqual(
+            detect_tool_call_parser(template, tokenizer, config, force),
+            "qwen3_coder",
+        )
+
     def test_glm45_requires_glm_specific_template_markers(self):
         template = """
         [gMASK]<sop>

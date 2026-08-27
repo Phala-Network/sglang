@@ -1588,17 +1588,24 @@ class OpenAIServingChat(OpenAIServingBase):
         if self.reasoning_parser != "glm45" or not isinstance(rendered_prompt, str):
             return rendered_prompt
 
-        template_kwargs = request.chat_template_kwargs or {}
-        if "enable_thinking" in template_kwargs:
-            reasoning_disabled = template_kwargs["enable_thinking"] is False
-        elif "thinking" in template_kwargs:
-            reasoning_disabled = template_kwargs["thinking"] is False
-        else:
-            reasoning_disabled = request.reasoning_effort == "none"
-
+        reasoning_disabled = self._get_explicit_glm45_reasoning_disabled(request)
         if reasoning_disabled and rendered_prompt.endswith("<think>"):
             return rendered_prompt + "</think>"
         return rendered_prompt
+
+    @staticmethod
+    def _get_explicit_glm45_reasoning_disabled(
+        request: ChatCompletionRequest,
+    ) -> Optional[bool]:
+        """Resolve GLM reasoning aliases without diverging prompt and output modes."""
+        template_kwargs = request.chat_template_kwargs or {}
+        if "enable_thinking" in template_kwargs:
+            return template_kwargs["enable_thinking"] is False
+        if "thinking" in template_kwargs:
+            return template_kwargs["thinking"] is False
+        if request.reasoning_effort == "none":
+            return True
+        return None
 
     def _apply_conversation_template(
         self,
@@ -2601,6 +2608,11 @@ class OpenAIServingChat(OpenAIServingBase):
             # "no_think" / "none" / unset; forcing reasoning would route all
             # output into reasoning_content.
             return request.reasoning_effort not in (None, "none", "no_think")
+
+        if self.reasoning_parser == "glm45":
+            reasoning_disabled = self._get_explicit_glm45_reasoning_disabled(request)
+            if reasoning_disabled is not None:
+                return not reasoning_disabled
 
         config = self.template_manager.reasoning_config
         if config is None:

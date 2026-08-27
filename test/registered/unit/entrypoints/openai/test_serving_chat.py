@@ -808,6 +808,32 @@ class ServingChatTestCase(unittest.TestCase):
             closed_prompt,
         )
 
+    def test_glm45_reasoning_aliases_match_output_classification(self):
+        self.chat.reasoning_parser = "glm45"
+        self.template_manager.reasoning_config = ReasoningToggleConfig(
+            toggle_param="enable_thinking", default_enabled=True
+        )
+
+        cases = (
+            ({"thinking": False}, None, False),
+            ({"enable_thinking": False}, None, False),
+            (None, "none", False),
+            ({"thinking": True}, None, True),
+            ({"enable_thinking": True}, "none", True),
+            (None, None, True),
+        )
+        for template_kwargs, reasoning_effort, expected in cases:
+            with self.subTest(
+                template_kwargs=template_kwargs, reasoning_effort=reasoning_effort
+            ):
+                req = ChatCompletionRequest(
+                    model="x",
+                    messages=[{"role": "user", "content": "hi"}],
+                    chat_template_kwargs=template_kwargs,
+                    reasoning_effort=reasoning_effort,
+                )
+                self.assertIs(self.chat._get_reasoning_from_request(req), expected)
+
     def test_kimi_tool_call_keeps_template_default_thinking(self):
         self.template_manager.chat_template_name = None
         self.template_manager.jinja_template_content_format = "string"

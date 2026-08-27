@@ -1016,15 +1016,17 @@ class ChatCompletionRequest(BaseModel):
             elif effort is not None:
                 raise ValueError(f"invalid reasoning effort: {effort!r}")
 
-            enabled = (
-                r.get("enabled")
-                if r.get("enabled") is not None
-                else r.get("enable", False)
-            )
-            if isinstance(enabled, str):
-                enabled = enabled.strip().lower() in {"1", "true", "yes", "y", "on"}
-            if enabled:
-                thinking = True
+            enabled = r.get("enabled") if "enabled" in r else r.get("enable")
+            if enabled is not None:
+                if isinstance(enabled, str):
+                    enabled = enabled.strip().lower() in {
+                        "1",
+                        "true",
+                        "yes",
+                        "y",
+                        "on",
+                    }
+                thinking = bool(enabled)
 
         effort = values.get("reasoning_effort")
         if effort is not None:

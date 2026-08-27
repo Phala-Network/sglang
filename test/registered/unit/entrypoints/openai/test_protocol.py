@@ -261,6 +261,25 @@ class TestChatCompletionRequest(unittest.TestCase):
             {"thinking": True, "enable_thinking": True},
         )
 
+    def test_chat_completion_reasoning_disabled(self):
+        """Nested reasoning false values disable thinking for every alias."""
+        messages = [{"role": "user", "content": "Hello"}]
+        for field, value in (
+            ("enabled", False),
+            ("enabled", "false"),
+            ("enable", False),
+        ):
+            with self.subTest(field=field, value=value):
+                request = ChatCompletionRequest(
+                    model="test-model",
+                    messages=messages,
+                    reasoning={field: value},
+                )
+                self.assertEqual(
+                    request.chat_template_kwargs,
+                    {"thinking": False, "enable_thinking": False},
+                )
+
     def test_chat_completion_reasoning_effort_high_enables_thinking(self):
         """Top-level reasoning_effort='high' enables thinking."""
         messages = [{"role": "user", "content": "Hello"}]

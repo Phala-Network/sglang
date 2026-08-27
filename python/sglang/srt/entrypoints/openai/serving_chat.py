@@ -1483,6 +1483,9 @@ class OpenAIServingChat(OpenAIServingBase):
                     return_dict=False,
                     **extra_template_kwargs,
                 )
+                rendered_prompt = self._close_ignored_glm45_reasoning_prompt(
+                    rendered_prompt, request
+                )
                 prompt_ids = self.tokenizer_manager.tokenizer.encode(
                     rendered_prompt, **encode_kwargs
                 )
@@ -1504,6 +1507,9 @@ class OpenAIServingChat(OpenAIServingBase):
                             return_dict=False,
                             **extra_template_kwargs,
                         )
+                    )
+                    rendered_prompt = self._close_ignored_glm45_reasoning_prompt(
+                        rendered_prompt, request
                     )
                     prompt_ids = self.tokenizer_manager.tokenizer.encode(
                         rendered_prompt, **encode_kwargs
@@ -1574,6 +1580,25 @@ class OpenAIServingChat(OpenAIServingBase):
             modalities=modalities,
             stop=stop,
         )
+
+    def _close_ignored_glm45_reasoning_prompt(
+        self, rendered_prompt: str, request: ChatCompletionRequest
+    ) -> str:
+        """Honor explicit reasoning-off requests for GLM templates that ignore them."""
+        if self.reasoning_parser != "glm45" or not isinstance(rendered_prompt, str):
+            return rendered_prompt
+
+        template_kwargs = request.chat_template_kwargs or {}
+        if "enable_thinking" in template_kwargs:
+            reasoning_disabled = template_kwargs["enable_thinking"] is False
+        elif "thinking" in template_kwargs:
+            reasoning_disabled = template_kwargs["thinking"] is False
+        else:
+            reasoning_disabled = request.reasoning_effort == "none"
+
+        if reasoning_disabled and rendered_prompt.endswith("<think>"):
+            return rendered_prompt + "</think>"
+        return rendered_prompt
 
     def _apply_conversation_template(
         self,

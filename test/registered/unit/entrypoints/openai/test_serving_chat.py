@@ -745,6 +745,69 @@ class ServingChatTestCase(unittest.TestCase):
 
         self.assertEqual(req.reasoning_effort, "high")
 
+    def test_glm45_reasoning_off_closes_ignored_think_prompt(self):
+        self.chat.reasoning_parser = "glm45"
+        base_prompt = "<|user|>hi<|assistant|><think>"
+
+        cases = (
+            ({"thinking": False}, None),
+            ({"enable_thinking": False}, None),
+            (None, "none"),
+        )
+        for template_kwargs, reasoning_effort in cases:
+            with self.subTest(
+                template_kwargs=template_kwargs, reasoning_effort=reasoning_effort
+            ):
+                req = ChatCompletionRequest(
+                    model="x",
+                    messages=[{"role": "user", "content": "hi"}],
+                    chat_template_kwargs=template_kwargs,
+                    reasoning_effort=reasoning_effort,
+                )
+                self.assertEqual(
+                    self.chat._close_ignored_glm45_reasoning_prompt(base_prompt, req),
+                    base_prompt + "</think>",
+                )
+
+    def test_glm45_reasoning_on_and_other_parsers_are_unchanged(self):
+        base_prompt = "<|user|>hi<|assistant|><think>"
+        cases = (
+            ("glm45", None, None),
+            ("glm45", {"thinking": True}, None),
+            ("glm45", {"enable_thinking": True}, "none"),
+            ("qwen3", {"thinking": False}, None),
+        )
+        for parser, template_kwargs, reasoning_effort in cases:
+            with self.subTest(
+                parser=parser,
+                template_kwargs=template_kwargs,
+                reasoning_effort=reasoning_effort,
+            ):
+                self.chat.reasoning_parser = parser
+                req = ChatCompletionRequest(
+                    model="x",
+                    messages=[{"role": "user", "content": "hi"}],
+                    chat_template_kwargs=template_kwargs,
+                    reasoning_effort=reasoning_effort,
+                )
+                self.assertEqual(
+                    self.chat._close_ignored_glm45_reasoning_prompt(base_prompt, req),
+                    base_prompt,
+                )
+
+    def test_glm45_reasoning_off_does_not_double_close_prompt(self):
+        self.chat.reasoning_parser = "glm45"
+        closed_prompt = "<|user|>hi<|assistant|><think></think>"
+        req = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "hi"}],
+            chat_template_kwargs={"thinking": False},
+        )
+        self.assertEqual(
+            self.chat._close_ignored_glm45_reasoning_prompt(closed_prompt, req),
+            closed_prompt,
+        )
+
     def test_kimi_tool_call_keeps_template_default_thinking(self):
         self.template_manager.chat_template_name = None
         self.template_manager.jinja_template_content_format = "string"

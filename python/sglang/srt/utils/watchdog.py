@@ -146,10 +146,29 @@ class WatchdogRaw:
                     watchdog_last_time = current
             time.sleep(self.watchdog_timeout / 2)
 
-        if self.dump_info is not None and (info_msg := self.dump_info()):
-            logger.error(f"{self.debug_name} debug info:\n{info_msg}")
+        # Timeout diagnostics must be best-effort. In particular, a broken CUDA
+        # context can make an invariant-check dump raise AcceleratorError. Do not
+        # let a diagnostic failure kill this thread before a hard watchdog sends
+        # SIGQUIT to the parent process.
+        if self.dump_info is not None:
+            try:
+                info_msg = self.dump_info()
+            except Exception as e:
+                logger.error(
+                    f"{self.debug_name} failed to dump watchdog debug info: {e}",
+                    exc_info=True,
+                )
+            else:
+                if info_msg:
+                    logger.error(f"{self.debug_name} debug info:\n{info_msg}")
 
-        pyspy_dump_schedulers()
+        try:
+            pyspy_dump_schedulers()
+        except Exception as e:
+            logger.error(
+                f"{self.debug_name} failed to dump scheduler stacks: {e}",
+                exc_info=True,
+            )
         logger.error(
             f"{self.debug_name} watchdog timeout "
             f"({self.watchdog_timeout=}, {self.soft=})"

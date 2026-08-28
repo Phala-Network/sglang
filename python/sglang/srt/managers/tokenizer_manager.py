@@ -1039,6 +1039,15 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             contains_mm_input or is_mossvl
         )
 
+        # Reject requests whose text alone already exhausts the context before
+        # media decoding or feature extraction can consume bounded worker/GPU
+        # resources. The post-MM validation below remains authoritative because
+        # media expansion can add tokens. Auto-truncation is intentionally left
+        # to that final validation so a multimodal prompt is never truncated
+        # before the processor has constructed its complete token sequence.
+        if should_run_mm_processor and not self.allow_auto_truncate:
+            self._validate_token_budget(obj, input_ids)
+
         if should_run_mm_processor:
             if obj.image_data is not None and not isinstance(obj.image_data, list):
                 obj.image_data = [obj.image_data]
@@ -1185,11 +1194,10 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             normalized.append(provided or embedded)
         obj.mm_content_hashes = normalized
 
-    def _validate_one_request(
+    def _validate_token_budget(
         self, obj: Union[GenerateReqInput, EmbeddingReqInput], input_ids: List[int]
     ) -> None:
-        """Validates that the input token count and the requested token count doesn't exceed the model's context length."""
-        # FIXME: unify the length validation logic with the one in the scheduler.
+        """Validate input and requested output tokens against the context length."""
         _max_req_len = self.context_len
         input_token_num = len(input_ids) if input_ids is not None else 0
         input_token_num += self.num_reserved_tokens
@@ -1236,6 +1244,13 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     f"of tokens in the input messages or the completion to fit within the limit."
                 )
                 raise ValueError(error_msg)
+
+    def _validate_one_request(
+        self, obj: Union[GenerateReqInput, EmbeddingReqInput], input_ids: List[int]
+    ) -> None:
+        """Validate one fully tokenized request before scheduler dispatch."""
+        # FIXME: unify the length validation logic with the one in the scheduler.
+        self._validate_token_budget(obj, input_ids)
 
         # Validate embedding requests
         if isinstance(obj, EmbeddingReqInput) and self.is_generation:

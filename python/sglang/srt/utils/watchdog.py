@@ -16,6 +16,8 @@ from sglang.srt.utils.cudacore_pyspy_dump_utils import pyspy_dump_schedulers
 
 logger = logging.getLogger(__name__)
 
+HARD_WATCHDOG_GRACE_SECONDS = 5.0
+
 
 class Watchdog:
     @staticmethod
@@ -146,10 +148,10 @@ class WatchdogRaw:
                     watchdog_last_time = current
             time.sleep(self.watchdog_timeout / 2)
 
-        # Timeout diagnostics must be best-effort. In particular, a broken CUDA
-        # context can make an invariant-check dump raise AcceleratorError. Do not
-        # let a diagnostic failure kill this thread before a hard watchdog sends
-        # SIGQUIT to the parent process.
+        self._handle_timeout()
+
+    def _run_diagnostics(self):
+        """Run best-effort diagnostics for a non-fatal soft watchdog timeout."""
         if self.dump_info is not None:
             try:
                 info_msg = self.dump_info()
@@ -169,17 +171,59 @@ class WatchdogRaw:
                 f"{self.debug_name} failed to dump scheduler stacks: {e}",
                 exc_info=True,
             )
+
+    def _handle_timeout(self):
+        """Handle a detected timeout without letting diagnostics block recovery."""
         logger.error(
             f"{self.debug_name} watchdog timeout "
             f"({self.watchdog_timeout=}, {self.soft=})"
         )
-        print(file=sys.stderr, flush=True)
-        print(file=sys.stdout, flush=True)
+        sys.stderr.flush()
+        sys.stdout.flush()
 
-        if not self.soft:
-            # Wait for some time so that the parent process can print the error.
-            time.sleep(5)
+        if self.soft:
+            self._run_diagnostics()
+            return
+
+        # Hard watchdog recovery is termination-first. A CUDA or native-code
+        # stall can also block invariant dumps and py-spy indefinitely, so do
+        # not run either before asking the launch process to tear down the tree.
+        try:
             self.parent_process.send_signal(signal.SIGQUIT)
+        except psutil.NoSuchProcess:
+            return
+        except psutil.Error as e:
+            logger.error(
+                f"{self.debug_name} failed to send SIGQUIT to parent: {e}",
+                exc_info=True,
+            )
+
+        try:
+            self.parent_process.wait(timeout=HARD_WATCHDOG_GRACE_SECONDS)
+            return
+        except psutil.NoSuchProcess:
+            return
+        except psutil.TimeoutExpired:
+            logger.error(
+                f"{self.debug_name} parent did not exit within "
+                f"{HARD_WATCHDOG_GRACE_SECONDS}s after SIGQUIT; sending SIGKILL"
+            )
+        except psutil.Error as e:
+            logger.error(
+                f"{self.debug_name} failed while waiting for parent exit: {e}; "
+                "sending SIGKILL",
+                exc_info=True,
+            )
+
+        try:
+            self.parent_process.kill()
+        except psutil.NoSuchProcess:
+            pass
+        except psutil.Error as e:
+            logger.error(
+                f"{self.debug_name} failed to send SIGKILL to parent: {e}",
+                exc_info=True,
+            )
 
 
 class SubprocessWatchdog:

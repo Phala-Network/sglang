@@ -28,6 +28,8 @@ import psutil
 
 logger = logging.getLogger(__name__)
 
+PYSPY_DUMP_TIMEOUT_SECONDS = 10
+
 
 def _resolve_cuda_coredump_pipe_path(proc: psutil.Process) -> Path:
     pipe_template = os.environ.get("CUDA_COREDUMP_PIPE")
@@ -82,10 +84,24 @@ def pyspy_dump_schedulers(scheduler_only=False):
             try:
                 cmd = f"py-spy dump {native_flag} --pid {pid}".strip()
                 result = subprocess.run(
-                    cmd, shell=True, capture_output=True, text=True, check=True
+                    cmd,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=PYSPY_DUMP_TIMEOUT_SECONDS,
                 )
                 logger.error(f"Pyspy dump for PID {pid} ({cmd}):\n{result.stdout}")
                 break
+            except subprocess.TimeoutExpired:
+                logger.error(
+                    "Pyspy timed out after %ss for PID %s (%s).",
+                    PYSPY_DUMP_TIMEOUT_SECONDS,
+                    pid,
+                    cmd,
+                )
+                if attempt == 1:
+                    logger.error(f"All pyspy dump attempts failed for PID {pid}.")
             except subprocess.CalledProcessError as e:
                 logger.error(f"Pyspy failed ({cmd}). Error: {e.stderr}")
                 if attempt == 1:

@@ -9,10 +9,15 @@ from sglang.test.ci.ci_register import register_cpu_ci
 register_cpu_ci(est_time=10, suite="base-a-test-cpu")
 
 import binascii
+import errno
+import io
+import os
+import struct
 import unittest
 from unittest.mock import MagicMock, patch
 
 import requests
+from PIL import Image
 
 from sglang.srt.managers.schedule_batch import Modality
 from sglang.srt.multimodal.processors.base_processor import BaseMultimodalProcessor
@@ -76,7 +81,7 @@ class TestBadInputIsClientError(CustomTestCase):
 
 
 class TestServerFaultStaysServerError(CustomTestCase):
-    """``load_video`` catches the decoder broadly; these are the exclusions."""
+    """Non-payload failures must stay server errors."""
 
     def _assert_server_error(self, side_effect):
         with patch(
@@ -91,6 +96,80 @@ class TestServerFaultStaysServerError(CustomTestCase):
     def test_decoder_oom(self):
         self._assert_server_error(MemoryError("out of memory"))
 
+    def test_non_pil_oserror(self):
+        with patch(
+            "sglang.srt.multimodal.processors.base_processor.load_audio",
+            side_effect=OSError("too many open files"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "too many open files"):
+                _StubProcessor._load_single_item(b"payload", Modality.AUDIO)
+
+    def test_pil_system_oserror(self):
+        image = MagicMock(mode="RGB")
+        image.load.side_effect = OSError(errno.EMFILE, "too many open files")
+        with patch(
+            "sglang.srt.multimodal.processors.base_processor.load_image",
+            return_value=(image, None),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "too many open files"):
+                _StubProcessor._load_single_item(b"payload", Modality.IMAGE)
+
+
+class TestDecodeTimeCorruptionIsClientError(CustomTestCase):
+    """Corruption past the sniffed header must still classify as client error."""
+
+    @staticmethod
+    def _multi_idat_png() -> bytes:
+        noise = Image.frombytes("RGB", (512, 512), os.urandom(512 * 512 * 3))
+        buf = io.BytesIO()
+        noise.save(buf, format="PNG")
+        return buf.getvalue()
+
+    @staticmethod
+    def _jpeg() -> bytes:
+        pixels = bytes((index * 37) % 256 for index in range(128 * 128 * 3))
+        image = Image.frombytes("RGB", (128, 128), pixels)
+        buf = io.BytesIO()
+        image.save(buf, format="JPEG", quality=90)
+        return buf.getvalue()
+
+    def test_corrupt_png_chunk(self):
+        png = bytearray(self._multi_idat_png())
+        offset, idat_offsets = 8, []
+        while offset < len(png):
+            (length,) = struct.unpack(">I", png[offset : offset + 4])
+            if bytes(png[offset + 4 : offset + 8]) == b"IDAT":
+                idat_offsets.append(offset)
+            offset += 12 + length
+        self.assertGreater(len(idat_offsets), 1, "test needs a multi-IDAT PNG")
+        png[idat_offsets[1] : idat_offsets[1] + 8] = b"\x00" * 8
+
+        with self.assertRaisesRegex(ValueError, "broken PNG file"):
+            _StubProcessor._load_single_item(bytes(png), Modality.IMAGE)
+
+    def test_truncated_png(self):
+        png = self._multi_idat_png()
+        with self.assertRaisesRegex(ValueError, "truncated"):
+            _StubProcessor._load_single_item(png[: len(png) // 2], Modality.IMAGE)
+
+    def test_missing_jpeg_eoi(self):
+        jpeg = self._jpeg()
+        self.assertEqual(jpeg[-2:], b"\xff\xd9")
+        with self.assertRaisesRegex(ValueError, "truncated"):
+            _StubProcessor._load_single_item(jpeg[:-2], Modality.IMAGE)
+
+    def test_half_truncated_jpeg(self):
+        jpeg = self._jpeg()
+        with self.assertRaisesRegex(ValueError, "truncated"):
+            _StubProcessor._load_single_item(jpeg[: len(jpeg) // 2], Modality.IMAGE)
+
+    def test_open_time_truncated_jpeg(self):
+        buf = io.BytesIO()
+        Image.new("RGB", (64, 64), color=(230, 20, 20)).save(buf, format="JPEG")
+        jpeg = buf.getvalue()
+        with self.assertRaisesRegex(ValueError, "Truncated File Read"):
+            _StubProcessor._load_single_item(jpeg[: len(jpeg) // 2], Modality.IMAGE)
+
 
 class TestClientMediaExceptions(CustomTestCase):
     def test_tuple_covers_the_documented_families(self):
@@ -102,6 +181,11 @@ class TestClientMediaExceptions(CustomTestCase):
         ):
             with self.subTest(exc_type=exc_type.__name__):
                 self.assertTrue(issubclass(exc_type, CLIENT_MEDIA_EXCEPTIONS))
+
+        # PIL's broad built-in failures are translated at the image decode site;
+        # globally classifying them would hide unrelated loader/system faults.
+        self.assertNotIn(OSError, CLIENT_MEDIA_EXCEPTIONS)
+        self.assertNotIn(SyntaxError, CLIENT_MEDIA_EXCEPTIONS)
 
 
 if __name__ == "__main__":

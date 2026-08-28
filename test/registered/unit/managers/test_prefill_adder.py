@@ -2,8 +2,15 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import torch
+
 import sglang.srt.managers.schedule_policy as schedule_policy
-from sglang.srt.managers.schedule_batch import Req
+from sglang.srt.managers.schedule_batch import (
+    Modality,
+    MultimodalDataItem,
+    MultimodalInputs,
+    Req,
+)
 from sglang.srt.managers.schedule_policy import (
     AddReqResult,
     PrefillAdder,
@@ -118,6 +125,33 @@ class TestPrefillAdder(CustomTestCase):
         )
         defaults.update(kwargs)
         return PrefillAdder(**defaults)
+
+    @staticmethod
+    def set_video_patch_tokens(req, grid):
+        req.multimodal_inputs = MultimodalInputs(
+            mm_items=[
+                MultimodalDataItem(
+                    modality=Modality.VIDEO,
+                    model_specific_data={
+                        "video_grid_thw": torch.tensor([grid], dtype=torch.int64)
+                    },
+                )
+            ]
+        )
+
+    def test_multimodal_patch_budget_stops_prefill_batch_growth(self):
+        adder = self.create_adder(
+            self.create_running_batch(), max_prefill_mm_patch_tokens=128
+        )
+        admitted = self.create_mock_req("video-1", 0, 1)
+        candidate = self.create_mock_req("video-2", 0, 1)
+        self.set_video_patch_tokens(admitted, [1, 8, 8])
+        self.set_video_patch_tokens(candidate, [1, 9, 8])
+        adder.can_run_list.append(admitted)
+
+        self.assertEqual(
+            adder.add_one_req(candidate, False, None), AddReqResult.OTHER
+        )
 
     def test_preempt_success_high_priority_values_first(self):
         params = [

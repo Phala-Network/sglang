@@ -871,6 +871,29 @@ class ServerArgs:
         "The maximum number of requests in a prefill batch. If not specified, there is no limit.",
         NS("schedule"),
     ] = None
+    max_mm_patch_tokens_per_request: A[
+        Optional[int],
+        Arg(
+            help=(
+                "The maximum number of post-alignment raw ViT patch tokens in one "
+                "image/video request."
+            ),
+            type_parser=human_readable_int,
+        ),
+        NS("schedule"),
+    ] = None
+    max_prefill_mm_patch_tokens: A[
+        Optional[int],
+        Arg(
+            help=(
+                "The maximum total number of post-alignment raw ViT patch tokens "
+                "admitted to one prefill batch. Requests that do not fit remain "
+                "queued for a later batch."
+            ),
+            type_parser=human_readable_int,
+        ),
+        NS("schedule"),
+    ] = None
     schedule_policy: A[
         str,
         Arg(
@@ -3858,6 +3881,7 @@ class ServerArgs:
 
         # Validate mm_process_config.
         self._handle_multimodal()
+        self._validate_mm_patch_budgets()
         # Validate SSL arguments early.
         self._handle_ssl_validation()
         # Validate transcription/ASR-specific server args.
@@ -4379,6 +4403,16 @@ class ServerArgs:
                         f"mm_process_config['{key}'] must be a dict, "
                         f"but got {type(cfg.mm_process_config[key])}"
                     )
+
+    def _validate_mm_patch_budgets(self):
+        cfg = resolving_view(self)
+        for name in (
+            "max_mm_patch_tokens_per_request",
+            "max_prefill_mm_patch_tokens",
+        ):
+            value = getattr(cfg, name)
+            if value is not None and value <= 0:
+                raise ValueError(f"--{name.replace('_', '-')} must be positive")
 
     def _handle_media_url_security(self):
         """Normalize and publish the media URL policy before workers start."""

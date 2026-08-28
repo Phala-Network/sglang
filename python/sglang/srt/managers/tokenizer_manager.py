@@ -93,6 +93,7 @@ from sglang.srt.managers.mm_utils import wrap_shm_features
 from sglang.srt.managers.multimodal_processor import get_mm_processor, import_processors
 from sglang.srt.managers.schedule_batch import (
     MultimodalDataItem,
+    compute_visual_patch_tokens,
     get_request_return_hidden_states_mode,
 )
 from sglang.srt.managers.scheduler_input_blocker import input_blocker_guard_region
@@ -1076,6 +1077,30 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     input_text=mm_processor_input,
                     request_obj=obj,
                     max_req_input_len=self.max_req_input_len,
+                )
+
+            if mm_inputs:
+                visual_patch_tokens = compute_visual_patch_tokens(mm_inputs.mm_items)
+                mm_inputs.visual_patch_tokens = visual_patch_tokens
+                total_visual_patch_tokens = sum(visual_patch_tokens)
+                request_limit = self.server_args.max_mm_patch_tokens_per_request
+                if (
+                    request_limit is not None
+                    and total_visual_patch_tokens > request_limit
+                ):
+                    raise ValueError(
+                        "The multimodal input requires "
+                        f"{total_visual_patch_tokens} raw ViT patch tokens after "
+                        "media alignment, exceeding the per-request limit of "
+                        f"{request_limit}. Reduce the total image or video size."
+                    )
+                logger.debug(
+                    "Multimodal visual cost: rid=%s, items=%d, "
+                    "total_patch_tokens=%d, max_item_patch_tokens=%d",
+                    getattr(obj, "rid", "anonymous_rid"),
+                    len(visual_patch_tokens),
+                    total_visual_patch_tokens,
+                    max(visual_patch_tokens, default=0),
                 )
 
             if mm_inputs and mm_inputs.input_ids is not None:

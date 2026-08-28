@@ -439,7 +439,9 @@ class Runtime:
         from sglang.srt.utils import kill_process_tree
 
         if self.pid is not None:
-            kill_process_tree(self.pid)
+            # __del__ routes here, so blocking on process reap can stall the
+            # thread that happens to trigger garbage collection.
+            kill_process_tree(self.pid, wait_timeout=None)
             self.pid = None
 
     def start_profile(self):

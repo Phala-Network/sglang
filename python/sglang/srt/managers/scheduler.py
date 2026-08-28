@@ -3904,7 +3904,9 @@ class Scheduler(
                         # FIXME(lsyin): maybe move this to forward_batch_generation
                         batch_result.copy_done = self.device_module.Event()
                         if batch_result.delay_sample_func is None:
-                            self._relay_forward_payload(future_indices, batch_result)
+                            self._relay_forward_payload(
+                                batch, future_indices, batch_result
+                            )
                             if _is_hip:
                                 # Cross-stream sync costs more than the tiny D2H it
                                 # overlaps.
@@ -3937,7 +3939,9 @@ class Scheduler(
             elif self.enable_pdmux and batch.forward_mode.is_split_prefill():
                 resolve_forward_inputs(batch, self.future_map)
                 batch_result = self.tp_worker.forward_batch_split_prefill(batch)
-                self._relay_forward_payload(batch.req_pool_indices, batch_result)
+                self._relay_forward_payload(
+                    batch, batch.req_pool_indices, batch_result
+                )
                 batch.input_ids = None
                 self._copy_auxiliary_output_to_cpu(batch, batch_result)
             elif not batch.spec_algorithm.is_none():
@@ -3974,7 +3978,9 @@ class Scheduler(
                 )
                 if batch_result.has_sampled_token_ids:
                     # Non-spec: relay via future_map, gathered next iter.
-                    self._relay_forward_payload(batch.req_pool_indices, batch_result)
+                    self._relay_forward_payload(
+                        batch, batch.req_pool_indices, batch_result
+                    )
                     batch.input_ids = None
                 self.update_cache_from_scheduler(batch, batch_result)
                 self._copy_auxiliary_output_to_cpu(batch, batch_result)
@@ -4055,7 +4061,10 @@ class Scheduler(
             model_runner._pending_elastic_scale_update = None
 
     def _relay_forward_payload(
-        self, future_indices: torch.Tensor, batch_result: GenerationBatchResult
+        self,
+        batch: ScheduleBatch,
+        future_indices: torch.Tensor,
+        batch_result: GenerationBatchResult,
     ) -> None:
         """Stash this iter's relay payload for next iter's resolve_forward_inputs."""
         keep = None
@@ -4126,7 +4135,9 @@ class Scheduler(
             _batch_result = batch_result.delay_sample_func()
             assert _batch_result is batch_result
             # Delay-sample is non-spec only; relays the sampled bonus tokens.
-            self._relay_forward_payload(batch_result.future_indices, batch_result)
+            self._relay_forward_payload(
+                cur_batch, batch_result.future_indices, batch_result
+            )
 
         # Run device-to-host copy on a separate stream to avoid blocking the
         # forward stream. The copy waits for the sampled result and can overlap

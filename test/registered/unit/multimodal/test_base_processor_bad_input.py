@@ -13,6 +13,7 @@ import io
 import os
 import struct
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import requests
@@ -141,16 +142,28 @@ class TestDecodeTimeCorruptionIsClientError(CustomTestCase):
             _StubProcessor._load_single_item(png[: len(png) // 2], Modality.IMAGE)
 
     def test_truncated_jpeg(self):
-        pixels = bytes((index * 17 + 11) % 256 for index in range(256 * 256 * 3))
-        image = Image.frombytes("RGB", (256, 256), pixels)
-        buf = io.BytesIO()
-        image.save(buf, format="JPEG", quality=95)
-        jpeg = buf.getvalue()
+        jpeg = _truncated_jpeg()
 
         with self.assertRaisesRegex(ValueError, "truncated"):
-            _StubProcessor._load_single_item(
-                jpeg[: len(jpeg) // 2], Modality.IMAGE
-            )
+            _StubProcessor._load_single_item(jpeg, Modality.IMAGE)
+
+
+class TestEncoderDecodeTimeCorruptionIsClientError(CustomTestCase):
+    def test_truncated_jpeg(self):
+        from sglang.srt.disaggregation.encoder.preprocessor import (
+            EncoderPreprocessor,
+        )
+        from sglang.srt.disaggregation.encoder.server import BadRequestError
+
+        preprocessor = EncoderPreprocessor.__new__(EncoderPreprocessor)
+        preprocessor.use_image_processor_gpu = False
+        preprocessor.encoder_media_processor_config = SimpleNamespace(
+            image_decode_mode=False,
+            preserve_media_metadata=False,
+        )
+
+        with self.assertRaisesRegex(BadRequestError, "truncated"):
+            preprocessor._load_single_item(_truncated_jpeg(), Modality.IMAGE)
 
 
 class TestClientMediaExceptions(CustomTestCase):
@@ -168,6 +181,15 @@ class TestClientMediaExceptions(CustomTestCase):
         # globally classifying them would hide unrelated loader/system faults.
         self.assertNotIn(OSError, CLIENT_MEDIA_EXCEPTIONS)
         self.assertNotIn(SyntaxError, CLIENT_MEDIA_EXCEPTIONS)
+
+
+def _truncated_jpeg() -> bytes:
+    pixels = bytes((index * 17 + 11) % 256 for index in range(256 * 256 * 3))
+    image = Image.frombytes("RGB", (256, 256), pixels)
+    buf = io.BytesIO()
+    image.save(buf, format="JPEG", quality=95)
+    jpeg = buf.getvalue()
+    return jpeg[: len(jpeg) // 2]
 
 
 if __name__ == "__main__":

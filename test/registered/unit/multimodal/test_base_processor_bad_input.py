@@ -140,6 +140,18 @@ class TestDecodeTimeCorruptionIsClientError(CustomTestCase):
         with self.assertRaisesRegex(ValueError, "truncated"):
             _StubProcessor._load_single_item(png[: len(png) // 2], Modality.IMAGE)
 
+    def test_truncated_jpeg(self):
+        pixels = bytes((index * 17 + 11) % 256 for index in range(256 * 256 * 3))
+        image = Image.frombytes("RGB", (256, 256), pixels)
+        buf = io.BytesIO()
+        image.save(buf, format="JPEG", quality=95)
+        jpeg = buf.getvalue()
+
+        with self.assertRaisesRegex(ValueError, "truncated"):
+            _StubProcessor._load_single_item(
+                jpeg[: len(jpeg) // 2], Modality.IMAGE
+            )
+
 
 class TestClientMediaExceptions(CustomTestCase):
     def test_tuple_covers_the_documented_families(self):

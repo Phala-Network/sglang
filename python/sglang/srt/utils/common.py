@@ -1854,7 +1854,15 @@ def _load_image(
                     "Failed to decode JPEG on GPU, falling back to CPU. Error: %s",
                     e,
                 )
-    return Image.open(BytesIO(image_bytes))
+    try:
+        return Image.open(BytesIO(image_bytes))
+    except (OSError, SyntaxError) as e:
+        # Pillow reports malformed headers with broad built-in exceptions.
+        # Keep real operating-system failures (for example EMFILE) as server
+        # faults; decode errors raised from the in-memory payload have no errno.
+        if isinstance(e, OSError) and e.errno is not None:
+            raise
+        raise ValueError(f"Could not decode image: {e}") from e
 
 
 def load_image(

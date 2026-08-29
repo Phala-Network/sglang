@@ -26,9 +26,9 @@ class Watchdog:
         test_stuck_time: float = 0,
     ) -> Watchdog:
         if watchdog_timeout is None:
-            assert (
-                test_stuck_time == 0
-            ), f"stuck tester can be enabled only if soft watchdog is enabled."
+            assert test_stuck_time == 0, (
+                f"stuck tester can be enabled only if soft watchdog is enabled."
+            )
             return _WatchdogNoop()
         return _WatchdogReal(
             debug_name=debug_name,
@@ -109,6 +109,8 @@ class WatchdogRaw:
         watchdog_timeout: float,
         soft: bool = False,
         dump_info: Optional[Callable[[], str]] = None,
+        hard_exit_timeout: float = 30.0,
+        hard_exit_fn: Optional[Callable[[int], None]] = None,
     ):
         self.debug_name = debug_name
         self.get_counter = get_counter
@@ -116,6 +118,8 @@ class WatchdogRaw:
         self.watchdog_timeout = watchdog_timeout
         self.soft = soft
         self.dump_info = dump_info
+        self.hard_exit_timeout = hard_exit_timeout
+        self.hard_exit_fn = hard_exit_fn or os._exit
 
         self.parent_process = psutil.Process().parent()
         t = threading.Thread(target=self._watchdog_thread, daemon=True)
@@ -145,6 +149,19 @@ class WatchdogRaw:
                     watchdog_last_counter = current_counter
                     watchdog_last_time = current
             time.sleep(self.watchdog_timeout / 2)
+
+        hard_exit_guard = None
+        if not self.soft:
+            # Diagnostics are useful, but they must never be allowed to keep a
+            # wedged scheduler alive forever. The timer runs in a separate
+            # thread and terminates this scheduler even if an invariant check
+            # or py-spy dump blocks.
+            hard_exit_guard = threading.Timer(
+                self.hard_exit_timeout,
+                self._hard_exit_after_diagnostic_timeout,
+            )
+            hard_exit_guard.daemon = True
+            hard_exit_guard.start()
 
         # Timeout diagnostics must be best-effort. A broken CUDA context can
         # make an invariant dump raise before a hard watchdog signals the main
@@ -176,9 +193,24 @@ class WatchdogRaw:
         print(file=sys.stdout, flush=True)
 
         if not self.soft:
-            # Wait for some time so that the parent process can print the error.
-            time.sleep(5)
-            self.parent_process.send_signal(signal.SIGQUIT)
+            try:
+                self.parent_process.send_signal(signal.SIGQUIT)
+            finally:
+                # Do not rely on the parent SIGQUIT handler alone. Exiting the
+                # scheduler also gives the parent-side SubprocessWatchdog an
+                # independent signal that the serving process is unrecoverable.
+                self.hard_exit_fn(1)
+                if hard_exit_guard is not None:
+                    hard_exit_guard.cancel()
+
+    def _hard_exit_after_diagnostic_timeout(self) -> None:
+        logger.error(
+            "%s hard-watchdog diagnostics exceeded %.1fs; force-exiting the "
+            "scheduler process.",
+            self.debug_name,
+            self.hard_exit_timeout,
+        )
+        self.hard_exit_fn(1)
 
 
 class SubprocessWatchdog:
@@ -197,10 +229,14 @@ class SubprocessWatchdog:
         processes: List[Process],
         process_names: Optional[List[str]] = None,
         interval: float = 1.0,
+        sigquit_grace_period: float = 5.0,
+        hard_exit_fn: Optional[Callable[[int], None]] = None,
     ):
         self._processes = processes
         self._names = process_names or [f"process_{i}" for i in range(len(processes))]
         self._interval = interval
+        self._sigquit_grace_period = sigquit_grace_period
+        self._hard_exit_fn = hard_exit_fn or os._exit
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -236,6 +272,22 @@ class SubprocessWatchdog:
                 f"with exit code {proc.exitcode}. "
                 f"Triggering SIGQUIT for cleanup..."
             )
-            os.kill(os.getpid(), signal.SIGQUIT)
+            try:
+                os.kill(os.getpid(), signal.SIGQUIT)
+            finally:
+                # The SIGQUIT handler performs crash diagnostics before killing
+                # the process tree. If signal delivery fails, or diagnostics
+                # block on a broken CUDA context, the old behavior leaves a
+                # permanently alive but unusable service. Give the normal
+                # handler a short grace period, then unconditionally terminate
+                # the container's main process.
+                if self._sigquit_grace_period > 0:
+                    time.sleep(self._sigquit_grace_period)
+                logger.error(
+                    "SIGQUIT cleanup did not terminate the process within %.1fs; "
+                    "force-exiting to allow the service supervisor to restart it.",
+                    self._sigquit_grace_period,
+                )
+                self._hard_exit_fn(1)
             return True
         return False

@@ -11,6 +11,7 @@ from sglang.srt.constrained.llguidance_backend import (
     GuidanceBackend,
     GuidanceGrammar,
     _allocate_token_bitmask,
+    _move_vocab_mask_blocking,
 )
 from sglang.srt.runtime_context import get_resources
 from sglang.test.ci.ci_register import register_cpu_ci
@@ -53,43 +54,39 @@ class TestLLGuidanceBatchedMask(unittest.TestCase):
         grammars[0].fill_vocab_mask_batched(entries, mask)
         return mask
 
-    @patch(
-        "sglang.srt.constrained.llguidance_backend.is_pin_memory_available",
-        return_value=True,
-    )
     @patch("sglang.srt.constrained.llguidance_backend.allocate_token_bitmask")
-    def test_accelerator_mask_uses_pinned_host_memory(
-        self, allocate_token_bitmask_mock, is_pin_memory_available_mock
+    def test_accelerator_mask_stays_pageable_for_blocking_copy(
+        self, allocate_token_bitmask_mock
     ):
         pageable_mask = MagicMock()
-        pinned_mask = MagicMock()
-        pageable_mask.pin_memory.return_value = pinned_mask
         allocate_token_bitmask_mock.return_value = pageable_mask
 
         mask = _allocate_token_bitmask(4, 256, "cuda")
 
         allocate_token_bitmask_mock.assert_called_once_with(4, 256)
-        is_pin_memory_available_mock.assert_called_once_with("cuda")
-        pageable_mask.pin_memory.assert_called_once_with()
-        self.assertIs(mask, pinned_mask)
+        pageable_mask.pin_memory.assert_not_called()
+        self.assertIs(mask, pageable_mask)
 
-    @patch(
-        "sglang.srt.constrained.llguidance_backend.is_pin_memory_available",
-        return_value=False,
-    )
     @patch("sglang.srt.constrained.llguidance_backend.allocate_token_bitmask")
-    def test_cpu_mask_does_not_require_pinned_memory(
-        self, allocate_token_bitmask_mock, is_pin_memory_available_mock
-    ):
+    def test_cpu_mask_stays_pageable(self, allocate_token_bitmask_mock):
         pageable_mask = MagicMock()
         allocate_token_bitmask_mock.return_value = pageable_mask
 
         mask = _allocate_token_bitmask(2, 128, "cpu")
 
         allocate_token_bitmask_mock.assert_called_once_with(2, 128)
-        is_pin_memory_available_mock.assert_called_once_with("cpu")
         pageable_mask.pin_memory.assert_not_called()
         self.assertIs(mask, pageable_mask)
+
+    def test_vocab_mask_move_is_blocking(self):
+        host_mask = MagicMock()
+        device_mask = MagicMock()
+        host_mask.to.return_value = device_mask
+
+        moved = _move_vocab_mask_blocking(host_mask, "cuda")
+
+        host_mask.to.assert_called_once_with("cuda", non_blocking=False)
+        self.assertIs(moved, device_mask)
 
     def test_batched_matches_serial(self):
         for batch_size in (1, 4, 10):

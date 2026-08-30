@@ -17,10 +17,14 @@ logger = logging.getLogger(__name__)
 
 _GLM_TOOL_RESULT_SORT_START = "    {%- set ns_a = namespace(tool_calls=none) -%}"
 _GLM_TOOL_RESULT_SORT_END = "\n{% endif -%}\n{%- elif m.role == 'system' -%}"
-# sha256 of the excised region in the zai-org/GLM-5.3-Flash template at HF
-# revision 04c4e9e9; order_glm_tool_results replicates exactly that region.
-_GLM_TOOL_RESULT_SORT_SHA256 = (
-    "f585e1f2937c781d8ce1234622eb032d99268e5f876f06c752599f2dd29c821a"
+# SHA-256 values of excised regions covered by golden-equivalence tests. The
+# first is zai-org/GLM-5.3-Flash at HF revision 04c4e9e9. The second is
+# PhalaCloud/GLM-5.3-W4AFP8 at revision 3e53882c.
+_GLM_TOOL_RESULT_SORT_SHA256S = frozenset(
+    {
+        "f585e1f2937c781d8ce1234622eb032d99268e5f876f06c752599f2dd29c821a",
+        "83e93037c13d15b2b8c0761d648711df96a1fd2a4cbb8a100316881c26981ca8",
+    }
 )
 _GLM_LINEAR_TOOL_RESULT_RENDER = """    {%- for k in range(block_start, ns_blk.end + 1) -%}
         {{- render_tool_response(messages[k]) -}}
@@ -146,7 +150,7 @@ def resolve_glm_tool_result_template(
     if (
         end < 0
         or hashlib.sha256(template[start:end].encode("utf-8")).hexdigest()
-        != _GLM_TOOL_RESULT_SORT_SHA256
+        not in _GLM_TOOL_RESULT_SORT_SHA256S
     ):
         logger.info(
             "GLM chat template does not match the known quadratic tool-result "

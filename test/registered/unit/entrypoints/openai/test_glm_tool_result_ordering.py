@@ -22,6 +22,13 @@ register_cpu_ci(est_time=1, suite="base-a-test-cpu")
 # zai-org/GLM-5.3-Flash chat template at HF revision 04c4e9e9.
 _TEMPLATE_SHA256 = "34d5ee66b12fa6446cdae131c352b8f68cd85369e0e6fda115583805fada3891"
 _TEMPLATE = (Path(__file__).parent / "glm53_flash_chat_template.jinja").read_text()
+# PhalaCloud/GLM-5.3-W4AFP8 chat template at HF revision 3e53882c.
+_W4AFP8_TEMPLATE_SHA256 = (
+    "69bb3ab52067898e2466b855407636de559568947f367945842aabcb7fcc1705"
+)
+_W4AFP8_TEMPLATE = (
+    Path(__file__).parent / "glm53_w4afp8_chat_template.jinja"
+).read_text()
 
 _TOOLS = [
     {
@@ -186,9 +193,23 @@ class TestGlmToolResultTemplate(CustomTestCase):
         self.assertEqual(
             hashlib.sha256(_TEMPLATE.encode("utf-8")).hexdigest(), _TEMPLATE_SHA256
         )
+        self.assertEqual(
+            hashlib.sha256(_W4AFP8_TEMPLATE.encode("utf-8")).hexdigest(),
+            _W4AFP8_TEMPLATE_SHA256,
+        )
 
     def test_quadratic_glm_template_is_replaced(self):
         resolved = _resolve()
+
+        self.assertIsNotNone(resolved)
+        self.assertNotIn("namespace(tool_calls=none)", resolved)
+        self.assertNotIn("has_dup_tool_result_id(block_start", resolved)
+        self.assertIn("render_tool_response(messages[k])", resolved)
+
+    def test_w4afp8_quadratic_glm_template_is_replaced(self):
+        resolved = _resolve(
+            template=_W4AFP8_TEMPLATE, architecture="GlmMoeDsaForCausalLM"
+        )
 
         self.assertIsNotNone(resolved)
         self.assertNotIn("namespace(tool_calls=none)", resolved)
@@ -224,12 +245,20 @@ class TestGlmToolResultGoldenEquivalence(CustomTestCase):
     @classmethod
     def setUpClass(cls):
         cls.patched = _resolve()
+        cls.w4afp8_patched = _resolve(
+            template=_W4AFP8_TEMPLATE, architecture="GlmMoeDsaForCausalLM"
+        )
 
     def _assert_equivalent(self, messages, tools=None):
-        self.assertEqual(
-            _render(_TEMPLATE, messages, tools=tools),
-            _render(self.patched, order_glm_tool_results(messages), tools=tools),
-        )
+        for name, original, patched in (
+            ("glm53-flash", _TEMPLATE, self.patched),
+            ("glm53-w4afp8", _W4AFP8_TEMPLATE, self.w4afp8_patched),
+        ):
+            with self.subTest(template=name):
+                self.assertEqual(
+                    _render(original, messages, tools=tools),
+                    _render(patched, order_glm_tool_results(messages), tools=tools),
+                )
 
     def test_plain_result_blocks(self):
         cases = {

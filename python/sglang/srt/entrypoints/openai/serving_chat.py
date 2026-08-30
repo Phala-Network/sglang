@@ -1450,7 +1450,12 @@ class OpenAIServingChat(OpenAIServingBase):
                 self._handle_last_assistant_message(openai_compatible_messages, request)
             )
 
-            if self._glm_tool_result_template is not None:
+            # The reorder is only valid for the patched template, so a
+            # request-supplied chat_template disables both together.
+            glm_tool_result_template = self._glm_tool_result_template
+            if "chat_template" in (request.chat_template_kwargs or {}):
+                glm_tool_result_template = None
+            if glm_tool_result_template is not None:
                 openai_compatible_messages = chat_encoding.order_glm_tool_results(
                     openai_compatible_messages
                 )
@@ -1460,8 +1465,8 @@ class OpenAIServingChat(OpenAIServingBase):
                 extra_template_kwargs["reasoning_effort"] = request.reasoning_effort
             if request.chat_template_kwargs:
                 extra_template_kwargs.update(request.chat_template_kwargs)
-            if self._glm_tool_result_template is not None:
-                extra_template_kwargs["chat_template"] = self._glm_tool_result_template
+            if glm_tool_result_template is not None:
+                extra_template_kwargs["chat_template"] = glm_tool_result_template
 
             rc = self.template_manager.reasoning_config
             if rc is not None and rc.effort_kwarg is not None:

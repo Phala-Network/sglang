@@ -1855,7 +1855,7 @@ def _load_image(
                     e,
                 )
     try:
-        return Image.open(BytesIO(image_bytes))
+        image = Image.open(BytesIO(image_bytes))
     except (OSError, SyntaxError) as e:
         # Pillow reports malformed headers with broad built-in exceptions.
         # Keep real operating-system failures (for example EMFILE) as server
@@ -1863,6 +1863,18 @@ def _load_image(
         if isinstance(e, OSError) and e.errno is not None:
             raise
         raise ValueError(f"Could not decode image: {e}") from e
+    return _fully_load_pil_image(image)
+
+
+def _fully_load_pil_image(image: Image.Image) -> Image.Image:
+    """Force PIL's lazy decode while malformed input is still request-local."""
+    try:
+        image.load()
+    except (OSError, SyntaxError) as e:
+        if isinstance(e, OSError) and e.errno is not None:
+            raise
+        raise ValueError(f"Could not decode image: {e}") from e
+    return image
 
 
 def load_image(
@@ -1879,7 +1891,7 @@ def load_image(
     image = None
     image_size: Optional[tuple[int, int]] = None
     if isinstance(image_file, Image.Image):
-        image = image_file
+        image = _fully_load_pil_image(image_file)
         image_size = (image.width, image.height)
     elif isinstance(image_file, bytes):
         image = _load_image(image_bytes=image_file, gpu_image_decode=gpu_image_decode)

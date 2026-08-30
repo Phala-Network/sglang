@@ -3273,6 +3273,89 @@ class TestGlm47MoeDetector(unittest.TestCase):
         )
         self.assertEqual(result.normal_text, "")
 
+    def test_repeated_calls_get_sequential_tool_index(self):
+        text = (
+            "<tool_call>get_weather"
+            "<arg_key>city</arg_key><arg_value>Beijing</arg_value>"
+            "</tool_call>"
+            "<tool_call>get_weather"
+            "<arg_key>city</arg_key><arg_value>Shanghai</arg_value>"
+            "</tool_call>"
+            "<tool_call>get_weather"
+            "<arg_key>city</arg_key><arg_value>Tokyo</arg_value>"
+            "</tool_call>"
+        )
+        result = self.detector.detect_and_parse(text, self.tools)
+        self.assertEqual([call.tool_index for call in result.calls], [0, 1, 2])
+
+    def test_streaming_matches_detect_and_parse_tool_index(self):
+        tools = [
+            Tool(
+                type="function",
+                function=Function(
+                    name="get_weather",
+                    parameters={
+                        "type": "object",
+                        "properties": {"city": {"type": "string"}},
+                        "required": ["city"],
+                    },
+                ),
+            ),
+            Tool(
+                type="function",
+                function=Function(
+                    name="search",
+                    parameters={
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                    },
+                ),
+            ),
+        ]
+        text = (
+            "<tool_call>get_weather"
+            "<arg_key>city</arg_key><arg_value>Beijing</arg_value>"
+            "</tool_call>"
+            "<tool_call>search"
+            "<arg_key>query</arg_key><arg_value>hotels</arg_value>"
+            "</tool_call>"
+            "<tool_call>get_weather"
+            "<arg_key>city</arg_key><arg_value>Tokyo</arg_value>"
+            "</tool_call>"
+        )
+
+        one_shot = self.detector.detect_and_parse(text, tools)
+        one_shot_indices = [call.tool_index for call in one_shot.calls]
+        self.assertEqual(one_shot_indices, [0, 1, 2])
+
+        detector = Glm47MoeDetector()
+        stream_indices = []
+        for offset in range(0, len(text), 3):
+            result = detector.parse_streaming_increment(
+                text[offset : offset + 3], tools
+            )
+            stream_indices.extend(call.tool_index for call in result.calls if call.name)
+        self.assertEqual(stream_indices, [0, 1, 2])
+        self.assertEqual(one_shot_indices, stream_indices)
+
+    def test_repeated_calls_preserve_unknown_tool_policy(self):
+        text = (
+            "<tool_call>get_weather"
+            "<arg_key>city</arg_key><arg_value>Beijing</arg_value>"
+            "</tool_call>"
+            "<tool_call>undefined_tool"
+            "<arg_key>value</arg_key><arg_value>x</arg_value>"
+            "</tool_call>"
+            "<tool_call>get_weather"
+            "<arg_key>city</arg_key><arg_value>Tokyo</arg_value>"
+            "</tool_call>"
+        )
+        result = self.detector.detect_and_parse(text, self.tools)
+        self.assertEqual(
+            [call.name for call in result.calls], ["get_weather", "get_weather"]
+        )
+        self.assertEqual([call.tool_index for call in result.calls], [0, 2])
+
     def test_streaming_multiple_tool_calls(self):
         """Test streaming incremental parsing of multiple tool calls."""
         chunks = [

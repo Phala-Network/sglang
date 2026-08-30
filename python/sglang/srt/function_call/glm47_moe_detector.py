@@ -229,6 +229,7 @@ class Glm47MoeDetector(BaseFormatDetector):
         self.current_tool_id = -1
         self.current_tool_name_sent = False
         self._streamed_raw_length = 0
+        self._skipping_unknown_tool = False
         self._tool_call_completed = False  # Track if tool call has been completed
         self._sent_empty_object = (
             False  # Track if empty object has been sent for no-arg functions
@@ -728,6 +729,7 @@ class Glm47MoeDetector(BaseFormatDetector):
         self._last_arguments = ""
         self.current_tool_name_sent = False
         self._streamed_raw_length = 0
+        self._skipping_unknown_tool = False
         self._reset_streaming_state()
 
         return calls
@@ -798,6 +800,31 @@ class Glm47MoeDetector(BaseFormatDetector):
                 partial_match
             )
 
+            # Do not emit a streaming tool-call name until enough input has
+            # arrived to determine the complete name. Once complete, apply the
+            # same unknown-tool policy as the non-streaming parser. Keep
+            # consuming a filtered call through its end token so its argument
+            # fragments cannot leak into the response.
+            has_arg_key = "<arg_key" in current_text
+            is_func_name_complete = has_arg_key or is_tool_end == self.eot_token
+            if is_func_name_complete and not self._skipping_unknown_tool:
+                is_known_tool = bool(func_name and func_name in self._tool_indices)
+                if not is_known_tool:
+                    logger.warning(
+                        f"Model attempted to call undefined function: {func_name}"
+                    )
+                    if not envs.SGLANG_FORWARD_UNKNOWN_TOOLS.get():
+                        self._skipping_unknown_tool = True
+            if self._skipping_unknown_tool:
+                if is_tool_end == self.eot_token:
+                    self._buffer = current_text[partial_match.end() :]
+                    self._skipping_unknown_tool = False
+                    if self._buffer:
+                        following = self.parse_streaming_increment("", tools)
+                        following.normal_text = normal_text + following.normal_text
+                        return following
+                return StreamingParseResult(normal_text=normal_text, calls=[])
+
             # Initialize tool call state if needed (keeping existing logic)
             if self.current_tool_id == -1:
                 self.current_tool_id = 0
@@ -820,10 +847,6 @@ class Glm47MoeDetector(BaseFormatDetector):
                 self.prev_tool_call_arr.append({})
             while len(self.streamed_args_for_tool) <= self.current_tool_id:
                 self.streamed_args_for_tool.append("")
-
-            # Determine if function name is complete by checking for <arg_key> in the full text
-            # This is important for streaming scenarios where args come in later chunks
-            has_arg_key = "<arg_key" in current_text
 
             # Send tool name if needed
             tool_name_item = self._send_tool_name_if_needed(

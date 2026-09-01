@@ -499,44 +499,52 @@ class ServingChatTestCase(unittest.TestCase):
         self.tm.server_args.enable_strict_thinking = True
 
         self.assertEqual(
-            self.chat._qwen35_reasoning_effort_token_range("low", 1024),
+            self.chat._qwen35_reasoning_effort_token_range("low", 16384),
             (32, 64),
         )
         self.assertEqual(
-            self.chat._qwen35_reasoning_effort_token_range("medium", 1024),
+            self.chat._qwen35_reasoning_effort_token_range("medium", 16384),
             (128, 256),
         )
         self.assertEqual(
-            self.chat._qwen35_reasoning_effort_token_range("xhigh", 1024),
-            (384, 768),
+            self.chat._qwen35_reasoning_effort_token_range("xhigh", 16384),
+            (384, 8192),
         )
         self.assertEqual(
-            self.chat._qwen35_reasoning_effort_token_range(None, 8192),
-            (384, 3072),
+            self.chat._qwen35_reasoning_effort_token_range(None, 16384),
+            (384, 8192),
         )
         self.assertEqual(
-            self.chat._qwen35_reasoning_effort_token_range(None, 8192, 1536),
-            (384, 1536),
+            self.chat._qwen35_reasoning_effort_token_range(None, 16384, 1536),
+            (72, 1536),
         )
         self.assertEqual(
-            self.chat._qwen35_reasoning_effort_token_range(None, 8192, 256),
-            (128, 256),
+            self.chat._qwen35_reasoning_effort_token_range(None, 16384, 256),
+            (12, 256),
         )
         self.assertEqual(
-            self.chat._qwen35_reasoning_effort_token_range(None, 8192, 2),
+            self.chat._qwen35_reasoning_effort_token_range(None, 16384, 2),
             (2, 2),
         )
         self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("xhigh", None),
+            (384, 8192),
+        )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range(None, None),
+            (384, 8192),
+        )
+        self.assertEqual(
             self.chat._qwen35_reasoning_effort_token_range("low", 128),
-            (4, 8),
+            (1, 1),
         )
         self.assertEqual(
             self.chat._qwen35_reasoning_effort_token_range("medium", 128),
-            (16, 32),
+            (2, 3),
         )
         self.assertEqual(
             self.chat._qwen35_reasoning_effort_token_range("xhigh", 128),
-            (48, 96),
+            (4, 96),
         )
         self.assertEqual(
             [
@@ -553,8 +561,8 @@ class ServingChatTestCase(unittest.TestCase):
 
         self.tm.server_args.enable_strict_thinking = True
         self.assertEqual(
-            self.chat._qwen35_reasoning_effort_token_range(None, 1024),
-            (384, 768),
+            self.chat._qwen35_reasoning_effort_token_range(None, 16384),
+            (384, 8192),
         )
         for effort in ("none", "minimal", "high", "max"):
             with self.subTest(effort=effort):
@@ -572,7 +580,7 @@ class ServingChatTestCase(unittest.TestCase):
             model="x",
             messages=[{"role": "user", "content": "What is 2+2?"}],
             reasoning_effort="medium",
-            max_tokens=1024,
+            max_tokens=16384,
         )
         processed = MessageProcessingResult(
             prompt="",
@@ -601,7 +609,7 @@ class ServingChatTestCase(unittest.TestCase):
         request = ChatCompletionRequest(
             model="x",
             messages=[{"role": "user", "content": "What is 2+2?"}],
-            max_tokens=1024,
+            max_tokens=16384,
         )
         processed = MessageProcessingResult(
             prompt="",
@@ -618,11 +626,37 @@ class ServingChatTestCase(unittest.TestCase):
             adapted, _ = self.chat._convert_to_internal_request(request)
 
         self.assertEqual(adapted.min_thinking_tokens, 384)
-        self.assertEqual(adapted.max_thinking_tokens, 768)
+        self.assertEqual(adapted.max_thinking_tokens, 8192)
         self.assertNotIn(
             "disable_strict_thinking_grammar",
             adapted.sampling_params.get("custom_params") or {},
         )
+
+    def test_qwen35_reasoning_disabled_skips_strict_thinking_bounds(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        self.tm.server_args.enable_strict_thinking = True
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "What is 2+2?"}],
+            max_tokens=16384,
+            reasoning={"enabled": False},
+        )
+        processed = MessageProcessingResult(
+            prompt="",
+            prompt_ids=[1, 2, 3],
+            image_data=None,
+            audio_data=None,
+            video_data=None,
+            modalities=[],
+            stop=[],
+            require_reasoning=False,
+        )
+
+        with patch.object(self.chat, "_process_messages", return_value=processed):
+            adapted, _ = self.chat._convert_to_internal_request(request)
+
+        self.assertIsNone(adapted.min_thinking_tokens)
+        self.assertIsNone(adapted.max_thinking_tokens)
 
     def test_qwen35_nested_reasoning_max_tokens_reaches_internal_request(self):
         self.tm.model_config.hf_config.model_type = "qwen3_5"
@@ -630,7 +664,7 @@ class ServingChatTestCase(unittest.TestCase):
         request = ChatCompletionRequest(
             model="x",
             messages=[{"role": "user", "content": "What is 2+2?"}],
-            max_tokens=8192,
+            max_tokens=16384,
             reasoning={"max_tokens": 1536},
         )
         processed = MessageProcessingResult(
@@ -647,7 +681,7 @@ class ServingChatTestCase(unittest.TestCase):
         with patch.object(self.chat, "_process_messages", return_value=processed):
             adapted, _ = self.chat._convert_to_internal_request(request)
 
-        self.assertEqual(adapted.min_thinking_tokens, 384)
+        self.assertEqual(adapted.min_thinking_tokens, 72)
         self.assertEqual(adapted.max_thinking_tokens, 1536)
 
     def test_qwen35_nested_reasoning_effort_guidance_reaches_template(self):

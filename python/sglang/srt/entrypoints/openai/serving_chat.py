@@ -137,10 +137,10 @@ _QWEN35_COMPLETED_TOOL_RESULT_GUIDANCE = (
 _QWEN35_REASONING_EFFORT_TOKEN_RANGES = {
     "low": (32, 64),
     "medium": (128, 256),
-    "xhigh": (384, 768),
+    "xhigh": (384, 8192),
 }
-_QWEN35_REASONING_EFFORT_FULL_BUDGET = 768
-_QWEN35_DEFAULT_REASONING_BUDGET = 3072
+_QWEN35_REASONING_EFFORT_FULL_BUDGET = 8192
+_QWEN35_DEFAULT_REASONING_BUDGET = 8192
 _QWEN35_REASONING_ANSWER_RESERVE_CAP = 256
 
 _MEDIA_CONTENT_PART_TYPES = frozenset({"image_url", "video_url", "audio_url"})
@@ -671,7 +671,16 @@ class OpenAIServingChat(OpenAIServingBase):
         xhigh_max = (
             available_tokens
             if reasoning_max_tokens is not None
-            else min(max(xhigh_min, int(768 * scale)), available_tokens)
+            else min(
+                max(
+                    xhigh_min,
+                    int(
+                        _QWEN35_REASONING_EFFORT_TOKEN_RANGES["xhigh"][1]
+                        * scale
+                    ),
+                ),
+                available_tokens,
+            )
         )
         ranges = {
             "low": (low_min, low_max),

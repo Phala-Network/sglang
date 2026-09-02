@@ -1,0 +1,84 @@
+# syntax=docker/dockerfile:1.7
+
+ARG BASE_IMAGE="docker.io/lmsysorg/sglang:dev-qwen38-27b-dflash2@sha256:616a3e97f45191af975896cfa644279096cb31bd408a071c2e99ca7209c3cafe"
+FROM ${BASE_IMAGE}
+
+ARG CREATED_AT
+ARG RELEASE_VERSION
+ARG SOURCE_REPOSITORY
+ARG SOURCE_REVISION
+ARG SOURCE_TREE_DIGEST
+ARG SOURCE_DATE_EPOCH
+ARG PATCH_COMMIT
+ARG RUNTIME_TREE_DIGEST
+ARG RUNTIME_CONTENT_DIGEST
+ARG RUNTIME_FILE_COUNT
+ARG RUNTIME_SYMLINK_DIGEST
+ARG RUNTIME_SYMLINK_COUNT
+ARG BASE_IMAGE_REF
+ARG BASE_IMAGE_DIGEST
+ARG BASE_PLATFORM_DIGEST
+ARG BASE_SOURCE_COMMIT
+ARG DOCKERFILE_DIGEST
+ARG BUILD_MANIFEST_URL
+ARG BUILD_MANIFEST_DIGEST
+ARG BUILDKIT_VERSION
+
+LABEL org.opencontainers.image.created="${CREATED_AT}" \
+      org.opencontainers.image.title="Phala Qwen3.8-27B SGLang flat runtime" \
+      org.opencontainers.image.description="Qwen3.8-27B SGLang runtime built directly from one public source commit on an immutable official SGLang base" \
+      org.opencontainers.image.url="https://github.com/Phala-Network/sglang/pkgs/container/sglang" \
+      org.opencontainers.image.source="${SOURCE_REPOSITORY}" \
+      org.opencontainers.image.version="${RELEASE_VERSION}" \
+      org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.vendor="Phala Network" \
+      org.opencontainers.image.ref.name="${RELEASE_VERSION}" \
+      org.opencontainers.image.documentation="${SOURCE_REPOSITORY}/tree/${SOURCE_REVISION}/release/phala/qwen38-flat" \
+      org.phala.source.repository="${SOURCE_REPOSITORY}" \
+      org.phala.source.commit="${SOURCE_REVISION}" \
+      org.phala.source.tree.digest="${SOURCE_TREE_DIGEST}" \
+      org.phala.patch.commit="${PATCH_COMMIT}" \
+      org.phala.source.runtime.tree.digest="${RUNTIME_TREE_DIGEST}" \
+      org.phala.source.runtime.content.digest="${RUNTIME_CONTENT_DIGEST}" \
+      org.phala.base.image="${BASE_IMAGE_REF}" \
+      org.phala.base.digest="${BASE_IMAGE_DIGEST}" \
+      org.phala.base.platform.digest="${BASE_PLATFORM_DIGEST}" \
+      org.phala.base.source.commit="${BASE_SOURCE_COMMIT}" \
+      org.phala.dockerfile.path="release/phala/qwen38-flat/Dockerfile" \
+      org.phala.dockerfile.digest="${DOCKERFILE_DIGEST}" \
+      org.phala.dependency.lock.mode="inherited-from-immutable-official-base-no-added-packages" \
+      org.phala.dependency.lock.digest="${BASE_IMAGE_DIGEST}" \
+      org.phala.builder.platform="linux/amd64" \
+      org.phala.buildkit.version="${BUILDKIT_VERSION}" \
+      org.phala.source.date.epoch="${SOURCE_DATE_EPOCH}" \
+      org.phala.build.manifest.url="${BUILD_MANIFEST_URL}" \
+      org.phala.build.manifest.digest="${BUILD_MANIFEST_DIGEST}" \
+      org.phala.sbom.digest="buildkit-attestation" \
+      org.phala.provenance.digest="buildkit-attestation" \
+      org.phala.reproducible="candidate-two-clean-build-verification"
+
+ENV SGLANG_BUILD_COMMIT="${SOURCE_REVISION}" \
+    SGLANG_BUILD_URL="${SOURCE_REPOSITORY}/commit/${SOURCE_REVISION}" \
+    SGLANG_IMAGE_TAG="${RELEASE_VERSION}"
+
+WORKDIR /sgl-workspace/sglang
+
+# Replace the complete Python runtime tree in one build from the public source
+# commit. Native CUDA dependencies remain those of the immutable official base.
+RUN rm -rf /sgl-workspace/sglang/python/sglang
+COPY --link python/sglang /sgl-workspace/sglang/python/sglang
+
+RUN set -eux; \
+    cd /sgl-workspace/sglang/python/sglang; \
+    actual_file_count="$(find . -type f | wc -l | tr -d ' ')"; \
+    actual_symlink_count="$(find . -type l | wc -l | tr -d ' ')"; \
+    actual_content_digest="$(find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | awk '{print "sha256:" $1}')"; \
+    actual_symlink_digest="$(find . -type l -printf '%P -> %l\n' | LC_ALL=C sort | sha256sum | awk '{print "sha256:" $1}')"; \
+    test "${actual_file_count}" = "${RUNTIME_FILE_COUNT}"; \
+    test "${actual_symlink_count}" = "${RUNTIME_SYMLINK_COUNT}"; \
+    test "${actual_content_digest}" = "${RUNTIME_CONTENT_DIGEST}"; \
+    test "${actual_symlink_digest}" = "${RUNTIME_SYMLINK_DIGEST}"
+
+COPY _release/build-input-manifest.json /usr/share/phala/sglang-build-input-manifest.json
+RUN printf '%s\n' "${SOURCE_REVISION}" > /etc/.GIT_REV

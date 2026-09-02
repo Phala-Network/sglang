@@ -71,6 +71,69 @@ class TestModelList(unittest.TestCase):
         self.assertEqual(model_list.data[1].id, "model-2")
 
 
+class TestReasoningVisibility(unittest.TestCase):
+    def request(self, **kwargs):
+        return ChatCompletionRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "Think."}],
+            **kwargs,
+        )
+
+    def assert_toggle(self, request, enabled: bool):
+        self.assertEqual(request.chat_template_kwargs["thinking"], enabled)
+        self.assertEqual(request.chat_template_kwargs["enable_thinking"], enabled)
+
+    def test_include_reasoning_legacy_visibility_and_default_enable(self):
+        included = self.request(include_reasoning=True)
+        self.assertTrue(included.include_reasoning)
+        self.assertFalse(included.reasoning_exclude)
+        self.assert_toggle(included, True)
+
+        excluded = self.request(include_reasoning=False)
+        self.assertFalse(excluded.include_reasoning)
+        self.assertTrue(excluded.reasoning_exclude)
+        self.assertIsNone(excluded.chat_template_kwargs)
+
+    def test_nested_reasoning_exclude_wins_legacy_visibility(self):
+        request = self.request(
+            include_reasoning=True,
+            reasoning={"enabled": True, "exclude": True},
+        )
+        self.assertTrue(request.reasoning_exclude)
+        self.assert_toggle(request, True)
+
+        request = self.request(
+            include_reasoning=False,
+            reasoning={"effort": "high", "exclude": False},
+        )
+        self.assertFalse(request.reasoning_exclude)
+        self.assertEqual(request.reasoning_effort, "high")
+        self.assert_toggle(request, True)
+
+    def test_explicit_reasoning_disable_wins_include_reasoning(self):
+        request = self.request(
+            include_reasoning=True,
+            reasoning={"enabled": False},
+        )
+        self.assertFalse(request.reasoning_exclude)
+        self.assert_toggle(request, False)
+
+    def test_reasoning_visibility_controls_require_booleans(self):
+        for value in (1, 0, "true", "false", {}, []):
+            with self.subTest(include_reasoning=value):
+                with self.assertRaisesRegex(
+                    ValidationError, "include_reasoning must be a boolean"
+                ):
+                    self.request(include_reasoning=value)
+
+        for value in (1, 0, "true", "false", {}, []):
+            with self.subTest(reasoning_exclude=value):
+                with self.assertRaisesRegex(
+                    ValidationError, "reasoning.exclude must be a boolean"
+                ):
+                    self.request(reasoning={"exclude": value})
+
+
 class TestCompletionRequest(unittest.TestCase):
     """Test CompletionRequest protocol model"""
 

@@ -616,7 +616,9 @@ class TestGenerateRequestCleanupOnDispatchFailure(CustomTestCase):
 
     def test_invalid_thinking_bounds_are_rejected_before_dispatch(self):
         tm = _make_tm_for_generate(self)
-        tm.server_args.enable_strict_thinking = True
+        override = get_context().override_server_args(enable_strict_thinking=True)
+        override.install()
+        self.addCleanup(override.restore)
         obj = GenerateReqInput(
             text="hello",
             rid="invalid-thinking-bounds",

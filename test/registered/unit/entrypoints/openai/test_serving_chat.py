@@ -2877,7 +2877,15 @@ class ServingChatTestCase(unittest.TestCase):
                 parsed.append(json.loads(c[len("data: ") :]))
         return parsed
 
-    async def _collect_stream_content(self, content, choice_logprobs, req):
+    async def _collect_stream_content(
+        self,
+        content,
+        choice_logprobs,
+        req,
+        *,
+        continuous_usage_stats=False,
+        reasoning_tokens=0,
+    ):
         chunks = []
         async for chunk in self.chat._generate_stream_content(
             content=content,
@@ -2889,9 +2897,9 @@ class ServingChatTestCase(unittest.TestCase):
             has_tool_calls={},
             choice_logprobs=choice_logprobs,
             finish_reason_type="stop",
-            continuous_usage_stats=False,
+            continuous_usage_stats=continuous_usage_stats,
             prompt_tokens={0: 5},
-            reasoning_tokens={0: 0},
+            reasoning_tokens={0: reasoning_tokens},
             completion_tokens={0: 1},
         ):
             chunks.append(chunk)
@@ -2949,6 +2957,60 @@ class ServingChatTestCase(unittest.TestCase):
             logprob_chunks,
             "logprobs dropped: no chunk carried logprobs with reasoning_parser active",
         )
+
+    def test_streaming_reasoning_exclusion_preserves_content_and_usage(self):
+        self.chat.reasoning_parser = "qwen3"
+        content = {
+            "text": "thinking then answer",
+            "meta_info": {
+                "id": "chatcmpl-hidden-reasoning",
+                "prompt_tokens": 5,
+                "completion_tokens": 4,
+                "cached_tokens": 0,
+                "finish_reason": {"type": "stop", "matched": None},
+                "output_token_logprobs": [(0.1, 1, "hidden")],
+                "output_top_logprobs": [],
+                "output_token_logprobs_length": 1,
+            },
+            "index": 0,
+        }
+        choice_logprobs = self.chat._process_streaming_logprobs(
+            content, 0, 1
+        ).model_dump()
+        req = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "Hi?"}],
+            stream=True,
+            logprobs=True,
+            separate_reasoning=True,
+            reasoning={"effort": "high", "exclude": True},
+        )
+        with patch.object(self.chat, "_process_reasoning_stream") as proc_mock:
+            proc_mock.return_value = ("private thought", "Visible answer")
+            chunks = get_or_create_event_loop().run_until_complete(
+                self._collect_stream_content(
+                    content,
+                    choice_logprobs,
+                    req,
+                    continuous_usage_stats=True,
+                    reasoning_tokens=1,
+                )
+            )
+        parsed = self._parse_chunks(chunks)
+        self.assertFalse(
+            any(
+                chunk["choices"][0]["delta"].get("reasoning_content")
+                for chunk in parsed
+            )
+        )
+        content_chunks = [
+            chunk
+            for chunk in parsed
+            if chunk["choices"][0]["delta"].get("content") == "Visible answer"
+        ]
+        self.assertEqual(len(content_chunks), 1)
+        self.assertEqual(content_chunks[0]["usage"]["reasoning_tokens"], 1)
+        self.assertIsNone(content_chunks[0]["choices"][0].get("logprobs"))
 
     def test_streaming_logprobs_flushed_when_tool_parser_buffers_delta(self):
         """Logprobs must be flushed on a standalone chunk when the tool parser emits no content delta."""
@@ -3651,6 +3713,36 @@ class ServingChatTestCase(unittest.TestCase):
         message = response.choices[0].message
         self.assertEqual(message.reasoning_content, "\nLet me think\n")
         self.assertEqual(message.content, "\n\nThe answer is 42.\n")
+
+    def test_non_stream_reasoning_exclusion_preserves_usage(self):
+        self.chat.reasoning_parser = "qwen3"
+        self.template_manager.force_reasoning = False
+        req = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "Hi?"}],
+            stream=False,
+            separate_reasoning=True,
+            reasoning={"enabled": True, "exclude": True},
+        )
+        ret = [
+            {
+                "text": "<think>private thought</think>Visible answer",
+                "meta_info": {
+                    "id": "chatcmpl-hidden-reasoning",
+                    "prompt_tokens": 5,
+                    "completion_tokens": 6,
+                    "reasoning_tokens": 3,
+                    "cached_tokens": 0,
+                    "finish_reason": {"type": "stop", "matched": None},
+                    "weight_version": "test",
+                },
+                "index": 0,
+            }
+        ]
+        response = self.chat._build_chat_response(req, ret, created=123)
+        self.assertIsNone(response.choices[0].message.reasoning_content)
+        self.assertEqual(response.choices[0].message.content, "Visible answer")
+        self.assertEqual(response.usage.reasoning_tokens, 3)
 
     # ------------- reasoning config tests -------------
     def test_get_reasoning_from_request_default_true_toggle(self):

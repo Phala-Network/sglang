@@ -13,10 +13,16 @@ system dependencies; native CUDA components and dependency versions are
 inherited unchanged from the digest-pinned official base.
 
 The release process must use `linux/amd64`, `--pull=false`, the source commit
-timestamp as `SOURCE_DATE_EPOCH`, `--sbom=true`, and
-`--provenance=mode=max`. Publish both a version tag and a source-revision tag,
-attach the sanitized build manifest as an OCI referrer, and verify the runtime
-manifest with two clean BuildKit builders before promotion.
+timestamp as `SOURCE_DATE_EPOCH`, `--provenance=mode=max`, and a digest-pinned
+SBOM generator. For this release line, use:
+
+```text
+--attest=type=sbom,generator=docker.io/docker/buildkit-syft-scanner:stable-1@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9
+```
+
+Publish both a version tag and a source-revision tag, attach the sanitized
+build manifest as an OCI referrer, and verify the runtime manifest with two
+clean BuildKit builders before promotion.
 
 The Dockerfile intentionally has no external `# syntax=` frontend tag. The
 release pins the BuildKit image itself and uses its built-in Dockerfile

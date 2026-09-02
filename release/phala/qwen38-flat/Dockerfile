@@ -22,6 +22,8 @@ ARG BASE_SOURCE_COMMIT
 ARG DOCKERFILE_DIGEST
 ARG BUILD_MANIFEST_URL
 ARG BUILD_MANIFEST_DIGEST
+ARG BUILD_CONTEXT_URI
+ARG BUILD_RECIPE_DIGEST
 ARG BUILDKIT_VERSION
 
 LABEL org.opencontainers.image.created="${CREATED_AT}" \
@@ -54,6 +56,8 @@ LABEL org.opencontainers.image.created="${CREATED_AT}" \
       org.phala.source.date.epoch="${SOURCE_DATE_EPOCH}" \
       org.phala.build.manifest.url="${BUILD_MANIFEST_URL}" \
       org.phala.build.manifest.digest="${BUILD_MANIFEST_DIGEST}" \
+      org.phala.build.context="${BUILD_CONTEXT_URI}" \
+      org.phala.build.recipe.digest="${BUILD_RECIPE_DIGEST}" \
       org.phala.sbom.digest="buildkit-attestation" \
       org.phala.provenance.digest="buildkit-attestation" \
       org.phala.reproducible="candidate-two-clean-build-verification"
@@ -80,5 +84,15 @@ RUN set -eux; \
     test "${actual_content_digest}" = "${RUNTIME_CONTENT_DIGEST}"; \
     test "${actual_symlink_digest}" = "${RUNTIME_SYMLINK_DIGEST}"
 
-COPY _release/build-input-manifest.json /usr/share/phala/sglang-build-input-manifest.json
-RUN printf '%s\n' "${SOURCE_REVISION}" > /etc/.GIT_REV
+RUN set -eu; \
+    mkdir -p /usr/share/phala; \
+    printf '%s\n' \
+      '{' \
+      '  "schema_version": 1,' \
+      "  \"source\": {\"repository\": \"${SOURCE_REPOSITORY}\", \"commit\": \"${SOURCE_REVISION}\", \"tree\": \"${SOURCE_TREE_DIGEST}\", \"runtime_tree\": \"${RUNTIME_TREE_DIGEST}\", \"runtime_content_digest\": \"${RUNTIME_CONTENT_DIGEST}\"}," \
+      "  \"base\": {\"image\": \"${BASE_IMAGE_REF}\", \"index_digest\": \"${BASE_IMAGE_DIGEST}\", \"platform_digest\": \"${BASE_PLATFORM_DIGEST}\", \"source_commit\": \"${BASE_SOURCE_COMMIT}\"}," \
+      "  \"build\": {\"context\": \"${BUILD_CONTEXT_URI}\", \"dockerfile\": \"release/phala/qwen38-flat/Dockerfile\", \"dockerfile_digest\": \"${DOCKERFILE_DIGEST}\", \"recipe_digest\": \"${BUILD_RECIPE_DIGEST}\", \"platform\": \"linux/amd64\", \"source_date_epoch\": \"${SOURCE_DATE_EPOCH}\", \"buildkit_version\": \"${BUILDKIT_VERSION}\"}," \
+      "  \"build_manifest\": {\"url\": \"${BUILD_MANIFEST_URL}\", \"input_digest\": \"${BUILD_MANIFEST_DIGEST}\"}" \
+      '}' \
+      > /usr/share/phala/sglang-build-input-manifest.json; \
+    printf '%s\n' "${SOURCE_REVISION}" > /etc/.GIT_REV

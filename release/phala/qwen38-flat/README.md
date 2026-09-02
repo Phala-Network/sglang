@@ -4,16 +4,16 @@ This release definition has one immutable official SGLang base and one public
 source commit. It must not use a Phala `r12`, `r13`, `r14`, or other overlay
 image as its base.
 
-The build context is a complete `git archive` of the commit named by
-`SOURCE_REVISION`. The Dockerfile removes the base image's entire
+BuildKit uses the public repository URL plus the complete commit SHA as its Git
+context, so provenance records the VCS source directly. The Dockerfile removes
+the base image's entire
 `/sgl-workspace/sglang/python/sglang` directory and copies the complete
 `python/sglang` tree from that archive. It does not install Python or operating
 system dependencies; native CUDA components and dependency versions are
 inherited unchanged from the digest-pinned official base.
 
-The release process must provide a generated
-`_release/build-input-manifest.json`, use `linux/amd64`, `--pull=false`, the
-source commit timestamp as `SOURCE_DATE_EPOCH`, `--sbom=true`, and
+The release process must use `linux/amd64`, `--pull=false`, the source commit
+timestamp as `SOURCE_DATE_EPOCH`, `--sbom=true`, and
 `--provenance=mode=max`. Publish both a version tag and a source-revision tag,
 attach the sanitized build manifest as an OCI referrer, and verify the runtime
 manifest with two clean BuildKit builders before promotion.

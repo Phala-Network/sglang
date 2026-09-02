@@ -18,6 +18,10 @@ timestamp as `SOURCE_DATE_EPOCH`, `--sbom=true`, and
 attach the sanitized build manifest as an OCI referrer, and verify the runtime
 manifest with two clean BuildKit builders before promotion.
 
+The Dockerfile intentionally has no external `# syntax=` frontend tag. The
+release pins the BuildKit image itself and uses its built-in Dockerfile
+frontend, so a floating frontend image is not an undeclared build input.
+
 The immutable base for this release line is:
 
 ```text

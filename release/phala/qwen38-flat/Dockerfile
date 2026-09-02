@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.7
-
 ARG BASE_IMAGE="docker.io/lmsysorg/sglang:dev-qwen38-27b-dflash2@sha256:616a3e97f45191af975896cfa644279096cb31bd408a071c2e99ca7209c3cafe"
 FROM ${BASE_IMAGE}
 

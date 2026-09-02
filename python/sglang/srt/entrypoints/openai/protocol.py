@@ -919,6 +919,16 @@ class ChatCompletionRequest(BaseModel):
         "models that expose a maximum-effort tier above 'high'; models that don't "
         "support it treat it the same as 'high'.",
     )
+    include_reasoning: Optional[StrictBool] = Field(
+        default=None,
+        description="Legacy OpenRouter-compatible control for returning reasoning. "
+        "False is equivalent to reasoning.exclude=true. True preserves reasoning "
+        "visibility and, when no explicit reasoning control is present, enables "
+        "the model's default reasoning mode for backward compatibility.",
+    )
+    # Response-only policy. Excluding it from model dumps prevents this normalized
+    # control from becoming an accidental wire-level SGLang extension.
+    reasoning_exclude: bool = Field(default=False, exclude=True, repr=False)
     reasoning_max_tokens: Optional[int] = Field(
         default=None,
         ge=1,
@@ -1040,6 +1050,22 @@ class ChatCompletionRequest(BaseModel):
         r = values.get("reasoning")
         thinking = None
 
+        include_reasoning = values.get("include_reasoning")
+        if include_reasoning is not None and not isinstance(include_reasoning, bool):
+            raise ValueError("include_reasoning must be a boolean")
+
+        # Nested reasoning.exclude is authoritative. The legacy spelling is
+        # consulted only when nested exclude is absent.
+        reasoning_exclude = False
+        if isinstance(r, dict) and "exclude" in r:
+            exclude = r["exclude"]
+            if not isinstance(exclude, bool):
+                raise ValueError("reasoning.exclude must be a boolean")
+            reasoning_exclude = exclude
+        elif include_reasoning is not None:
+            reasoning_exclude = not include_reasoning
+        values["reasoning_exclude"] = reasoning_exclude
+
         if r is not None and isinstance(r, dict):
             if "max_tokens" in r:
                 max_tokens = r["max_tokens"]
@@ -1085,6 +1111,13 @@ class ChatCompletionRequest(BaseModel):
                         "on",
                     }
                 thinking = bool(enabled)
+
+        # include_reasoning=true is the legacy visible-reasoning request. It
+        # enables the template default only when no explicit nested control or
+        # effort has already selected a mode. Excluding output alone must not
+        # disable internal reasoning.
+        if thinking is None and include_reasoning is True:
+            thinking = True
 
         effort = values.get("reasoning_effort")
         if effort is not None:

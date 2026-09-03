@@ -112,6 +112,17 @@ class Qwen25Detector(BaseFormatDetector):
 
         return result
 
+    def supports_structural_tag(self) -> bool:
+        """Use JSON-schema constraints for required and named tool choice.
+
+        Qwen2.5 tokenizers encode ``</tool_call>`` as one atomic special token.
+        Legacy structural-tag grammars describe that delimiter as ordinary
+        bytes, so llguidance rejects the model's valid closing token and turns
+        a complete call into ``finish_reason=abort``. Automatic tool choice is
+        still parsed in the model's native tagged format by this detector.
+        """
+        return False
+
     def structure_info(self) -> _GetInfoFunc:
         return lambda name: StructureInfo(
             begin='<tool_call>\n{"name":"' + name + '", "arguments":',

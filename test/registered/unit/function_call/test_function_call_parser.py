@@ -4599,7 +4599,7 @@ class TestGetStructureConstraint(unittest.TestCase):
     def _constraint_json(self, result):
         return result[1].model_dump_json()
 
-    # --- structural_tag detectors (kimi_k2, deepseekv3, qwen25, etc.) ---
+    # --- structural_tag detectors (kimi_k2, deepseekv3, etc.) ---
 
     def test_kimi_required_strict_returns_structural_tag(self):
         import xgrammar as xgr
@@ -4683,11 +4683,24 @@ class TestGetStructureConstraint(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result[0], "structural_tag")
 
-    def test_qwen25_required_no_strict_returns_structural_tag(self):
+    def test_qwen25_required_uses_json_schema_constraint(self):
         parser = self._make_parser("qwen25", strict=False)
         result = parser.get_structure_constraint("required")
         self.assertIsNotNone(result)
-        self.assertEqual(result[0], "structural_tag")
+        self.assertEqual(result[0], "json_schema")
+        self.assertFalse(parser.detector.supports_structural_tag())
+
+    def test_qwen25_named_uses_json_schema_constraint(self):
+        parser = self._make_parser("qwen25", strict=False)
+        choice = ToolChoice(function=ToolChoiceFuncName(name="get_weather"))
+        result = parser.get_structure_constraint(choice)
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0], "json_schema")
+        self.assertIn("get_weather", json.dumps(result[1]))
+
+    def test_qwen25_auto_keeps_native_parser_unconstrained(self):
+        parser = self._make_parser("qwen25", strict=False)
+        self.assertIsNone(parser.get_structure_constraint("auto"))
 
     # --- structural_tag content verification ---
 

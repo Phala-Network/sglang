@@ -128,20 +128,17 @@ class TestMuseGlimmerDetector(CustomTestCase):
         JSON body retains Muse's channel header and must still become a call."""
         raw = (
             " to=self<|message|>Need weather.<|eom|>"
-            '<|start|>assistant to=get_weather<|message|>'
+            "<|start|>assistant to=get_weather<|message|>"
             '[{"name":"get_weather","parameters":{"city":"Paris"}}]'
         )
         reasoning, remainder = ReasoningParser(
             "muse", tool_call_parser_active=True
         ).parse_non_stream(raw)
-        parser = FunctionCallParser(
-            self.tools, "muse", constrained_output=True
-        )
-        self.assertFalse(parser.detector.parses_required_natively())
+        parser = FunctionCallParser(self.tools, "muse", constrained_output=True)
+        self.assertTrue(parser.detector.parses_required_natively())
         self.assertTrue(parser.detector.parses_constrained_output_natively())
         constraint = parser.get_structure_constraint("required")
-        self.assertEqual(constraint[0], "json_schema")
-        self.assertEqual(constraint[1]["minItems"], 1)
+        self.assertIsNone(constraint)
         self.assertTrue(parser.has_tool_call(remainder))
         content, calls = parser.parse_non_stream(remainder)
         self.assertEqual(reasoning, "Need weather.")
@@ -161,7 +158,7 @@ class TestMuseGlimmerDetector(CustomTestCase):
     def test_required_json_array_quoted_in_answer_is_not_a_call(self):
         """The broader header detector must not activate a quoted tool frame."""
         quoted = (
-            '<|start|>assistant to=get_weather<|message|>'
+            "<|start|>assistant to=get_weather<|message|>"
             '[{"name":"get_weather","parameters":{"city":"X"}}]'
         )
         raw = (
@@ -178,9 +175,7 @@ class TestMuseGlimmerDetector(CustomTestCase):
         self.assertIn(quoted, content)
 
     def test_required_json_array_without_tool_channel_header(self):
-        parser = FunctionCallParser(
-            self.tools, "muse", constrained_output=True
-        )
+        parser = FunctionCallParser(self.tools, "muse", constrained_output=True)
         raw = '[{"name":"get_weather","parameters":{"city":"Paris"}}]'
         content, calls = parser.parse_non_stream(raw)
         self.assertEqual(content, "")
@@ -235,9 +230,7 @@ class TestMuseGlimmerDetector(CustomTestCase):
         self.assertEqual(constraint[0], "json_schema")
         schema = constraint[1]
         self.assertEqual(schema["minItems"], 1)
-        self.assertEqual(
-            schema["items"]["properties"]["name"]["enum"], ["calculate"]
-        )
+        self.assertEqual(schema["items"]["properties"]["name"]["enum"], ["calculate"])
 
     def test_namespaced_name_passes_through(self):
         tools = [

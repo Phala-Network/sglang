@@ -57,8 +57,7 @@ def _has_tool_channel_header(text: str) -> bool:
     marker detection alone misses that valid form.
     """
     return any(
-        _is_tool_channel(match.group(1))
-        for match in _CHANNEL_HEADER_RE.finditer(text)
+        _is_tool_channel(match.group(1)) for match in _CHANNEL_HEADER_RE.finditer(text)
     )
 
 
@@ -102,10 +101,7 @@ class MuseGlimmerDetector(BaseFormatDetector):
         return (
             has_atem_markers(text)
             or _has_tool_channel_header(text)
-            or (
-                self._constrained_output
-                and ("[" in text or "{" in text)
-            )
+            or (self._constrained_output and ("[" in text or "{" in text))
         )
 
     def _registered_names(self, tools: Optional[List[Tool]]) -> Set[str]:
@@ -258,9 +254,7 @@ class MuseGlimmerDetector(BaseFormatDetector):
                 if m is None:
                     if not final:
                         return pos
-                    self._emit_json_calls(
-                        chunk[pos:], registered, calls, normal_parts
-                    )
+                    self._emit_json_calls(chunk[pos:], registered, calls, normal_parts)
                     return len(chunk)
                 self._open_invoke = m.group("name")
                 pos = m.end()
@@ -333,9 +327,6 @@ class MuseGlimmerDetector(BaseFormatDetector):
         if not emitted:
             normal_parts.append(chunk)
 
-    def parses_required_natively(self) -> bool:
-        return False
-
     def parses_constrained_output_natively(self) -> bool:
         """Parse the JSON body after Muse's generated channel header."""
         return True
@@ -344,8 +335,11 @@ class MuseGlimmerDetector(BaseFormatDetector):
         return False
 
     def parses_required_natively(self) -> bool:
-        """The model only ever emits ATEM tool calls, so the JSON-array grammar
-        the default required/named path forces cannot parse its output."""
+        """Keep Muse's native ATEM framing for unconstrained required calls.
+
+        Named tool choice remains schema-constrained by FunctionCallParser so
+        the requested function name is enforced.
+        """
         return True
 
     def structure_info(self) -> _GetInfoFunc:

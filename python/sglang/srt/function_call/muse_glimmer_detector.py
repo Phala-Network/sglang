@@ -335,12 +335,13 @@ class MuseGlimmerDetector(BaseFormatDetector):
         return False
 
     def parses_required_natively(self) -> bool:
-        """Keep Muse's native ATEM framing for unconstrained required calls.
+        """Require a schema constraint for OpenAI ``tool_choice=required``.
 
-        Named tool choice remains schema-constrained by FunctionCallParser so
-        the requested function name is enforced.
+        Muse can decline an unconstrained required call and emit a normal final
+        answer. The constrained-output parser below preserves Muse's channel
+        framing while enforcing that at least one registered tool is emitted.
         """
-        return True
+        return False
 
     def structure_info(self) -> _GetInfoFunc:
         return lambda name: StructureInfo(

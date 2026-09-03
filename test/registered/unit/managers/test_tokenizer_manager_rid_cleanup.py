@@ -617,7 +617,7 @@ class TestGenerateRequestCancellationCleanup(CustomTestCase):
     """Cancellation must not orphan requests that reached the scheduler."""
 
     def test_cancelled_request_after_dispatch_keeps_state_for_abort_echo(self):
-        tm = _make_tm_for_generate()
+        tm = _make_tm_for_generate(self)
         rid = "cancelled_after_dispatch"
         obj = _make_generate_obj(rid, is_single=True)
         obj.return_prompt_token_ids = False
@@ -643,7 +643,7 @@ class TestGenerateRequestCancellationCleanup(CustomTestCase):
         self.assertEqual(obj._dispatched_rids, {rid})
 
     def test_cancelled_request_before_dispatch_discards_state(self):
-        tm = _make_tm_for_generate()
+        tm = _make_tm_for_generate(self)
         rid = "cancelled_before_dispatch"
         obj = _make_generate_obj(rid, is_single=True)
         tm._tokenize_one_request = AsyncMock(side_effect=asyncio.CancelledError())
@@ -660,7 +660,7 @@ class TestGenerateRequestCancellationCleanup(CustomTestCase):
         self.assertEqual(obj._dispatched_rids, set())
 
     def test_delayed_abort_force_dispatches_recorded_scheduler_rids(self):
-        tm = _make_tokenizer_manager()
+        tm = _make_tokenizer_manager(self)
         obj = _make_generate_obj("root", is_single=True)
         obj._dispatched_rids = {"child-0", "child-1"}
         tm.abort_request = Mock()
@@ -678,7 +678,10 @@ class TestGenerateRequestCancellationCleanup(CustomTestCase):
             [("child-0",), ("child-1",)],
         )
         self.assertTrue(
-            all(call.kwargs == {"force": True} for call in tm.abort_request.call_args_list)
+            all(
+                call.kwargs == {"force": True}
+                for call in tm.abort_request.call_args_list
+            )
         )
 
 

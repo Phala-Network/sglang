@@ -121,6 +121,7 @@ def _scheduler_for_raw_prefill(*, chunked_req, waiting_queue) -> Scheduler:
     s.enable_priority_preemption = False
     s.is_hybrid_swa = False
     s.chunked_req = chunked_req
+    s._pending_chunked_abort_req = None
     s.waiting_queue = waiting_queue
     s.min_free_slots_delayer = None
     s.get_num_allocatable_reqs = MagicMock(return_value=1)
@@ -270,6 +271,30 @@ class TestMMEmbeddingValidationGate(CustomTestCase):
         self.assertFalse(running_batch.batch_is_full)
         req.init_next_round_input.assert_not_called()
         scheduler.get_num_allocatable_reqs.assert_not_called()
+        scheduler.policy.calc_priority.assert_not_called()
+        prefill_adder.assert_not_called()
+
+    def test_pending_chunked_abort_blocks_next_prefill_owner(self):
+        """A new chunk owner must not replace one whose abort is draining."""
+        draining = self._make_chunked_req()
+        waiting = self._make_chunked_req()
+        waiting.rid = "next-owner"
+        scheduler = _scheduler_for_raw_prefill(
+            chunked_req=None, waiting_queue=[waiting]
+        )
+        scheduler._pending_chunked_abort_req = draining
+        running_batch = SimpleNamespace(reqs=[], batch_is_full=False)
+
+        with patch("sglang.srt.managers.scheduler.PrefillAdder") as prefill_adder:
+            batch, returned_running = Scheduler._get_new_batch_prefill_raw(
+                scheduler, None, running_batch
+            )
+
+        self.assertIsNone(batch)
+        self.assertIs(returned_running, running_batch)
+        self.assertIs(scheduler._pending_chunked_abort_req, draining)
+        self.assertEqual(scheduler.waiting_queue, [waiting])
+        waiting.init_next_round_input.assert_not_called()
         scheduler.policy.calc_priority.assert_not_called()
         prefill_adder.assert_not_called()
 

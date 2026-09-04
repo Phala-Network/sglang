@@ -3326,6 +3326,14 @@ class Scheduler(
         prefill_delayer_single_pass: Optional[PrefillDelayerSinglePassExecutor],
         running_batch: ScheduleBatch,
     ) -> Tuple[Optional[ScheduleBatch], ScheduleBatch]:
+        # A chunked request whose abort is waiting for an overlap result still
+        # owns KV and Mamba allocations. Do not admit another prefill until that
+        # request is released: _pending_chunked_abort_req is intentionally a
+        # single owner slot, and replacing it would orphan the previous request's
+        # final chunk.
+        if self._pending_chunked_abort_req is not None:
+            return None, running_batch
+
         # Check if the grammar is ready in the grammar queue
         if self.grammar_manager.has_waiting_grammars():
             ready_grammar_requests = self.grammar_manager.get_ready_grammar_requests()
@@ -3939,9 +3947,7 @@ class Scheduler(
             elif self.enable_pdmux and batch.forward_mode.is_split_prefill():
                 resolve_forward_inputs(batch, self.future_map)
                 batch_result = self.tp_worker.forward_batch_split_prefill(batch)
-                self._relay_forward_payload(
-                    batch, batch.req_pool_indices, batch_result
-                )
+                self._relay_forward_payload(batch, batch.req_pool_indices, batch_result)
                 batch.input_ids = None
                 self._copy_auxiliary_output_to_cpu(batch, batch_result)
             elif not batch.spec_algorithm.is_none():

@@ -25,8 +25,8 @@ ARG BUILD_RECIPE_DIGEST
 ARG BUILDKIT_VERSION
 
 LABEL org.opencontainers.image.created="${CREATED_AT}" \
-      org.opencontainers.image.title="Phala Muse-Glimmer and Qwen2.5 SGLang flat runtime" \
-      org.opencontainers.image.description="SGLang v0.5.18 runtime for Muse-Glimmer-30B and Qwen2.5-7B, built from one public source commit on an immutable official SGLang base" \
+      org.opencontainers.image.title="Phala GPT-OSS, Muse-Glimmer, and Qwen2.5 SGLang flat runtime" \
+      org.opencontainers.image.description="SGLang v0.5.18 runtime for GPT-OSS-20B, Muse-Glimmer-30B, and Qwen2.5-7B, built from one public source commit on an immutable official SGLang base" \
       org.opencontainers.image.url="https://github.com/Phala-Network/sglang/pkgs/container/sglang" \
       org.opencontainers.image.source="${SOURCE_REPOSITORY}" \
       org.opencontainers.image.version="${RELEASE_VERSION}" \

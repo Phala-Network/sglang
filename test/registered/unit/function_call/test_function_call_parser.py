@@ -2827,6 +2827,23 @@ class TestGptOssDetector(unittest.TestCase):
         )
         self.assertFalse(self.detector.has_tool_call("no tool call here"))
 
+    def test_constrained_tool_call_without_repeated_assistant_start(self):
+        # With required/named tool choice, constrained decoding begins after
+        # the assistant start token was already consumed by the prompt.  The
+        # valid Harmony payload therefore starts at the commentary channel.
+        text = (
+            "<|channel|>commentary to=functions.get_weather"
+            "<|constrain|>json<|message|>{\"city\":\"Paris\"}<|call|>"
+        )
+
+        self.assertTrue(self.detector.has_tool_call(text))
+        result = self.detector.detect_and_parse(text, self.tools)
+
+        self.assertEqual(result.normal_text, "")
+        self.assertEqual(len(result.calls), 1)
+        self.assertEqual(result.calls[0].name, "get_weather")
+        self.assertEqual(json.loads(result.calls[0].parameters), {"city": "Paris"})
+
     def test_get_model_structural_tag(self):
         import xgrammar as xgr
 

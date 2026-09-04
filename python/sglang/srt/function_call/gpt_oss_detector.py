@@ -38,7 +38,16 @@ class GptOssDetector(BaseFormatDetector):
 
     def has_tool_call(self, text: str) -> bool:
         """Check if text contains TypeScript-style function call markers."""
-        return self.bot_token in text
+        # Constrained decoding can begin after the assistant start token has
+        # already been consumed by the prompt.  In that case xgrammar emits a
+        # valid Harmony tool payload beginning at ``<|channel|>commentary``
+        # instead of repeating ``<|start|>assistant``.  Detect the parser's
+        # actual tool-call shape as well so non-streaming required/named calls
+        # are parsed consistently with streaming calls.
+        return (
+            self.bot_token in text
+            or self.tool_extract_pattern.search(text) is not None
+        )
 
     def detect_and_parse(self, text: str, tools: List[Tool]) -> StreamingParseResult:
         """Parse TypeScript-style function calls from complete text."""

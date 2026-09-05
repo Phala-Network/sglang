@@ -330,7 +330,7 @@ class Glm47MoeDetector(BaseFormatDetector):
 
         Args:
             value: Raw value string
-            value_type: Expected type ('string', 'number', 'object')
+            value_type: Expected JSON Schema type
 
         Returns:
             Properly formatted JSON value string
@@ -338,7 +338,7 @@ class Glm47MoeDetector(BaseFormatDetector):
         if value_type == "string":
             # Ensure proper JSON string formatting with quotes
             return json.dumps(value, ensure_ascii=False)
-        elif value_type == "number":
+        elif value_type in ("number", "integer"):
             try:
                 num = _convert_to_number(value.strip() if value else "")
                 return str(num)
@@ -348,6 +348,26 @@ class Glm47MoeDetector(BaseFormatDetector):
                     f"Failed to parse '{value}' as number, treating as string"
                 )
                 return json.dumps(str(value) if value else "", ensure_ascii=False)
+        elif value_type in ("boolean", "null"):
+            # GLM can emit Python spellings such as True, False, or None in its
+            # XML argument values. They are accepted by the non-streaming
+            # parser, but are not valid JSON and therefore must not be copied
+            # character-by-character into an OpenAI streaming delta.
+            parsed_value, _ = parse_arguments(value.strip(), value_type)
+            if value_type == "boolean" and isinstance(parsed_value, bool):
+                return json.dumps(parsed_value)
+            if value_type == "null" and parsed_value is None:
+                return "null"
+
+            # Keep the stream valid JSON even when the model violates the
+            # declared schema. Downstream validation can then report a type
+            # mismatch instead of failing to parse the accumulated arguments.
+            logger.warning(
+                "Failed to parse %r as JSON Schema type %s",
+                value,
+                value_type,
+            )
+            return json.dumps(parsed_value, ensure_ascii=False)
         else:
             # For object/array types, return as-is (should already be valid JSON)
             return value
@@ -459,6 +479,14 @@ class Glm47MoeDetector(BaseFormatDetector):
                                 if not self._value_started:
                                     self._value_started = True
                                 json_output += content
+                                self._current_value += content
+                                self._xml_tag_buffer = ""
+                        elif value_type in ("boolean", "null"):
+                            # Buffer scalar literals until </arg_value>. This
+                            # lets _format_value_complete canonicalize GLM's
+                            # True/False/None spellings to valid JSON without
+                            # emitting a malformed partial literal.
+                            if content:
                                 self._current_value += content
                                 self._xml_tag_buffer = ""
                         else:

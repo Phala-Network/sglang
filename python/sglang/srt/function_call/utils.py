@@ -328,6 +328,7 @@ def infer_type_from_json_schema(schema: Dict[str, Any]) -> Optional[str]:
     Infer the primary type of a parameter from JSON Schema.
 
     Supports complex JSON Schema structures including:
+    - const: exact value determines the parameter type
     - Direct type field (including type arrays)
     - anyOf/oneOf: parameter can be any of multiple types
     - enum: parameter must be one of enum values
@@ -343,6 +344,26 @@ def infer_type_from_json_schema(schema: Dict[str, Any]) -> Optional[str]:
     """
     if not isinstance(schema, dict):
         return None
+
+    # A const narrows every broader type/combinator to one exact JSON value.
+    # Resolve it first so mixed oneOf/enum schemas do not coerce that value to
+    # string merely because one of their alternatives is string-typed.
+    if "const" in schema:
+        const_value = schema["const"]
+        if const_value is None:
+            return "null"
+        if isinstance(const_value, bool):
+            return "boolean"
+        if isinstance(const_value, int):
+            return "integer"
+        if isinstance(const_value, float):
+            return "number"
+        if isinstance(const_value, str):
+            return "string"
+        if isinstance(const_value, list):
+            return "array"
+        if isinstance(const_value, dict):
+            return "object"
 
     # Priority 1: Direct type field (including type arrays)
     if "type" in schema:

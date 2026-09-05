@@ -3586,6 +3586,72 @@ class TestGlm47MoeDetector(unittest.TestCase):
             [str(w.message) for w in caught],
         )
 
+    def test_const_preserves_type_over_mixed_schema(self):
+        properties = {
+            "retry": {"type": ["integer", "null"], "const": None},
+            "retry_python": {"const": None},
+            "payload": {
+                "oneOf": [{"type": "string"}, {"type": "integer"}],
+                "const": 7,
+            },
+            "state": {"const": "ready"},
+            "selector": {"enum": ["alpha", 2, False], "const": False},
+            "mode": {"enum": ["safe", "fast"], "const": "safe"},
+            "request_id": {"type": "string", "const": "10220_3939392"},
+        }
+        tools = [
+            Tool(
+                type="function",
+                function=Function(
+                    name="record_union_values",
+                    description="Record exact mixed JSON values.",
+                    parameters={
+                        "type": "object",
+                        "properties": properties,
+                        "required": list(properties),
+                        "additionalProperties": False,
+                    },
+                ),
+            )
+        ]
+        text = (
+            "<tool_call>record_union_values"
+            "<arg_key>retry</arg_key><arg_value>null</arg_value>"
+            "<arg_key>retry_python</arg_key>"
+            "<arg_value>None</arg_value>"
+            "<arg_key>payload</arg_key><arg_value>7</arg_value>"
+            "<arg_key>state</arg_key><arg_value>ready</arg_value>"
+            "<arg_key>selector</arg_key><arg_value>False</arg_value>"
+            "<arg_key>mode</arg_key><arg_value>safe</arg_value>"
+            "<arg_key>request_id</arg_key>"
+            "<arg_value>10220_3939392</arg_value>"
+            "</tool_call>"
+        )
+        expected = {
+            "retry": None,
+            "retry_python": None,
+            "payload": 7,
+            "state": "ready",
+            "selector": False,
+            "mode": "safe",
+            "request_id": "10220_3939392",
+        }
+
+        result = self.detector.detect_and_parse(text, tools)
+        self.assertEqual(len(result.calls), 1)
+        self.assertEqual(json.loads(result.calls[0].parameters), expected)
+
+        detector = Glm47MoeDetector()
+        streamed_arguments = ""
+        for offset in range(0, len(text), 7):
+            result = detector.parse_streaming_increment(
+                text[offset : offset + 7], tools
+            )
+            for call in result.calls:
+                streamed_arguments += call.parameters or ""
+
+        self.assertEqual(json.loads(streamed_arguments), expected)
+
     def test_parse_arguments_preserves_underscore_in_string_args(self):
         """Same PEP 515 guard as the GLM-4 detector, on the GLM-4.7 parser."""
         from sglang.srt.function_call.glm47_moe_detector import parse_arguments

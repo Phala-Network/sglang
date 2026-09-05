@@ -23,6 +23,9 @@ ARG BUILD_MANIFEST_DIGEST
 ARG BUILD_CONTEXT_URI
 ARG BUILD_RECIPE_DIGEST
 ARG BUILDKIT_VERSION
+ARG SBOM_STATUS
+ARG PROVENANCE_STATUS
+ARG REPRODUCIBILITY_STATUS
 
 LABEL org.opencontainers.image.created="${CREATED_AT}" \
       org.opencontainers.image.title="Phala Qwen3.8-27B SGLang v0.5.19 flat runtime" \
@@ -56,9 +59,9 @@ LABEL org.opencontainers.image.created="${CREATED_AT}" \
       org.phala.build.manifest.digest="${BUILD_MANIFEST_DIGEST}" \
       org.phala.build.context="${BUILD_CONTEXT_URI}" \
       org.phala.build.recipe.digest="${BUILD_RECIPE_DIGEST}" \
-      org.phala.sbom.digest="buildkit-attestation" \
-      org.phala.provenance.digest="buildkit-attestation" \
-      org.phala.reproducible="candidate-two-clean-build-verification"
+      org.phala.sbom.digest="" \
+      org.phala.provenance.digest="" \
+      org.phala.reproducible=""
 
 ENV SGLANG_BUILD_COMMIT="${SOURCE_REVISION}" \
     SGLANG_BUILD_URL="${SOURCE_REPOSITORY}/commit/${SOURCE_REVISION}" \

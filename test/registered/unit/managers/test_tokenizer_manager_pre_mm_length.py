@@ -60,6 +60,7 @@ def _run_tokenize(manager, request):
     with patch(
         "sglang.srt.managers.tokenizer_manager.get_disagg",
         return_value=SimpleNamespace(
+            language_model_only=False,
             language_only=False,
             encoder_transfer_backend=None,
         ),

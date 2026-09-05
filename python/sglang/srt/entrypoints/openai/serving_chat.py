@@ -134,6 +134,14 @@ _QWEN35_COMPLETED_TOOL_RESULT_GUIDANCE = (
     "that the available result does not contain."
 )
 
+# Qwen3.5's native chat template exposes only low, medium, and xhigh. Accept
+# the wider OpenAI/OpenRouter vocabulary without forwarding unsupported values
+# into the template. These aliases preserve the closest native semantics.
+_QWEN35_REASONING_EFFORT_ALIASES = {
+    "minimal": "low",
+    "high": "xhigh",
+    "max": "xhigh",
+}
 _QWEN35_REASONING_EFFORT_TOKEN_RANGES = {
     "low": (32, 64),
     "medium": (128, 256),
@@ -589,12 +597,15 @@ class OpenAIServingChat(OpenAIServingBase):
         if not self._uses_qwen35_chat_template():
             return messages
 
-        guidance = _QWEN35_REASONING_EFFORT_GUIDANCE.get(reasoning_effort)
+        native_effort = _QWEN35_REASONING_EFFORT_ALIASES.get(
+            reasoning_effort, reasoning_effort
+        )
+        guidance = _QWEN35_REASONING_EFFORT_GUIDANCE.get(native_effort)
         if guidance is None:
             return messages
 
         if (
-            reasoning_effort in ("medium", "xhigh")
+            native_effort in ("medium", "xhigh")
             and messages
             and messages[-1].get("role") == "tool"
         ):
@@ -636,6 +647,9 @@ class OpenAIServingChat(OpenAIServingBase):
         if reasoning_effort is None and reasoning_max_tokens is None:
             reasoning_max_tokens = _QWEN35_DEFAULT_REASONING_BUDGET
         reasoning_effort = reasoning_effort or "xhigh"
+        reasoning_effort = _QWEN35_REASONING_EFFORT_ALIASES.get(
+            reasoning_effort, reasoning_effort
+        )
         if reasoning_effort not in _QWEN35_REASONING_EFFORT_TOKEN_RANGES:
             return None
 
@@ -1695,7 +1709,14 @@ class OpenAIServingChat(OpenAIServingBase):
 
             extra_template_kwargs = {}
             if request.reasoning_effort is not None:
-                extra_template_kwargs["reasoning_effort"] = request.reasoning_effort
+                template_reasoning_effort = request.reasoning_effort
+                if self._uses_qwen35_chat_template():
+                    template_reasoning_effort = (
+                        _QWEN35_REASONING_EFFORT_ALIASES.get(
+                            template_reasoning_effort, template_reasoning_effort
+                        )
+                    )
+                extra_template_kwargs["reasoning_effort"] = template_reasoning_effort
             if request.chat_template_kwargs:
                 extra_template_kwargs.update(request.chat_template_kwargs)
 

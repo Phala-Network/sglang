@@ -59,9 +59,9 @@ LABEL org.opencontainers.image.created="${CREATED_AT}" \
       org.phala.build.manifest.digest="${BUILD_MANIFEST_DIGEST}" \
       org.phala.build.context="${BUILD_CONTEXT_URI}" \
       org.phala.build.recipe.digest="${BUILD_RECIPE_DIGEST}" \
-      org.phala.sbom.digest="" \
-      org.phala.provenance.digest="" \
-      org.phala.reproducible=""
+      org.phala.sbom.digest="${SBOM_STATUS}" \
+      org.phala.provenance.digest="${PROVENANCE_STATUS}" \
+      org.phala.reproducible="${REPRODUCIBILITY_STATUS}"
 
 ENV SGLANG_BUILD_COMMIT="${SOURCE_REVISION}" \
     SGLANG_BUILD_URL="${SOURCE_REPOSITORY}/commit/${SOURCE_REVISION}" \

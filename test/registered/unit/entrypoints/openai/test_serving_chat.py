@@ -389,7 +389,7 @@ class ServingChatTestCase(unittest.TestCase):
         )
 
         self.tm.model_config.hf_config.model_type = "qwen3_5"
-        for effort in (None, "none", "minimal", "high", "max"):
+        for effort in (None, "none"):
             with self.subTest(effort=effort):
                 self.assertIs(
                     self.chat._apply_qwen35_reasoning_effort_guidance(messages, effort),
@@ -401,9 +401,12 @@ class ServingChatTestCase(unittest.TestCase):
         messages = [{"role": "user", "content": "What is 2+2?"}]
 
         expected_markers = {
+            "minimal": "reason briefly in one compact internal step",
             "low": "reason briefly in one compact internal step",
             "medium": "perform one independent verification",
+            "high": "perform a thorough multi-stage analysis",
             "xhigh": "perform a thorough multi-stage analysis",
+            "max": "perform a thorough multi-stage analysis",
         }
         for effort, marker in expected_markers.items():
             with self.subTest(effort=effort):
@@ -506,9 +509,15 @@ class ServingChatTestCase(unittest.TestCase):
             self.chat._qwen35_reasoning_effort_token_range("medium", 16384),
             (128, 256),
         )
+        for effort in ("high", "xhigh", "max"):
+            with self.subTest(effort=effort):
+                self.assertEqual(
+                    self.chat._qwen35_reasoning_effort_token_range(effort, 16384),
+                    (384, 8192),
+                )
         self.assertEqual(
-            self.chat._qwen35_reasoning_effort_token_range("xhigh", 16384),
-            (384, 8192),
+            self.chat._qwen35_reasoning_effort_token_range("minimal", 16384),
+            (32, 64),
         )
         self.assertEqual(
             self.chat._qwen35_reasoning_effort_token_range(None, 16384),
@@ -564,11 +573,9 @@ class ServingChatTestCase(unittest.TestCase):
             self.chat._qwen35_reasoning_effort_token_range(None, 16384),
             (384, 8192),
         )
-        for effort in ("none", "minimal", "high", "max"):
-            with self.subTest(effort=effort):
-                self.assertIsNone(
-                    self.chat._qwen35_reasoning_effort_token_range(effort, 1024)
-                )
+        self.assertIsNone(
+            self.chat._qwen35_reasoning_effort_token_range("none", 1024)
+        )
 
         self.tm.model_config.hf_config.model_type = "llama"
         self.assertIsNone(self.chat._qwen35_reasoning_effort_token_range("low", 1024))
@@ -704,6 +711,32 @@ class ServingChatTestCase(unittest.TestCase):
             "reason briefly in one compact internal step",
             rendered_messages[0]["content"],
         )
+
+    def test_qwen35_reasoning_effort_aliases_reach_native_template(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        self.template_manager.chat_template_name = None
+        self.template_manager.jinja_template_content_format = "string"
+        self.tm.tokenizer.apply_chat_template.return_value = "rendered"
+
+        for requested, expected in (
+            ("minimal", "low"),
+            ("high", "xhigh"),
+            ("max", "xhigh"),
+        ):
+            with self.subTest(requested=requested):
+                request = ChatCompletionRequest(
+                    model="x",
+                    messages=[{"role": "user", "content": "What is 2+2?"}],
+                    reasoning_effort=requested,
+                )
+                self.chat._process_messages(request, is_multimodal=False)
+                self.assertEqual(request.reasoning_effort, requested)
+                self.assertEqual(
+                    self.tm.tokenizer.apply_chat_template.call_args.kwargs[
+                        "reasoning_effort"
+                    ],
+                    expected,
+                )
 
     def test_qwen35_exposes_reasoning_for_empty_tool_history_turns(self):
         self.tm.model_config.hf_config.model_type = "qwen3_5"

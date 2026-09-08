@@ -24,6 +24,7 @@ from sglang.srt.utils import (
     get_cuda_driver_bindings,
     is_flashinfer_available,
 )
+from sglang.srt.utils.confidential_compute import is_confidential_compute
 from sglang.srt.utils.custom_op import register_custom_op
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,18 @@ def _resolve_backend(backend: str, is_multi_node: bool = False) -> str:
         raise ValueError(
             "FlashInfer allreduce fusion requires SM90 or SM10X NVIDIA GPUs."
         )
+
+    if backend not in ("auto", "trtllm", "mnnvl"):
+        raise ValueError(f"Unknown FlashInfer allreduce fusion backend: {backend}")
+    if is_confidential_compute():
+        if backend == "mnnvl":
+            raise ValueError(
+                "FlashInfer mnnvl requires multicast, unavailable under GPU CC. "
+                "Use --flashinfer-allreduce-fusion-backend=trtllm."
+            )
+        if is_multi_node:
+            raise ValueError("FlashInfer allreduce fusion under GPU CC is single-node only.")
+        return "trtllm"
 
     if backend == "auto":
         if is_multi_node:
@@ -154,6 +167,13 @@ if is_flashinfer_available():
                 )
                 return object_list[0]
 
+            def allgather(self, data):
+                # CC workspace allocation votes must not allocate CUDA memory
+                # or enter NCCL on an already memory-starved rank.
+                gathered = [None] * dist.get_world_size(self._cpu_group)
+                dist.all_gather_object(gathered, data, group=self._cpu_group)
+                return gathered
+
         _TorchDistBackend = _FixedTorchDistBackend
     except ImportError:
         logger.debug(
@@ -219,6 +239,49 @@ if is_flashinfer_available():
 
 def is_flashinfer_allreduce_unavailable() -> bool:
     return _flashinfer_allreduce_unavailable
+
+
+def _collective_cc_workspace_mode(cpu_group, backend: str) -> Optional[bool]:
+    """Agree on dispatch and allocation safety before any GPU rendezvous.
+
+    None means every rank must skip fusion. The matching FlashInfer overlay
+    votes after *actual* local IPC allocations, retaining successful buffers
+    until rendezvous. A probe-and-free alone would leave an allocation race.
+    """
+    local = None
+    try:
+        from flashinfer.comm import trtllm_ar
+        from flashinfer.utils import is_confidential_compute as flashinfer_cc
+
+        cc = is_confidential_compute()
+        fi_cc = flashinfer_cc()
+        guarded = (
+            getattr(trtllm_ar, "CC_ALLOCATION_GUARD_VERSION", 0) == 1
+            and _TorchDistBackend is not None
+        )
+        local = (cc, fi_cc, backend, guarded if cc else True)
+    except Exception as exc:
+        logger.warning("FlashInfer CC capability check failed: %s", exc)
+
+    if cpu_group is None:
+        logger.warning("FlashInfer workspace needs a CPU group for safe rank agreement.")
+        return None
+    states = [None] * dist.get_world_size(cpu_group)
+    dist.all_gather_object(states, local, group=cpu_group)
+    first = states[0]
+    if (
+        first is None
+        or any(state != first for state in states)
+        or first[0] != first[1]
+        or not first[3]
+        or (first[0] and first[2] != "trtllm")
+    ):
+        logger.warning(
+            "Skipping FlashInfer fusion: CC/backend disagreement or missing IPC "
+            "allocation guard across ranks: %s", states
+        )
+        return None
+    return first[0]
 
 
 def _make_flashinfer_workspace_allocation_prop(cuda_driver):
@@ -468,7 +531,15 @@ class FlashInferWorkspaceManager:
 
         self.cleanup()
 
-        if not _preflight_check_workspace_memory(
+        cc_enabled = _collective_cc_workspace_mode(cpu_group, backend)
+        if cc_enabled is None:
+            _flashinfer_allreduce_unavailable = True
+            return
+
+        # CC uses multicast-free IPC. Its matching FlashInfer allocator votes
+        # on the CPU group after each real allocation and before rendezvous;
+        # the SymmDeviceMemory / multicast probe is only for the non-CC path.
+        if not cc_enabled and not _preflight_check_workspace_memory(
             world_size=world_size,
             max_token_num=max_token_num,
             hidden_dim=hidden_dim,
@@ -544,7 +615,9 @@ class FlashInferWorkspaceManager:
                 logger.info(
                     f"FlashInfer AllReduce Fusion enabled and workspace initialized: "
                     f"backend={self.backend}, rank={rank}, world_size={world_size}, "
-                    f"max_token_num={self.max_token_num}, hidden_dim={self.hidden_dim}"
+                    f"max_token_num={self.max_token_num}, hidden_dim={self.hidden_dim}, "
+                    f"cc_enabled={cc_enabled}, "
+                    f"workspace_kind={'ipc-guarded' if cc_enabled else 'symmetric'}"
                 )
                 self._logged_init = True
             else:

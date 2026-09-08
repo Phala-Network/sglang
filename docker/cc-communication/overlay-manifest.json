@@ -1,0 +1,38 @@
+{
+  "schema": "phala.cc-communication-overlay.v1",
+  "base_source": "c1ff6d9b34a3c5257c8eaf5222e8a0b18c017517",
+  "base_image": "ghcr.io/phala-network/sglang:glm53-nvfp4-main-ccf9fe-c1ff6d9b-r1@sha256:174f2d0c1beddf47f41a3db401b6651134443b1a4c11332458cc19ad9c73b83d",
+  "versions": {
+    "torch": "2.13.0+cu130",
+    "flashinfer-python": "0.6.18",
+    "flashinfer-cubin": "0.6.18"
+  },
+  "files": [
+    {
+      "package": "sglang",
+      "path": "srt/layers/flashinfer_comm_fusion.py",
+      "before": "b5e05d5432c1f20258ed638fa46452c04061d54595c145464943b7984e7d4f2f",
+      "after": "c72e930ae7f990ab37bb0fe45464538deb92094cac0be773ad01261288f858e8",
+      "copy": "flashinfer_comm_fusion.py"
+    },
+    {
+      "package": "sglang",
+      "path": "srt/utils/confidential_compute.py",
+      "before": null,
+      "after": "6995e0b15da67f6e03c2b080cc4cde6dedde453af5f235848fca17c7eafe5f7e",
+      "copy": "confidential_compute.py"
+    },
+    {
+      "package": "flashinfer",
+      "path": "comm/torch_symmetric_memory.py",
+      "before": "e88f0dbc0c19c5113227c930479295e19b36ba743f2e55bd54c75fec1d06d8d7",
+      "after": "bb855d372d61f3524c3e43ca45a325280bfb6101b0385596ba89a8a173061a32"
+    },
+    {
+      "package": "flashinfer",
+      "path": "comm/trtllm_ar.py",
+      "before": "31ccb9fc18e62b6bfd0b0f81d817f416e08e06c6a51796699cf6ded781f9fccd",
+      "after": "f92b339a572e4ad6f140349d020dde2f2fa71c1b45ef66ca1086d4523eb2adbe"
+    }
+  ]
+}

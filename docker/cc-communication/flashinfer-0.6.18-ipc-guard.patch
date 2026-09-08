@@ -1,0 +1,40 @@
+diff --git a/flashinfer/comm/torch_symmetric_memory.py b/flashinfer/comm/torch_symmetric_memory.py
+index f92c987..6a47ee2 100644
+--- a/flashinfer/comm/torch_symmetric_memory.py
++++ b/flashinfer/comm/torch_symmetric_memory.py
+@@ -50,0 +51 @@ def _alloc_symm_buffer_bytes(
++    comm_backend=None,
+@@ -66 +67,18 @@ def _alloc_symm_buffer_bytes(
+-    _enable_symm_mem_for_group(group_name)
++    tensor = None
++    local_error = None
++    try:
++        _enable_symm_mem_for_group(group_name)
++        elem_size = torch.empty(0, dtype=dtype).element_size()
++        numel = size_bytes // elem_size
++        tensor = symm_mem.empty(numel, dtype=dtype, device=device)
++    except Exception as exc:
++        local_error = f"{type(exc).__name__}: {exc}"
++
++    # The successful local allocations stay live across this CPU vote. No
++    # rank may enter GPU rendezvous when one peer failed allocation.
++    if comm_backend is not None:
++        errors = comm_backend.allgather(local_error)
++        if len(errors) != world_size or any(error is not None for error in errors):
++            raise RuntimeError(f"IPC allocation failed across ranks: {errors}")
++    elif local_error is not None:
++        raise RuntimeError(f"IPC allocation failed: {local_error}")
+@@ -68,3 +85,0 @@ def _alloc_symm_buffer_bytes(
+-    elem_size = torch.empty(0, dtype=dtype).element_size()
+-    numel = size_bytes // elem_size
+-    tensor = symm_mem.empty(numel, dtype=dtype, device=device)
+diff --git a/flashinfer/comm/trtllm_ar.py b/flashinfer/comm/trtllm_ar.py
+index 436c682..631db3c 100644
+--- a/flashinfer/comm/trtllm_ar.py
++++ b/flashinfer/comm/trtllm_ar.py
+@@ -35,0 +36,3 @@ from .torch_symmetric_memory import _alloc_symm_buffer_bytes
++# Paired with SGLang's CPU-only rank consensus for CC workspace allocation.
++CC_ALLOCATION_GUARD_VERSION = 1
++
+@@ -711,0 +715 @@ def trtllm_create_ipc_workspace_for_all_reduce_fusion(
++                comm_backend=comm_backend,

@@ -3006,6 +3006,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
                     req.mamba_branching_seqlen > len(req.prefix_indices)
                     and req.mamba_branching_seqlen < mamba_track_seqlen
                     and branching_seqlen_aligned_mask
+                    and req.mamba_branching_seqlen % checkpoint_grid == 0
                 ):
                     # We want to track mamba_track_seqlen_aligned, and it's not the last position,
                     # so we need to add 1 to the seqlen to retrieve the correct mamba state from h.

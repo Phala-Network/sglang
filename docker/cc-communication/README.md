@@ -86,3 +86,12 @@ CUDA graph replay, cleanup/recreation, model protocol gates and same-workload
 performance/stability evidence. Preserve all existing model, KV, context,
 EAGLE, batching and PIG parameters. Drain the exact target deployment before
 any change to a live model instance.
+
+`gpu_preflight.py` is an executable eight-B200 gate that reads hidden size
+from the pinned local checkpoint. It tests real NVML agreement, injected
+rank-local allocation failure before rendezvous, 1/8/32/48/288/384-token
+all-reduce and residual RMSNorm in oneshot/twoshot modes, graph capture/replay,
+three workspace lifecycles and pinned D2H parity. CPU tests cannot run this
+gate. `run_verified_server.py` runs it only with `PHALA_CC_GPU_PREFLIGHT=1`,
+with a bounded process-group timeout, then execs the original server command.
+Any failure refuses model launch. Use only after routing is down and drained.

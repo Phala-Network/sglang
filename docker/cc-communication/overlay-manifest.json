@@ -11,6 +11,27 @@
   "files": [
     {
       "package": "sglang",
+      "path": "srt/managers/async_d2h_copy_worker.py",
+      "before": null,
+      "after": "bc8d55f74bbde00d41bcc9ba935b658af085c008c7697283538895ddef8eec98",
+      "copy": "async_d2h_copy_worker.py"
+    },
+    {
+      "package": "sglang",
+      "path": "srt/managers/scheduler.py",
+      "before": "1596692060f504a07565095ea0d8354439fdca52243daa64a6c71e6102161d1f",
+      "after": "14ae05ff82f653ea6a99539142715067216b568750fbf6b2e967523a2b946413",
+      "copy": "scheduler.py"
+    },
+    {
+      "package": "sglang",
+      "path": "srt/managers/utils.py",
+      "before": "331b26a03edc191b0551fda61effc23ec8c16fb7762959e8950a9e1b6ccc8ec2",
+      "after": "fe6869e6ff927c65839da2cf41a9f66fe4227e81c1ea71f41fac888d0af84285",
+      "copy": "managers_utils.py"
+    },
+    {
+      "package": "sglang",
       "path": "srt/layers/flashinfer_comm_fusion.py",
       "before": "b5e05d5432c1f20258ed638fa46452c04061d54595c145464943b7984e7d4f2f",
       "after": "3f9004cfd393b3e9f5342570e257a8e560b48f2cf24a85c5d1fd5b85caca7329",

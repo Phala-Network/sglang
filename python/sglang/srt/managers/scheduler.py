@@ -1620,6 +1620,9 @@ class Scheduler(
                 self.draft_worker.get_confidence_budget_prepare()
             )
 
+        self.enable_async_d2h_copy = False
+        self.async_d2h_worker = None
+
         if use_mlx():
             # MLX uses its own overlap loop and does not create CUDA streams,
             # but the normal non-overlap scheduler path still relays decode
@@ -1639,6 +1642,18 @@ class Scheduler(
 
         if not self.enable_overlap:
             return
+
+        # PR #36810: under CC, D2H can block at issue even with a pinned
+        # destination. Keep the worker independently switchable for A/B gates.
+        from sglang.srt.managers.async_d2h_copy_worker import (
+            AsyncD2HCopyWorker,
+            cc_async_d2h_enabled,
+        )
+
+        self.enable_async_d2h_copy = cc_async_d2h_enabled()
+        if self.enable_async_d2h_copy:
+            self.async_d2h_worker = AsyncD2HCopyWorker(self.device_module)
+            logger.info("CC/PPCIE async D2H worker enabled for overlap scheduling")
 
         self.batch_record_buf = [None] * 2
         self.batch_record_ct = 0
@@ -4249,9 +4264,8 @@ class Scheduler(
                                 # gated by copy_done, so nothing on forward_stream waits.
                                 self.copy_stream.wait_stream(self.forward_stream)
                                 with self.copy_stream_ctx:
-                                    batch_result.copy_to_cpu(
-                                        return_logprob=batch.return_logprob,
-                                        return_hidden_states=batch.return_hidden_states,
+                                    self._copy_overlap_result_to_cpu(
+                                        batch_result, batch
                                     )
                         else:
                             batch_result.future_indices = future_indices
@@ -4442,6 +4456,26 @@ class Scheduler(
             return_hidden_states=batch.return_hidden_states,
         )
 
+    def _copy_overlap_result_to_cpu(
+        self, batch_result: GenerationBatchResult, batch: ScheduleBatch
+    ) -> None:
+        """Schedule a result copy with the source-ready stream current."""
+        copy_fn = partial(
+            batch_result.copy_to_cpu,
+            return_logprob=batch.return_logprob,
+            return_hidden_states=batch.return_hidden_states,
+        )
+        if self.enable_async_d2h_copy:
+            from sglang.srt.managers.async_d2h_copy_worker import HostCopyDone
+
+            # The worker may execute immediately; publish before enqueue, not
+            # via `batch_result.copy_done = worker.submit(copy_fn)`.
+            done = HostCopyDone()
+            batch_result.copy_done = done
+            self.async_d2h_worker.submit(copy_fn, done=done)
+        else:
+            copy_fn()
+
     def launch_batch_sample_if_needed(
         self, batch_result: GenerationBatchResult, cur_batch: ScheduleBatch
     ) -> Union[GenerationBatchResult]:
@@ -4464,10 +4498,7 @@ class Scheduler(
         # with subsequent forward computation.
         self.copy_stream.wait_stream(self.forward_stream)
         with self.copy_stream_ctx:
-            batch_result.copy_to_cpu(
-                return_logprob=cur_batch.return_logprob,
-                return_hidden_states=cur_batch.return_hidden_states,
-            )
+            self._copy_overlap_result_to_cpu(batch_result, cur_batch)
 
         # Release the closure and large GPU tensors that are no longer needed.
         # The delay_sample_func closure captures forward_batch (which holds
@@ -5751,9 +5782,17 @@ def run_scheduler_process(
             # FPM has a background ZMQ publisher thread that needs explicit
             # teardown to flush queued metrics and close the socket cleanly.
             scheduler.metrics_reporter._shutdown_fpm()
+            d2h_stopped = True
+            if scheduler.async_d2h_worker is not None:
+                d2h_stopped = scheduler.async_d2h_worker.shutdown()
+                if not d2h_stopped:
+                    logger.warning(
+                        "D2H worker still active; skipping GPU resource teardown"
+                    )
+                scheduler.async_d2h_worker = None
             # Graceful path only: on the exception path the GPU may be wedged
             # and the synchronize() in destroy() could itself hang.
-            if scheduler.gracefully_exit:
+            if scheduler.gracefully_exit and d2h_stopped:
                 scheduler.release_host_resources()
 
 

@@ -13,7 +13,8 @@ LABEL org.opencontainers.image.source="https://github.com/Phala-Network/sglang" 
       org.phala.base.digest="sha256:174f2d0c1beddf47f41a3db401b6651134443b1a4c11332458cc19ad9c73b83d" \
       org.phala.source.date.epoch=$SOURCE_DATE_EPOCH
 COPY . /opt/phala/cc-communication/
-RUN python3 /opt/phala/cc-communication/install_overlay.py
+RUN PYTHONDONTWRITEBYTECODE=1 python3 /opt/phala/cc-communication/install_overlay.py
 ENV SGLANG_SOURCE_ROOT=/sgl-workspace/sglang/python/sglang \
     FLASHINFER_SOURCE_ROOT=/opt/sglang/lib/python3.12/site-packages/flashinfer
-RUN python3 /opt/phala/cc-communication/test_flashinfer_cc_contract.py
+RUN PYTHONDONTWRITEBYTECODE=1 python3 /opt/phala/cc-communication/test_flashinfer_cc_contract.py
+RUN PYTHONDONTWRITEBYTECODE=1 python3 /opt/phala/cc-communication/test_async_d2h_cc_contract.py

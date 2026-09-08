@@ -17,8 +17,25 @@ FlashInfer query the NVML Settings API first: protected multi-GPU PCIe mode
 selects CC dispatch even if the legacy `ccFeature` is zero. Missing/unsupported
 Settings APIs fall back to the State API; other query errors are not claimed
 as successful CC detection. The exact nvidia-ml-py binding version is pinned
-in the manifest. PR #36810's D2H worker is not part of this communication-only
-candidate and needs its own scheduler/lifetime/correctness tests.
+in the manifest.
+
+## Independent D2H candidate
+
+PR #36810's D2H worker is backported as a separate change, disabled unless
+`SGLANG_CC_ASYNC_D2H=1`. This opt-in also requires CC/PPCIE detection and the
+scheduler's existing overlap path. Keep `0` for the communication-only control.
+The normal and delayed-sampling generation paths use the same helper; existing
+pinned CPU destinations and `record_stream` lifetime protection are unchanged.
+The result-completion handle is published before enqueue. Source-ready events,
+a private copy stream and exception-carrying completion handles follow upstream.
+
+Deterministic Linux thread tests reproduced two upstream lifecycle edge cases:
+submitting after shutdown accepted work with no worker, and an idle worker held
+the last completed callback (and its captured batch). This backport atomically
+closes submissions on shutdown and releases completed work before waiting for
+the next item. Bounded shutdown returns its state so graceful GPU teardown can
+be skipped if the worker is still active. These are bounded lifecycle fixes,
+not evidence of a GPU memory leak in the live deployment.
 
 The additional FlashInfer patch is paired with SGLang's CPU-only allgather:
 after an actual local symmetric-memory allocation, successful tensors are
@@ -41,8 +58,12 @@ files copied into the context root using the committed LF line endings:
 
 - `python/sglang/srt/layers/flashinfer_comm_fusion.py`
 - `python/sglang/srt/utils/confidential_compute.py`
+- `python/sglang/srt/managers/async_d2h_copy_worker.py`
+- `python/sglang/srt/managers/scheduler.py`
+- `python/sglang/srt/managers/utils.py` (as `managers_utils.py`)
 - `test/registered/backends/test_flashinfer_cc_contract.py`
 - `test/registered/backends/test_flashinfer_cc_gloo.py`
+- `test/registered/backends/test_async_d2h_cc_contract.py`
 
 The installer checks the exact original and patched SHA-256 of all changed
 runtime files. No package version upgrades, startup downloads or dependency
@@ -56,6 +77,8 @@ The CPU contract suite checks dispatch, detection, rank agreement and actual
 allocation-before-rendezvous ordering. The Gloo suite uses eight real local
 processes, with CUDA allocation mocked, and injects failures at rank 0 and 7.
 Neither is an eight-GPU numerical or performance test.
+The D2H CPU suite uses real threads with simulated device events/streams; it
+does not establish CUDA correctness, CC overlap speed or graph-buffer lifetime.
 
 Before promotion, require eight-rank NVML CC agreement, multicast-free IPC
 workspace, all-reduce/residual-RMSNorm numerical parity, oneshot/twoshot,

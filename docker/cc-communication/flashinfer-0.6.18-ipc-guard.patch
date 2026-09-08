@@ -38,3 +38,29 @@ index 436c682..631db3c 100644
 +
 @@ -711,0 +715 @@ def trtllm_create_ipc_workspace_for_all_reduce_fusion(
 +                comm_backend=comm_backend,
+diff --git a/flashinfer/utils.py b/flashinfer/utils.py
+index 905e423..e1db928 100644
+--- a/flashinfer/utils.py
++++ b/flashinfer/utils.py
+@@ -1515,3 +1515,18 @@ def is_confidential_compute() -> bool:
+-            state = pynvml.nvmlSystemGetConfComputeState()
+-            # ccFeature != 0 means CC is enabled (ON or devtools).
+-            return int(getattr(state, "ccFeature", 0)) != 0
++            from ctypes import byref
++
++            try:
++                settings = pynvml.c_nvmlSystemConfComputeSettings_v1_t()
++                ret = pynvml.nvmlSystemGetConfComputeSettings(byref(settings))
++                pynvml._nvmlCheckReturn(ret)
++                return (
++                    int(settings.ccFeature) != 0
++                    or settings.multiGpuMode
++                    == pynvml.NVML_CC_SYSTEM_MULTIGPU_PROTECTED_PCIE
++                )
++            except (
++                AttributeError,
++                pynvml.NVMLError_NotSupported,
++                pynvml.NVMLError_FunctionNotFound,
++            ):
++                state = pynvml.nvmlSystemGetConfComputeState()
++                return int(state.ccFeature) != 0

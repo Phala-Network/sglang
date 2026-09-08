@@ -26,8 +26,26 @@ def is_confidential_compute() -> bool:
 
         pynvml.nvmlInit()
         try:
-            state = pynvml.nvmlSystemGetConfComputeState()
-            return int(state.ccFeature) != 0
+            from ctypes import byref
+
+            try:
+                settings = pynvml.c_nvmlSystemConfComputeSettings_v1_t()
+                ret = pynvml.nvmlSystemGetConfComputeSettings(byref(settings))
+                pynvml._nvmlCheckReturn(ret)
+                # PPCIE requires the CC software path even when the legacy
+                # ccFeature field is zero. See upstream SGLang PR #36810.
+                return (
+                    int(settings.ccFeature) != 0
+                    or settings.multiGpuMode
+                    == pynvml.NVML_CC_SYSTEM_MULTIGPU_PROTECTED_PCIE
+                )
+            except (
+                AttributeError,
+                pynvml.NVMLError_NotSupported,
+                pynvml.NVMLError_FunctionNotFound,
+            ):
+                state = pynvml.nvmlSystemGetConfComputeState()
+                return int(state.ccFeature) != 0
         finally:
             pynvml.nvmlShutdown()
     except Exception as exc:

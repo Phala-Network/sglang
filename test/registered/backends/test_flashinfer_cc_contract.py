@@ -6,6 +6,7 @@ Run the distributed GPU acceptance separately before serving traffic.
 """
 
 import ast
+import ctypes
 import importlib.util
 import logging
 import os
@@ -95,6 +96,7 @@ class DetectorTests(unittest.TestCase):
     def test_nvml_modes_and_shutdown(self):
         for feature in (0, 1, 2):
             nvml = SimpleNamespace(nvmlInit=Mock(), nvmlShutdown=Mock(),
+                NVMLError_NotSupported=OSError, NVMLError_FunctionNotFound=LookupError,
                 nvmlSystemGetConfComputeState=Mock(return_value=SimpleNamespace(ccFeature=feature)))
             with patch.dict(os.environ, {}, clear=True), patch.dict(sys.modules, {
                 "torch": SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True)), "pynvml": nvml,
@@ -107,12 +109,66 @@ class DetectorTests(unittest.TestCase):
 
     def test_query_failure_is_not_claimed_as_cc(self):
         nvml = SimpleNamespace(nvmlInit=Mock(), nvmlShutdown=Mock(),
+            NVMLError_NotSupported=OSError, NVMLError_FunctionNotFound=LookupError,
             nvmlSystemGetConfComputeState=Mock(side_effect=RuntimeError("query failed")))
         with patch.dict(os.environ, {}, clear=True), patch.dict(sys.modules, {
             "torch": SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True)), "pynvml": nvml,
         }):
             self.assertFalse(self.load_detector().is_confidential_compute())
             nvml.nvmlShutdown.assert_called_once()
+
+    def check_both_libraries(self, feature, multigpu, settings_error=None):
+        class Settings(ctypes.Structure):
+            _fields_ = [("ccFeature", ctypes.c_uint), ("multiGpuMode", ctypes.c_uint)]
+
+        def settings(ptr):
+            if settings_error:
+                raise settings_error
+            ptr._obj.ccFeature = feature
+            ptr._obj.multiGpuMode = multigpu
+            return 0
+
+        nvml = SimpleNamespace(nvmlInit=Mock(), nvmlShutdown=Mock(),
+            NVMLError_NotSupported=OSError, NVMLError_FunctionNotFound=LookupError,
+            c_nvmlSystemConfComputeSettings_v1_t=Settings,
+            nvmlSystemGetConfComputeSettings=Mock(side_effect=settings),
+            NVML_CC_SYSTEM_MULTIGPU_PROTECTED_PCIE=1, _nvmlCheckReturn=Mock(),
+            nvmlSystemGetConfComputeState=Mock(return_value=SimpleNamespace(ccFeature=feature)))
+        torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True))
+        fi_ns = functions(FI_ROOT / "utils.py", ["is_confidential_compute"],
+            {"torch": torch, "os": os, "logger": logging.getLogger("fi-cc-test")})
+        with patch.dict(os.environ, {}, clear=True), patch.dict(sys.modules, {
+            "torch": torch, "pynvml": nvml,
+        }):
+            values = (self.load_detector().is_confidential_compute(),
+                      fi_ns["is_confidential_compute"]())
+        self.assertEqual(nvml.nvmlShutdown.call_count, 2)
+        return values, nvml
+
+    def test_ppcie_only_is_cc_in_both_libraries(self):
+        values, nvml = self.check_both_libraries(feature=0, multigpu=1)
+        self.assertEqual(values, (True, True))
+        nvml.nvmlSystemGetConfComputeState.assert_not_called()
+
+    def test_cc_settings_disabled_in_both_libraries(self):
+        values, _ = self.check_both_libraries(feature=0, multigpu=0)
+        self.assertEqual(values, (False, False))
+
+    def test_cc_feature_on_in_both_libraries(self):
+        values, _ = self.check_both_libraries(feature=1, multigpu=0)
+        self.assertEqual(values, (True, True))
+
+    def test_unsupported_settings_falls_back_in_both_libraries(self):
+        for error in (OSError("not supported"), LookupError("missing function")):
+            with self.subTest(error=type(error).__name__):
+                values, nvml = self.check_both_libraries(1, 0, error)
+                self.assertEqual(values, (True, True))
+                self.assertEqual(nvml.nvmlSystemGetConfComputeState.call_count, 2)
+
+    def test_query_error_is_not_treated_as_supported_settings(self):
+        values, nvml = self.check_both_libraries(1, 1, RuntimeError("query denied"))
+        self.assertEqual(values, (False, False))
+        nvml.nvmlSystemGetConfComputeState.assert_not_called()
 
 
 class RankAgreementTests(unittest.TestCase):

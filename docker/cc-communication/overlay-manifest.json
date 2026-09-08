@@ -5,21 +5,22 @@
   "versions": {
     "torch": "2.13.0+cu130",
     "flashinfer-python": "0.6.18",
-    "flashinfer-cubin": "0.6.18"
+    "flashinfer-cubin": "0.6.18",
+    "nvidia-ml-py": "13.610.43"
   },
   "files": [
     {
       "package": "sglang",
       "path": "srt/layers/flashinfer_comm_fusion.py",
       "before": "b5e05d5432c1f20258ed638fa46452c04061d54595c145464943b7984e7d4f2f",
-      "after": "c72e930ae7f990ab37bb0fe45464538deb92094cac0be773ad01261288f858e8",
+      "after": "3f9004cfd393b3e9f5342570e257a8e560b48f2cf24a85c5d1fd5b85caca7329",
       "copy": "flashinfer_comm_fusion.py"
     },
     {
       "package": "sglang",
       "path": "srt/utils/confidential_compute.py",
       "before": null,
-      "after": "6995e0b15da67f6e03c2b080cc4cde6dedde453af5f235848fca17c7eafe5f7e",
+      "after": "57fad79fb6c031381ff0b04e327da99cd01769cf1d92cbb61ac825281451d516",
       "copy": "confidential_compute.py"
     },
     {
@@ -33,6 +34,12 @@
       "path": "comm/trtllm_ar.py",
       "before": "31ccb9fc18e62b6bfd0b0f81d817f416e08e06c6a51796699cf6ded781f9fccd",
       "after": "f92b339a572e4ad6f140349d020dde2f2fa71c1b45ef66ca1086d4523eb2adbe"
+    },
+    {
+      "package": "flashinfer",
+      "path": "utils.py",
+      "before": "6cb8ebcc25eb65521808bf40a8aaf0c5a868827283955867ae382ad7ec773815",
+      "after": "2d727a4223d2084504587783757adad2ddc496595c17ebc11a953eead738adbd"
     }
   ]
 }

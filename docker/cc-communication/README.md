@@ -10,6 +10,16 @@ https://github.com/sgl-project/sglang/pull/31447 (head
 deliberately excluded. FlashInfer 0.6.18 already contains the multicast-free
 IPC implementation from https://github.com/flashinfer-ai/flashinfer/pull/3993.
 
+The detector also incorporates the PPCIE insight from upstream PR
+https://github.com/sgl-project/sglang/pull/36810, reviewed at head
+`3be871e94a2430c38a0fa64e54c925a3e07f83b7` (open, not merged). Both SGLang and
+FlashInfer query the NVML Settings API first: protected multi-GPU PCIe mode
+selects CC dispatch even if the legacy `ccFeature` is zero. Missing/unsupported
+Settings APIs fall back to the State API; other query errors are not claimed
+as successful CC detection. The exact nvidia-ml-py binding version is pinned
+in the manifest. PR #36810's D2H worker is not part of this communication-only
+candidate and needs its own scheduler/lifetime/correctness tests.
+
 The additional FlashInfer patch is paired with SGLang's CPU-only allgather:
 after an actual local symmetric-memory allocation, successful tensors are
 held while all ranks vote. A local allocation failure makes all ranks raise
@@ -27,7 +37,7 @@ Actual NVML CC state must be verified on the target before promotion.
 ## Build context
 
 Use this directory's Dockerfile, patch, installer and manifest, plus these
-files copied into the context root without changing their contents:
+files copied into the context root using the committed LF line endings:
 
 - `python/sglang/srt/layers/flashinfer_comm_fusion.py`
 - `python/sglang/srt/utils/confidential_compute.py`

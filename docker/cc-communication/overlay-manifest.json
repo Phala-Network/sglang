@@ -46,6 +46,12 @@
     },
     {
       "package": "flashinfer",
+      "path": "comm/allreduce.py",
+      "before": "3bfe75852207d474cb44c66c074fc9ae7f5b4e13d398b494845b6a0e56ac25a8",
+      "after": "6c70e04cedc4e070d9fb3ae25345bd37cda30d65c23a4a0660c09ed47738b49b"
+    },
+    {
+      "package": "flashinfer",
       "path": "comm/torch_symmetric_memory.py",
       "before": "e88f0dbc0c19c5113227c930479295e19b36ba743f2e55bd54c75fec1d06d8d7",
       "after": "bb855d372d61f3524c3e43ca45a325280bfb6101b0385596ba89a8a173061a32"

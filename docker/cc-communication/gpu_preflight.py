@@ -4,6 +4,7 @@ This is not a model throughput benchmark. It intentionally refuses non-B200,
 non-CC hardware, and never changes the device's security configuration.
 """
 
+import ctypes
 import gc
 import json
 import os
@@ -18,6 +19,39 @@ import torch.distributed as dist
 def emit(event, **data):
     print(json.dumps({"gate": "phala_cc_gpu", "rank": dist.get_rank(),
                       "event": event, **data}), flush=True)
+
+
+def preflight_oneshot_modes(token_count, world_size):
+    """Only enumerate modes supported by TRTLLM's token-count contract."""
+    # FlashInfer explicitly rejects two-shot when token_count <= world_size.
+    # Small decode shapes still receive full one-shot numeric/graph coverage.
+    return (True, False) if token_count > world_size else (True,)
+
+
+def valid_host_allocation(is_cpu, pytorch_pinned, cc_enabled, host_status, memory_type):
+    # Under CC, cudaMallocHost may be reported as cudaMemoryTypeManaged (3).
+    # Require successful cudaHostGetFlags, not just a managed-memory pointer.
+    return is_cpu and (pytorch_pinned or (
+        cc_enabled and host_status == 0 and memory_type in (1, 3)))
+
+
+def host_allocation_metadata(tensor):
+    class Attributes(ctypes.Structure):
+        _fields_ = [("type", ctypes.c_int), ("device", ctypes.c_int),
+                    ("devicePointer", ctypes.c_void_p), ("hostPointer", ctypes.c_void_p),
+                    ("reserved", ctypes.c_long * 8)]  # CUDA 13 driver_types.h
+
+    runtime = ctypes.CDLL("libcudart.so.13")
+    runtime.cudaPointerGetAttributes.argtypes = [ctypes.POINTER(Attributes), ctypes.c_void_p]
+    runtime.cudaPointerGetAttributes.restype = ctypes.c_int
+    runtime.cudaHostGetFlags.argtypes = [ctypes.POINTER(ctypes.c_uint), ctypes.c_void_p]
+    runtime.cudaHostGetFlags.restype = ctypes.c_int
+    attributes, flags = Attributes(), ctypes.c_uint()
+    pointer_status = runtime.cudaPointerGetAttributes(ctypes.byref(attributes), tensor.data_ptr())
+    host_status = runtime.cudaHostGetFlags(ctypes.byref(flags), tensor.data_ptr())
+    assert pointer_status == 0, pointer_status
+    return {"pytorch_pinned": tensor.is_pinned(), "host_status": host_status,
+            "memory_type": attributes.type, "host_flags": flags.value}
 
 
 def main():
@@ -93,12 +127,22 @@ def main():
             src = torch.randn(tokens, hidden, device="cuda", dtype=torch.bfloat16) * 0.1
             residual = torch.full_like(src, 0.1)
             weight = torch.ones(hidden, device="cuda", dtype=torch.bfloat16)
-            reduced = src.clone()
+            # Accumulate the BF16 inputs in FP32 for an independent reference.
+            # NCCL's BF16 reduction can round intermediate partial sums; adding
+            # the residual afterwards can amplify its error under cancellation.
+            # Keep the old BF16 result as diagnostic evidence, not as an oracle.
+            reduced_bf16 = src.clone()
+            dist.all_reduce(reduced_bf16)
+            reduced = src.float()
             dist.all_reduce(reduced)
-            residual_ref = reduced.float() + residual.float()
+            residual_ref = reduced + residual.float()
             norm_ref = residual_ref * torch.rsqrt(residual_ref.square().mean(-1, keepdim=True) + 1e-6)
             output, norm, residual_out = (torch.empty_like(src) for _ in range(3))
-            for oneshot in (True, False):
+            modes = preflight_oneshot_modes(tokens, dist.get_world_size())
+            if False not in modes:
+                emit("twoshot_not_applicable", tokens=tokens,
+                     requirement="token_count > world_size")
+            for oneshot in modes:
                 def operations():
                     comm.allreduce_fusion(src, manager.workspace,
                         comm.AllReduceFusionPattern.kAllReduce, output=output,
@@ -118,7 +162,23 @@ def main():
                         operations()
                 torch.cuda.current_stream().wait_stream(stream)
                 torch.cuda.synchronize()
-                torch.testing.assert_close(output, reduced, rtol=0.03, atol=0.01)
+                old_residual_ref = reduced_bf16.float() + residual.float()
+                old_bad = (residual_out.float() - old_residual_ref).abs() > (
+                    0.01 + 0.03 * old_residual_ref.abs())
+                emit("reference_precision", cycle=cycle, tokens=tokens, oneshot=oneshot,
+                     fp32_reference=True,
+                     nccl_bf16_max_abs_error=(reduced_bf16.float()-reduced).abs().max().item(),
+                     fused_reduce_max_abs_error=(output.float()-reduced).abs().max().item(),
+                     fused_residual_max_abs_error=(residual_out.float()-residual_ref).abs().max().item(),
+                     old_reference_failed_elements=old_bad.sum().item())
+                if old_bad.any():
+                    coordinates = old_bad.nonzero()[:4]
+                    emit("old_reference_mismatch", cycle=cycle, tokens=tokens, oneshot=oneshot,
+                         coordinates=coordinates.tolist(),
+                         old_reference=old_residual_ref[old_bad][:4].tolist(),
+                         fp32_reference=residual_ref[old_bad][:4].tolist(),
+                         fused_residual=residual_out[old_bad][:4].tolist())
+                torch.testing.assert_close(output.float(), reduced, rtol=0.03, atol=0.01)
                 torch.testing.assert_close(residual_out.float(), residual_ref, rtol=0.03, atol=0.01)
                 torch.testing.assert_close(norm.float(), norm_ref, rtol=0.03, atol=0.03)
                 graph = torch.cuda.CUDAGraph()
@@ -128,12 +188,13 @@ def main():
                 for _ in range(16):
                     graph.replay()
                 torch.cuda.synchronize()
-                torch.testing.assert_close(output, reduced, rtol=0.03, atol=0.01)
+                torch.testing.assert_close(output.float(), reduced, rtol=0.03, atol=0.01)
+                torch.testing.assert_close(residual_out.float(), residual_ref, rtol=0.03, atol=0.01)
                 torch.testing.assert_close(norm.float(), norm_ref, rtol=0.03, atol=0.03)
                 emit("numeric_graph", cycle=cycle, tokens=tokens, oneshot=oneshot,
                      graph_replays=16, max_norm_abs_error=(norm.float()-norm_ref).abs().max().item())
                 del graph
-            del src, residual, weight, reduced, residual_ref, norm_ref, output, norm, residual_out
+            del src, residual, weight, reduced, reduced_bf16, residual_ref, norm_ref, output, norm, residual_out
         torch.cuda.synchronize()
         dist.barrier(group=cpu_group)
         manager.cleanup()
@@ -151,10 +212,16 @@ def main():
             result = {}
             done = worker.submit(lambda: result.update(cpu=_async_d2h(src)))
             done.synchronize()
-            assert result["cpu"].is_pinned()
+            host = host_allocation_metadata(result["cpu"])
+            assert valid_host_allocation(result["cpu"].device.type == "cpu",
+                host["pytorch_pinned"], is_confidential_compute(),
+                host["host_status"], host["memory_type"]), host
             torch.testing.assert_close(result["cpu"], expected, rtol=0, atol=0)
-        emit("d2h_numeric", elements=elements, iterations=16)
+        emit("d2h_numeric", elements=elements, iterations=16, host_allocation=host)
     assert worker.shutdown(timeout=5)
+    del src, expected, result, done, worker
+    gc.collect()
+    torch.cuda.synchronize()
     dist.barrier(group=cpu_group)
     emit("PASS")
     dist.destroy_process_group(cpu_group)

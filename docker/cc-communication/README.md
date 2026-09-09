@@ -95,3 +95,35 @@ three workspace lifecycles and pinned D2H parity. CPU tests cannot run this
 gate. `run_verified_server.py` runs it only with `PHALA_CC_GPU_PREFLIGHT=1`,
 with a bounded process-group timeout, then execs the original server command.
 Any failure refuses model launch. Use only after routing is down and drained.
+
+## Target-GPU findings and follow-up fixes
+
+The first real eight-B200 run exposed two errors in the preflight itself:
+two-shot requires token_count > world_size (small shapes retain one-shot
+coverage), and the numerical oracle must accumulate in FP32 rather than reuse
+NCCL's BF16 intermediate rounding. The original tolerances are unchanged;
+both references and individual discrepant coordinates are logged for audit.
+This does not change the model's FP8 E4M3 KV cache or model compute dtype.
+
+The next run passed every legal numeric/graph shape but found that FlashInfer
+0.6.18's TRTLLM workspace destroy method did not release its IPC allocator
+registry entry and retained memory through its internal creation tuple.
+The bounded fix calls the existing low-level release API and clears that
+tuple. Five deterministic regressions fail on the original destroy method
+and pass on the repaired method: IPC references, non-CC tuple references,
+idempotence, failed-release retry, and repeated creation/cleanup. Real GPU
+lifecycle and end-to-end model acceptance remain independent requirements.
+
+On this pinned CUDA 13 / driver 595.91.07 CC runtime, a direct `pin_memory=True`
+allocation returns `is_pinned() == False`: CUDA reports memory type Managed (3),
+but `cudaHostGetFlags` succeeds with flags 3. Pageable controls return type 0
+and invalid-value from that query. The preflight therefore validates the CPU
+destination through both native host-allocation queries, allowing Managed
+reporting only after real CC detection. The CUDA 13 pointer-attribute ABI
+includes its eight-long reserved tail. No PyTorch memory behavior is patched.
+
+The repaired preflight passed on all eight B200 ranks on 2026-09-09: 14 legal
+numeric/graph cases per rank, 16 graph replays per case, three complete workspace
+lifecycles, and 64 exact D2H copies per rank. Source contract suites total 56
+passing cases. This is hardware correctness evidence, not a throughput or
+production-readiness claim; model and real ingress validation are separate.

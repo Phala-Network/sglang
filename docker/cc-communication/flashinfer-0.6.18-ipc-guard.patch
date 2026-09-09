@@ -64,3 +64,15 @@ index 905e423..e1db928 100644
 +            ):
 +                state = pynvml.nvmlSystemGetConfComputeState()
 +                return int(state.ccFeature) != 0
+diff --git a/flashinfer/comm/allreduce.py b/flashinfer/comm/allreduce.py
+index 3282dcf..df888d6 100644
+--- a/flashinfer/comm/allreduce.py
++++ b/flashinfer/comm/allreduce.py
+@@ -66,0 +67 @@ from .trtllm_ar import trtllm_create_ipc_workspace_for_all_reduce_fusion
++from .trtllm_ar import trtllm_destroy_ipc_workspace_for_all_reduce_fusion
+@@ -269,0 +271,5 @@ class TRTLLMAllReduceFusionWorkspace(AllReduceFusionWorkspace):
++        # The IPC allocator owns live torch symmetric-memory references keyed
++        # by the handles list, independently of this Python workspace object.
++        trtllm_destroy_ipc_workspace_for_all_reduce_fusion(self.ipc_handles)
++        # The creation tuple also retains workspace_tensor / mem_handles.
++        self._internal_workspace = None

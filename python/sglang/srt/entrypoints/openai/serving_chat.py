@@ -144,7 +144,7 @@ _QWEN35_REASONING_EFFORT_ALIASES = {
 }
 _QWEN35_REASONING_EFFORT_TOKEN_RANGES = {
     "low": (32, 64),
-    "medium": (128, 256),
+    "medium": (128, 4096),
     "xhigh": (384, 8192),
 }
 _QWEN35_REASONING_EFFORT_FULL_BUDGET = 8192
@@ -629,7 +629,7 @@ class OpenAIServingChat(OpenAIServingBase):
         max_new_tokens: Optional[int],
         reasoning_max_tokens: Optional[int] = None,
     ) -> Optional[tuple[int, int]]:
-        """Return strict, non-overlapping reasoning bounds for Qwen3.5."""
+        """Return bounded reasoning effort tiers for the Qwen3.5 template."""
         if (
             not self._uses_qwen35_chat_template()
             or getattr(
@@ -667,7 +667,8 @@ class OpenAIServingChat(OpenAIServingBase):
         if reasoning_max_tokens is not None:
             available_tokens = min(available_tokens, reasoning_max_tokens)
 
-        # Three disjoint integer intervals require at least three reasoning tokens.
+        # Preserve the legacy behavior when fewer than three reasoning tokens
+        # are available for the tier minimums.
         if available_tokens < 3:
             if reasoning_max_tokens is not None:
                 return (available_tokens, available_tokens)
@@ -680,8 +681,11 @@ class OpenAIServingChat(OpenAIServingBase):
         low_min = min(max(1, int(32 * scale)), available_tokens - 2)
         low_max = min(max(low_min, int(64 * scale)), available_tokens - 2)
         medium_min = min(max(low_max + 1, int(128 * scale)), available_tokens - 1)
-        medium_max = min(max(medium_min, int(256 * scale)), available_tokens - 1)
-        xhigh_min = min(max(medium_max + 1, int(384 * scale)), available_tokens)
+        # Keep the existing xhigh/default lower bound independent of the
+        # medium ceiling. Raising medium's ceiling must not force every high
+        # or default request to spend thousands of extra reasoning tokens.
+        legacy_medium_max = min(max(medium_min, int(256 * scale)), available_tokens - 1)
+        xhigh_min = min(max(legacy_medium_max + 1, int(384 * scale)), available_tokens)
         xhigh_max = (
             available_tokens
             if reasoning_max_tokens is not None
@@ -698,7 +702,19 @@ class OpenAIServingChat(OpenAIServingBase):
         )
         ranges = {
             "low": (low_min, low_max),
-            "medium": (medium_min, medium_max),
+            "medium": (
+                medium_min,
+                min(
+                    available_tokens,
+                    max(
+                        medium_min,
+                        int(
+                            _QWEN35_REASONING_EFFORT_TOKEN_RANGES["medium"][1]
+                            * scale
+                        ),
+                    ),
+                ),
+            ),
             "xhigh": (xhigh_min, xhigh_max),
         }
         return ranges[reasoning_effort]

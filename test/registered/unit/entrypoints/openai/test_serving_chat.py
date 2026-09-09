@@ -507,7 +507,7 @@ class ServingChatTestCase(unittest.TestCase):
         )
         self.assertEqual(
             self.chat._qwen35_reasoning_effort_token_range("medium", 16384),
-            (128, 256),
+            (128, 4096),
         )
         for effort in ("high", "xhigh", "max"):
             with self.subTest(effort=effort):
@@ -549,7 +549,7 @@ class ServingChatTestCase(unittest.TestCase):
         )
         self.assertEqual(
             self.chat._qwen35_reasoning_effort_token_range("medium", 128),
-            (2, 3),
+            (2, 48),
         )
         self.assertEqual(
             self.chat._qwen35_reasoning_effort_token_range("xhigh", 128),
@@ -561,6 +561,48 @@ class ServingChatTestCase(unittest.TestCase):
                 for effort in ("low", "medium", "xhigh")
             ],
             [(1, 1), (2, 2), (3, 3)],
+        )
+
+    def test_qwen35_medium_budget_does_not_raise_other_tier_minimums(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        self.tm.server_args.enable_strict_thinking = True
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("medium", 16384),
+            (128, 4096),
+        )
+        for effort in (None, "high", "xhigh", "max"):
+            with self.subTest(effort=effort):
+                self.assertEqual(
+                    self.chat._qwen35_reasoning_effort_token_range(effort, 16384),
+                    (384, 8192),
+                )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("low", 16384),
+            (32, 64),
+        )
+
+    def test_qwen35_medium_budget_respects_request_limits(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        self.tm.server_args.enable_strict_thinking = True
+        for output_limit in (2, 3, 4, 16, 128, 512, 16384):
+            for reasoning_limit in (None, 1, 2, 64, 256, 4096, 8192):
+                with self.subTest(output=output_limit, reasoning=reasoning_limit):
+                    bounds = self.chat._qwen35_reasoning_effort_token_range(
+                        "medium", output_limit, reasoning_limit
+                    )
+                    available = output_limit - min(max(1, output_limit // 4), 256)
+                    if reasoning_limit is not None:
+                        available = min(available, reasoning_limit)
+                    elif available < 3:
+                        self.assertIsNone(bounds)
+                        continue
+                    lower, upper = bounds
+                    self.assertLessEqual(1, lower)
+                    self.assertLessEqual(lower, upper)
+                    self.assertLessEqual(upper, available)
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("medium", 16384, 256),
+            (4, 128),
         )
 
     def test_qwen35_reasoning_effort_token_ranges_are_narrowly_scoped(self):
@@ -604,7 +646,7 @@ class ServingChatTestCase(unittest.TestCase):
             adapted, _ = self.chat._convert_to_internal_request(request)
 
         self.assertEqual(adapted.min_thinking_tokens, 128)
-        self.assertEqual(adapted.max_thinking_tokens, 256)
+        self.assertEqual(adapted.max_thinking_tokens, 4096)
         self.assertNotIn(
             "disable_strict_thinking_grammar",
             adapted.sampling_params.get("custom_params") or {},

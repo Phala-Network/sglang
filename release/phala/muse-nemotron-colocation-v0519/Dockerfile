@@ -110,7 +110,10 @@ LABEL org.opencontainers.image.created="${CREATED_AT}" \
       org.phala.build.recipe.digest="${BUILD_RECIPE_DIGEST}" \
       org.phala.sbom.digest="${SBOM_STATUS}" \
       org.phala.provenance.digest="${PROVENANCE_STATUS}" \
-      org.phala.reproducible="${REPRODUCIBILITY_STATUS}"
+      org.phala.reproducible="${REPRODUCIBILITY_STATUS}" \
+      ai.sglang.build.commit="${SOURCE_REVISION}" \
+      ai.sglang.build.url="${SOURCE_REPOSITORY}/commit/${SOURCE_REVISION}" \
+      ai.sglang.image.tag="${RELEASE_VERSION}"
 
 ENV SGLANG_BUILD_COMMIT="${SOURCE_REVISION}" \
     SGLANG_BUILD_URL="${SOURCE_REPOSITORY}/commit/${SOURCE_REVISION}" \

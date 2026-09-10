@@ -5,7 +5,10 @@ single public `Phala-Network/sglang` source commit on the immutable official
 SGLang v0.5.19 CUDA 13.0 base image. It preserves the Nemotron latent-MoE and
 Gumbel sampling optimizations from the v0.5.19 r2 lineage and adds the audited
 Muse protocol, structured-output, reasoning-usage, tool-call, and pinned
-llguidance vocab-mask repairs used by this colocation image.
+llguidance vocab-mask repairs used by this colocation image. It also carries
+the upstream Mamba radix-cache SSM-index correction, complete Mamba admission
+accounting, and speculative-decode deferred-metadata cleanup required by the
+Nemotron hybrid Mamba plus EAGLE path.
 
 The Muse chat template is stored beside this Dockerfile and copied into the
 flat runtime image at `/opt/muse-glimmer-chat-template.jinja`. No model code,

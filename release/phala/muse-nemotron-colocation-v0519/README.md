@@ -1,0 +1,20 @@
+# Muse-Glimmer-30B and Nemotron 3.5 Lightning SGLang v0.5.19 runtime
+
+This release profile rebuilds the complete `python/sglang` runtime tree from a
+single public `Phala-Network/sglang` source commit on the immutable official
+SGLang v0.5.19 CUDA 13.0 base image. It preserves the Nemotron latent-MoE and
+Gumbel sampling optimizations from the v0.5.19 r2 lineage and adds the audited
+Muse protocol, structured-output, reasoning-usage, tool-call, and pinned
+llguidance vocab-mask repairs used by this colocation image.
+
+The Muse chat template is stored beside this Dockerfile and copied into the
+flat runtime image at `/opt/muse-glimmer-chat-template.jinja`. No model code,
+package installation, Rust compilation, or downloader self-update runs when
+the released image starts. Model artifacts are downloaded by the image's
+pinned `hf download` command with full Hugging Face revisions supplied by the
+Compose manifest.
+
+Publication requires OCI index annotations, an SPDX SBOM attestation, SLSA
+provenance in max mode, a Phala build-manifest referrer, registry readback, and
+two clean builds whose runnable platform manifest, config, and layer
+descriptors are identical after normalizing attestation-only differences.

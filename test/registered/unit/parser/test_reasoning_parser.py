@@ -626,9 +626,9 @@ class TestNemotron3Detector(CustomTestCase):
         self.assertEqual(end.reasoning_text, "")
         self.assertEqual(end.normal_text, "reasoning part one more reasoning")
 
-    def test_streaming_tool_start_ends_reasoning_and_noops_finish(self):
-        """tool_start_token interrupts reasoning; finish() then no-ops because
-        _in_reasoning is already False."""
+    def test_streaming_tool_start_without_closer_flushes_at_finish(self):
+        """Defer ambiguous tool text so a later closer can keep it in reasoning;
+        preserve the missing-closer fallback when the stream actually ends."""
         detector = Nemotron3Detector(force_nonempty_content=True)
         detector.parse_streaming_increment(detector.think_start_token)
         detector.parse_streaming_increment("reasoning here")
@@ -636,10 +636,12 @@ class TestNemotron3Detector(CustomTestCase):
             detector.tool_start_token + "payload"
         )
         self.assertEqual(result.reasoning_text, "")
-        self.assertEqual(result.normal_text, detector.tool_start_token + "payload")
-        self.assertFalse(detector._in_reasoning)
+        self.assertEqual(result.normal_text, "")
+        self.assertTrue(detector._in_reasoning)
         end = detector.finish()
-        self.assertEqual(end.normal_text, "")
+        self.assertEqual(end.normal_text, detector.tool_start_token + "payload")
+        self.assertFalse(detector._in_reasoning)
+        self.assertEqual(detector.finish().normal_text, "")
 
     def test_streaming_truncated_no_stream_reasoning_strips_think_start(self):
         """force_nonempty_content + stream_reasoning=False: the opening think

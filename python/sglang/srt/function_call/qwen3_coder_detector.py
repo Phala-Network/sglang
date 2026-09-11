@@ -3,7 +3,7 @@ import logging
 import re
 from typing import Any, List, Optional
 
-from sglang.srt.entrypoints.openai.protocol import Tool
+from sglang.srt.entrypoints.openai.protocol import Tool, ToolChoice
 from sglang.srt.function_call.base_format_detector import BaseFormatDetector
 from sglang.srt.function_call.core_types import (
     StreamingParseResult,
@@ -59,7 +59,9 @@ class Qwen3CoderDetector(BaseFormatDetector):
         self.current_func_name: Optional[str] = None
 
     def has_tool_call(self, text: str) -> bool:
-        return self.tool_call_start_token in text
+        # The streaming parser already recognizes a bare <function=...>.
+        # Non-streaming must make the same decision for the same model output.
+        return self.tool_call_start_token in text or self.tool_call_prefix in text
 
     def _get_arguments_config(
         self, func_name: str, tools: Optional[list[Tool]]
@@ -177,18 +179,15 @@ class Qwen3CoderDetector(BaseFormatDetector):
 
     def detect_and_parse(self, text: str, tools: List[Tool]) -> StreamingParseResult:
         """One-shot parsing for non-streaming scenarios."""
-        if self.tool_call_start_token not in text:
+        if not self.has_tool_call(text):
             return StreamingParseResult(normal_text=text)
 
         calls = []
         try:
-            # Simple cleanup of the text to find tool calls
-            # Note: This is a simplified regex approach consistent with vLLM
-            raw_tool_calls = self.tool_call_regex.findall(text)
-            if not raw_tool_calls:
-                # Fallback: maybe the whole text is inside the tag or tags are stripped
-                if self.tool_call_prefix in text:
-                    raw_tool_calls = [text]
+            # Parse the function blocks in order, including a mixture of
+            # wrapped and bare blocks. Selecting only complete outer wrappers
+            # would silently lose the bare calls already supported in streaming.
+            raw_tool_calls = [text]
 
             tool_idx = 0
             for tool_content in raw_tool_calls:
@@ -232,9 +231,12 @@ class Qwen3CoderDetector(BaseFormatDetector):
                     tool_idx += 1
 
             # Determine normal text (text before the first tool call)
-            start_idx = text.find(self.tool_call_start_token)
-            if start_idx == -1:
-                start_idx = text.find(self.tool_call_prefix)
+            starts = [
+                text.find(marker)
+                for marker in (self.tool_call_start_token, self.tool_call_prefix)
+                if marker in text
+            ]
+            start_idx = min(starts) if starts else -1
             normal_text = text[:start_idx] if start_idx > 0 else ""
 
             return StreamingParseResult(normal_text=normal_text, calls=calls)
@@ -481,3 +483,96 @@ class Qwen3CoderDetector(BaseFormatDetector):
 
     def get_structural_tag_name(self) -> str:
         return "qwen_3_coder"
+
+    def get_structural_tag(
+        self,
+        tools=None,
+        tool_choice="auto",
+        thinking_mode=False,
+        parallel_tool_calls=True,
+    ):
+        """Honor call cardinality in the native XML format, not JSON fallback.
+
+        The upstream named format is a single TagFormat and the required
+        format resumes arbitrary text after each call. Keep auto text replies,
+        but use a bounded-whitespace call sequence for required/named choices.
+        The reasoning prefix, when owned here, is preserved independently.
+        """
+        tag = super().get_structural_tag(
+            tools=tools,
+            tool_choice=tool_choice,
+            thinking_mode=thinking_mode,
+            parallel_tool_calls=parallel_tool_calls,
+        )
+        if tag is None:
+            return None
+
+        from xgrammar.structural_tag import (
+            OrFormat,
+            RegexFormat,
+            RepeatFormat,
+            SequenceFormat,
+        )
+
+        suffix = tag.format.elements[-1] if thinking_mode else tag.format
+        if tool_choice == "auto":
+            if suffix.type == "triggered_tags":
+                # Start validating as soon as the unambiguous tool marker is
+                # emitted. Waiting for '<tool_call>\n<function=' lets malformed
+                # function headers bypass the grammar as unconstrained prose.
+                bare_tags = []
+                for item in suffix.tags:
+                    if not item.begin.startswith("<tool_call>\n"):
+                        raise ValueError("Unexpected native Qwen XML tool tag")
+                    bare_tags.append(
+                        item.model_copy(
+                            update={
+                                "begin": item.begin.removeprefix("<tool_call>\n"),
+                                "end": [item.end, "\n</function>"],
+                            }
+                        )
+                    )
+                suffix = suffix.model_copy(
+                    update={
+                        # Both spellings are understood by the native parser;
+                        # neither may bypass name/argument schema enforcement.
+                        "triggers": [self.tool_call_start_token, self.tool_call_prefix],
+                        "tags": [*suffix.tags, *bare_tags],
+                        "stop_after_first": not parallel_tool_calls,
+                    }
+                )
+        elif tool_choice == "required" or isinstance(tool_choice, ToolChoice):
+            alternatives = suffix.tags if suffix.type == "triggered_tags" else [suffix]
+            call = OrFormat(elements=alternatives)
+            whitespace = RegexFormat(pattern=r"[\x20\x09\x0A\x0D]{0,64}")
+            # A repeated item must consume one whole call. Optional separators
+            # cannot form an empty loop or consume an unbounded token budget.
+            suffix = SequenceFormat(
+                elements=[
+                    RepeatFormat(
+                        min=1,
+                        max=-1 if parallel_tool_calls else 1,
+                        content=SequenceFormat(elements=[whitespace, call]),
+                    ),
+                    whitespace,
+                ]
+            )
+
+        if thinking_mode:
+            prefix = tag.format.elements[:-1]
+            return tag.model_copy(
+                update={"format": SequenceFormat(elements=[*prefix, suffix])}
+            )
+        return tag.model_copy(update={"format": suffix})
+
+    def get_auto_tool_call_structural_tag(
+        self, tools=None, thinking_mode=False, parallel_tool_calls=True
+    ):
+        # Native XML has an unambiguous tool marker. Constrain the tool payload
+        # even without strict=True, while preserving ordinary text-only answers.
+        return self.get_structural_tag(
+            tools=tools,
+            thinking_mode=thinking_mode,
+            tool_choice="auto",
+            parallel_tool_calls=parallel_tool_calls,
+        )

@@ -46,7 +46,12 @@ enabled. Auto mode can still return normal text and history-based final answers.
 For strict and non-strict automatic choice, the native constraint starts at
 `<tool_call>`, not the longer `<tool_call>\n<function=` prefix. Malformed
 function headers can no longer evade constraints by being treated as plain
-text. Ordinary text before a tool marker remains allowed. The existing native
+text. Ordinary text before a tool marker remains allowed. After the first auto
+invocation, the response stays in one final call phase: additional complete
+calls, bounded whitespace or end of turn. It cannot resume arbitrary prose
+between or after calls. Identical repeated invocations remain structurally
+legal; the grammar does not deduplicate or infer a desired count.
+The existing native
 streaming parser also recognizes a bare `<function=...>` invocation without the
 opening outer wrapper. Non-streaming now recognizes the same spelling, including
 mixtures with wrapped calls, and auto grammar constrains both spellings with the
@@ -79,9 +84,13 @@ the closer and classifies the same text differently.
 The Nemotron detector now defers this ambiguous suffix until `</think>` or EOF.
 Text before the ambiguous marker can still stream as reasoning. A later closer
 keeps quoted examples in reasoning; a missing closer at EOF retains the existing
-fallback. Non-reasoning tool replies are not deferred. Other model detectors
-retain their existing default behavior. Chunk-boundary, implicit/explicit
-reasoning, hidden reasoning and missing-closer controls cover this repair.
+fallback on a normal stop. The adapter passes the native finish type to parser
+finalization: a length/abort cut inside unclosed reasoning does not promote
+quoted tool examples (or force-nonempty reasoning) into executable final
+content. Calls after an actual reasoning closer are unaffected. Non-reasoning
+tool replies are not deferred. Other model detectors retain their existing
+default behavior. Chunk-boundary, implicit/explicit reasoning, hidden reasoning,
+budget-cut and missing-closer controls cover this repair.
 
 Source tests, diagnostic-image experiments, final-image qualification, registry
 publication and production rollout remain separate gates. Failed original runs

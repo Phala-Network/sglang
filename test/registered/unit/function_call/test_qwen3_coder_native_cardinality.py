@@ -77,10 +77,24 @@ def test_auto_false_still_allows_text_but_only_one_call(strict):
     assert not _is_grammar_accept_string(g, call() + "\n" + call("second"))
 
 
-def test_auto_true_can_interleave_text_and_multiple_calls():
+def test_auto_true_can_introduce_multiple_calls_with_text():
     g = grammar("auto", True)
     assert _is_grammar_accept_string(g, "No lookup is needed.")
     assert _is_grammar_accept_string(g, "Looking up.\n" + call() + "\n" + call("second"))
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_auto_enters_one_final_call_phase(strict):
+    g = grammar("auto", True, strict=strict)
+    assert _is_grammar_accept_string(g, "No lookup is needed.")
+    assert _is_grammar_accept_string(g, "Looking up.\n" + call() + "\n" + call("second"))
+    # Identical calls can be legitimate; cardinality remains the model's choice.
+    assert _is_grammar_accept_string(g, call() + "\n" + call())
+    assert not _is_grammar_accept_string(g, call() + "\nBut need to check the format.")
+    assert not _is_grammar_accept_string(g, call() + "\nNow another call\n" + call())
+    assert not _is_grammar_accept_string(g, call() + "\n" * 65)
+    bare = call().removeprefix("<tool_call>\n").removesuffix("\n</tool_call>")
+    assert _is_grammar_accept_string(g, bare + "\n" + call("second"))
 
 
 @pytest.mark.parametrize("closing_wrapper", [False, True])

@@ -541,6 +541,26 @@ class Qwen3CoderDetector(BaseFormatDetector):
                         "stop_after_first": not parallel_tool_calls,
                     }
                 )
+                if parallel_tool_calls:
+                    # Auto may answer in prose or introduce the calls in prose.
+                    # Once it starts a call, keep one final tool-call phase:
+                    # unconstrained prose between/after calls can send a model
+                    # into repeated format explanations. Do not infer call
+                    # counts or deduplicate legitimate repeated invocations.
+                    whitespace = RegexFormat(pattern=r"[\x20\x09\x0A\x0D]{0,64}")
+                    suffix = SequenceFormat(
+                        elements=[
+                            suffix.model_copy(update={"stop_after_first": True}),
+                            RepeatFormat(
+                                min=0,
+                                max=-1,
+                                content=SequenceFormat(
+                                    elements=[whitespace, OrFormat(elements=suffix.tags)]
+                                ),
+                            ),
+                            whitespace,
+                        ]
+                    )
         elif tool_choice == "required" or isinstance(tool_choice, ToolChoice):
             alternatives = suffix.tags if suffix.type == "triggered_tags" else [suffix]
             call = OrFormat(elements=alternatives)

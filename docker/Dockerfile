@@ -821,6 +821,10 @@ COPY --from=framework_final /opt/sglang/bin/sgl-model-gateway /opt/sglang/bin/sg
 # Copy sglang binary
 COPY --from=framework_final /opt/sglang/bin/sglang /opt/sglang/bin/sglang
 
+# Keep the native artifact downloader with the runtime's installed HF package.
+# Copying site-packages alone does not preserve Python console-script entrypoints.
+COPY --from=framework_final /opt/sglang/bin/hf /opt/sglang/bin/hf
+
 # Copy py-spy binary
 COPY --from=framework_final /opt/sglang/bin/py-spy /opt/sglang/bin/py-spy
 

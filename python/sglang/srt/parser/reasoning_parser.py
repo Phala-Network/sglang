@@ -88,6 +88,7 @@ class BaseReasoningFormatDetector:
         self.think_excluded_tokens = think_excluded_tokens
         self.tool_start_token = tool_start_token
         self.defer_tool_start_until_end = defer_tool_start_until_end
+        self.allow_tool_start_fallback = True
         self.force_reasoning = force_reasoning
         self._in_reasoning = force_reasoning
         self.stream_reasoning = stream_reasoning
@@ -117,7 +118,11 @@ class BaseReasoningFormatDetector:
     def _maybe_apply_force_nonempty_content(
         self, ret: StreamingParseResult
     ) -> StreamingParseResult:
-        if self._force_nonempty_content and not ret.normal_text:
+        if (
+            self._force_nonempty_content
+            and not ret.normal_text
+            and self.allow_tool_start_fallback
+        ):
             ret.normal_text, ret.reasoning_text = ret.reasoning_text, ret.normal_text
         return ret
 
@@ -149,6 +154,7 @@ class BaseReasoningFormatDetector:
             # Check for tool_start_token interruption
             if (
                 in_reasoning
+                and self.allow_tool_start_fallback
                 and self.tool_start_token is not None
                 and self.tool_start_token in processed_text
             ):
@@ -317,6 +323,7 @@ class BaseReasoningFormatDetector:
 
         if (
             self.defer_tool_start_until_end
+            and self.allow_tool_start_fallback
             and self.tool_start_token
             and self.tool_start_token in buffer
         ):
@@ -329,7 +336,7 @@ class BaseReasoningFormatDetector:
                 reasoning_text=buffer[:tool_idx], normal_text=buffer[tool_idx:]
             )
 
-        if self._force_nonempty_content:
+        if self._force_nonempty_content and self.allow_tool_start_fallback:
             normal_text = self._accumulated_reasoning + buffer
             self._accumulated_reasoning = ""
             if normal_text:
@@ -2055,8 +2062,22 @@ class ReasoningParser:
 
         self.detector = detector_class(**kwargs)
 
-    def parse_non_stream(self, full_text: str) -> Tuple[Optional[str], Optional[str]]:
+    def _set_finish_reason(self, finish_reason_type: Optional[str]) -> None:
+        # Nemotron's missing-closer compatibility fallback is ambiguous until
+        # normal EOF. A budget cut is not evidence that examples inside an
+        # unfinished reasoning block were intended as executable tool calls.
+        # Other detector formats retain their existing completion behavior.
+        if getattr(self.detector, "defer_tool_start_until_end", False):
+            self.detector.allow_tool_start_fallback = finish_reason_type not in {
+                "length",
+                "abort",
+            }
+
+    def parse_non_stream(
+        self, full_text: str, finish_reason_type: Optional[str] = None
+    ) -> Tuple[Optional[str], Optional[str]]:
         """Non-streaming call: one-time parsing"""
+        self._set_finish_reason(finish_reason_type)
         ret = self.detector.detect_and_parse(full_text)
         return ret.reasoning_text, ret.normal_text
 
@@ -2080,8 +2101,11 @@ class ReasoningParser:
         ret = self.detector.parse_streaming_increment(chunk_text)
         return ret.reasoning_text, ret.normal_text
 
-    def parse_stream_end(self) -> Tuple[Optional[str], Optional[str]]:
+    def parse_stream_end(
+        self, finish_reason_type: Optional[str] = None
+    ) -> Tuple[Optional[str], Optional[str]]:
         """Streaming call: flush any detector-specific buffered state once
         the stream ends."""
+        self._set_finish_reason(finish_reason_type)
         ret = self.detector.finish()
         return ret.reasoning_text, ret.normal_text

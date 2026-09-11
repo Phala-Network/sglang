@@ -1,0 +1,12 @@
+{
+  "upstream_repository": "https://github.com/mlc-ai/xgrammar",
+  "upstream_tag": "v0.2.6",
+  "upstream_commit": "bc09a30ec10ba30a6c1ab0c79eaeba3ca518d11f",
+  "source_distribution_url": "https://files.pythonhosted.org/packages/82/21/03c58293ed7d539252affb6499121dcd63265774e030f049ef4147b46f5b/xgrammar-0.2.6.tar.gz",
+  "source_distribution_sha256": "9d54c310b88f9f362655de1586529add59cf625db0af7c5c07f228287777ce84",
+  "patch_file": "xgrammar-strict-order.patch",
+  "patch_sha256": "f1755d033e8b56cc9e280714cf9fe38d7866e096539d044b05d861f4c37a2fdf",
+  "patched_files_manifest": "xgrammar-patched-files.sha256",
+  "package_version": "0.2.6+phala.strictorder1",
+  "scope": "Bounded exact subset-state order for ordinary JSON objects; does not enable approximate any_order or change XML tool grammar"
+}

@@ -81,11 +81,13 @@ class BaseReasoningFormatDetector:
         thinks_internally: bool = False,
         reasoning_default: str = "always",
         force_nonempty_content: bool = False,
+        defer_tool_start_until_end: bool = False,
     ):
         self.think_start_token = think_start_token
         self.think_end_token = think_end_token
         self.think_excluded_tokens = think_excluded_tokens
         self.tool_start_token = tool_start_token
+        self.defer_tool_start_until_end = defer_tool_start_until_end
         self.force_reasoning = force_reasoning
         self._in_reasoning = force_reasoning
         self.stream_reasoning = stream_reasoning
@@ -236,6 +238,16 @@ class BaseReasoningFormatDetector:
             # think_end_token that has not arrived yet; see the chunk_dependent test.
             if self.tool_start_token and self.tool_start_token in current_text:
                 tool_idx = current_text.find(self.tool_start_token)
+                if self.defer_tool_start_until_end:
+                    # A quoted tool example can precede a later </think>.
+                    # Preserve that ambiguity until the end marker or EOF;
+                    # eagerly forwarding it would execute reasoning as tools.
+                    if self.stream_reasoning:
+                        self._buffer = current_text[tool_idx:]
+                        return StreamingParseResult(
+                            reasoning_text=current_text[:tool_idx]
+                        )
+                    return StreamingParseResult()
                 reasoning_text = current_text[:tool_idx]
                 # Preserve tool_start_token in normal text
                 normal_text = current_text[tool_idx:]
@@ -302,6 +314,20 @@ class BaseReasoningFormatDetector:
         # the opening think token that _parse_streaming_increment_impl removes.
         buffer = self._strip_leading_think_start(self._buffer)
         self._buffer = ""
+
+        if (
+            self.defer_tool_start_until_end
+            and self.tool_start_token
+            and self.tool_start_token in buffer
+        ):
+            # No canonical reasoning closer arrived. Preserve the existing
+            # Nemotron missing-closer fallback, now consistently at stream EOF.
+            tool_idx = buffer.find(self.tool_start_token)
+            self._in_reasoning = False
+            self._accumulated_reasoning = ""
+            return StreamingParseResult(
+                reasoning_text=buffer[:tool_idx], normal_text=buffer[tool_idx:]
+            )
 
         if self._force_nonempty_content:
             normal_text = self._accumulated_reasoning + buffer
@@ -878,6 +904,7 @@ class Nemotron3Detector(BaseReasoningFormatDetector):
             previous_content=previous_content,
             reasoning_default="enable_thinking",
             force_nonempty_content=force_nonempty_content,
+            defer_tool_start_until_end=True,
         )
 
 

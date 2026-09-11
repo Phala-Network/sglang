@@ -1,2 +1,0 @@
-xgrammar @ https://files.pythonhosted.org/packages/67/1e/313450fa71fd62333c6c4d3c75c9396c3c4f0271037b06afd7cdd6d28b77/xgrammar-0.2.6-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl \
-    --hash=sha256:bbf25df4433706ae207d3355e982c4d76470b9c4a7fa910d11b3e9146b31af74

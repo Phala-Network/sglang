@@ -5,7 +5,7 @@ ARG SOURCE_DATE_EPOCH
 ARG RELEASE_VERSION
 ARG SOURCE_REVISION
 ARG RUST_TOOLCHAIN="1.92.0"
-ARG PYTHON_PACKAGE_VERSION="0.5.19+phala.mn.r2"
+ARG PYTHON_PACKAGE_VERSION="0.5.19+phala.mn.r3"
 
 ENV PATH="/root/.cargo/bin:${PATH}" \
     CARGO_INCREMENTAL=0 \
@@ -39,14 +39,33 @@ RUN set -eux; \
     python3 -m pip wheel --no-deps --no-build-isolation --wheel-dir /wheelhouse ./python; \
     python3 /opt/phala/verify_wheel.py /wheelhouse /build/sglang/python/sglang "${PYTHON_PACKAGE_VERSION}"
 
+FROM ${BASE_IMAGE} AS xgrammar_builder
+
+ARG SOURCE_DATE_EPOCH
+ENV SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+    CMAKE_BUILD_PARALLEL_LEVEL=8 \
+    PYTHONDONTWRITEBYTECODE=1
+WORKDIR /build/xgrammar
+ADD --checksum=sha256:9d54c310b88f9f362655de1586529add59cf625db0af7c5c07f228287777ce84 https://files.pythonhosted.org/packages/82/21/03c58293ed7d539252affb6499121dcd63265774e030f049ef4147b46f5b/xgrammar-0.2.6.tar.gz /tmp/xgrammar-0.2.6.tar.gz
+COPY --link release/phala/muse-nemotron-colocation-v0519/xgrammar-strict-order.patch /tmp/xgrammar-strict-order.patch
+COPY --link release/phala/muse-nemotron-colocation-v0519/xgrammar-patched-files.sha256 /tmp/xgrammar-patched-files.sha256
+RUN set -eu; \
+    echo 'f1755d033e8b56cc9e280714cf9fe38d7866e096539d044b05d861f4c37a2fdf  /tmp/xgrammar-strict-order.patch' | sha256sum -c -; \
+    tar -xzf /tmp/xgrammar-0.2.6.tar.gz --strip-components=1; \
+    patch -p1 --fuzz=0 < /tmp/xgrammar-strict-order.patch; \
+    sha256sum -c /tmp/xgrammar-patched-files.sha256; \
+    CXXFLAGS='-ffile-prefix-map=/build/xgrammar=. -fdebug-prefix-map=/build/xgrammar=.' \
+    LDFLAGS='-Wl,--build-id=none' \
+    python3 -m pip wheel --no-deps --no-build-isolation --wheel-dir /wheelhouse .
+
 FROM ${BASE_IMAGE}
 
 ARG SOURCE_DATE_EPOCH
-ARG PYTHON_PACKAGE_VERSION="0.5.19+phala.mn.r2"
-COPY --link release/phala/muse-nemotron-colocation-v0519/runtime-requirements.txt /tmp/phala-runtime-requirements.txt
-RUN python3 -m pip install --no-cache-dir --no-deps --no-compile --require-hashes \
-      -r /tmp/phala-runtime-requirements.txt \
-    && PYTHONDONTWRITEBYTECODE=1 python3 -c 'from importlib.metadata import version; assert version("xgrammar") == "0.2.6"'
+ARG PYTHON_PACKAGE_VERSION="0.5.19+phala.mn.r3"
+COPY --link --from=xgrammar_builder /wheelhouse /tmp/phala-xgrammar-wheelhouse
+RUN python3 -m pip install --no-cache-dir --no-deps --no-compile --force-reinstall /tmp/phala-xgrammar-wheelhouse/*.whl \
+    && PYTHONDONTWRITEBYTECODE=1 python3 -c 'from importlib.metadata import version; assert version("xgrammar") == "0.2.6+phala.strictorder1"' \
+    && rm -rf /tmp/phala-xgrammar-wheelhouse
 
 ARG CREATED_AT=""
 ARG RELEASE_VERSION=""
@@ -125,6 +144,8 @@ RUN set -eu; \
     rm -rf /tmp/phala-sglang-wheelhouse
 
 COPY --link release/phala/muse-nemotron-colocation-v0519/muse-glimmer-chat-template.jinja /opt/muse-glimmer-chat-template.jinja
+COPY --link release/phala/muse-nemotron-colocation-v0519/nemotron-lightning-chat-template.jinja /opt/phala/nemotron-lightning-chat-template.jinja
+COPY --link release/phala/muse-nemotron-colocation-v0519/xgrammar-source.lock.json /usr/share/phala/xgrammar-source.lock.json
 COPY --link --from=source_builder /wheelhouse/wheel-verification.json /usr/share/phala/sglang-wheel-verification.json
 
 RUN set -eu; \

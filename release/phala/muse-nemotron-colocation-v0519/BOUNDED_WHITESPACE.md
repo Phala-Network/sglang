@@ -11,11 +11,14 @@ The builtin unrestricted-JSON path also observes an explicit bound. Unsupported
 grammar backends and tokenizer fallback cannot silently ignore the setting.
 
 This fixes neither arbitrary model semantic mistakes nor all JSON Schema
-limitations. The next dependency candidate uses hash-pinned XGrammar 0.2.6,
+limitations. The dependency uses hash-pinned XGrammar 0.2.6 sources,
 including upstream fixes #595 (optional field types), #641 (empty enums), and
 #871 (RFC carriage-return whitespace). The property-order limitation in issue
-#831 remains; enabling any_order would weaken required/duplicate-key checks
-and is not used. CPU and GPU dependency qualification remain separate gates.
+#831 is addressed only for the exact bounded shapes documented in
+`STRICT_OBJECT_ORDER_AND_TOOLS.md`. Larger/unsupported shapes retain the
+strict fixed-order implementation. Enabling approximate any_order would weaken
+required/duplicate-key checks and is not used. CPU and GPU dependency
+qualification remain separate gates.
 
 CPU regressions must be followed by installed-image GPU tests, reasoning and
 streaming variants, neighbouring tool controls, and co-located Muse/ingress

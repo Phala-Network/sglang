@@ -1,0 +1,247 @@
+diff --git a/cpp/json_schema_converter.cc b/cpp/json_schema_converter.cc
+index eabcebb..740983f 100644
+--- a/cpp/json_schema_converter.cc
++++ b/cpp/json_schema_converter.cc
+@@ -29,6 +29,7 @@
+ #include "grammar_functor.h"
+ #include "json_schema_converter_ext.h"
+ #include "regex_converter.h"
++#include "support/encoding.h"
+ #include "support/json_parse.h"
+ #include "support/logging.h"
+ 
+@@ -2598,6 +2599,141 @@ int32_t JSONSchemaConverter::GetAnyOrderRuleForProperties(
+   return Sequence({first_separator, RuleRef(item_rule_id), repeated_items, last_separator});
+ }
+ 
++int32_t JSONSchemaConverter::GetExactOrderKeyPatternExcluding(
++    const std::vector<ObjectSpec::Property>& properties, const std::string& rule_name
++) {
++  struct KeyNode {
++    bool terminal = false;
++    std::map<TCodepoint, KeyNode> children;
++  } root;
++  for (const auto& property : properties) {
++    auto* node = &root;
++    for (auto cp : ParseUTF8(property.name.c_str())) {
++      XGRAMMAR_CHECK(cp >= 0) << "Invalid UTF-8 in declared property name";
++      node = &node->children[cp];
++    }
++    node->terminal = true;
++  }
++  const std::map<TCodepoint, std::string> short_escapes = {
++      {'"', "\\\""}, {'\\', "\\\\"}, {'/', "\\/"}, {'\b', "\\b"},
++      {'\f', "\\f"}, {'\n', "\\n"}, {'\r', "\\r"}, {'\t', "\\t"}
++  };
++  std::function<int32_t(const KeyNode&)> build = [&](const KeyNode& node) -> int32_t {
++    std::vector<int32_t> choices;
++    if (!node.terminal) choices.push_back(ByteString("\""));
++    std::vector<std::pair<TCodepoint, TCodepoint>> excluded = {
++        {0, 0x1f}, {'"', '"'}, {'\\', '\\'}, {0xd800, 0xdfff}
++    };
++    for (const auto& [cp, child] : node.children) {
++      static_cast<void>(child);
++      excluded.push_back({cp, cp});
++    }
++    // After the first different decoded character no suffix can alias a
++    // declared key, so the full JSON string suffix is safe.
++    // Use positive Unicode ranges. The upstream negative character-class
++    // normalizer is ASCII-only and would silently admit excluded non-ASCII keys.
++    std::sort(excluded.begin(), excluded.end());
++    std::vector<CharacterClassElement> allowed;
++    TCodepoint lower = 0;
++    for (const auto& [begin, end] : excluded) {
++      if (lower < begin) allowed.push_back({lower, begin - 1});
++      lower = std::max(lower, end + 1);
++    }
++    if (lower <= 0x10ffff) allowed.push_back({lower, 0x10ffff});
++    choices.push_back(Sequence({builder_.AddCharacterClass(allowed), RuleRef(kBasicStringSub)}));
++    for (const auto& [cp, spelling] : short_escapes) {
++      if (!node.children.count(cp)) {
++        choices.push_back(Sequence({ByteString(spelling), RuleRef(kBasicStringSub)}));
++      }
++    }
++    for (const auto& [cp, child] : node.children) {
++      std::string encoded = picojson::value(CharToUTF8(cp)).serialize();
++      encoded = encoded.substr(1, encoded.size() - 2);
++      std::vector<int32_t> spellings = {ByteString(encoded)};
++      if (cp == '/') spellings.push_back(ByteString("\\/"));
++      choices.push_back(Sequence({Choice(spellings), build(child)}));
++    }
++    // While a name can still match a declared key, require its canonical UTF-8
++    // / short-escape spelling. Arbitrary \\u aliases at that prefix are not
++    // permitted: the upstream generic-escape branch could otherwise bypass
++    // required/type/duplicate-key constraints. Values are unaffected.
++    return Choice(choices);
++  };
++  int32_t id = builder_.AddRuleWithHint(
++      rule_name + "_exact_addl_key", Sequence({ByteString("\""), build(root)})
++  );
++  return RuleRef(id);
++}
++
++int32_t JSONSchemaConverter::GetExactOrderRuleForProperties(
++    const std::vector<ObjectSpec::Property>& properties,
++    const std::unordered_set<std::string>& required,
++    const SchemaSpecPtr& additional,
++    const std::string& rule_name,
++    const std::string& additional_suffix
++) {
++  const size_t state_count = size_t{1} << properties.size();
++  XGRAMMAR_CHECK(state_count <= exact_order_states_left_);
++  exact_order_states_left_ -= state_count;
++  int32_t first_separator = NextSeparatorExpression();
++  int32_t middle_separator = NextSeparatorExpression();
++  int32_t last_separator = NextSeparatorExpression(true);
++
++  size_t required_mask = 0;
++  std::vector<int32_t> patterns;
++  for (size_t index = 0; index < properties.size(); ++index) {
++    const auto& property = properties[index];
++    if (required.count(property.name)) required_mask |= size_t{1} << index;
++    int32_t value_rule_id =
++        CreateRule(property.schema, rule_name + "_prop_" + std::to_string(index));
++    patterns.push_back(
++        FormatProperty(property.name, value_rule_id, rule_name, index, property.schema)
++    );
++  }
++  std::optional<int32_t> extra;
++  if (additional != nullptr) {
++    int32_t value_rule_id = CreateRule(additional, rule_name + "_" + additional_suffix);
++    extra = FormatOtherProperty(
++        GetExactOrderKeyPatternExcluding(properties, rule_name), value_rule_id,
++        rule_name, additional_suffix, /*schema=*/nullptr
++    );
++  }
++
++  // Each state records exactly which declared keys were consumed. Additional
++  // keys never stand in for a required key and cannot alias a declared key.
++  std::vector<int32_t> tails;
++  for (size_t mask = 0; mask < state_count; ++mask) {
++    tails.push_back(builder_.AddRuleWithHint(
++        rule_name + "_exact_order_" + std::to_string(mask), Empty()
++    ));
++  }
++  for (size_t mask = 0; mask < state_count; ++mask) {
++    std::vector<int32_t> choices;
++    if ((mask & required_mask) == required_mask) choices.push_back(Empty());
++    for (size_t index = 0; index < properties.size(); ++index) {
++      const size_t bit = size_t{1} << index;
++      if (!(mask & bit)) {
++        choices.push_back(Sequence({
++            middle_separator, patterns[index], RuleRef(tails[mask | bit])
++        }));
++      }
++    }
++    if (extra.has_value()) {
++      // This recursion always consumes a comma, key and value; it cannot be
++      // an epsilon/whitespace-only loop.
++      choices.push_back(Sequence({middle_separator, *extra, RuleRef(tails[mask])}));
++    }
++    builder_.UpdateRuleBody(tails[mask], Choice(choices));
++  }
++
++  std::vector<int32_t> first;
++  for (size_t index = 0; index < properties.size(); ++index) {
++    first.push_back(Sequence({patterns[index], RuleRef(tails[size_t{1} << index])}));
++  }
++  if (extra.has_value()) first.push_back(Sequence({*extra, RuleRef(tails[0])}));
++  return Sequence({first_separator, Choice(first), last_separator});
++}
++
+ int32_t JSONSchemaConverter::GetPartialRuleForProperties(
+     const std::vector<ObjectSpec::Property>& properties,
+     const std::unordered_set<std::string>& required,
+@@ -2624,6 +2760,26 @@ int32_t JSONSchemaConverter::GetPartialRuleForProperties(
+     );
+   }
+ 
++  // Preserve every constraint: unlike the opt-in any_order approximation,
++  // this subset construction enforces required keys, types and uniqueness.
++  // Unsupported shapes stay on the existing fixed-order implementation.
++  bool required_are_declared = std::all_of(required.begin(), required.end(), [&](const auto& key) {
++    return std::any_of(properties.begin(), properties.end(), [&](const auto& p) {
++      return p.name == key;
++    });
++  });
++  bool keys_have_no_nul = std::all_of(properties.begin(), properties.end(), [](const auto& p) {
++    return p.name.find('\0') == std::string::npos;
++  });
++  if (SupportsExactPropertyOrder() && properties.size() > 0 && properties.size() <= 8 &&
++      min_properties == 0 && max_properties == -1 && !additional_property_override.has_value() &&
++      required_are_declared && keys_have_no_nul &&
++      (size_t{1} << properties.size()) <= exact_order_states_left_) {
++    return GetExactOrderRuleForProperties(
++        properties, required, additional, rule_name, additional_suffix
++    );
++  }
++
+   int32_t first_separator = NextSeparatorExpression();
+   int32_t middle_separator = NextSeparatorExpression();
+   int32_t last_separator = NextSeparatorExpression(true);
+diff --git a/cpp/json_schema_converter.h b/cpp/json_schema_converter.h
+index 982f37b..71a9228 100644
+--- a/cpp/json_schema_converter.h
++++ b/cpp/json_schema_converter.h
+@@ -364,6 +364,9 @@ class JSONSchemaConverter {
+ 
+   /*! \brief Add basic rules for the format. Override for different formats. */
+   virtual void AddBasicRules();
++  // XML converters retain their format-specific ordering; this repair applies
++  // only to ordinary JSON objects.
++  virtual bool SupportsExactPropertyOrder() const { return true; }
+   void AddBasicRules(const std::vector<std::string>& additional_rule_names);
+ 
+   /*! \brief Add a key-value pair to the generation cache. Override for custom cache behavior. */
+@@ -450,6 +453,17 @@ class JSONSchemaConverter {
+       const std::optional<int32_t>& additional_property_override = std::nullopt
+   );
+ 
++  int32_t GetExactOrderRuleForProperties(
++      const std::vector<ObjectSpec::Property>& properties,
++      const std::unordered_set<std::string>& required,
++      const SchemaSpecPtr& additional,
++      const std::string& rule_name,
++      const std::string& additional_suffix
++  );
++  int32_t GetExactOrderKeyPatternExcluding(
++      const std::vector<ObjectSpec::Property>& properties, const std::string& rule_name
++  );
++
+   // ==================== Protected members ====================
+ 
+   GrammarBuilder builder_;
+@@ -461,6 +475,9 @@ class JSONSchemaConverter {
+   // Applies to all objects (including nested ones). Default false preserves the fixed-order
+   // behavior.
+   bool any_order_ = false;
++  // Bound the exponential subset construction across the whole schema, not
++  // only per object. Larger/unsupported shapes keep the original strict path.
++  size_t exact_order_states_left_ = 1024;
+ 
+  public:
+   // Basic rule names
+diff --git a/cpp/json_schema_converter_ext.h b/cpp/json_schema_converter_ext.h
+index f5d32b1..5e06f84 100644
+--- a/cpp/json_schema_converter_ext.h
++++ b/cpp/json_schema_converter_ext.h
+@@ -78,6 +78,7 @@ class XMLToolCallingConverter : public JSONSchemaConverter {
+   std::string NextSeparator(bool is_end = false) override;
+ 
+   void AddBasicRules() override;
++  bool SupportsExactPropertyOrder() const override { return false; }
+ 
+   void AddCache(const std::string& key, int32_t rule_id) override;
+   std::optional<int32_t> GetCache(const std::string& key) const override;
+diff --git a/pyproject.toml b/pyproject.toml
+index 461a447..6530bf9 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "xgrammar"
+-version = "0.2.6"
++version = "0.2.6+phala.strictorder1"
+ description = "Efficient, Flexible and Portable Structured Generation"
+ authors = [{ name = "MLC Team" }]
+ readme = "README.md"

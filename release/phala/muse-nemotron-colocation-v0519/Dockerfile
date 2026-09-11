@@ -5,11 +5,13 @@ ARG SOURCE_DATE_EPOCH
 ARG RELEASE_VERSION
 ARG SOURCE_REVISION
 ARG RUST_TOOLCHAIN="1.92.0"
+ARG PYTHON_PACKAGE_VERSION="0.5.19+phala.mn.r2"
 
 ENV PATH="/root/.cargo/bin:${PATH}" \
     CARGO_INCREMENTAL=0 \
     PYTHONHASHSEED=0 \
-    SETUPTOOLS_SCM_PRETEND_VERSION="0.5.19+phala.r4" \
+    SETUPTOOLS_SCM_PRETEND_VERSION="${PYTHON_PACKAGE_VERSION}" \
+    PYTHONDONTWRITEBYTECODE=1 \
     SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
     SGLANG_BUILD_RUST_EXTS=all
 
@@ -28,29 +30,23 @@ COPY --link python python
 COPY --link rust rust
 COPY --link proto proto
 COPY --link README.md LICENSE ./
+COPY --link release/phala/muse-nemotron-colocation-v0519/verify_wheel.py /opt/phala/verify_wheel.py
 
 RUN set -eux; \
     cp README.md LICENSE python/; \
     export RUSTUP_TOOLCHAIN="${RUST_TOOLCHAIN}-x86_64-unknown-linux-gnu"; \
     export RUSTFLAGS="-C link-arg=-Wl,--build-id=none --remap-path-prefix=/build/sglang=."; \
-    python3 -m pip install --no-deps --no-build-isolation -e python; \
-    suffix="$(python3 -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')"; \
-    test -f "python/sglang/srt/rust_extensions/_server${suffix}"; \
-    test -f "python/sglang/srt/rust_extensions/_grpc${suffix}"; \
-    test -f "python/sglang/srt/rust_extensions/_multimodal${suffix}"; \
-    test -f "python/sglang/srt/mem_cache/rust_tree_core/mem_cache${suffix}"; \
-    test -f python/sglang/_version.py; \
-    rm -f python/README.md python/LICENSE; \
-    find python/sglang -type d -name '__pycache__' -prune -exec rm -rf '{}' +; \
-    find python/sglang -type f -name '*.pyc' -delete; \
-    find python/sglang -type f -exec touch -d "@${SOURCE_DATE_EPOCH}" '{}' +
+    python3 -m pip wheel --no-deps --no-build-isolation --wheel-dir /wheelhouse ./python; \
+    python3 /opt/phala/verify_wheel.py /wheelhouse /build/sglang/python/sglang "${PYTHON_PACKAGE_VERSION}"
 
 FROM ${BASE_IMAGE}
 
+ARG SOURCE_DATE_EPOCH
+ARG PYTHON_PACKAGE_VERSION="0.5.19+phala.mn.r2"
 COPY --link release/phala/muse-nemotron-colocation-v0519/runtime-requirements.txt /tmp/phala-runtime-requirements.txt
-RUN python3 -m pip install --no-cache-dir --no-deps --require-hashes \
+RUN python3 -m pip install --no-cache-dir --no-deps --no-compile --require-hashes \
       -r /tmp/phala-runtime-requirements.txt \
-    && python3 -c 'from importlib.metadata import version; assert version("xgrammar") == "0.2.6"'
+    && PYTHONDONTWRITEBYTECODE=1 python3 -c 'from importlib.metadata import version; assert version("xgrammar") == "0.2.6"'
 
 ARG CREATED_AT=""
 ARG RELEASE_VERSION=""
@@ -59,11 +55,6 @@ ARG SOURCE_REVISION=""
 ARG SOURCE_TREE_DIGEST=""
 ARG SOURCE_DATE_EPOCH=""
 ARG PATCH_COMMIT=""
-ARG RUNTIME_TREE_DIGEST=""
-ARG RUNTIME_CONTENT_DIGEST=""
-ARG RUNTIME_FILE_COUNT=""
-ARG RUNTIME_SYMLINK_DIGEST=""
-ARG RUNTIME_SYMLINK_COUNT=""
 ARG BASE_IMAGE_REF=""
 ARG BASE_IMAGE_DIGEST=""
 ARG BASE_PLATFORM_DIGEST=""
@@ -92,15 +83,13 @@ LABEL org.opencontainers.image.created="${CREATED_AT}" \
       org.phala.source.commit="${SOURCE_REVISION}" \
       org.phala.source.tree.digest="${SOURCE_TREE_DIGEST}" \
       org.phala.patch.commit="${PATCH_COMMIT}" \
-      org.phala.source.runtime.tree.digest="${RUNTIME_TREE_DIGEST}" \
-      org.phala.source.runtime.content.digest="${RUNTIME_CONTENT_DIGEST}" \
       org.phala.base.image="${BASE_IMAGE_REF}" \
       org.phala.base.digest="${BASE_IMAGE_DIGEST}" \
       org.phala.base.platform.digest="${BASE_PLATFORM_DIGEST}" \
       org.phala.base.source.commit="${BASE_SOURCE_COMMIT}" \
       org.phala.dockerfile.path="release/phala/muse-nemotron-colocation-v0519/Dockerfile" \
       org.phala.dockerfile.digest="${DOCKERFILE_DIGEST}" \
-      org.phala.dependency.lock.mode="immutable-base-plus-hash-pinned-build-tools-and-cargo-locks" \
+      org.phala.dependency.lock.mode="immutable-base-plus-hash-pinned-runtime-build-tools-and-cargo-locks" \
       org.phala.dependency.lock.digest="${BUILD_REQUIREMENTS_DIGEST}" \
       org.phala.rust.toolchain="${RUST_TOOLCHAIN}" \
       org.phala.builder.platform="linux/amd64" \
@@ -122,31 +111,28 @@ ENV SGLANG_BUILD_COMMIT="${SOURCE_REVISION}" \
 
 WORKDIR /sgl-workspace/sglang
 
-# Replace the complete Python runtime tree with the tree built above from this
-# frozen source commit, including all four native Rust extension modules.
-# CUDA dependencies remain those of the immutable official v0.5.19 base.
-RUN rm -rf /sgl-workspace/sglang/python/sglang
-COPY --link --from=source_builder /build/sglang/python/sglang /sgl-workspace/sglang/python/sglang
+# Install the complete source-built wheel, including all four native extensions
+# and its matching distribution metadata. Preserve the established import path
+# as an in-image symlink; no source is loaded from a host mount or at startup.
+COPY --link --from=source_builder /wheelhouse /tmp/phala-sglang-wheelhouse
+RUN set -eu; \
+    python3 -m pip install --no-deps --no-cache-dir --no-compile --force-reinstall /tmp/phala-sglang-wheelhouse/sglang-*.whl; \
+    rm -rf /sgl-workspace/sglang/python/sglang; \
+    package_dir="$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib") + "/sglang")')"; \
+    test -d "${package_dir}"; \
+    ln -s "${package_dir}" /sgl-workspace/sglang/python/sglang; \
+    EXPECTED_VERSION="${PYTHON_PACKAGE_VERSION}" PYTHONDONTWRITEBYTECODE=1 python3 -c 'import importlib.metadata as m; import os; import sglang; assert m.version("sglang") == os.environ["EXPECTED_VERSION"] == sglang.__version__; assert "xgrammar==0.2.6" in m.requires("sglang")'; \
+    rm -rf /tmp/phala-sglang-wheelhouse
 
 COPY --link release/phala/muse-nemotron-colocation-v0519/muse-glimmer-chat-template.jinja /opt/muse-glimmer-chat-template.jinja
-
-RUN set -eux; \
-    cd /sgl-workspace/sglang/python/sglang; \
-    actual_file_count="$(find . -type f | wc -l | tr -d ' ')"; \
-    actual_symlink_count="$(find . -type l | wc -l | tr -d ' ')"; \
-    actual_content_digest="$(find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | awk '{print "sha256:" $1}')"; \
-    actual_symlink_digest="$(find . -type l -printf '%P -> %l\n' | LC_ALL=C sort | sha256sum | awk '{print "sha256:" $1}')"; \
-    test -z "${RUNTIME_FILE_COUNT}" || test "${actual_file_count}" = "${RUNTIME_FILE_COUNT}"; \
-    test -z "${RUNTIME_SYMLINK_COUNT}" || test "${actual_symlink_count}" = "${RUNTIME_SYMLINK_COUNT}"; \
-    test -z "${RUNTIME_CONTENT_DIGEST}" || test "${actual_content_digest}" = "${RUNTIME_CONTENT_DIGEST}"; \
-    test -z "${RUNTIME_SYMLINK_DIGEST}" || test "${actual_symlink_digest}" = "${RUNTIME_SYMLINK_DIGEST}"
+COPY --link --from=source_builder /wheelhouse/wheel-verification.json /usr/share/phala/sglang-wheel-verification.json
 
 RUN set -eu; \
     mkdir -p /usr/share/phala; \
     printf '%s\n' \
       '{' \
       '  "schema_version": 1,' \
-      "  \"source\": {\"repository\": \"${SOURCE_REPOSITORY}\", \"commit\": \"${SOURCE_REVISION}\", \"tree\": \"${SOURCE_TREE_DIGEST}\", \"runtime_tree\": \"${RUNTIME_TREE_DIGEST}\", \"runtime_content_digest\": \"${RUNTIME_CONTENT_DIGEST}\"}," \
+      "  \"source\": {\"repository\": \"${SOURCE_REPOSITORY}\", \"commit\": \"${SOURCE_REVISION}\", \"tree\": \"${SOURCE_TREE_DIGEST}\", \"package_version\": \"${PYTHON_PACKAGE_VERSION}\"}," \
       "  \"base\": {\"image\": \"${BASE_IMAGE_REF}\", \"index_digest\": \"${BASE_IMAGE_DIGEST}\", \"platform_digest\": \"${BASE_PLATFORM_DIGEST}\", \"source_commit\": \"${BASE_SOURCE_COMMIT}\"}," \
       "  \"build\": {\"context\": \"${BUILD_CONTEXT_URI}\", \"dockerfile\": \"release/phala/muse-nemotron-colocation-v0519/Dockerfile\", \"dockerfile_digest\": \"${DOCKERFILE_DIGEST}\", \"recipe_digest\": \"${BUILD_RECIPE_DIGEST}\", \"platform\": \"linux/amd64\", \"source_date_epoch\": \"${SOURCE_DATE_EPOCH}\", \"buildkit_version\": \"${BUILDKIT_VERSION}\"}," \
       "  \"build_inputs\": {\"url\": \"${BUILD_INPUTS_URL}\", \"digest\": \"${BUILD_INPUTS_DIGEST}\"}" \

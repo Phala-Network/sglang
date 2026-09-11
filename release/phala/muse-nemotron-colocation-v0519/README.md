@@ -10,6 +10,15 @@ the upstream Mamba radix-cache SSM-index correction, complete Mamba admission
 accounting, and speculative-decode deferred-metadata cleanup required by the
 Nemotron hybrid Mamba plus EAGLE path.
 
+The r2 packaging builds and installs a regular wheel, including all four Rust
+extensions and matching distribution metadata. Build-time wheel validation
+compares every included source Python file against the frozen source tree.
+XGrammar is hash-pinned to 0.2.6; SGLang's declared dependency, imported library,
+and package version must agree. The established runtime path is retained as
+an in-image symlink to the installed package, not an editable source overlay.
+New dependency installs use `--no-compile` to avoid timestamp-bearing bytecode;
+clean-build comparison is still required, not inferred from this setting.
+
 The Muse chat template is stored beside this Dockerfile and copied into the
 flat runtime image at `/opt/muse-glimmer-chat-template.jinja`. No model code,
 package installation, Rust compilation, or downloader self-update runs when

@@ -9,7 +9,7 @@ ARG RUST_TOOLCHAIN="1.92.0"
 ENV PATH="/root/.cargo/bin:${PATH}" \
     CARGO_INCREMENTAL=0 \
     PYTHONHASHSEED=0 \
-    SETUPTOOLS_SCM_PRETEND_VERSION="0.5.19+phala.r3" \
+    SETUPTOOLS_SCM_PRETEND_VERSION="0.5.19+phala.r4" \
     SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
     SGLANG_BUILD_RUST_EXTS=all
 
@@ -46,6 +46,11 @@ RUN set -eux; \
     find python/sglang -type f -exec touch -d "@${SOURCE_DATE_EPOCH}" '{}' +
 
 FROM ${BASE_IMAGE}
+
+COPY --link release/phala/muse-nemotron-colocation-v0519/runtime-requirements.txt /tmp/phala-runtime-requirements.txt
+RUN python3 -m pip install --no-cache-dir --no-deps --require-hashes \
+      -r /tmp/phala-runtime-requirements.txt \
+    && python3 -c 'from importlib.metadata import version; assert version("xgrammar") == "0.2.6"'
 
 ARG CREATED_AT=""
 ARG RELEASE_VERSION=""

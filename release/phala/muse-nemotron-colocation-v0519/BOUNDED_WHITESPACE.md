@@ -11,9 +11,11 @@ The builtin unrestricted-JSON path also observes an explicit bound. Unsupported
 grammar backends and tokenizer fallback cannot silently ignore the setting.
 
 This fixes neither arbitrary model semantic mistakes nor all JSON Schema
-limitations. XGrammar 0.2.1 still has an independently reproduced optional-field
-type issue when `additionalProperties` is enabled. Its bare-CR rejection also
-predates this patch. Neither boundary is hidden by the regression suite.
+limitations. The next dependency candidate uses hash-pinned XGrammar 0.2.6,
+including upstream fixes #595 (optional field types), #641 (empty enums), and
+#871 (RFC carriage-return whitespace). The property-order limitation in issue
+#831 remains; enabling any_order would weaken required/duplicate-key checks
+and is not used. CPU and GPU dependency qualification remain separate gates.
 
 CPU regressions must be followed by installed-image GPU tests, reasoning and
 streaming variants, neighbouring tool controls, and co-located Muse/ingress

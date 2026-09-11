@@ -57,12 +57,28 @@ def test_default_is_unchanged_and_large_whitespace_remains_allowed():
 
 
 @pytest.mark.parametrize("schema", [{"type": "object"}, SCHEMA])
-def test_carriage_return_matches_existing_xgrammar_boundary(schema):
-    # XGrammar 0.2.1 already rejects a bare CR. Keep that limitation visible
-    # instead of reporting it as a regression caused by the new bound.
-    text = '{"count":\r1,"ok":true}'
-    assert not accepts(schema, text, None)
-    assert not accepts(schema, text, 64)
+@pytest.mark.parametrize("whitespace", ["\r", "\r\n"])
+def test_carriage_return_matches_json_standard(schema, whitespace):
+    # XGrammar 0.2.6 includes upstream #871. Both the unbounded path and our
+    # opt-in bound must accept RFC 8259 carriage-return whitespace now.
+    text = '{"count":' + whitespace + '1,"ok":true}'
+    assert accepts(schema, text, None)
+    assert accepts(schema, text, 64)
+
+
+def test_optional_property_type_cannot_use_additional_property_escape():
+    schema = {"type": "object", "properties": {"a": {"type": "integer"}},
+              "additionalProperties": True}
+    assert accepts(schema, '{"a":1}')
+    assert accepts(schema, '{"extra":"allowed"}')
+    assert not accepts(schema, '{"a":"wrong"}')
+
+
+def test_empty_enum_is_an_invalid_grammar_not_empty_success():
+    from sglang.srt.constrained.base_grammar_backend import InvalidGrammarObject
+
+    result = backend(64).dispatch_json('{"type":"string","enum":[]}')
+    assert isinstance(result, InvalidGrammarObject)
 
 
 @pytest.mark.parametrize("value", [1, None, True, "s", [], {"a": [1, 2]}])

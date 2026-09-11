@@ -9,7 +9,7 @@ ARG RUST_TOOLCHAIN="1.92.0"
 ENV PATH="/root/.cargo/bin:${PATH}" \
     CARGO_INCREMENTAL=0 \
     PYTHONHASHSEED=0 \
-    SETUPTOOLS_SCM_PRETEND_VERSION="0.5.19+phala.r2" \
+    SETUPTOOLS_SCM_PRETEND_VERSION="0.5.19+phala.r3" \
     SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
     SGLANG_BUILD_RUST_EXTS=all
 
@@ -64,20 +64,17 @@ ARG BASE_IMAGE_DIGEST=""
 ARG BASE_PLATFORM_DIGEST=""
 ARG BASE_SOURCE_COMMIT=""
 ARG DOCKERFILE_DIGEST=""
-ARG BUILD_MANIFEST_URL=""
-ARG BUILD_MANIFEST_DIGEST=""
+ARG BUILD_INPUTS_URL=""
+ARG BUILD_INPUTS_DIGEST=""
 ARG BUILD_CONTEXT_URI=""
 ARG BUILD_RECIPE_DIGEST=""
 ARG BUILDKIT_VERSION=""
-ARG SBOM_STATUS=""
-ARG PROVENANCE_STATUS=""
-ARG REPRODUCIBILITY_STATUS=""
 ARG BUILD_REQUIREMENTS_DIGEST=""
 ARG RUST_TOOLCHAIN="1.92.0"
 
 LABEL org.opencontainers.image.created="${CREATED_AT}" \
       org.opencontainers.image.title="Phala Muse-Glimmer-30B and Nemotron 3.5 Lightning SGLang v0.5.19 flat runtime" \
-      org.opencontainers.image.description="SGLang v0.5.19 runtime for Muse-Glimmer-30B and Nemotron 3.5 Lightning, built from one public source commit on an immutable official SGLang base" \
+      org.opencontainers.image.description="SGLang v0.5.19 runtime for Muse-Glimmer-30B and Nemotron 3.5 Lightning, built from one frozen source commit on an immutable official SGLang base" \
       org.opencontainers.image.url="https://github.com/Phala-Network/sglang/pkgs/container/sglang" \
       org.opencontainers.image.source="${SOURCE_REPOSITORY}" \
       org.opencontainers.image.version="${RELEASE_VERSION}" \
@@ -104,13 +101,10 @@ LABEL org.opencontainers.image.created="${CREATED_AT}" \
       org.phala.builder.platform="linux/amd64" \
       org.phala.buildkit.version="${BUILDKIT_VERSION}" \
       org.phala.source.date.epoch="${SOURCE_DATE_EPOCH}" \
-      org.phala.build.manifest.url="${BUILD_MANIFEST_URL}" \
-      org.phala.build.manifest.digest="${BUILD_MANIFEST_DIGEST}" \
+      org.phala.build.inputs.url="${BUILD_INPUTS_URL}" \
+      org.phala.build.inputs.digest="${BUILD_INPUTS_DIGEST}" \
       org.phala.build.context="${BUILD_CONTEXT_URI}" \
       org.phala.build.recipe.digest="${BUILD_RECIPE_DIGEST}" \
-      org.phala.sbom.digest="${SBOM_STATUS}" \
-      org.phala.provenance.digest="${PROVENANCE_STATUS}" \
-      org.phala.reproducible="${REPRODUCIBILITY_STATUS}" \
       ai.sglang.build.commit="${SOURCE_REVISION}" \
       ai.sglang.build.url="${SOURCE_REPOSITORY}/commit/${SOURCE_REVISION}" \
       ai.sglang.image.tag="${RELEASE_VERSION}"
@@ -124,7 +118,7 @@ ENV SGLANG_BUILD_COMMIT="${SOURCE_REVISION}" \
 WORKDIR /sgl-workspace/sglang
 
 # Replace the complete Python runtime tree with the tree built above from this
-# public source commit, including all four native Rust extension modules.
+# frozen source commit, including all four native Rust extension modules.
 # CUDA dependencies remain those of the immutable official v0.5.19 base.
 RUN rm -rf /sgl-workspace/sglang/python/sglang
 COPY --link --from=source_builder /build/sglang/python/sglang /sgl-workspace/sglang/python/sglang
@@ -150,7 +144,7 @@ RUN set -eu; \
       "  \"source\": {\"repository\": \"${SOURCE_REPOSITORY}\", \"commit\": \"${SOURCE_REVISION}\", \"tree\": \"${SOURCE_TREE_DIGEST}\", \"runtime_tree\": \"${RUNTIME_TREE_DIGEST}\", \"runtime_content_digest\": \"${RUNTIME_CONTENT_DIGEST}\"}," \
       "  \"base\": {\"image\": \"${BASE_IMAGE_REF}\", \"index_digest\": \"${BASE_IMAGE_DIGEST}\", \"platform_digest\": \"${BASE_PLATFORM_DIGEST}\", \"source_commit\": \"${BASE_SOURCE_COMMIT}\"}," \
       "  \"build\": {\"context\": \"${BUILD_CONTEXT_URI}\", \"dockerfile\": \"release/phala/muse-nemotron-colocation-v0519/Dockerfile\", \"dockerfile_digest\": \"${DOCKERFILE_DIGEST}\", \"recipe_digest\": \"${BUILD_RECIPE_DIGEST}\", \"platform\": \"linux/amd64\", \"source_date_epoch\": \"${SOURCE_DATE_EPOCH}\", \"buildkit_version\": \"${BUILDKIT_VERSION}\"}," \
-      "  \"build_manifest\": {\"url\": \"${BUILD_MANIFEST_URL}\", \"input_digest\": \"${BUILD_MANIFEST_DIGEST}\"}" \
+      "  \"build_inputs\": {\"url\": \"${BUILD_INPUTS_URL}\", \"digest\": \"${BUILD_INPUTS_DIGEST}\"}" \
       '}' \
       > /usr/share/phala/sglang-build-input-manifest.json; \
     printf '%s\n' "${SOURCE_REVISION}" > /etc/.GIT_REV

@@ -356,6 +356,11 @@ def create_grammar_backend(
     think_end_ids: Optional[List[int]] = None,
 ) -> Optional[BaseGrammarBackend]:
     name = get_exec().kernel.grammar_backend
+    max_whitespace_cnt = get_serving().constrained_json_max_whitespace_cnt
+    if max_whitespace_cnt is not None and name != "xgrammar":
+        raise ValueError(
+            "--constrained-json-max-whitespace-cnt requires --grammar-backend xgrammar"
+        )
 
     # Custom grammar backend has the highest priority
     if name in GRAMMAR_BACKEND_REGISTRY:
@@ -386,8 +391,15 @@ def create_grammar_backend(
                 vocab_size=vocab_size,
                 model_eos_token_ids=eos_list,
                 any_whitespace=not get_serving().constrained_json_disable_any_whitespace,
+                max_whitespace_cnt=max_whitespace_cnt,
             )
         except TokenizerNotSupportedError as e:
+            if max_whitespace_cnt is not None:
+                raise ValueError(
+                    "--constrained-json-max-whitespace-cnt requires XGrammar; "
+                    "cannot disable the explicitly requested grammar constraint "
+                    f"after tokenizer initialization failed: {e}"
+                ) from e
             if get_serving().enable_strict_thinking:
                 raise ValueError(
                     f"--enable-strict-thinking requires a grammar backend with "

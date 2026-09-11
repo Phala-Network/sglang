@@ -335,9 +335,46 @@ class TestCreateGrammarBackend(unittest.TestCase):
 
         result = create_grammar_backend(args, "tok", 32000, {1, 2})
         mock_xgrammar_cls.assert_called_once_with(
-            "tok", vocab_size=32000, model_eos_token_ids=[1, 2], any_whitespace=False
+            "tok", vocab_size=32000, model_eos_token_ids=[1, 2], any_whitespace=False,
+            max_whitespace_cnt=None,
         )
         self.assertIs(result, mock_backend)
+
+    @patch("sglang.srt.constrained.xgrammar_backend.XGrammarGrammarBackend")
+    def test_xgrammar_explicit_whitespace_bound(self, mock_xgrammar_cls):
+        mock_backend = MagicMock(spec=BaseGrammarBackend)
+        mock_xgrammar_cls.return_value = mock_backend
+        args = self._make_server_args(
+            "xgrammar", constrained_json_max_whitespace_cnt=64
+        )
+
+        self.assertIs(create_grammar_backend(args, "tok", 32000), mock_backend)
+        mock_xgrammar_cls.assert_called_once_with(
+            "tok", vocab_size=32000, model_eos_token_ids=None, any_whitespace=True,
+            max_whitespace_cnt=64,
+        )
+
+    def test_whitespace_bound_rejects_unsupported_backend(self):
+        for name in ("llguidance", "outlines", "none"):
+            with self.subTest(backend=name):
+                args = self._make_server_args(
+                    name, constrained_json_max_whitespace_cnt=64
+                )
+                with self.assertRaisesRegex(ValueError, "requires.*xgrammar"):
+                    create_grammar_backend(args, "tok", 32000)
+
+    @patch("sglang.srt.constrained.xgrammar_backend.XGrammarGrammarBackend")
+    def test_explicit_whitespace_bound_prevents_silent_grammar_fallback(
+        self, mock_xgrammar_cls
+    ):
+        from sglang.srt.constrained.xgrammar_backend import TokenizerNotSupportedError
+
+        mock_xgrammar_cls.side_effect = TokenizerNotSupportedError("unsupported")
+        args = self._make_server_args(
+            "xgrammar", constrained_json_max_whitespace_cnt=64
+        )
+        with self.assertRaisesRegex(ValueError, "cannot disable"):
+            create_grammar_backend(args, "tok", 32000)
 
     @patch("sglang.srt.constrained.xgrammar_backend.XGrammarGrammarBackend")
     def test_xgrammar_unsupported_tokenizer_falls_back_to_none(self, mock_xgrammar_cls):

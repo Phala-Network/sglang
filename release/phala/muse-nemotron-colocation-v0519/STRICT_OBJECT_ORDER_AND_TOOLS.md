@@ -86,3 +86,21 @@ reasoning, hidden reasoning and missing-closer controls cover this repair.
 Source tests, diagnostic-image experiments, final-image qualification, registry
 publication and production rollout remain separate gates. Failed original runs
 must remain in release evidence; a prompt A/B pass alone is not qualification.
+
+## Emitted reasoning-token accounting
+
+The candidate also carries the source change from upstream SGLang
+[#37450](https://github.com/sgl-project/sglang/pull/37450), inspected at head
+`e27d2d464151baed376e2c4d2ef60939737c13ac` (open, unmerged on 2026-09-12).
+Speculative acceptance counts the complete accepted token run before stop/length
+handling determines the emitted prefix. The reasoning count must be bounded by
+that emitted prefix when a request finishes, including an EOS past the budget.
+This is an O(1) accounting correction and does not change generated tokens,
+sampling or the requested output budget. Regression cases cover length crossing,
+EOS on either side of the cap, a reasoning closer on either side of the cap,
+ordinary in-budget output and a multi-token closer spanning decode steps.
+
+The XGrammar patch is a byte-addressed release input. Its scoped Git attribute
+preserves the qualified raw bytes rather than applying workstation line-ending
+normalization; the build continues to require its exact SHA-256 and a zero-fuzz
+application with matching patched-file hashes.

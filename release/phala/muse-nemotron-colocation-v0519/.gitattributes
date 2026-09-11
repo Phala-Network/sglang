@@ -1,0 +1,3 @@
+# Preserve the already-qualified upstream patch as a byte-addressed build input.
+# Its blank context lines are valid unified-diff syntax, not source whitespace.
+xgrammar-strict-order.patch -text -whitespace

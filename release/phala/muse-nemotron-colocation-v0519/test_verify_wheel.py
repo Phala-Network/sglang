@@ -11,11 +11,15 @@ spec.loader.exec_module(checker)
 VERSION = "0.5.19+phala.mn.r2"
 
 
-@pytest.mark.parametrize("defect", [None, "version", "dependency", "native", "source", "content", "pyc"])
+@pytest.mark.parametrize("defect", [None, "version", "dependency", "native", "source", "content", "pyc", "hidden_runtime"])
 def test_source_wheel_contract(tmp_path, defect):
     source = tmp_path / "source"
     source.mkdir()
     (source / "__init__.py").write_bytes(b"# frozen source\n")
+    for relative in checker.DEVELOPER_ONLY_SOURCES:
+        path = source / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"# upstream developer tooling; not runtime\n")
     wheels = tmp_path / "wheels"
     wheels.mkdir()
     entries = {"sglang/__init__.py": b"# frozen source\n",
@@ -38,6 +42,8 @@ def test_source_wheel_contract(tmp_path, defect):
         entries["sglang/__init__.py"] = b"# different code\n"
     elif defect == "pyc":
         entries["sglang/__pycache__/__init__.pyc"] = b"uncontrolled bytecode"
+    elif defect == "hidden_runtime":
+        (source / ".unaccounted.py").write_bytes(b"# must not be silently excluded\n")
     with zipfile.ZipFile(wheels / ("sglang-" + VERSION + ".whl"), "w") as archive:
         for name, data in entries.items():
             archive.writestr(name, data)
@@ -47,4 +53,5 @@ def test_source_wheel_contract(tmp_path, defect):
     else:
         result = checker.verify(wheels, source, VERSION)
         assert result["source_python_files_verified"] == 1
+        assert set(result["developer_only_sources_excluded"]) == checker.DEVELOPER_ONLY_SOURCES
         assert not result["editable"]

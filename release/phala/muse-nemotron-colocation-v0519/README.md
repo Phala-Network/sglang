@@ -13,6 +13,8 @@ Nemotron hybrid Mamba plus EAGLE path.
 The r2 packaging builds and installs a regular wheel, including all four Rust
 extensions and matching distribution metadata. Build-time wheel validation
 compares every included source Python file against the frozen source tree.
+The exact two upstream `.claude` developer-tool scripts are excluded and
+reported explicitly; other missing files, including hidden files, fail the gate.
 XGrammar is hash-pinned to 0.2.6; SGLang's declared dependency, imported library,
 and package version must agree. The established runtime path is retained as
 an in-image symlink to the installed package, not an editable source overlay.

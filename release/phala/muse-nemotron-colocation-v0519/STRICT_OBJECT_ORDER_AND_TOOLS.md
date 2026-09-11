@@ -104,3 +104,13 @@ The XGrammar patch is a byte-addressed release input. Its scoped Git attribute
 preserves the qualified raw bytes rather than applying workstation line-ending
 normalization; the build continues to require its exact SHA-256 and a zero-fuzz
 application with matching patched-file hashes.
+
+## Deterministic dependency packaging
+
+The XGrammar builder fixes `PYTHONHASHSEED=0` as well as `SOURCE_DATE_EPOCH`.
+Without the hash seed, two clean builds contained identical installed runtime
+code but the wheel file order and its RECORD order differed. That changed the
+wheel digest and pip's installed direct_url/RECORD metadata, so runtime image
+digests were not identical. This setting is build-stage-only; it changes no
+model sampling, runtime hash seed, parser, template or library payload.
+Only a fresh two-clean-build comparison can qualify the corrected packaging.

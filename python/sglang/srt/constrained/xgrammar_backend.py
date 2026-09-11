@@ -212,8 +212,14 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
         vocab_size: int,
         model_eos_token_ids: Optional[List[int]] = None,
         any_whitespace: bool = True,
+        max_whitespace_cnt: Optional[int] = None,
     ):
         super().__init__()
+        if max_whitespace_cnt is not None:
+            if max_whitespace_cnt <= 0:
+                raise ValueError("max_whitespace_cnt must be positive")
+            if not any_whitespace:
+                raise ValueError("max_whitespace_cnt requires flexible whitespace")
 
         if hasattr(tokenizer, "init_xgrammar"):
             # For special tokenizer
@@ -241,6 +247,7 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
         self.vocab_size = vocab_size
         self.override_stop_tokens = override_stop_tokens
         self.any_whitespace = any_whitespace
+        self.max_whitespace_cnt = max_whitespace_cnt
 
     @property
     def is_support_token_filter(self):
@@ -336,12 +343,14 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
 
     def dispatch_json(self, key_string: str) -> BaseGrammarObject:
         try:
-            if key_string == "$$ANY$$":
+            if key_string == "$$ANY$$" and self.max_whitespace_cnt is None:
                 # Note: This builtin JSON grammar includes *all* valid JSON (including, for example, arrays at the root)
                 ctx = self.grammar_compiler.compile_builtin_json_grammar()
             else:
                 ctx = self.grammar_compiler.compile_json_schema(
-                    schema=key_string, any_whitespace=self.any_whitespace
+                    schema="{}" if key_string == "$$ANY$$" else key_string,
+                    any_whitespace=self.any_whitespace,
+                    max_whitespace_cnt=self.max_whitespace_cnt,
                 )
 
         except (RuntimeError, json.decoder.JSONDecodeError, UnicodeDecodeError) as e:

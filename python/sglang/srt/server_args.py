@@ -1650,6 +1650,11 @@ class ServerArgs:
         "(xgrammar and llguidance backends only) Enforce compact representation in JSON constrained output.",
         NS("serving"),
     ] = False
+    constrained_json_max_whitespace_cnt: A[
+        Optional[int],
+        "(xgrammar only) Maximum consecutive syntactic whitespace characters in JSON constrained output. Must be positive and requires flexible whitespace. Does not limit whitespace inside strings. Unset preserves the existing behavior.",
+        NS("serving"),
+    ] = None
 
     # -------------------------------------------------------------------------
     # Kernel backend

@@ -28,6 +28,17 @@ retaining an old dist-info or source egg-info cannot pass as an aligned install.
 New dependency installs use `--no-compile` to avoid timestamp-bearing bytecode;
 clean-build comparison is still required, not inferred from this setting.
 
+XGrammar's build backend emits nondeterministically ordered ZIP members and
+RECORD rows even with `PYTHONHASHSEED=0`. The build-only
+`canonicalize_wheel.py` verifies every original RECORD hash/size and membership,
+then deterministically orders the archive and RECORD. It rejects signed wheels,
+links, ambiguous paths, missing or duplicate entries, and tampered payloads.
+Every non-RECORD payload and all semantic member metadata must remain identical;
+timestamp, permission, native-library and source differences are not normalized
+away. The script proves payload preservation and idempotence before replacing
+the build output. It is not present in the final runtime or invoked at startup.
+Tests: `python3 -m unittest discover -s release/phala/muse-nemotron-colocation-v0519/tests -p test_canonicalize_wheel.py -v`.
+
 Both model templates are stored beside this Dockerfile and baked into the
 runtime. Muse uses `/opt/muse-glimmer-chat-template.jinja`; Nemotron uses
 `/opt/phala/nemotron-lightning-chat-template.jinja`. No model code,

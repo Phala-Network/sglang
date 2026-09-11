@@ -50,6 +50,7 @@ WORKDIR /build/xgrammar
 ADD --checksum=sha256:9d54c310b88f9f362655de1586529add59cf625db0af7c5c07f228287777ce84 https://files.pythonhosted.org/packages/82/21/03c58293ed7d539252affb6499121dcd63265774e030f049ef4147b46f5b/xgrammar-0.2.6.tar.gz /tmp/xgrammar-0.2.6.tar.gz
 COPY --link release/phala/muse-nemotron-colocation-v0519/xgrammar-strict-order.patch /tmp/xgrammar-strict-order.patch
 COPY --link release/phala/muse-nemotron-colocation-v0519/xgrammar-patched-files.sha256 /tmp/xgrammar-patched-files.sha256
+COPY --link release/phala/muse-nemotron-colocation-v0519/canonicalize_wheel.py /opt/phala/canonicalize_wheel.py
 RUN set -eu; \
     echo 'f1755d033e8b56cc9e280714cf9fe38d7866e096539d044b05d861f4c37a2fdf  /tmp/xgrammar-strict-order.patch' | sha256sum -c -; \
     tar -xzf /tmp/xgrammar-0.2.6.tar.gz --strip-components=1; \
@@ -57,7 +58,8 @@ RUN set -eu; \
     sha256sum -c /tmp/xgrammar-patched-files.sha256; \
     CXXFLAGS='-ffile-prefix-map=/build/xgrammar=. -fdebug-prefix-map=/build/xgrammar=.' \
     LDFLAGS='-Wl,--build-id=none' \
-    python3 -m pip wheel --no-deps --no-build-isolation --wheel-dir /wheelhouse .
+    python3 -m pip wheel --no-deps --no-build-isolation --wheel-dir /wheelhouse .; \
+    python3 /opt/phala/canonicalize_wheel.py /wheelhouse/xgrammar-*.whl
 
 FROM ${BASE_IMAGE}
 

@@ -116,10 +116,23 @@ application with matching patched-file hashes.
 
 ## Deterministic dependency packaging
 
-The XGrammar builder fixes `PYTHONHASHSEED=0` as well as `SOURCE_DATE_EPOCH`.
-Without the hash seed, two clean builds contained identical installed runtime
-code but the wheel file order and its RECORD order differed. That changed the
-wheel digest and pip's installed direct_url/RECORD metadata, so runtime image
-digests were not identical. This setting is build-stage-only; it changes no
-model sampling, runtime hash seed, parser, template or library payload.
-Only a fresh two-clean-build comparison can qualify the corrected packaging.
+The XGrammar builder fixes `PYTHONHASHSEED=0` as well as `SOURCE_DATE_EPOCH`,
+but a second independent build proved those settings alone insufficient.
+Both builds still contained identical installed runtime code but different
+wheel member and RECORD ordering. That changed the wheel digest and pip's
+installed direct_url/RECORD metadata, so runtime image digests did not match.
+Neither original reproducibility failure is waived or rewritten as a pass.
+
+The build-only `canonicalize_wheel.py` now verifies every original RECORD
+hash/size and complete membership, canonically orders the ZIP and RECORD,
+then verifies payload/metadata preservation and idempotence. It rejects signed
+wheels, non-regular or unsafe paths, duplicate or missing entries, weak hashes
+and content/size mismatches. Twelve build-only tests cover ordering, successful
+atomic replacement, hash/size corruption, path/signature/link rejection,
+preservation on validation failure and failure to hide real payload, timestamp
+or permission differences. The preserved two XGrammar wheels yield identical
+canonical bytes without changing their non-RECORD payloads.
+
+This step changes no model sampling, runtime hash seed, parser, template or
+library payload, and the utility does not enter the final runtime. Only a fresh
+two-clean-build comparison can qualify the resulting full-image packaging.

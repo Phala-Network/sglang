@@ -116,12 +116,12 @@ WORKDIR /sgl-workspace/sglang
 # as an in-image symlink; no source is loaded from a host mount or at startup.
 COPY --link --from=source_builder /wheelhouse /tmp/phala-sglang-wheelhouse
 RUN set -eu; \
-    python3 -m pip install --no-deps --no-cache-dir --no-compile --force-reinstall /tmp/phala-sglang-wheelhouse/sglang-*.whl; \
-    rm -rf /sgl-workspace/sglang/python/sglang; \
+    PYTHONPATH= python3 -m pip install --no-deps --no-cache-dir --no-compile --force-reinstall /tmp/phala-sglang-wheelhouse/sglang-*.whl; \
+    rm -rf /sgl-workspace/sglang/python/sglang /sgl-workspace/sglang/python/sglang.egg-info; \
     package_dir="$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib") + "/sglang")')"; \
     test -d "${package_dir}"; \
     ln -s "${package_dir}" /sgl-workspace/sglang/python/sglang; \
-    EXPECTED_VERSION="${PYTHON_PACKAGE_VERSION}" PYTHONDONTWRITEBYTECODE=1 python3 -c 'import importlib.metadata as m; import os; import sglang; assert m.version("sglang") == os.environ["EXPECTED_VERSION"] == sglang.__version__; assert "xgrammar==0.2.6" in m.requires("sglang")'; \
+    EXPECTED_VERSION="${PYTHON_PACKAGE_VERSION}" PYTHONDONTWRITEBYTECODE=1 python3 -c 'import importlib.metadata as m; import os; import sglang; versions = [d.version for d in m.distributions() if d.metadata.get("Name") == "sglang"]; print("Installed SGLang distributions:", versions); assert versions == [os.environ["EXPECTED_VERSION"]]; assert m.version("sglang") == os.environ["EXPECTED_VERSION"] == sglang.__version__; assert "xgrammar==0.2.6" in m.requires("sglang")'; \
     rm -rf /tmp/phala-sglang-wheelhouse
 
 COPY --link release/phala/muse-nemotron-colocation-v0519/muse-glimmer-chat-template.jinja /opt/muse-glimmer-chat-template.jinja

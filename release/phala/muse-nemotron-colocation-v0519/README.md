@@ -18,6 +18,9 @@ reported explicitly; other missing files, including hidden files, fail the gate.
 XGrammar is hash-pinned to 0.2.6; SGLang's declared dependency, imported library,
 and package version must agree. The established runtime path is retained as
 an in-image symlink to the installed package, not an editable source overlay.
+Installation isolates pip from the base checkout's PYTHONPATH and removes its
+stale `sglang.egg-info`. The final build requires exactly one SGLang distribution;
+retaining an old dist-info or source egg-info cannot pass as an aligned install.
 New dependency installs use `--no-compile` to avoid timestamp-bearing bytecode;
 clean-build comparison is still required, not inferred from this setting.
 

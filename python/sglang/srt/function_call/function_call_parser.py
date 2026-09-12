@@ -110,6 +110,7 @@ class FunctionCallParser:
         tool_call_parser: str,
         tokenizer=None,
         constrained_output: bool = False,
+        require_complete_calls: bool = False,
     ):
         detector_class = self.ToolCallParserEnum.get(tool_call_parser)
         if detector_class:
@@ -120,6 +121,12 @@ class FunctionCallParser:
                     kwargs["tokenizer"] = tokenizer
             if "constrained_output" in inspect.signature(detector_class).parameters:
                 kwargs["constrained_output"] = constrained_output
+            if require_complete_calls:
+                if "require_complete_calls" not in inspect.signature(detector_class).parameters:
+                    raise ValueError(
+                        f"Parser {tool_call_parser} does not support complete-call buffering"
+                    )
+                kwargs["require_complete_calls"] = True
             detector = detector_class(**kwargs)
         else:
             raise ValueError(f"Unsupported tool_call_parser: {tool_call_parser}")

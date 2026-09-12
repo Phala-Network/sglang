@@ -2202,6 +2202,10 @@ class OpenAIServingChat(OpenAIServingBase):
                 self.tool_call_parser,
                 tokenizer=self.tokenizer_manager.tokenizer,
                 constrained_output=is_required,
+                require_complete_calls=(
+                    self.tool_call_parser == "qwen3_coder"
+                    and self.reasoning_parser == "nemotron_3"
+                ),
             )
             detector_owns_format = (
                 parser.detector.supports_structural_tag()
@@ -2650,6 +2654,10 @@ class OpenAIServingChat(OpenAIServingBase):
                         tool_call_parser=self.tool_call_parser,
                         tokenizer=self.tokenizer_manager.tokenizer,
                         constrained_output=True,
+                        require_complete_calls=(
+                            self.tool_call_parser == "qwen3_coder"
+                            and self.reasoning_parser == "nemotron_3"
+                        ),
                     )
                     use_native_parser = (
                         probe.detector.supports_structural_tag()
@@ -2665,6 +2673,10 @@ class OpenAIServingChat(OpenAIServingBase):
                     tools=effective_tools,
                     tool_call_parser=self.tool_call_parser,
                     tokenizer=self.tokenizer_manager.tokenizer,
+                    require_complete_calls=(
+                        self.tool_call_parser == "qwen3_coder"
+                        and self.reasoning_parser == "nemotron_3"
+                    ),
                 )
 
         parser = parser_dict[index]

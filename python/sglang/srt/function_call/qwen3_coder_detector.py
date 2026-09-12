@@ -20,8 +20,12 @@ logger = logging.getLogger(__name__)
 
 
 class Qwen3CoderDetector(BaseFormatDetector):
-    def __init__(self):
+    def __init__(self, require_complete_calls: bool = False):
         super().__init__()
+        # Nemotron may reach its output budget partway through an invocation.
+        # Opt in at the serving adapter: other users retain incremental deltas.
+        self.require_complete_calls = require_complete_calls
+        self._pending_call_items: List[ToolCallItem] = []
 
         # Sentinel tokens
         self.tool_call_start_token: str = "<tool_call>"
@@ -194,6 +198,10 @@ class Qwen3CoderDetector(BaseFormatDetector):
                 # Find function calls
                 funcs = self.tool_call_function_regex.findall(tool_content)
                 for func_match in funcs:
+                    if self.require_complete_calls and not func_match[0]:
+                        # The second regex alternative is an unterminated EOF
+                        # suffix. Do not synthesize {} or partial arguments.
+                        continue
                     func_body = func_match[0] or func_match[1]
                     if ">" not in func_body:
                         continue
@@ -472,8 +480,29 @@ class Qwen3CoderDetector(BaseFormatDetector):
             self._buffer = self._buffer[self.parsed_pos :]
             self.parsed_pos = 0
 
+        if self.require_complete_calls:
+            complete_items = []
+            for item in calls:
+                if item.name is not None:
+                    # A malformed abandoned invocation must not contaminate a
+                    # later complete one. Valid repeated calls are kept intact.
+                    self._pending_call_items = []
+                elif not self._pending_call_items:
+                    continue
+                self._pending_call_items.append(item)
+                if item.parameters == "}":
+                    complete_items.extend(self._pending_call_items)
+                    self._pending_call_items = []
+            calls = complete_items
+
         normal_text = "".join(normal_text_chunks) if normal_text_chunks else ""
         return StreamingParseResult(calls=calls, normal_text=normal_text)
+
+    def finish(self, tools: List[Tool]) -> StreamingParseResult:
+        # Calls that reached </function> have already been emitted. Never close
+        # an unfinished function or release its buffered deltas at EOF.
+        self._pending_call_items = []
+        return super().finish(tools)
 
     def supports_structural_tag(self) -> bool:
         return True

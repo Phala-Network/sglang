@@ -1267,6 +1267,11 @@ class OpenAIServingChat(OpenAIServingBase):
             if schema is None:
                 return "schema_ is required for json_schema response format request."
             try:
+                # Normalize optional null keywords before Draft 2020-12 validation.
+                # Some OpenAI-compatible clients serialize omitted ``required`` or
+                # ``properties`` as null; these are semantically equivalent to
+                # omission but otherwise rejected by the validator.
+                normalize_json_schema_types(schema)
                 Draft202012Validator.check_schema(schema)
             except SchemaError as e:
                 return f"Invalid response_format JSON schema: {str(e)}"

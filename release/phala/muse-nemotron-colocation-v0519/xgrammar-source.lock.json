@@ -7,6 +7,22 @@
   "patch_file": "xgrammar-strict-order.patch",
   "patch_sha256": "f1755d033e8b56cc9e280714cf9fe38d7866e096539d044b05d861f4c37a2fdf",
   "patched_files_manifest": "xgrammar-patched-files.sha256",
-  "package_version": "0.2.6+phala.strictorder1",
-  "scope": "Bounded exact subset-state order for ordinary JSON objects; does not enable approximate any_order or change XML tool grammar"
+  "additional_patches": [
+    {
+      "patch_file": "xgrammar-bounded-string-escapes.patch",
+      "patch_sha256": "0b86f69f83464c2c6ea461dd4febb7ab0421ac3175ec11a43468513068cabf4e",
+      "upstream_pr": "https://github.com/mlc-ai/xgrammar/pull/880",
+      "upstream_head_commit": "78ed389a31499a4a4fc20e275536774a465b5120",
+      "upstream_state_at_review": "open",
+      "adaptation": "Apply after strict-order patch and set the local package version to strictorder2"
+    },
+    {
+      "patch_file": "xgrammar-order-goldens.patch",
+      "patch_sha256": "7bb323ea5d6772ed90b649301e54f5e93a35762b4c408031c6f3782eb3909e7a",
+      "scope": "Tests only: align two inherited order-rule grammar snapshots; behavior assertions are retained"
+    }
+  ],
+  "final_patched_files_manifest": "xgrammar-r4-patched-files.sha256",
+  "package_version": "0.2.6+phala.strictorder2",
+  "scope": "Bounded exact subset-state object order plus legal decoded-character counting and escaping in length-constrained strings; no approximate any_order or XML tool grammar change"
 }

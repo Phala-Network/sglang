@@ -127,6 +127,14 @@ class GrammarManager:
             return
         if isinstance(req.grammar, ReasonerGrammarObject):
             req.grammar.max_think_tokens = thinking_budget
+            if thinking_budget >= 0:
+                if req.grammar.token_filter_fn is None:
+                    req.set_finish_with_abort(
+                        "Per-request thinking_budget requires a grammar backend "
+                        "with token-filter support"
+                    )
+                    return
+                req.grammar.enable_token_filter = True
 
     def process_req_with_grammar(self, req: Req) -> bool:
         # Init grammar cache for this request

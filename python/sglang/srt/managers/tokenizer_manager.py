@@ -1908,6 +1908,13 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 self.rid_to_state[objs[i].rid].time_stats.set_finished_time()
                 del self.rid_to_state[objs[i].rid]
 
+            # Normalization reserves batch_size * n parent IDs, but only the
+            # first batch_size entries are tokenized. Every actual sample is
+            # dispatched with a fresh ID. The remaining parent placeholders
+            # have no scheduler completion and otherwise survive streamed n>1
+            # requests forever, keeping graceful shutdown artificially busy.
+            self._discard_pending_req_states(obj)
+
         # Wait for all requests
         is_stream = hasattr(obj, "stream") and obj.stream
         if not is_stream:

@@ -41,6 +41,12 @@
         {{- "<|im_start|>system\n" }}
     {%- endif %}
 {%- endif %}
+{%- if response_format is defined and response_format.type in ['json_object', 'json_schema'] %}
+    {{- '\n\nYour final answer must be JSON only, without code fences or prose.' }}
+    {%- if response_format.type == 'json_schema' %}
+        {{- ' It must satisfy this JSON Schema: ' ~ (response_format.json_schema.schema | tojson | safe) }}
+    {%- endif %}
+{%- endif %}
 {%- if tools is iterable and tools | length > 0 %}
     {%- if system_message is defined and system_message | length > 0 %}
         {{- "\n\n" }}

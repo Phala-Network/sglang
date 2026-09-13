@@ -15,9 +15,17 @@ extensions and matching distribution metadata. Build-time wheel validation
 compares every included source Python file against the frozen source tree.
 The exact two upstream `.claude` developer-tool scripts are excluded and
 reported explicitly; other missing files, including hidden files, fail the gate.
-The r3 XGrammar dependency is rebuilt from the complete, hash-pinned 0.2.6
+The r4 XGrammar dependency is rebuilt from the complete, hash-pinned 0.2.6
 source distribution with the bounded exact-object-order patch and version
-`0.2.6+phala.strictorder1`. See `xgrammar-source.lock.json` and
+`0.2.6+phala.strictorder2`. The second patch backports upstream PR #880 at
+`78ed389a31499a4a4fc20e275536774a465b5120`: length-bounded strings accept legal
+JSON escapes, reject unescaped control characters, and count a Unicode
+surrogate pair as one decoded character. PR #880 was open at review time.
+All patch hashes and the final changed-file hashes are verified in the build.
+A tests-only third patch aligns two inherited exact-order converter snapshots;
+their behavior assertions are retained. The installed-package tests also cover
+decoded string lengths and JSON escape validity at both root and nested positions.
+See `xgrammar-source.lock.json` and
 `STRICT_OBJECT_ORDER_AND_TOOLS.md` for source identity, changes and limits.
 SGLang's public-version requirement accepts that local-version build. The
 established runtime path is retained as
@@ -51,3 +59,46 @@ Publication requires OCI index annotations, an SPDX SBOM attestation, SLSA
 provenance in max mode, a Phala build-manifest referrer, registry readback, and
 two clean builds whose runnable platform manifest, config, and layer
 descriptors are identical after normalizing attestation-only differences.
+
+The SGLang r4 source also preserves literal reasoning markers inside Nemotron
+answer content, and rejects JSON schemas that combine `pattern` with
+`minLength` or `maxLength` instead of silently dropping the length constraints.
+This rejection adapts SGLang PR #37726; it does not claim full support for the
+intersection of arbitrary regular expressions and string-length constraints.
+Request budget exhaustion remains truncation, not a valid JSON completion.
+
+For Nemotron JSON and tool requests with an explicit completion limit and no
+explicit thinking budget, r4 preserves reasoning enablement and effort while reserving final-answer
+space: `max(128, min(4096, completion_limit // 2))` tokens. A request-scoped
+thinking budget activates the grammar's existing token filter; global strict
+thinking need not be enabled. Client limits, explicit thinking budgets,
+ordinary chat, other model families and genuine length finishes are preserved.
+This is a bounded default, not a guarantee that every requested JSON value
+fits in the client's completion budget.
+
+Nemotron's measured template also receives the actual response_format: JSON
+mode is made explicit, and json_schema requests render their original schema
+into the model's system context. Previously the schema existed only in the
+grammar, so reasoning could plan an incompatible answer and stall in allowed
+whitespace during generation. Existing messages and reasoning controls are
+preserved. Grammar enforcement remains enabled; this is not output rewriting
+or a substitute for validation. Ordinary chat, other models, preencoded input
+and assistant continuation keep the previous template path.
+
+An asynchronous grammar error in the first streaming event becomes a real
+HTTP 4xx/5xx before headers are committed. An error after output starts remains
+an SSE event. No false success usage is emitted after an initial error.
+Parallel-sampling cleanup removes undispatched parent placeholders after fresh
+sample IDs are dispatched; actual sample and unrelated in-flight state remains
+intact. This prevents streamed `n>1` requests from leaving stale shutdown state.
+
+Native XML tool parameter conversion also resolves local JSON pointers against
+the original full tool schema. Referenced objects, arrays and scalars retain
+their JSON types; references are not fetched over the network, and cyclic
+references terminate without mutating the caller's schema. Upstream PR #31692
+only covers the separate named-choice constraint hoisting path, not this parser.
+Type lookup also preserves const-only integers, booleans, arrays and objects.
+A non-null string declaration keeps literal `null` text as a string; explicitly
+nullable parameters retain the established bare-null conversion. The related
+open PR #36835 addresses empty tags and non-string `None`, but does not repair
+this non-null-string or const-only type loss, so it is not applied here.

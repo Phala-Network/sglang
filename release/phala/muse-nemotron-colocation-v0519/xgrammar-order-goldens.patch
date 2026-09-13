@@ -1,0 +1,26 @@
+--- a/tests/python/test_json_schema_converter.py
++++ b/tests/python/test_json_schema_converter.py
+@@ -3096,8 +3096,9 @@
+ def test_limited_whitespace_cnt():
+     expected_grammar = r"""basic_escape ::= (([\"\\/bfnrt]) | ("u" [A-Fa-f0-9] [A-Fa-f0-9] [A-Fa-f0-9] [A-Fa-f0-9])) (=(basic_string_sub))
+ basic_string_sub ::= (("\"") | ([^\0-\x1f\"\\\r\n] basic_string_sub) | ("\\" basic_escape basic_string_sub)) (=(basic_string_sub_4 [,}\]:]))
+-basic_string ::= (("\"" basic_string_sub)) (=(basic_string_sub_4 "}"))
+-root ::= (("{" basic_string_sub_4 "\"key\"" basic_string_sub_4 ":" basic_string_sub_4 basic_string basic_string_sub_4 "}"))
++basic_string ::= (("\"" basic_string_sub)) (=(root_exact_order_1 basic_string_sub_4 "}"))
++root ::= (("{" basic_string_sub_4 "\"key\"" basic_string_sub_4 ":" basic_string_sub_4 basic_string root_exact_order_1 basic_string_sub_4 "}"))
++root_exact_order_1 ::= ("") (=(basic_string_sub_4 "}"))
+ basic_string_sub_2 ::= ("" | ([ \n\r\t] basic_string_sub_3))
+ basic_string_sub_3 ::= ("" | ([ \n\r\t]))
+ basic_string_sub_4 ::= ((basic_string_sub_2))
+@@ -3118,8 +3119,9 @@
+ def test_limited_whitespace_compile():
+     expected_grammar = r"""basic_escape ::= (([\"\\/bfnrt]) | ("u" [A-Fa-f0-9] [A-Fa-f0-9] [A-Fa-f0-9] [A-Fa-f0-9])) (=(basic_string_sub))
+ basic_string_sub ::= (("\"") | ([^\0-\x1f\"\\\r\n] basic_string_sub) | ("\\" basic_escape basic_string_sub)) (=(basic_string_sub_4 [,}\]:]))
+-basic_string ::= (("\"" basic_string_sub)) (=(basic_string_sub_4 "}"))
+-root ::= (("{" basic_string_sub_4 "\"key\"" basic_string_sub_4 ":" basic_string_sub_4 basic_string basic_string_sub_4 "}"))
++basic_string ::= (("\"" basic_string_sub)) (=(root_exact_order_1 basic_string_sub_4 "}"))
++root ::= (("{" basic_string_sub_4 "\"key\"" basic_string_sub_4 ":" basic_string_sub_4 basic_string root_exact_order_1 basic_string_sub_4 "}"))
++root_exact_order_1 ::= ("") (=(basic_string_sub_4 "}"))
+ basic_string_sub_2 ::= ("" | ([ \n\r\t] basic_string_sub_3))
+ basic_string_sub_3 ::= ("" | ([ \n\r\t]))
+ basic_string_sub_4 ::= ((basic_string_sub_2))

@@ -328,6 +328,75 @@ def apply_muse_structured_output_reasoning_default(
     request.chat_template_kwargs = chat_template_kwargs
 
 
+def apply_nemotron_structured_output_reasoning_budget(
+    request: ChatCompletionRequest, reasoning_parser: Optional[str]
+) -> None:
+    """Reserve final-answer space for budgeted Nemotron structured requests.
+
+    Keep implicit reasoning enabled, but stop it before it consumes the entire
+    client-supplied completion budget. Reasoning enablement/effort stays intact;
+    an explicit thinking_budget, ordinary chat, preencoded prompts and assistant
+    continuations keep their current behavior.
+    This is a reservation, not a promise that an arbitrarily large JSON value
+    fits: max_tokens and genuine length finishes remain unchanged.
+    """
+    if reasoning_parser != "nemotron_3":
+        return
+    structured_format = (
+        request.response_format is not None
+        and request.response_format.type in {"json_object", "json_schema"}
+    )
+    structured_tools = bool(request.tools) and request.tool_choice != "none"
+    if not (structured_format or structured_tools):
+        return
+    if request.input_ids is not None or request.continue_final_message:
+        return
+    chat_template_kwargs = dict(request.chat_template_kwargs or {})
+    if request.reasoning_effort == "none" or any(
+        chat_template_kwargs.get(key) is False
+        for key in ("enable_thinking", "thinking")
+    ):
+        return
+    if (request.custom_params or {}).get("thinking_budget") is not None:
+        return
+    total_budget = (
+        request.max_completion_tokens
+        if request.max_completion_tokens is not None
+        else request.max_tokens
+    )
+    if total_budget is None or total_budget <= 0:
+        return
+    final_reserve = max(128, min(4096, total_budget // 2))
+    request.custom_params = dict(
+        request.custom_params or {},
+        thinking_budget=max(0, total_budget - final_reserve),
+    )
+
+
+def nemotron_response_format_template_kwargs(
+    request: ChatCompletionRequest, reasoning_parser: Optional[str]
+) -> dict:
+    """Expose the actual JSON contract to the Nemotron template as well as grammar.
+
+    Grammar-only schemas can leave the model reasoning about a different
+    answer shape and stalling in allowed whitespace when forced into it.
+    This does not replace grammar enforcement or alter the caller's messages.
+    """
+    if (
+        reasoning_parser != "nemotron_3"
+        or request.response_format is None
+        or request.response_format.type not in {"json_object", "json_schema"}
+        or request.input_ids is not None
+        or request.continue_final_message
+    ):
+        return {}
+    return {
+        "response_format": request.response_format.model_dump(
+            exclude_unset=True, by_alias=True
+        )
+    }
+
+
 class OpenAIServingChat(OpenAIServingBase):
     """Handler for /v1/chat/completions requests"""
 
@@ -1058,6 +1127,9 @@ class OpenAIServingChat(OpenAIServingBase):
         apply_muse_structured_output_reasoning_default(
             request, reasoning_parser=self.reasoning_parser
         )
+        apply_nemotron_structured_output_reasoning_budget(
+            request, reasoning_parser=self.reasoning_parser
+        )
         reasoning_effort = (
             request.chat_template_kwargs.pop("reasoning_effort", None)
             if request.chat_template_kwargs
@@ -1451,6 +1523,9 @@ class OpenAIServingChat(OpenAIServingBase):
                 extra_template_kwargs["reasoning_effort"] = request.reasoning_effort
             if request.chat_template_kwargs:
                 extra_template_kwargs.update(request.chat_template_kwargs)
+            extra_template_kwargs.update(
+                nemotron_response_format_template_kwargs(request, self.reasoning_parser)
+            )
 
             rc = self.template_manager.reasoning_config
             if rc is not None and rc.effort_kwarg is not None:
@@ -1620,6 +1695,29 @@ class OpenAIServingChat(OpenAIServingBase):
             first_chunk = await generator.__anext__()
         except ValueError as e:
             return self.create_error_response(str(e))
+
+        # Grammar compilation can finish asynchronously. Its error is already
+        # encoded by _generate_chat_stream, so no ValueError reaches this frame.
+        # Before committing HTTP 200, promote an initial SSE error to its real
+        # HTTP status. Errors after output begins must remain in the stream.
+        if first_chunk.startswith("data:"):
+            try:
+                first_event = json.loads(first_chunk[5:].strip())
+            except (TypeError, ValueError):
+                first_event = None
+            if isinstance(first_event, dict) and isinstance(
+                first_event.get("error"), dict
+            ):
+                error = first_event["error"]
+                status = error.get("code", 400)
+                if isinstance(status, int) and 400 <= status <= 599:
+                    await generator.aclose()
+                    return self.create_error_response(
+                        message=error.get("message", "Request failed before output"),
+                        err_type=error.get("type", "BadRequestError"),
+                        status_code=status,
+                        param=error.get("param"),
+                    )
 
         async def prepend_first_chunk():
             yield first_chunk

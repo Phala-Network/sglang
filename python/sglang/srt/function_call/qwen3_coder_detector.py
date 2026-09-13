@@ -2,6 +2,7 @@ import json
 import logging
 import re
 from typing import Any, List, Optional
+from urllib.parse import unquote
 
 from sglang.srt.entrypoints.openai.protocol import Tool, ToolChoice
 from sglang.srt.function_call.base_format_detector import BaseFormatDetector
@@ -17,6 +18,80 @@ from sglang.srt.function_call.utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_local_schema_for_type(schema, root, seen=frozenset()):
+    """Resolve local type declarations without fetching or mutating schemas.
+
+    The XML parser needs a parameter's type, while its $ref is relative to the
+    complete tool schema. Resolving only after discarding that root turns
+    referenced objects/arrays/scalars into strings. Do not walk instance data
+    (const/enum/examples) or recursively expand object properties here.
+    """
+    if not isinstance(schema, dict) or len(seen) >= 64:
+        return schema
+    result = dict(schema)
+    reference = schema.get("$ref")
+    if (
+        isinstance(reference, str)
+        and reference.startswith("#/")
+        and reference not in seen
+    ):
+        target = root
+        for part in unquote(reference[2:]).split("/"):
+            key = part.replace("~1", "/").replace("~0", "~")
+            if not isinstance(target, dict) or key not in target:
+                target = None
+                break
+            target = target[key]
+        if isinstance(target, dict):
+            resolved = _resolve_local_schema_for_type(target, root, seen | {reference})
+            result = {
+                **resolved,
+                **{key: value for key, value in schema.items() if key != "$ref"},
+            }
+    for keyword in ("allOf", "anyOf", "oneOf"):
+        if isinstance(result.get(keyword), list):
+            result[keyword] = [
+                _resolve_local_schema_for_type(
+                    part,
+                    root,
+                    seen | ({reference} if isinstance(reference, str) else set()),
+                )
+                for part in result[keyword]
+            ]
+    # The shared inference helper understands enum values, but not const.
+    # This is a private type-lookup copy, never the generation constraint.
+    if "const" in result and "enum" not in result:
+        result["enum"] = [result["const"]]
+    return result
+
+
+def _schema_excludes_null(schema):
+    """Prove common non-null declarations; unknown constraints stay conservative."""
+    if schema is False:
+        return True
+    if not isinstance(schema, dict):
+        return False
+    declared = schema.get("type")
+    if isinstance(declared, str) and declared != "null":
+        return True
+    if isinstance(declared, list) and "null" not in declared:
+        return True
+    if "const" in schema and schema["const"] is not None:
+        return True
+    if isinstance(schema.get("enum"), list) and None not in schema["enum"]:
+        return True
+    if isinstance(schema.get("allOf"), list) and any(
+        _schema_excludes_null(part) for part in schema["allOf"]
+    ):
+        return True
+    return any(
+        isinstance(schema.get(key), list)
+        and bool(schema[key])
+        and all(_schema_excludes_null(part) for part in schema[key])
+        for key in ("anyOf", "oneOf")
+    )
 
 
 class Qwen3CoderDetector(BaseFormatDetector):
@@ -88,9 +163,14 @@ class Qwen3CoderDetector(BaseFormatDetector):
                     return {}
 
                 if isinstance(params, dict):
-                    properties = get_schema_properties(params)
+                    properties = get_schema_properties(
+                        _resolve_local_schema_for_type(params, params)
+                    )
                     if properties or "properties" in params:
-                        return properties
+                        return {
+                            name: _resolve_local_schema_for_type(schema, params)
+                            for name, schema in properties.items()
+                        }
                     return params
                 else:
                     return {}
@@ -108,8 +188,19 @@ class Qwen3CoderDetector(BaseFormatDetector):
         self, param_value: str, param_name: str, param_config: dict, func_name: str
     ) -> Any:
         """Convert parameter value based on its type in the schema."""
-        # Handle null value for any type
+        # XML uses bare null for nullable parameters, but it is also a valid
+        # literal string. Never turn a declared non-null string into JSON null.
         if param_value.lower() == "null":
+            schema = param_config.get(param_name)
+            if self._get_param_type(schema) in (
+                "string",
+                "str",
+                "text",
+                "varchar",
+                "char",
+                "enum",
+            ) and _schema_excludes_null(schema):
+                return param_value
             return None
 
         if param_name not in param_config:
@@ -584,7 +675,10 @@ class Qwen3CoderDetector(BaseFormatDetector):
                                 min=0,
                                 max=-1,
                                 content=SequenceFormat(
-                                    elements=[whitespace, OrFormat(elements=suffix.tags)]
+                                    elements=[
+                                        whitespace,
+                                        OrFormat(elements=suffix.tags),
+                                    ]
                                 ),
                             ),
                             whitespace,

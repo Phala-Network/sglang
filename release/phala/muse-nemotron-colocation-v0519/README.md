@@ -67,6 +67,49 @@ This rejection adapts SGLang PR #37726; it does not claim full support for the
 intersection of arbitrary regular expressions and string-length constraints.
 Request budget exhaustion remains truncation, not a valid JSON completion.
 
+Nemotron assistant-history normalization strips only an opening reasoning
+prefix and its first closing delimiter. Literal think tags in final JSON or
+tool-associated assistant content remain intact across subsequent user turns.
+The installed-template regression covers separate and combined reasoning,
+recent and truncated older history, and content with and without tool calls.
+The opt-in Nemotron template also distinguishes literal caller data from
+reasoning/tool framing during tokenization. A shadow render locates `<think>`,
+`</think>`, `<tool_call>` and `</tool_call>` in message content, separate
+reasoning fields, historical tool-call data, and the response schema/tool
+metadata. Only those data spans use ordinary BPE pieces, preserving the
+tokenizer's original vocabulary and merges. Template-generated reasoning and
+tool controls are unchanged. Rendered text and decoded prompt equality are
+checked explicitly; requests, model artifacts, and the shared tokenizer are
+not modified. Other model parsers, non-opt-in templates, native input IDs,
+and continuation paths keep their existing behavior.
+
+This addresses a reproduced NVFP4/EAGLE failure where literal added-token IDs
+in message data caused JSON strings to repeat escapes until the token budget
+was exhausted. It does not guarantee arbitrary model semantics or rewrite a
+malformed generated response. The regression includes user/system/tool/assistant
+content, Unicode offsets, separate/combined reasoning history, opt-in routing,
+and fail-closed render/token-offset checks. Production weight, KV, SSM-state,
+context, and speculative-decoding settings are not changed by this repair.
+
+Nemotron response parsing additionally uses the existing internal generated
+token IDs to distinguish a true reasoning closer from the same characters
+quoted as ordinary BPE text inside reasoning. Previously, the first textual
+`</think>` could prematurely end reasoning and leak the remaining analysis
+into JSON content even when the model's final JSON was valid. The parser
+decodes the prefix once when the real closing control token arrives, tracks
+its exact character offset, and handles both cumulative and incremental IDs.
+Stream/non-stream paths and each sampled choice preserve their own boundary
+state. Leading literal opening tags remain data; malformed/truncated output
+does not become a successful completion. Other models, legacy callers without
+output IDs, and assistant continuation preserve their existing behavior.
+
+Deterministic regressions exercise literal closers/openers, chunk boundaries,
+buffered and emitted reasoning, truncation, and cumulative/incremental token
+delivery. A separately recorded real-token replay verifies the original
+failure without regenerating or rewriting the model output. SGLang PR #37365
+was reviewed but not applied: it exposes public stream token IDs and does not
+fix the reasoning/content separation; the internal token IDs already exist.
+
 For Nemotron JSON and tool requests with an explicit completion limit and no
 explicit thinking budget, r4 preserves reasoning enablement and effort while reserving final-answer
 space: `max(128, min(4096, completion_limit // 2))` tokens. A request-scoped

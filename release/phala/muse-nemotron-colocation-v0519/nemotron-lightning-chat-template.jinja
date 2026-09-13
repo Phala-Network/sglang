@@ -1,3 +1,4 @@
+{#- phala-nemotron-literal-message-tokens-v1 -#}
 {% macro render_extra_keys(json_dict, handled_keys) %}
     {%- if json_dict is mapping %}
         {%- for json_key in json_dict if json_key not in handled_keys %}
@@ -107,7 +108,7 @@
         {%- else %}
             {%- set content = message.content | default('', true) %}
             {%- if content is string -%}
-                {%- if '<think>' not in content and '</think>' not in content -%}
+                {%- if not content.lstrip().startswith('<think>') -%}
                     {%- set content = "<think></think>" ~ content -%}
                 {%- endif -%}
             {%- else -%}
@@ -122,10 +123,12 @@
                         {{- (content | trim) ~ '\n' -}}
                     {%- else %}
                         {%- set c = (content | string) %}
-                        {%- if '</think>' in c %}
-                            {%- set c = c.split('</think>')[-1] %}
-                        {%- elif '<think>' in c %}
-                            {%- set c = c.split('<think>')[0] %}
+                        {%- if c.lstrip().startswith('<think>') %}
+                            {%- if '</think>' in c %}
+                                {%- set c = c.split('</think>', 1)[1] %}
+                            {%- else %}
+                                {%- set c = '' %}
+                            {%- endif %}
                         {%- endif %}
                         {%- set c = "<think></think>" ~ c %}
                         {%- if c | length > 0 %}
@@ -155,8 +158,8 @@
                 {{- '<|im_start|>assistant\n' ~ (content | default('', true) | string | trim) ~ '<|im_end|>\n' }}
             {%- else %}
                 {%- set c = (content | default('', true) | string) %}
-                {%- if '<think>' in c and '</think>' in c %}
-                    {%- set c = "<think></think>" ~ c.split('</think>')[-1] %}
+                {%- if c.lstrip().startswith('<think>') and '</think>' in c %}
+                    {%- set c = "<think></think>" ~ c.split('</think>', 1)[1] %}
                 {%- endif %}
                 {%- set c = c | trim %}
                 {%- if c | length > 0 %}

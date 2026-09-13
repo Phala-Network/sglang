@@ -404,7 +404,9 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
                 "filtering (e.g., xgrammar) or disable strict reasoning mode."
             )
         self._token_filter_fn = (
-            self.grammar_backend.set_token_filter if self.enable_token_filter else None
+            self.grammar_backend.set_token_filter
+            if self.grammar_backend.is_support_token_filter
+            else None
         )
 
     @staticmethod

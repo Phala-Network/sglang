@@ -58,6 +58,64 @@ logger = logging.getLogger(__name__)
 MAX_ROLLBACK_TOKENS = 200
 
 
+def has_xgrammar_unsupported_pattern_length_combination(schema: dict) -> bool:
+    """Reject the length bounds XGrammar drops when ``pattern`` is present.
+
+    Adapted from upstream SGLang PR #37726. Only schema positions are walked;
+    strings/property names and data in enum/const/examples are not keywords.
+    """
+    schema_array_keywords = ("allOf", "anyOf", "oneOf", "prefixItems")
+    schema_keywords = (
+        "additionalItems",
+        "additionalProperties",
+        "contains",
+        "else",
+        "if",
+        "items",
+        "not",
+        "propertyNames",
+        "then",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+    )
+    schema_map_keywords = (
+        "$defs",
+        "dependentSchemas",
+        "definitions",
+        "patternProperties",
+        "properties",
+    )
+
+    def check_schema(obj):
+        if not isinstance(obj, dict):
+            return False
+        if "pattern" in obj and ("minLength" in obj or "maxLength" in obj):
+            return True
+        for key in schema_keywords + schema_array_keywords:
+            value = obj.get(key)
+            if isinstance(value, dict) and check_schema(value):
+                return True
+            if isinstance(value, list) and any(check_schema(item) for item in value):
+                return True
+        for key in schema_map_keywords:
+            value = obj.get(key)
+            if isinstance(value, dict) and any(
+                check_schema(item) for item in value.values()
+            ):
+                return True
+        return False
+
+    return check_schema(schema)
+
+
+def _validate_xgrammar_json_schema(schema):
+    if has_xgrammar_unsupported_pattern_length_combination(schema):
+        raise RuntimeError(
+            "JSON schema combines pattern with minLength or maxLength, "
+            "which xgrammar cannot enforce together"
+        )
+
+
 def _allocate_token_bitmask(vocab_size: int, batch_size: int) -> torch.Tensor:
     # Pin where pinning exists, so the later H2D can be a genuine non_blocking
     # copy (a pageable source silently downgrades it).  MPS torch has no
@@ -306,6 +364,7 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
         if fmt_type in {"json_schema", "qwen_xml_parameter"}:
             if structural_format.get("json_schema") is None:
                 structural_format["json_schema"] = {}
+            _validate_xgrammar_json_schema(structural_format["json_schema"])
 
         if fmt_type == "tag":
             XGrammarGrammarBackend._sanitize_structural_format(
@@ -323,6 +382,7 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
         for structure in structural_tag.get("structures", []):
             if structure.get("schema") is None:
                 structure["schema"] = {}
+            _validate_xgrammar_json_schema(structure["schema"])
 
     def _from_context(
         self, ctx: CompiledGrammar, key_string: str, grammar_stats: GrammarStats
@@ -347,8 +407,10 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
                 # Note: This builtin JSON grammar includes *all* valid JSON (including, for example, arrays at the root)
                 ctx = self.grammar_compiler.compile_builtin_json_grammar()
             else:
+                schema_text = "{}" if key_string == "$$ANY$$" else key_string
+                _validate_xgrammar_json_schema(json.loads(schema_text))
                 ctx = self.grammar_compiler.compile_json_schema(
-                    schema="{}" if key_string == "$$ANY$$" else key_string,
+                    schema=schema_text,
                     any_whitespace=self.any_whitespace,
                     max_whitespace_cnt=self.max_whitespace_cnt,
                 )

@@ -67,6 +67,9 @@ class BaseReasoningFormatDetector:
     # decoding waits for the model-written answer-channel header to finish.
     grammar_channel_header_end: Optional[str] = None
     grammar_channel_reasoning_header: Optional[str] = None
+    # Some formats have exactly one optional reasoning prefix. Once answer
+    # content starts, marker-looking strings are literal answer data.
+    reasoning_start_at_prefix_only: bool = False
 
     def __init__(
         self,
@@ -136,7 +139,12 @@ class BaseReasoningFormatDetector:
         )
 
     def _detect_and_parse_impl(self, text: str) -> StreamingParseResult:
-        in_reasoning = self._in_reasoning or self.think_start_token in text
+        has_think_start = self.think_start_token in text
+        if self.reasoning_start_at_prefix_only:
+            has_think_start = not self.previous_content and text.startswith(
+                self.think_start_token + self.think_start_self_label
+            )
+        in_reasoning = self._in_reasoning or has_think_start
 
         if not in_reasoning:
             return StreamingParseResult(normal_text=text)
@@ -205,6 +213,17 @@ class BaseReasoningFormatDetector:
         current_text = self._buffer
 
         think_start_text = self.think_start_token + self.think_start_self_label
+
+        if self.reasoning_start_at_prefix_only and not self.stripped_think_start:
+            if (self.previous_content and not self._in_reasoning) or (
+                current_text
+                and not think_start_text.startswith(current_text)
+                and not current_text.startswith(think_start_text)
+            ):
+                # The template may already have supplied the opening marker.
+                # Close the opening-marker decision when any body text arrives,
+                # rather than searching later JSON strings for a new <think>.
+                self.stripped_think_start = True
 
         # If the current text is a prefix of the think token, keep buffering
         tokens_to_check = [think_start_text, self.think_end_token]
@@ -892,6 +911,8 @@ class Nemotron3Detector(BaseReasoningFormatDetector):
     Uses the same reasoning format as DeepSeek-R1: (<think>)*(.*)</think>
 
     """
+
+    reasoning_start_at_prefix_only = True
 
     def __init__(
         self,

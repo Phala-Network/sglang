@@ -5729,3 +5729,11 @@ def _make_abort_req(
             num_output_tokens=len(req.output_ids),
         ),
     )
+
+# Phala source-integrated compatibility (no runtime source overlays).
+import sys as _phala_sys
+from sglang.srt.phala_compat import dsv41_adaptive_chunk as _phala_compat_0
+if _phala_compat_0.enabled():
+    _phala_compat_0.apply(_phala_sys.modules[__name__])
+del _phala_compat_0
+del _phala_sys

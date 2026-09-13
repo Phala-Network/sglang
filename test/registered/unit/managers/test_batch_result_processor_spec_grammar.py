@@ -176,6 +176,32 @@ class TestSpecV2GrammarTruncation(CustomTestCase):
 
 
 class TestReasoningTokenAccounting(CustomTestCase):
+    def test_reasoning_tokens_capped_when_accepted_run_crosses_budget(self):
+        req = _make_req(terminate_after=99)
+        req.require_reasoning = True
+        req.sampling_params.max_new_tokens = 4
+        processor = _make_processor()
+        processor.model_config.think_end_ids = [7, 8]
+        run = [10, 11, 12, 13, 14, 15]
+        req.output_ids.extend(run)
+        processor._maybe_update_reasoning_tokens(req, run)
+        req.update_finish_state(len(run))
+        self.assertEqual(len(req.output_ids_through_stop), 4)
+        self.assertEqual(req.reasoning_tokens, 4)
+
+    def test_reasoning_tokens_kept_when_accepted_run_fits_budget(self):
+        req = _make_req(terminate_after=99)
+        req.require_reasoning = True
+        req.sampling_params.max_new_tokens = 16
+        processor = _make_processor()
+        processor.model_config.think_end_ids = [7, 8]
+        run = [10, 11, 12, 13, 14, 15]
+        req.output_ids.extend(run)
+        processor._maybe_update_reasoning_tokens(req, run)
+        req.update_finish_state(len(run))
+        self.assertIsNone(req.finished_len)
+        self.assertEqual(req.reasoning_tokens, 6)
+
     def test_multi_token_end_can_span_decode_steps(self):
         req = _make_req(terminate_after=99)
         req.require_reasoning = True

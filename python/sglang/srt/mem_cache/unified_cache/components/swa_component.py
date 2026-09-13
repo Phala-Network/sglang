@@ -1386,3 +1386,11 @@ class SWAComponent(TreeComponent):
         raise AssertionError(
             f"SWAComponent: unhandled ComponentAction {type(action).__name__}"
         )
+
+# Phala source-integrated compatibility (no runtime source overlays).
+import sys as _phala_sys
+from sglang.srt.phala_compat import dsv41_swa_retention as _phala_compat_0
+if _phala_compat_0.enabled():
+    _phala_compat_0.apply(_phala_sys.modules[__name__])
+del _phala_compat_0
+del _phala_sys

@@ -3267,6 +3267,11 @@ class Scheduler(
             # it. Drop the marker once the request is actually gone.
             if req.finished() or not req.kv.holds_kv:
                 self._pending_chunked_abort_req = None
+                return
+            # The request left the chunked slot before the deferred abort was
+            # processed. Retry against its current scheduler queue.
+            self._pending_chunked_abort_req = None
+            self.abort_request(AbortReq(rid=req.rid))
             return
 
         prepare_abort(req, "Aborted")

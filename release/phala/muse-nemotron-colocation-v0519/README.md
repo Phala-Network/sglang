@@ -1,5 +1,11 @@
 # Muse-Glimmer-30B and Nemotron 3.5 Lightning SGLang v0.5.19 runtime
 
+The r5 request-cancellation repair is documented in
+[`CANCELLATION_LIFECYCLE.md`](CANCELLATION_LIFECYCLE.md). It preserves the r4
+protocol behavior and prevents disconnected requests from continuing to decode
+after their tokenizer state is removed. Deployment qualification is separate
+from the source and image release.
+
 This release profile rebuilds the complete `python/sglang` runtime tree from a
 single public `Phala-Network/sglang` source commit on the immutable official
 SGLang v0.5.19 CUDA 13.0 base image. It preserves the Nemotron latent-MoE and

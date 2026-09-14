@@ -159,7 +159,9 @@ class Qwen3CoderDetector(BaseFormatDetector):
                     break
                 if param_name in get_schema_properties(schema):
                     break
-                additional = schema.get("additionalProperties")
+                additional = schema.get(
+                    "additionalProperties", schema.get("unevaluatedProperties")
+                )
                 if isinstance(additional, dict):
                     argument_schema = dict(additional)
                     for key in ("$defs", "definitions"):

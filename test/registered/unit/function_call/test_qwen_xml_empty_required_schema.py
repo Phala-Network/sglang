@@ -10,9 +10,14 @@ from xgrammar.testing import _is_grammar_accept_string
 
 from sglang.srt.entrypoints.openai.protocol import Tool, ToolChoice
 from sglang.srt.function_call.qwen3_coder_detector import Qwen3CoderDetector
+from sglang.srt.function_call.utils import normalize_json_schema_types
 
 
 def tool(schema):
+    # Match OpenAIServingChat's real validation order. Tool.model_validate by
+    # itself deliberately does not perform the request-level null normalization.
+    schema = copy.deepcopy(schema)
+    normalize_json_schema_types(schema)
     return Tool.model_validate(
         {"type": "function", "function": {"name": "probe", "strict": True, "parameters": schema}}
     )
@@ -92,8 +97,9 @@ def test_typed_additional_required_property_remains_typed():
 
 
 @pytest.mark.parametrize("streaming", [False, True])
-def test_typed_additional_parameter_parser(streaming):
-    schema = {"type": "object", "required": ["count"], "additionalProperties": {"type": "integer"}}
+@pytest.mark.parametrize("keyword", ["additionalProperties", "unevaluatedProperties"])
+def test_typed_additional_parameter_parser(streaming, keyword):
+    schema = {"type": "object", "required": ["count"], keyword: {"type": "integer"}}
     detector = Qwen3CoderDetector()
     tools = [tool(schema)]
     text = call(parameter("count", "7"))
@@ -146,3 +152,22 @@ def test_open_object_not_collapsed_to_no_arguments():
     compiled = grammar({"type": "object", "additionalProperties": True})
     assert _is_grammar_accept_string(compiled, call())
     assert _is_grammar_accept_string(compiled, call(parameter()))
+
+
+@pytest.mark.parametrize("extra", [
+    {"patternProperties": {"^city$": {"type": "string"}}},
+    {"propertyNames": {"enum": ["city"]}},
+])
+def test_undeclared_required_complex_key_constraints_fail_closed(extra):
+    with pytest.raises((RuntimeError, ValueError), match="Undeclared required"):
+        grammar({"type": "object", "required": ["city"], **extra})
+
+
+def test_typed_additional_ref_preserved_in_parser():
+    schema = {"type": "object", "required": ["count"], "additionalProperties": {"$ref": "#/$defs/Count"},
+              "$defs": {"Count": {"type": "integer", "minimum": 1}}}
+    compiled = grammar(schema)
+    assert _is_grammar_accept_string(compiled, call(parameter("count", "7")))
+    assert not _is_grammar_accept_string(compiled, call(parameter("count", "0")))
+    parsed = Qwen3CoderDetector().detect_and_parse(call(parameter("count", "7")), [tool(schema)])
+    assert json.loads(parsed.calls[0].parameters) == {"count": 7}

@@ -21,6 +21,10 @@ an eager success followed by a duplicate result; a deterministic regression
 covers pending and completed prefill counts. Transport diagnostics now retain
 the underlying reqwest error chain in server logs, without changing retry or
 error-response behavior. This logging change is not a fix for the observed 502s.
+Late prefill failures emit `event: error` together with the JSON error envelope;
+the installed AIPerf 0.12.0 transport recognizes named errors but ignores a
+data-only error packet. The actual-image regression requires that event and
+no false `[DONE]`, so failure cannot be presented as a clean completion.
 
 Build-time support for SOURCE_DATE_EPOCH in
 `sgl-model-gateway/build.rs`, to avoid embedding wall-clock build times into

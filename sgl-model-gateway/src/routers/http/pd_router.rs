@@ -1226,7 +1226,13 @@ impl PDRouter {
                                     "code": 502
                                 }
                             });
-                            let _ = tx.send(Ok(bytes::Bytes::from(format!("data: {}\n\n", err))));
+                            // Name the SSE error event as well as retaining its
+                            // OpenAI-compatible JSON envelope. Otherwise clients
+                            // such as AIPerf ignore a data-only error packet and
+                            // may score the truncated stream as a success.
+                            let _ = tx.send(Ok(bytes::Bytes::from(format!(
+                                "event: error\ndata: {}\n\n", err
+                            ))));
                             break;
                         }
                         if let Ok(resp) = pr {

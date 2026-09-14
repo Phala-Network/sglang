@@ -136,11 +136,13 @@ def run_case(name):
               headers={'Content-Type': 'application/json'})
     response = c.getresponse()
     row = {'name': name, 'http': response.status, 'headers_s': time.monotonic() - t,
-           'data_times_s': [], 'payloads': []}
+           'data_times_s': [], 'payloads': [], 'sse_events': []}
     if name == 'nonstream' or response.status != 200:
         row['body'] = response.read().decode()
     else:
         while line := response.readline():
+            if line.startswith(b'event:'):
+                row['sse_events'].append(line[6:].strip().decode())
             if not line.startswith(b'data: '):
                 continue
             payload = line[6:].strip().decode()
@@ -171,7 +173,7 @@ def run_case(name):
     elif name == 'late-failure':
         error = any(x != '[DONE]' and json.loads(x).get('error', {}).get('type') == 'prefill_failed'
                     for x in row['payloads'])
-        row['pass'] = (row['http'] == 200 and error and '[DONE]' not in row['payloads'] and
+        row['pass'] = (row['http'] == 200 and error and 'error' in row['sse_events'] and '[DONE]' not in row['payloads'] and
             state.get('decode', {}).get('chunks', 100) < 100)
     elif name == 'cancel':
         row['pass'] = ('disconnected' in state.get('decode', {}) and

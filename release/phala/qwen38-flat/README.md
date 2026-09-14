@@ -25,6 +25,11 @@ typed additional parameters in both streaming and non-streaming output.
 The native build uses the official base's compiler, CMake, scikit-build-core
 and TVM FFI. `pip wheel --no-deps --no-build-isolation` runs without network
 access. The final installation is also offline and never occurs at startup.
+The effective upstream `RelWithDebInfo` mode is preserved explicitly. A fixed
+GCC random seed makes bundled LTO static archives deterministic, and the
+hash-guarded wheel canonicalizer sorts ZIP members and regenerates RECORD
+without changing any other member's bytes. Two independent native wheel
+builds and two final runtime image builds must compare equal before release.
 Qualify the installed native grammar and SGLang parser together with
 `test/registered/unit/function_call/test_qwen_xml_empty_required_schema.py`;
 serialized structural-tag equality alone does not establish grammar behavior.

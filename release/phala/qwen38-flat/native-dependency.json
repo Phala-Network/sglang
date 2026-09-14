@@ -21,7 +21,11 @@
     "apache-tvm-ffi": "0.1.11"
   },
   "build": {
-    "type": "Release",
+    "type": "RelWithDebInfo",
+    "build_type_note": "Preserves the effective upstream cmake/config.cmake build type; it overrode the earlier requested Release setting",
+    "cxx_flags": "-frandom-seed=phala-xgrammar-r5",
+    "canonical_wheel_script": "release/phala/qwen38-flat/canonicalize_wheel.py",
+    "canonical_wheel_script_sha256": "55549be27c102fefb87bad0d00ad0d7ffe5a073c07a66fe5929c8bdf58600ec1",
     "parallel_jobs": 1,
     "network_during_compilation": "none",
     "source_date_epoch": "same frozen SGLang source-commit timestamp as the runtime image"

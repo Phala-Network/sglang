@@ -9,8 +9,10 @@ ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH} \
     TZ=UTC \
     LC_ALL=C.UTF-8
 COPY release/phala/qwen38-flat/xgrammar-r5.patch /build-inputs/xgrammar-r5.patch
+COPY release/phala/qwen38-flat/canonicalize_wheel.py /build-inputs/canonicalize_wheel.py
 RUN set -eu; \
     echo 'cda7644a43f71f6d12152df16865055e5a429cc5aa04c82fe934206b981a9af7  /build-inputs/xgrammar-r5.patch' | sha256sum -c -; \
+    echo '55549be27c102fefb87bad0d00ad0d7ffe5a073c07a66fe5929c8bdf58600ec1  /build-inputs/canonicalize_wheel.py' | sha256sum -c -; \
     git init /opt/xgrammar-source; \
     cd /opt/xgrammar-source; \
     git remote add origin https://github.com/mlc-ai/xgrammar.git; \
@@ -24,8 +26,10 @@ RUN set -eu; \
 # No build-time package resolution: compiler, CMake, scikit-build-core and TVM
 # FFI are inherited from the exact official base. Build cannot access a network.
 RUN --network=none python -m pip wheel --no-deps --no-build-isolation \
-    --config-settings=cmake.build-type=Release \
-    --wheel-dir=/wheels /opt/xgrammar-source
+    --config-settings=cmake.build-type=RelWithDebInfo \
+    --config-settings=cmake.define.CMAKE_CXX_FLAGS=-frandom-seed=phala-xgrammar-r5 \
+    --wheel-dir=/wheels /opt/xgrammar-source \
+    && python /build-inputs/canonicalize_wheel.py /wheels/*.whl
 
 FROM scratch AS xgrammar-wheel
 COPY --from=xgrammar-build /wheels /

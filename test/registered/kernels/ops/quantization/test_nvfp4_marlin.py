@@ -53,13 +53,21 @@ def test_nvfp4_marlin_support_and_scale_transforms_sm80_sm90_sm120(dtype):
     not (is_sm80_supported() or is_sm90_supported() or is_sm120_supported()),
     reason="NVFP4 Marlin dense numeric test requires CUDA SM80, SM86, SM90 or SM120",
 )
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
-def test_nvfp4_marlin_dense_matches_dequant_reference(dtype):
+@pytest.mark.parametrize(
+    "size_m,size_n,size_k,dtype",
+    [
+        (17, 192, 256, torch.float16),
+        (17, 192, 256, torch.bfloat16),
+        (1, 1856, 2688, torch.float16),
+        (1, 1856, 2688, torch.bfloat16),
+        (6, 1856, 2688, torch.bfloat16),
+        (81, 1856, 2688, torch.bfloat16),
+        (337, 1856, 2688, torch.bfloat16),
+    ],
+)
+def test_nvfp4_marlin_dense_matches_dequant_reference(size_m, size_n, size_k, dtype):
     torch.manual_seed(0)
 
-    size_m = 17
-    size_k = 256
-    size_n = 192
     group_size = 16
 
     a_input = torch.randn((size_m, size_k), dtype=dtype, device="cuda") / 10
@@ -79,21 +87,38 @@ def test_nvfp4_marlin_dense_matches_dequant_reference(dtype):
     )
     prepare_nvfp4_layer_for_marlin(layer)
 
-    output = apply_fp4_marlin_linear(
-        a_input,
-        layer.weight,
-        layer.weight_scale,
-        layer.weight_global_scale,
-        layer.workspace,
-        size_n,
-        size_k,
-        use_fp32_reduce=True,
-    )
+    def run():
+        return apply_fp4_marlin_linear(
+            a_input,
+            layer.weight,
+            layer.weight_scale,
+            layer.weight_global_scale,
+            layer.workspace,
+            size_n,
+            size_k,
+            use_fp32_reduce=True,
+        )
 
+    output = run().clone()
     output_ref = torch.matmul(a_input, weight_ref.T)
     torch.cuda.synchronize()
 
-    torch.testing.assert_close(output, output_ref, rtol=0.04, atol=0.04)
+    if size_k == 256:
+        torch.testing.assert_close(output, output_ref, rtol=0.04, atol=0.04)
+    else:
+        relative_error = (
+            output.float() - output_ref.float()
+        ).norm() / output_ref.float().norm()
+        assert relative_error < 0.012
+    assert torch.isfinite(output).all()
+    for _ in range(12):
+        assert torch.equal(run(), output)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        graph_result = run()
+    for _ in range(10):
+        graph.replay()
+        assert torch.equal(graph_result, output)
 
 
 if __name__ == "__main__":

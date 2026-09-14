@@ -8,6 +8,9 @@ import triton.language as tl
 
 from sglang.kernels.jit.utils import get_ci_test_range
 from sglang.kernels.ops.moe.moe_align import moe_align_block_size
+from sglang.srt.layers.moe.moe_runner.triton_utils.moe_align_block_size import (
+    moe_align_block_size as runtime_moe_align_block_size,
+)
 from sglang.test.ci.ci_register import register_cuda_ci
 
 register_cuda_ci(est_time=28, stage="base-b-kernel-unit", runner_config="1-gpu-large")
@@ -357,6 +360,84 @@ def test_moe_align_block_size_v2_large_num_experts(
             f"Block {b} sorted_ids mismatch for num_experts={num_experts}, "
             f"num_tokens={num_tokens}"
         )
+
+
+@pytest.mark.parametrize(
+    "num_tokens,topk,num_experts,block_size,with_invalid_routes",
+    [
+        (1, 6, 128, 8, False),
+        (6, 6, 128, 8, False),
+        (81, 6, 128, 8, False),
+        (337, 6, 128, 32, False),
+        (337, 6, 128, 32, True),
+        (8192, 6, 128, 64, False),
+        (128, 2, 32, 64, False),
+        (4097, 16, 128, 64, False),
+        (2048, 8, 128, 64, True),
+    ],
+)
+@pytest.mark.parametrize("ignore_invalid_expert", [False, True])
+def test_runtime_moe_align_block_size_deterministic(
+    num_tokens: int,
+    topk: int,
+    num_experts: int,
+    block_size: int,
+    with_invalid_routes: bool,
+    ignore_invalid_expert: bool,
+):
+    torch.manual_seed(42)
+    topk_ids = torch.topk(
+        torch.randn(num_tokens, num_experts, device="cuda"), topk, dim=-1
+    ).indices.to(torch.int32)
+    if with_invalid_routes:
+        topk_ids[:, topk // 2 :] = -1
+
+    def align():
+        return runtime_moe_align_block_size(
+            topk_ids,
+            block_size=block_size,
+            num_experts=num_experts,
+            ignore_invalid_expert=ignore_invalid_expert,
+            deterministic=True,
+        )
+
+    results = [align() for _ in range(20)]
+    torch.cuda.synchronize()
+
+    count = int(results[0][2].item())
+    blocks = count // block_size
+    expected_tokens = results[0][0][:count]
+    expected_experts = results[0][1][:blocks]
+    for result in results[1:]:
+        # Allocation tails outside num_tokens_post_pad are not kernel output.
+        assert int(result[2].item()) == count
+        assert torch.equal(expected_tokens, result[0][:count])
+        assert torch.equal(expected_experts, result[1][:blocks])
+
+    flat = topk_ids.cpu().flatten().tolist()
+    assigned = {expert: [] for expert in range(-1, num_experts)}
+    for block, expert in enumerate(expected_experts.cpu().tolist()):
+        values = expected_tokens[block * block_size : (block + 1) * block_size]
+        for route in values.cpu().tolist():
+            assert 0 <= route <= len(flat)
+            if route < len(flat):
+                assigned[expert].append(route)
+    for expert, actual in assigned.items():
+        expected = (
+            []
+            if ignore_invalid_expert and expert == -1
+            else [i for i, route in enumerate(flat) if route == expert]
+        )
+        assert actual == expected
+
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        graph_result = align()
+    for _ in range(10):
+        graph.replay()
+        assert int(graph_result[2].item()) == count
+        assert torch.equal(expected_tokens, graph_result[0][:count])
+        assert torch.equal(expected_experts, graph_result[1][:blocks])
 
 
 if __name__ == "__main__":

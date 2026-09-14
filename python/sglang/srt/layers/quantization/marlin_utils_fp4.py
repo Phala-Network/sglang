@@ -99,7 +99,10 @@ def apply_fp4_marlin_linear(
     if padded_size_k != size_k:
         reshaped_x = torch.nn.functional.pad(reshaped_x, (0, padded_size_k - size_k))
 
-    use_atomic_add = should_use_atomic_add_reduce(
+    # Atomic addition accumulates directly in FP16/BF16 and bypasses the
+    # FP32 scratch reduction, even when use_fp32_reduce is requested. Honor
+    # that precision contract for NVFP4 shared experts and dense projections.
+    use_atomic_add = not use_fp32_reduce and should_use_atomic_add_reduce(
         m=reshaped_x.size(0),
         n=padded_size_n,
         k=padded_size_k,

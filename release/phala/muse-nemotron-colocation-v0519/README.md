@@ -1,5 +1,10 @@
 # Muse-Glimmer-30B and Nemotron 3.5 Lightning SGLang v0.5.19 runtime
 
+The r6 Marlin numerical repair is documented in
+[`NVFP4_DETERMINISTIC_REDUCTION.md`](NVFP4_DETERMINISTIC_REDUCTION.md). It makes
+expert routing stable and uses FP32 reduction for NVFP4 MoE and dense layers.
+Runtime/protocol qualification remains separate from the kernel evidence.
+
 The r5 request-cancellation repair is documented in
 [`CANCELLATION_LIFECYCLE.md`](CANCELLATION_LIFECYCLE.md). It preserves the r4
 protocol behavior and prevents disconnected requests from continuing to decode

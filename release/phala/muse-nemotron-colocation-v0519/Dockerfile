@@ -5,7 +5,7 @@ ARG SOURCE_DATE_EPOCH
 ARG RELEASE_VERSION
 ARG SOURCE_REVISION
 ARG RUST_TOOLCHAIN="1.92.0"
-ARG PYTHON_PACKAGE_VERSION="0.5.19+phala.mn.r5"
+ARG PYTHON_PACKAGE_VERSION="0.5.19+phala.mn.r6"
 
 ENV PATH="/root/.cargo/bin:${PATH}" \
     CARGO_INCREMENTAL=0 \
@@ -72,7 +72,7 @@ RUN set -eu; \
 FROM ${BASE_IMAGE}
 
 ARG SOURCE_DATE_EPOCH
-ARG PYTHON_PACKAGE_VERSION="0.5.19+phala.mn.r5"
+ARG PYTHON_PACKAGE_VERSION="0.5.19+phala.mn.r6"
 COPY --link --from=xgrammar_builder /wheelhouse /tmp/phala-xgrammar-wheelhouse
 RUN python3 -m pip install --no-cache-dir --no-deps --no-compile --force-reinstall /tmp/phala-xgrammar-wheelhouse/*.whl \
     && PYTHONDONTWRITEBYTECODE=1 python3 -c 'from importlib.metadata import version; assert version("xgrammar") == "0.2.6+phala.strictorder2"' \

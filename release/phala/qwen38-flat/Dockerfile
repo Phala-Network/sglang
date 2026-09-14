@@ -27,6 +27,9 @@ RUN --network=none python -m pip wheel --no-deps --no-build-isolation \
     --config-settings=cmake.build-type=Release \
     --wheel-dir=/wheels /opt/xgrammar-source
 
+FROM scratch AS xgrammar-wheel
+COPY --from=xgrammar-build /wheels /
+
 FROM ${BASE_IMAGE}
 
 ARG CREATED_AT

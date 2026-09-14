@@ -146,4 +146,3 @@ def test_open_object_not_collapsed_to_no_arguments():
     compiled = grammar({"type": "object", "additionalProperties": True})
     assert _is_grammar_accept_string(compiled, call())
     assert _is_grammar_accept_string(compiled, call(parameter()))
-

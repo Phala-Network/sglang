@@ -2441,6 +2441,57 @@ mod upstream_cancel_tests {
         ctx.shutdown().await;
     }
 
+    /// Decode headers cannot report a success for a still-pending prefill.
+    /// Once prefill resolves, its success must be counted exactly once.
+    #[tokio::test]
+    async fn test_pd_early_stream_records_prefill_outcome_once_when_resolved() {
+        let prefill_port = 20350;
+        let decode_port = 20351;
+        reset_stream_tracker(decode_port);
+        set_slow_stream_chunks(decode_port, 20);
+        let config = RouterConfig::builder()
+            .prefill_decode_mode(
+                vec![(format!("http://127.0.0.1:{prefill_port}"), None)],
+                vec![format!("http://127.0.0.1:{decode_port}")],
+            )
+            .round_robin_policy()
+            .host("127.0.0.1")
+            .port(4350)
+            .request_timeout_secs(15)
+            .worker_startup_timeout_secs(5)
+            .worker_startup_check_interval_secs(1)
+            .build_unchecked();
+        let mut prefill_config = TestWorkerConfig::prefill(prefill_port);
+        prefill_config.response_delay_ms = 1000;
+        let mut decode_config = TestWorkerConfig::decode(decode_port);
+        decode_config.response_delay_ms = 50;
+        let ctx = AppTestContext::new_with_config(config, vec![prefill_config, decode_config]).await;
+        let app = ctx.create_app().await;
+        let prefill = pin_worker(&ctx, &format!("http://127.0.0.1:{prefill_port}"));
+        let before = breaker_counts(&prefill);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/generate")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"text": "pending prefill outcome", "stream": true}).to_string()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let mut body = resp.into_body();
+        assert!(read_n_chunks(&mut body, 1).await > 0);
+        assert_eq!(breaker_counts(&prefill), before, "pending prefill must not record eager success");
+        let _ = body.collect().await;
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while breaker_counts(&prefill) == before {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.unwrap();
+        let after = breaker_counts(&prefill);
+        assert_eq!((after.0 - before.0, after.1 - before.1), (1, 0));
+        clear_slow_stream_chunks(decode_port);
+        ctx.shutdown().await;
+    }
+
     /// PD generate, prefill 5xx (decode never reached): prefill breaker
     /// records failure, decode breaker untouched. Guards the prefill-only
     /// failure attribution in the PD retry/dispatch path.

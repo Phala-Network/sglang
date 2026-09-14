@@ -13,6 +13,7 @@ macro_rules! set_env {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Rebuild triggers
     println!("cargo:rerun-if-changed=Cargo.toml");
+    println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
 
     // Set version info environment variables
     let version = read_cargo_version().unwrap_or_else(|_| DEFAULT_VERSION.to_string());
@@ -21,10 +22,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     set_env!("PROJECT_NAME", DEFAULT_PROJECT_NAME);
     set_env!("VERSION", version);
-    set_env!(
-        "BUILD_TIME",
-        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
-    );
+    // Distribution builds freeze the timestamp; local builds retain the default.
+    // Reject an invalid supplied epoch instead of quietly producing new bytes.
+    let build_time = match std::env::var("SOURCE_DATE_EPOCH") {
+        Ok(value) => chrono::DateTime::from_timestamp(value.parse::<i64>()?, 0)
+            .ok_or("SOURCE_DATE_EPOCH is out of range")?,
+        Err(std::env::VarError::NotPresent) => chrono::Utc::now(),
+        Err(error) => return Err(error.into()),
+    };
+    set_env!("BUILD_TIME", build_time.format("%Y-%m-%d %H:%M:%S UTC"));
     set_env!(
         "BUILD_MODE",
         if profile == "release" {

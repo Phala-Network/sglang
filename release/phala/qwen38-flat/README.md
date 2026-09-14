@@ -8,9 +8,26 @@ BuildKit uses the public repository URL plus the complete commit SHA as its Git
 context, so provenance records the VCS source directly. The Dockerfile removes
 the base image's entire
 `/sgl-workspace/sglang/python/sglang` directory and copies the complete
-`python/sglang` tree from that archive. It does not install Python or operating
-system dependencies; native CUDA components and dependency versions are
-inherited unchanged from the digest-pinned official base.
+`python/sglang` tree from that archive. Native CUDA components and all dependencies
+except XGrammar remain those of the digest-pinned official base. XGrammar is
+built from the full upstream commit and the hash-guarded public patch recorded
+in `native-dependency.json`. No source fork image, runtime installer, source
+mount or mutable dependency tag is used.
+
+The r5 patch backports the empty XML parameter-zone fix from upstream PR #837
+to XGrammar 0.2.1. It also enforces required names omitted from `properties`,
+retaining typed additional-property constraints and rejecting contradictory
+closed schemas before generation. Undeclared required names combined with
+`patternProperties`/`propertyNames` are explicitly unsupported; clients must
+declare those properties. The Qwen XML parser retains the original types of
+typed additional parameters in both streaming and non-streaming output.
+
+The native build uses the official base's compiler, CMake, scikit-build-core
+and TVM FFI. `pip wheel --no-deps --no-build-isolation` runs without network
+access. The final installation is also offline and never occurs at startup.
+Qualify the installed native grammar and SGLang parser together with
+`test/registered/unit/function_call/test_qwen_xml_empty_required_schema.py`;
+serialized structural-tag equality alone does not establish grammar behavior.
 
 The release process must use `linux/amd64`, `--pull=false`, the source commit
 timestamp as `SOURCE_DATE_EPOCH`, `--provenance=mode=max`, and a digest-pinned

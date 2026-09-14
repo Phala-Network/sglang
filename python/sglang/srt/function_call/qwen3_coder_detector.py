@@ -145,6 +145,27 @@ class Qwen3CoderDetector(BaseFormatDetector):
     ) -> Any:
         """Convert parameter value based on its type in the schema."""
         argument_schema = get_argument_schema(func_name, param_name, tools or [])
+        if argument_schema is None:
+            # A required name need not appear in "properties". Its value can
+            # instead be constrained by a typed additionalProperties schema.
+            # Keep this Qwen XML conversion on both stream/non-stream paths;
+            # do not convert an integer into a JSON string merely because its
+            # name was not explicitly declared.
+            for tool in tools or []:
+                if tool.function.name != func_name:
+                    continue
+                schema = tool.function.parameters
+                if not isinstance(schema, dict) or schema.get("patternProperties"):
+                    break
+                if param_name in get_schema_properties(schema):
+                    break
+                additional = schema.get("additionalProperties")
+                if isinstance(additional, dict):
+                    argument_schema = dict(additional)
+                    for key in ("$defs", "definitions"):
+                        if key in schema and key not in argument_schema:
+                            argument_schema[key] = schema[key]
+                break
         if argument_schema is not None:
             converted, schema_valid = coerce_argument_to_schema(
                 param_value, argument_schema

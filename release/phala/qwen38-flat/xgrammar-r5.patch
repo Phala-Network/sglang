@@ -1,0 +1,70 @@
+diff --git a/cpp/json_schema_converter.cc b/cpp/json_schema_converter.cc
+index 5f5ed77..90f72dc 100644
+--- a/cpp/json_schema_converter.cc
++++ b/cpp/json_schema_converter.cc
+@@ -757,6 +757,41 @@ Result<ObjectSpec, SchemaError> SchemaParser::ParseObject(const picojson::object
+     spec.allow_unevaluated_properties = false;
+   }
+ 
++  // "required" is independent of "properties" in JSON Schema. Materialize
++  // undeclared required names before generation: the properties-only emitter
++  // would otherwise ignore them (or compile a required object as empty).
++  // Iterate the input array, not the unordered set, for deterministic output.
++  if (schema.count("required")) {
++    std::unordered_set<std::string> declared;
++    for (const auto& property : spec.properties) declared.insert(property.name);
++    for (const auto& req : schema.at("required").get<picojson::array>()) {
++      const auto& name = req.get<std::string>();
++      if (!declared.insert(name).second) continue;
++      if (!spec.pattern_properties.empty() || spec.property_names) {
++        return ResultErr<SchemaError>(
++            SchemaErrorType::kInvalidSchema,
++            "Undeclared required names with patternProperties/propertyNames are unsupported; "
++            "declare the required property explicitly: " + name
++        );
++      }
++      const bool has_additional = schema.count("additionalProperties");
++      const bool has_unevaluated = schema.count("unevaluatedProperties");
++      if ((has_additional && !spec.allow_additional_properties) ||
++          (!has_additional && has_unevaluated && !spec.allow_unevaluated_properties)) {
++        return ResultErr<SchemaError>(
++            SchemaErrorType::kUnsatisfiableSchema,
++            "Required property is forbidden by the object schema: " + name
++        );
++      }
++      // The strict-mode default may close *optional* additional fields, but
++      // cannot erase an explicitly required name permitted by the input schema.
++      SchemaSpecPtr value = has_additional ? spec.additional_properties_schema
++                                          : spec.unevaluated_properties_schema;
++      if (!value) value = SchemaSpec::Make(AnySpec{}, "", name);
++      spec.properties.push_back({name, value});
++    }
++  }
++
+   if (schema.count("minProperties")) {
+     if (!schema.at("minProperties").is<int64_t>()) {
+       return ResultErr<SchemaError>(
+@@ -2056,7 +2091,10 @@ std::string JSONSchemaConverter::GenerateObject(
+     std::string whitespace_part = GetWhitespacePattern();
+     auto rest = need_braces
+                     ? "\"{\" " + std::string(any_whitespace_ ? whitespace_part + " " : "") + "\"}\""
+-                    : std::string(any_whitespace_ ? whitespace_part : "");
++                    // Backport of mlc-ai/xgrammar#837 for the 0.2.1 emitter:
++                    // an empty XML parameter zone must hand over to its end
++                    // tag, not consume unbounded whitespace without arguments.
++                    : std::string("\"\"");
+     if (result == "\"{\"  \"}\"" || result == "") {
+       result = rest;
+     } else {
+diff --git a/pyproject.toml b/pyproject.toml
+index 29d7eac..5eedc1b 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "xgrammar"
+-version = "0.2.1"
++version = "0.2.1+phala.r5"
+ description = "Efficient, Flexible and Portable Structured Generation"
+ authors = [{ name = "MLC Team" }]
+ readme = "README.md"

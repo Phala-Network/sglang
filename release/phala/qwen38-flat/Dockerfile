@@ -1,4 +1,32 @@
 ARG BASE_IMAGE="docker.io/lmsysorg/sglang:v0.5.19-cu130@sha256:d6e7288627be8b02be88e4bba38e73f6d50e2826869f753c13a4c4385ab3eda9"
+FROM ${BASE_IMAGE} AS xgrammar-build
+ARG SOURCE_DATE_EPOCH
+ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH} \
+    PYTHONHASHSEED=0 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    CMAKE_BUILD_PARALLEL_LEVEL=1 \
+    TZ=UTC \
+    LC_ALL=C.UTF-8
+COPY release/phala/qwen38-flat/xgrammar-r5.patch /build-inputs/xgrammar-r5.patch
+RUN set -eu; \
+    echo 'cda7644a43f71f6d12152df16865055e5a429cc5aa04c82fe934206b981a9af7  /build-inputs/xgrammar-r5.patch' | sha256sum -c -; \
+    git init /opt/xgrammar-source; \
+    cd /opt/xgrammar-source; \
+    git remote add origin https://github.com/mlc-ai/xgrammar.git; \
+    git fetch --depth=1 origin 5b4e9ce9e72524037ae24ecd831b9b6604d2eb48; \
+    git checkout --detach FETCH_HEAD; \
+    test "$(git rev-parse HEAD)" = '5b4e9ce9e72524037ae24ecd831b9b6604d2eb48'; \
+    git submodule update --init --depth=1 3rdparty/dlpack; \
+    test "$(git -C 3rdparty/dlpack rev-parse HEAD)" = 'bbd2f4d32427e548797929af08cfe2a9cbb3cf12'; \
+    git apply --check /build-inputs/xgrammar-r5.patch; \
+    git apply /build-inputs/xgrammar-r5.patch
+# No build-time package resolution: compiler, CMake, scikit-build-core and TVM
+# FFI are inherited from the exact official base. Build cannot access a network.
+RUN --network=none python -m pip wheel --no-deps --no-build-isolation \
+    --config-settings=cmake.build-type=Release \
+    --wheel-dir=/wheels /opt/xgrammar-source
+
 FROM ${BASE_IMAGE}
 
 ARG CREATED_AT
@@ -26,6 +54,7 @@ ARG BUILDKIT_VERSION
 ARG SBOM_STATUS
 ARG PROVENANCE_STATUS
 ARG REPRODUCIBILITY_STATUS
+ARG DEPENDENCY_LOCK_DIGEST
 
 LABEL org.opencontainers.image.created="${CREATED_AT}" \
       org.opencontainers.image.title="Phala Qwen3.8-27B SGLang v0.5.19 flat runtime" \
@@ -50,8 +79,8 @@ LABEL org.opencontainers.image.created="${CREATED_AT}" \
       org.phala.base.source.commit="${BASE_SOURCE_COMMIT}" \
       org.phala.dockerfile.path="release/phala/qwen38-flat/Dockerfile" \
       org.phala.dockerfile.digest="${DOCKERFILE_DIGEST}" \
-      org.phala.dependency.lock.mode="inherited-from-immutable-official-base-no-added-packages" \
-      org.phala.dependency.lock.digest="${BASE_IMAGE_DIGEST}" \
+      org.phala.dependency.lock.mode="immutable-official-base-with-source-built-pinned-xgrammar" \
+      org.phala.dependency.lock.digest="${DEPENDENCY_LOCK_DIGEST}" \
       org.phala.builder.platform="linux/amd64" \
       org.phala.buildkit.version="${BUILDKIT_VERSION}" \
       org.phala.source.date.epoch="${SOURCE_DATE_EPOCH}" \
@@ -68,6 +97,12 @@ ENV SGLANG_BUILD_COMMIT="${SOURCE_REVISION}" \
     SGLANG_IMAGE_TAG="${RELEASE_VERSION}"
 
 WORKDIR /sgl-workspace/sglang
+
+COPY --from=xgrammar-build /wheels /opt/phala-xgrammar-wheels
+COPY release/phala/qwen38-flat/native-dependency.json /usr/share/phala/xgrammar-source.json
+RUN --network=none python -m pip install --no-deps --no-compile --force-reinstall \
+      /opt/phala-xgrammar-wheels/xgrammar-0.2.1+phala.r5-*.whl \
+    && rm -rf /opt/phala-xgrammar-wheels
 
 # Replace the complete Python runtime tree in one build from the public source
 # commit. Native CUDA dependencies remain those of the immutable official base.

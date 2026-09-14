@@ -1,0 +1,29 @@
+{
+  "package": "xgrammar",
+  "version": "0.2.1+phala.r5",
+  "repository": "https://github.com/mlc-ai/xgrammar",
+  "source_commit": "5b4e9ce9e72524037ae24ecd831b9b6604d2eb48",
+  "patch": "release/phala/qwen38-flat/xgrammar-r5.patch",
+  "patch_sha256": "cda7644a43f71f6d12152df16865055e5a429cc5aa04c82fe934206b981a9af7",
+  "upstream_reference": "https://github.com/mlc-ai/xgrammar/pull/837",
+  "upstream_reference_head": "3f63083fa11161c09bdd55373d36ee96579e632f",
+  "upstream_reference_status_at_selection": "open, not merged; empty XML emission backported to the 0.2.1 emitter",
+  "additional_repair": "Materialize undeclared required properties with their original additional/unevaluated value constraints; reject impossible or unsupported combinations instead of discarding required names",
+  "submodules": {
+    "3rdparty/dlpack": {
+      "repository": "https://github.com/dmlc/dlpack",
+      "commit": "bbd2f4d32427e548797929af08cfe2a9cbb3cf12"
+    }
+  },
+  "build_dependencies": {
+    "source": "inherited from the digest-pinned official SGLang base; no build isolation or dependency installation",
+    "scikit-build-core": "1.0.3",
+    "apache-tvm-ffi": "0.1.11"
+  },
+  "build": {
+    "type": "Release",
+    "parallel_jobs": 1,
+    "network_during_compilation": "none",
+    "source_date_epoch": "same frozen SGLang source-commit timestamp as the runtime image"
+  }
+}

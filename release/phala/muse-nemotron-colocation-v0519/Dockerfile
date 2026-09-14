@@ -5,7 +5,7 @@ ARG SOURCE_DATE_EPOCH
 ARG RELEASE_VERSION
 ARG SOURCE_REVISION
 ARG RUST_TOOLCHAIN="1.92.0"
-ARG PYTHON_PACKAGE_VERSION="0.5.19+phala.mn.r6"
+ARG PYTHON_PACKAGE_VERSION="0.5.19+phala.mn.r7"
 
 ENV PATH="/root/.cargo/bin:${PATH}" \
     CARGO_INCREMENTAL=0 \
@@ -53,6 +53,9 @@ COPY --link release/phala/muse-nemotron-colocation-v0519/xgrammar-patched-files.
 COPY --link release/phala/muse-nemotron-colocation-v0519/xgrammar-bounded-string-escapes.patch /tmp/xgrammar-bounded-string-escapes.patch
 COPY --link release/phala/muse-nemotron-colocation-v0519/xgrammar-order-goldens.patch /tmp/xgrammar-order-goldens.patch
 COPY --link release/phala/muse-nemotron-colocation-v0519/xgrammar-r4-patched-files.sha256 /tmp/xgrammar-r4-patched-files.sha256
+COPY --link release/phala/muse-nemotron-colocation-v0519/xgrammar-unbounded-prefix.patch /tmp/xgrammar-unbounded-prefix.patch
+COPY --link release/phala/muse-nemotron-colocation-v0519/xgrammar-string-fsm-blocks.patch /tmp/xgrammar-string-fsm-blocks.patch
+COPY --link release/phala/muse-nemotron-colocation-v0519/xgrammar-r7-patched-files.sha256 /tmp/xgrammar-r7-patched-files.sha256
 COPY --link release/phala/muse-nemotron-colocation-v0519/canonicalize_wheel.py /opt/phala/canonicalize_wheel.py
 RUN set -eu; \
     echo 'f1755d033e8b56cc9e280714cf9fe38d7866e096539d044b05d861f4c37a2fdf  /tmp/xgrammar-strict-order.patch' | sha256sum -c -; \
@@ -64,6 +67,11 @@ RUN set -eu; \
     echo '7bb323ea5d6772ed90b649301e54f5e93a35762b4c408031c6f3782eb3909e7a  /tmp/xgrammar-order-goldens.patch' | sha256sum -c -; \
     patch -p1 --fuzz=0 < /tmp/xgrammar-order-goldens.patch; \
     sha256sum -c /tmp/xgrammar-r4-patched-files.sha256; \
+    echo '0bd2f03e0639a1b086f430fa527f7733eb6d7cf641e017ac982f674d1a31c2b6  /tmp/xgrammar-unbounded-prefix.patch' | sha256sum -c -; \
+    patch -p1 --fuzz=0 < /tmp/xgrammar-unbounded-prefix.patch; \
+    echo '2470ab07e90b072146cbcee3e14fec52067088b31e6d5ef6e58172e5595aa31b  /tmp/xgrammar-string-fsm-blocks.patch' | sha256sum -c -; \
+    patch -p1 --fuzz=0 < /tmp/xgrammar-string-fsm-blocks.patch; \
+    sha256sum -c /tmp/xgrammar-r7-patched-files.sha256; \
     CXXFLAGS='-ffile-prefix-map=/build/xgrammar=. -fdebug-prefix-map=/build/xgrammar=.' \
     LDFLAGS='-Wl,--build-id=none' \
     python3 -m pip wheel --no-deps --no-build-isolation --wheel-dir /wheelhouse .; \
@@ -72,10 +80,10 @@ RUN set -eu; \
 FROM ${BASE_IMAGE}
 
 ARG SOURCE_DATE_EPOCH
-ARG PYTHON_PACKAGE_VERSION="0.5.19+phala.mn.r6"
+ARG PYTHON_PACKAGE_VERSION="0.5.19+phala.mn.r7"
 COPY --link --from=xgrammar_builder /wheelhouse /tmp/phala-xgrammar-wheelhouse
 RUN python3 -m pip install --no-cache-dir --no-deps --no-compile --force-reinstall /tmp/phala-xgrammar-wheelhouse/*.whl \
-    && PYTHONDONTWRITEBYTECODE=1 python3 -c 'from importlib.metadata import version; assert version("xgrammar") == "0.2.6+phala.strictorder2"' \
+    && PYTHONDONTWRITEBYTECODE=1 python3 -c 'from importlib.metadata import version; assert version("xgrammar") == "0.2.6+phala.strictorder4"' \
     && rm -rf /tmp/phala-xgrammar-wheelhouse
 
 ARG CREATED_AT=""

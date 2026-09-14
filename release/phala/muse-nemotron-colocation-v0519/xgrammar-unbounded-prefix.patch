@@ -1,0 +1,43 @@
+diff --git a/cpp/grammar_functor.cc b/cpp/grammar_functor.cc
+--- a/cpp/grammar_functor.cc
++++ b/cpp/grammar_functor.cc
+@@ -2210,11 +2210,6 @@ int32_t RepetitionRangeExpanderImpl::ExpandRepetitionRange(
+   const auto repeat_name = cur_rule_name + "_repeat_1";
+   XGRAMMAR_DCHECK(lower >= kUnzipThreshold && upper >= lower);
+ 
+-  // If we have infinite repetition part, add it to the sequence.
+-  if (infinite_repetition_id.has_value()) {
+-    repeated_sequence.push_back(infinite_repetition_id.value());
+-  }
+-
+   // The repetition body.
+   if (upper != kUnzipThreshold) {
+     XGRAMMAR_DCHECK(upper > kUnzipThreshold);
+@@ -2235,6 +2230,16 @@ int32_t RepetitionRangeExpanderImpl::ExpandRepetitionRange(
+     repeated_sequence.push_back(grammar_expr_id);
+   }
+ 
++  // Keep the mandatory prefix before the unbounded tail: expr{lower} expr*.
++  // Putting expr* first is language-equivalent but keeps a possible start of
++  // the mandatory suffix at every input position. For lower > 128 this causes
++  // growing Earley state sets and second-scale token masks (issue #805).
++  // The counted prefix and its lookahead stay unchanged, preserving bounds,
++  // repeated-rule semantics, and rollback behavior.
++  if (infinite_repetition_id.has_value()) {
++    repeated_sequence.push_back(infinite_repetition_id.value());
++  }
++
+   // Add the sequence to choices.
+   choices.push_back(builder_->AddSequence(repeated_sequence));
+   auto result_rule_id = builder_->AddRuleWithHint(cur_rule_name, builder_->AddChoices(choices));
+diff --git a/pyproject.toml b/pyproject.toml
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "xgrammar"
+-version = "0.2.6+phala.strictorder2"
++version = "0.2.6+phala.strictorder3"
+ description = "Efficient, Flexible and Portable Structured Generation"
+ authors = [{ name = "MLC Team" }]
+ readme = "README.md"

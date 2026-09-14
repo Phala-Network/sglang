@@ -1,5 +1,13 @@
 # Muse-Glimmer-30B and Nemotron 3.5 Lightning SGLang v0.5.19 runtime
 
+The r7 XGrammar prefix-growth repair is documented in
+[`UNBOUNDED_REPETITION.md`](UNBOUNDED_REPETITION.md). It moves the mandatory
+prefix ahead of the unbounded repetition tail and uses decoded-character FSM
+blocks for unbounded strings, preserving grammar semantics while removing
+output-dependent state growth and repeated vocabulary walks. The
+dependency version is `0.2.6+phala.strictorder4`; serving-chain and release
+acceptance remain separate from the focused source regressions.
+
 The r6 Marlin numerical repair is documented in
 [`NVFP4_DETERMINISTIC_REDUCTION.md`](NVFP4_DETERMINISTIC_REDUCTION.md). It makes
 expert routing stable and uses FP32 reduction for NVFP4 MoE and dense layers.

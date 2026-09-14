@@ -20,9 +20,21 @@
       "patch_file": "xgrammar-order-goldens.patch",
       "patch_sha256": "7bb323ea5d6772ed90b649301e54f5e93a35762b4c408031c6f3782eb3909e7a",
       "scope": "Tests only: align two inherited order-rule grammar snapshots; behavior assertions are retained"
+    },
+    {
+      "patch_file": "xgrammar-unbounded-prefix.patch",
+      "patch_sha256": "0bd2f03e0639a1b086f430fa527f7733eb6d7cf641e017ac982f674d1a31c2b6",
+      "upstream_issue": "https://github.com/mlc-ai/xgrammar/issues/805",
+      "scope": "Move the mandatory counted prefix before the unbounded tail; preserve language, bounds and rollback"
+    },
+    {
+      "patch_file": "xgrammar-string-fsm-blocks.patch",
+      "patch_sha256": "2470ab07e90b072146cbcee3e14fec52067088b31e6d5ef6e58172e5595aa31b",
+      "scope": "Compile unbounded length-constrained JSON strings into decoded-character FSM blocks and a free FSM tail; retain bounded-string behavior"
     }
   ],
-  "final_patched_files_manifest": "xgrammar-r4-patched-files.sha256",
-  "package_version": "0.2.6+phala.strictorder2",
-  "scope": "Bounded exact subset-state object order plus legal decoded-character counting and escaping in length-constrained strings; no approximate any_order or XML tool grammar change"
+  "intermediate_patched_files_manifest": "xgrammar-r4-patched-files.sha256",
+  "final_patched_files_manifest": "xgrammar-r7-patched-files.sha256",
+  "package_version": "0.2.6+phala.strictorder4",
+  "scope": "Exact object order, decoded-character lengths/escapes, prefix-order repair and FSM blocks for unbounded strings; no approximate any_order or XML tool grammar change"
 }

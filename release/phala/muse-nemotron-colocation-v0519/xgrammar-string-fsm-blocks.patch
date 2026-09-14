@@ -1,0 +1,46 @@
+diff --git a/cpp/json_schema_converter.cc b/cpp/json_schema_converter.cc
+--- a/cpp/json_schema_converter.cc
++++ b/cpp/json_schema_converter.cc
+@@ -2390,6 +2390,31 @@ int32_t JSONSchemaConverter::GenerateString(const StringSpec& spec, const std::string& rule_name) {
+   }
+   // Check for length constraints
+   if (spec.min_length != 0 || spec.max_length != -1) {
++    if (spec.max_length == -1) {
++      // Keep complete JSON characters in finite-state blocks. A one-character
++      // CFG rule makes almost every multi-character token uncertain, forcing
++      // a vocabulary walk per mask even after the minimum is satisfied.
++      // Each atom consumes one decoded Unicode scalar: an unescaped scalar,
++      // one short/BMP escape, or a complete high+low surrogate escape pair.
++      static const std::string kJSONCharacter =
++          R"re((?:[^"\\\x00-\x1f]|\\["\\/bfnrt]|\\u(?:[0-9A-CE-Fa-ce-f][0-9A-Fa-f]{3}|[Dd][0-7][0-9A-Fa-f]{2})|\\u[Dd][89ABab][0-9A-Fa-f]{2}\\u[Dd][C-Fc-f][0-9A-Fa-f]{2}))re";
++      static constexpr int32_t kBlockChars = 128;
++      const int32_t blocks = spec.min_length / kBlockChars;
++      const int32_t remainder = spec.min_length % kBlockChars;
++      std::vector<int32_t> elements{ByteString("\"")};
++      if (blocks > 0) {
++        auto block = builder_.AddRegex(kJSONCharacter + "{128}", false);
++        elements.push_back(Repeat(rule_name + "_prefix_blocks", block, blocks, blocks));
++      }
++      if (remainder > 0) {
++        elements.push_back(
++            builder_.AddRegex(kJSONCharacter + "{" + std::to_string(remainder) + "}", false)
++        );
++      }
++      elements.push_back(builder_.AddRegex(kJSONCharacter + "*", false));
++      elements.push_back(ByteString("\""));
++      return Sequence(elements);
++    }
+     // Each repetition must match exactly one JSON character so the Repeat budget counts
+     // characters (JSON Schema maxLength counts characters of the decoded string). An
+     // unescaped code point is one repetition; one complete escape sequence is also one.
+diff --git a/pyproject.toml b/pyproject.toml
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "xgrammar"
+-version = "0.2.6+phala.strictorder3"
++version = "0.2.6+phala.strictorder4"
+ description = "Efficient, Flexible and Portable Structured Generation"
+ authors = [{ name = "MLC Team" }]
+ readme = "README.md"

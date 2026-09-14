@@ -867,7 +867,28 @@ impl PDRouter {
                     return response;
                 }
 
-                // Process prefill response
+                // Prefill headers may arrive before decode's headers while its
+                // body is still in flight. Header success is already checked
+                // above; ordinary SSE needs no prefill body. Hand this ready
+                // response to the same relay used by the decode-first branch,
+                // so body drain cannot buffer decode tokens in either order.
+                if context.is_stream && !context.return_logprob {
+                    let response_headers = header_utils::preserve_response_headers(res.headers());
+                    let mut response = self.create_streaming_response(
+                        res.bytes_stream(),
+                        status,
+                        None,
+                        false,
+                        Some(response_headers),
+                        prefill,
+                        decode,
+                        Some(Box::pin(std::future::ready(prefill_result))),
+                    );
+                    response.extensions_mut().insert(BreakerOutcomesRecorded);
+                    return response;
+                }
+
+                // Non-streaming and logprob merging still need the prefill body.
                 let prefill_body = if context.return_logprob {
                     match self
                         .process_prefill_response(

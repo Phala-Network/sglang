@@ -29,7 +29,7 @@ ARG SOURCE_DATE_EPOCH
 ARG PHALA_SOURCE_COMMIT
 LABEL org.opencontainers.image.source="https://github.com/Phala-Network/sglang" \
       org.opencontainers.image.revision="${PHALA_SOURCE_COMMIT}" \
-      org.opencontainers.image.version="dev-dsv41-phala-r2-pdstream" \
+      org.opencontainers.image.version="dev-dsv41-phala-r3-pdstream" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.description="P/D gateway streaming repair; SGLang model runtime inherited unchanged from r1"
 RUN printf '%s\n' \

@@ -17,15 +17,24 @@ import time
 p = argparse.ArgumentParser()
 p.add_argument('--output', required=True)
 p.add_argument('--expect-buffered', action='store_true')
+p.add_argument('--case', action='append', help='Run only these named fixtures')
 a = p.parse_args()
 out = pathlib.Path(a.output)
 out.mkdir(parents=True, exist_ok=False)
 events = {}
 fixtures = {
     'timing': {'p_delay': 3, 'chunks': 12, 'gap': .05},
+    'timing-headers-first': {'p_delay': 0, 'p_body_delay': 3, 'd_delay': .2,
+                             'chunks': 12, 'gap': .05},
     'late-failure': {'p_delay': .4, 'p_status': 500, 'chunks': 100, 'gap': .05},
     'cancel': {'p_delay': 1, 'chunks': 100, 'gap': .05},
+    'cancel-headers-first': {'p_delay': 0, 'p_body_delay': 1, 'd_delay': .2,
+                             'chunks': 100, 'gap': .05},
     'nonstream': {'p_delay': .5, 'chunks': 1, 'gap': 0},
+    'nonstream-headers-first': {'p_delay': 0, 'p_body_delay': .5,
+                                'chunks': 1, 'gap': 0},
+    'logprob-headers-first': {'p_delay': 0, 'p_body_delay': .5, 'd_delay': .2,
+                              'chunks': 4, 'gap': .05, 'return_logprob': True},
 }
 
 
@@ -75,14 +84,25 @@ class Worker(http.server.BaseHTTPRequestHandler):
         try:
             if role == 'prefill':
                 time.sleep(cfg['p_delay'])
-                self.respond(cfg.get('p_status', 200), {'text': '', 'meta_info': {
-                    'prompt_tokens': 4, 'completion_tokens': 1}})
+                payload = json.dumps({'text': '', 'meta_info': {
+                    'prompt_tokens': 4, 'completion_tokens': 1,
+                    'input_token_logprobs': [[-.5, 101, 'prefix']]}}).encode()
+                self.send_response(cfg.get('p_status', 200))
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(payload)))
+                self.end_headers()
+                self.wfile.flush()
+                record['headers_sent'] = time.monotonic()
+                time.sleep(cfg.get('p_body_delay', 0))
+                self.wfile.write(payload)
+                self.wfile.flush()
                 record['body_sent'] = time.monotonic()
             elif not body.get('stream'):
                 self.respond(200, {'text': 'fixture complete', 'meta_info': {
                     'prompt_tokens': 4, 'completion_tokens': 1}})
                 record['body_sent'] = time.monotonic()
             else:
+                time.sleep(cfg.get('d_delay', 0))
                 self.send_response(200)
                 self.send_header('Content-Type', 'text/event-stream')
                 self.send_header('Connection', 'close')
@@ -91,7 +111,8 @@ class Worker(http.server.BaseHTTPRequestHandler):
                 record['headers_sent'] = time.monotonic()
                 for i in range(cfg['chunks']):
                     self.wfile.write(('data: ' + json.dumps({'text': 'x' * (i + 1),
-                        'meta_info': {'prompt_tokens': 4, 'completion_tokens': i + 1}}) + '\n\n').encode())
+                        'meta_info': {'prompt_tokens': 4, 'completion_tokens': i + 1,
+                                      'input_token_logprobs': []}}) + '\n\n').encode())
                     self.wfile.flush()
                     record['chunks'] += 1
                     time.sleep(cfg['gap'])
@@ -132,12 +153,15 @@ def save():
 def run_case(name):
     c = http.client.HTTPConnection('127.0.0.1', 30200, timeout=10)
     t = time.monotonic()
-    c.request('POST', '/generate', body=json.dumps({'text': name, 'stream': name != 'nonstream'}),
+    payload = {'text': name, 'stream': not name.startswith('nonstream')}
+    if fixtures[name].get('return_logprob'):
+        payload['return_logprob'] = True
+    c.request('POST', '/generate', body=json.dumps(payload),
               headers={'Content-Type': 'application/json'})
     response = c.getresponse()
     row = {'name': name, 'http': response.status, 'headers_s': time.monotonic() - t,
            'data_times_s': [], 'payloads': [], 'sse_events': []}
-    if name == 'nonstream' or response.status != 200:
+    if name.startswith('nonstream') or response.status != 200:
         row['body'] = response.read().decode()
     else:
         while line := response.readline():
@@ -148,7 +172,7 @@ def run_case(name):
             payload = line[6:].strip().decode()
             row['data_times_s'].append(time.monotonic() - t)
             row['payloads'].append(payload)
-            if name == 'cancel' and len(row['payloads']) >= 2:
+            if name.startswith('cancel') and len(row['payloads']) >= 2:
                 break
             if payload == '[DONE]':
                 break
@@ -163,21 +187,30 @@ def run_case(name):
             break
         time.sleep(.02)
     state = events.get(name, {})
-    if name == 'timing':
+    if name.startswith('timing'):
         first = row['data_times_s'][0] if row['data_times_s'] else float('inf')
         row['buffering_reproduced'] = row['headers_s'] > 2.5 and first > 2.5
         row['streaming_pass'] = (row['http'] == 200 and row['headers_s'] < 1.5 and
             first < 1.5 and row['data_times_s'][-1] - first > .4 and
             row['payloads'][-1] == '[DONE]' and 'body_sent' in state.get('prefill', {}))
         row['pass'] = row['buffering_reproduced'] if a.expect_buffered else row['streaming_pass']
+        if name == 'timing-headers-first':
+            row['prefill_headers_first'] = (state['prefill']['headers_sent'] <
+                                            state['decode']['headers_sent'])
+            row['pass'] = row['pass'] and row['prefill_headers_first']
     elif name == 'late-failure':
         error = any(x != '[DONE]' and json.loads(x).get('error', {}).get('type') == 'prefill_failed'
                     for x in row['payloads'])
         row['pass'] = (row['http'] == 200 and error and 'error' in row['sse_events'] and '[DONE]' not in row['payloads'] and
             state.get('decode', {}).get('chunks', 100) < 100)
-    elif name == 'cancel':
+    elif name.startswith('cancel'):
         row['pass'] = ('disconnected' in state.get('decode', {}) and
             state['decode']['chunks'] < 100 and 'body_sent' in state.get('prefill', {}))
+    elif name == 'logprob-headers-first':
+        row['pass'] = (row['http'] == 200 and row['headers_s'] >= .45 and
+            row['payloads'][-1] == '[DONE]' and
+            json.loads(row['payloads'][0])['meta_info']['input_token_logprobs'] ==
+            [[-.5, 101, 'prefix']])
     else:
         row['pass'] = (row['http'] == 200 and json.loads(row['body'])['text'] == 'fixture complete'
                        and row['headers_s'] >= .45)
@@ -207,7 +240,8 @@ try:
             time.sleep(.25)
         else:
             raise RuntimeError('Gateway readiness timed out')
-        for name in (['timing'] if a.expect_buffered else fixtures):
+        for name in (a.case or (['timing'] if a.expect_buffered else fixtures)):
+            assert name in fixtures
             run_case(name)
         result['completed'] = True
         result['pass'] = all(row['pass'] for row in result['cases'])

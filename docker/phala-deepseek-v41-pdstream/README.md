@@ -48,3 +48,20 @@ or described as updated when only the gateway image is changed.
 
 Status: source candidate only. No build, publication or runtime acceptance is
 implied by this file; those stages require the separate release evidence.
+
+## r3: prefill headers first, body delayed
+
+The r2 actual-image probe covered late prefill headers but missed the other
+ordering. The installed r2 PyO3 gateway reproduces a 3.008-second first byte
+followed by all 12 decode chunks within 0.4 milliseconds when prefill headers
+arrive immediately but its body is delayed three seconds. In this ordering the
+legacy branch still awaited `process_prefill_response(...).bytes()`.
+
+The r3 candidate hands the already-successful prefill header response to the
+same asynchronous relay as the decode-first branch. Nonstreaming and logprob
+merging retain their body dependency. The installed-extension probe now tests
+both header orderings, both cancellation orderings, late prefill failure, and
+nonstream/logprob body-dependency controls. Header status remains the existing
+prefill breaker outcome definition; a late body-read error is not newly claimed
+as an end-to-end KV or generation-success guarantee. This patch does not change
+connection pooling or retries, and is not a fix for observed connection resets.

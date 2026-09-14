@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
 ARG BASE_IMAGE=ghcr.io/phala-network/sglang:dev-dsv41-phala-r1@sha256:067b5487093e47d52b6fe25242374f7cacc859b92c7d07dd37f6be19c81329c1
+FROM redis:7.2.8-bookworm@sha256:73d68753a2c3e9be8473dc06290ec2236058f358db8bf1fd9a8492f3e1874dd1 AS redis-test-tools
 FROM ${BASE_IMAGE} AS builder
 ARG SOURCE_DATE_EPOCH
 ENV RUSTUP_TOOLCHAIN=stable \
@@ -15,6 +16,9 @@ RUN cd /build && sha256sum -c source.sha256 \
     && rustc --version | grep -F 'rustc 1.98.1 ' \
     && cargo --version | grep -F 'cargo 1.98.1 '
 RUN cargo fetch --locked
+COPY --from=redis-test-tools /usr/local/bin/redis-server /usr/local/bin/redis-server
+RUN --network=none redis-server --version
+RUN --network=none cargo test --frozen --release -p sgl-model-gateway --test routing_tests --test reliability_tests --no-run
 RUN --network=none cargo test --frozen --release -p sgl-model-gateway --test routing_tests -- --test-threads=1
 RUN --network=none cargo test --frozen --release -p sgl-model-gateway --test reliability_tests upstream_cancel_test -- --test-threads=1
 RUN --network=none cargo build --frozen --release -p sgl-model-gateway-python \

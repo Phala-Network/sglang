@@ -29,6 +29,11 @@ The digest-pinned base provides the installed `stable` toolchain; the build
 asserts its exact Rust/Cargo 1.98.1 versions without updating the toolchain.
 Cargo.lock is resolved and frozen for this repair because no original lock was
 available; the old binary's Rust dependency closure is not claimed identical.
+The routing suite's Redis helper uses the redis-server executable from the
+digest-pinned official Redis 7.2.8 Bookworm amd64 image, only in the build stage
+and with network disabled. Redis is not copied into the final runtime or
+installed on the host. Compile and execute tests in separate layers so a
+test-harness failure preserves the compile artifacts for attributable retries.
 
 The serving entrypoint loads the Python Rust extension, not the native binary.
 Any image must therefore contain the newly built Python extension; replacing

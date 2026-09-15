@@ -10,6 +10,7 @@ from sglang.srt.model_loader.gguf_name_maps import (
     Qwen3_5GGUFWeightTransform,
     apply_gguf_weight_transform,
     get_gguf_weight_transform,
+    get_missing_gguf_parameters,
 )
 
 
@@ -76,6 +77,17 @@ class TestQwen35GGUFTransform(unittest.TestCase):
     def test_other_architectures_unchanged(self):
         self.assertIsNone(get_gguf_weight_transform(SimpleNamespace(model_type="gemma4")))
         self.assertIsNone(get_gguf_weight_transform(SimpleNamespace(model_type="qwen3_next")))
+
+    def test_loaded_aliases_do_not_hide_real_missing_parameters(self):
+        model = torch.nn.Module()
+        model.A_log = torch.nn.Parameter(torch.ones(6))
+        model.other = torch.nn.Parameter(torch.ones(6))
+        model.attn = torch.nn.Module()
+        model.attn.A_log = model.A_log
+        self.assertEqual(get_missing_gguf_parameters(model, {"A_log"}), ["other"])
+        self.assertEqual(get_missing_gguf_parameters(model, {"attn.A_log"}), ["other"])
+        self.assertEqual(get_missing_gguf_parameters(model, {"A_log", "other"}), [])
+        self.assertEqual(get_missing_gguf_parameters(model, set()), ["A_log", "other"])
 
     def test_snapshot_requires_a_single_gguf(self):
         from sglang.srt.model_loader.loader import GGUFModelLoader

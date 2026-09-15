@@ -397,6 +397,16 @@ def get_gguf_weight_transform(config: PretrainedConfig):
     return None if builder is None else builder(config)
 
 
+def get_missing_gguf_parameters(model, loaded_names):
+    """Audit unique parameters, including weights shared by GDN modules."""
+    by_name = dict(model.named_parameters(remove_duplicate=False))
+    loaded_ids = {id(by_name[name]) for name in loaded_names if name in by_name}
+    return sorted(
+        name for name, parameter in model.named_parameters()
+        if id(parameter) not in loaded_ids
+    )
+
+
 def apply_gguf_weight_transform(weights_iterator, transform):
     """Run ``transform`` over a GGUF weight iterator.
 

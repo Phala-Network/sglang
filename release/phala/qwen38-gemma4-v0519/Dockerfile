@@ -23,10 +23,13 @@ COPY python/sglang/srt/function_call/qwen3_coder_detector.py /sgl-workspace/sgla
 COPY python/sglang/srt/function_call/schema_argument_coercion.py /sgl-workspace/sglang/python/sglang/srt/function_call/schema_argument_coercion.py
 COPY python/sglang/srt/constrained/llguidance_backend.py /sgl-workspace/sglang/python/sglang/srt/constrained/llguidance_backend.py
 COPY python/sglang/srt/function_call/utils.py /sgl-workspace/sglang/python/sglang/srt/function_call/utils.py
+COPY python/sglang/srt/entrypoints/openai/serving_chat.py /sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_chat.py
+COPY python/sglang/srt/entrypoints/openai/mode_sampling_defaults.py /sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/mode_sampling_defaults.py
 COPY test/registered/unit/test_qwen35_gguf_weight_transform.py /opt/phala/tests/test_qwen35_gguf_weight_transform.py
 COPY test/registered/unit/test_qwen_coder_schema_contract.py /opt/phala/tests/test_qwen_coder_schema_contract.py
 COPY test/registered/unit/test_guidance_reasoner_callbacks.py /opt/phala/tests/test_guidance_reasoner_callbacks.py
 COPY test/registered/unit/test_named_tool_reference_scope.py /opt/phala/tests/test_named_tool_reference_scope.py
+COPY test/registered/unit/test_mode_sampling_defaults.py /opt/phala/tests/test_mode_sampling_defaults.py
 COPY release/phala/qwen38-gemma4-v0519/runtime-files.sha256 /opt/phala/runtime-files.sha256
 COPY release/phala/qwen38-gemma4-v0519/qwen-text-config.json /root/.cache/huggingface/hub/models--HauhauCS--Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF/snapshots/993a5971fda8f30dd1b7eb2654792ba4415c7460/config.json
 RUN cd /sgl-workspace/sglang && sha256sum -c /opt/phala/runtime-files.sha256 \

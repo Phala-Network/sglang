@@ -21,6 +21,7 @@ COPY python/sglang/srt/models/qwen3_5.py /sgl-workspace/sglang/python/sglang/srt
 COPY python/sglang/srt/models/qwen3_5_text.py /sgl-workspace/sglang/python/sglang/srt/models/qwen3_5_text.py
 COPY test/registered/unit/test_qwen35_gguf_weight_transform.py /opt/phala/tests/test_qwen35_gguf_weight_transform.py
 COPY release/phala/qwen38-gemma4-v0519/runtime-files.sha256 /opt/phala/runtime-files.sha256
+COPY release/phala/qwen38-gemma4-v0519/qwen-text-config.json /root/.cache/huggingface/hub/models--HauhauCS--Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF/snapshots/993a5971fda8f30dd1b7eb2654792ba4415c7460/config.json
 RUN cd /sgl-workspace/sglang && sha256sum -c /opt/phala/runtime-files.sha256 \
     && python3 -m compileall -q python/sglang/srt/model_loader/gguf_name_maps.py \
        python/sglang/srt/model_loader/loader.py python/sglang/srt/layers/linear.py \

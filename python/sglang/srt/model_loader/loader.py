@@ -3253,8 +3253,10 @@ class GGUFModelLoader(BaseModelLoader):
             )
 
             if model_config.hf_config.model_type == "qwen3_5_text":
-                all_params = set(dict(model.named_parameters(remove_duplicate=False)))
-                missing = sorted(all_params - set(loaded_params or ()))
+                from sglang.srt.model_loader.gguf_name_maps import get_missing_gguf_parameters
+
+                all_params = dict(model.named_parameters())
+                missing = get_missing_gguf_parameters(model, loaded_params or ())
                 logger.info(
                     "Qwen3.5 GGUF load audit: loaded=%d total=%d missing=%s",
                     len(loaded_params or ()), len(all_params), missing,

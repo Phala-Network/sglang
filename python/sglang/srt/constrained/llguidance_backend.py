@@ -210,6 +210,18 @@ class GuidanceGrammar(BaseGrammarObject):
 
 class GuidanceBackend(BaseGrammarBackend):
 
+    def allocate_vocab_mask(self, vocab_size: int, batch_size: int, device):
+        """Provide the backend callbacks consumed by ReasonerGrammarBackend."""
+        return allocate_token_bitmask(batch_size, self.llguidance_tokenizer.vocab_size)
+
+    @staticmethod
+    def move_vocab_mask(vocab_mask: torch.Tensor, device) -> torch.Tensor:
+        return GuidanceGrammar.move_vocab_mask(vocab_mask, device)
+
+    @staticmethod
+    def apply_vocab_mask(logits: torch.Tensor, vocab_mask: torch.Tensor) -> None:
+        GuidanceGrammar.apply_vocab_mask(logits, vocab_mask)
+
     def __init__(
         self,
         tokenizer,

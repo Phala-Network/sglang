@@ -3135,6 +3135,14 @@ class GGUFModelLoader(BaseModelLoader):
     def _prepare_weights(self, model_name_or_path: str):
         if os.path.isfile(model_name_or_path):
             return model_name_or_path
+        elif os.path.isdir(model_name_or_path):
+            gguf_files = glob.glob(os.path.join(model_name_or_path, "*.gguf"))
+            if len(gguf_files) == 1:
+                return gguf_files[0]
+            raise ValueError(
+                f"Expected exactly one GGUF file in {model_name_or_path}, "
+                f"found {len(gguf_files)}."
+            )
         else:
             raise ValueError(f"{model_name_or_path} is not a file.")
 
@@ -3192,9 +3200,28 @@ class GGUFModelLoader(BaseModelLoader):
         return gguf_to_hf_name_map
 
     def _get_weights_iterator(
-        self, model_name_or_path: str, gguf_to_hf_name_map: Dict[str, str]
+        self,
+        model_name_or_path: str,
+        gguf_to_hf_name_map: Dict[str, str],
+        model_config: Optional[ModelConfig] = None,
     ) -> Generator[Tuple[str, torch.Tensor], None, None]:
-        return gguf_quant_weights_iterator(model_name_or_path, gguf_to_hf_name_map)
+        from sglang.srt.model_loader.gguf_name_maps import (
+            apply_gguf_weight_transform,
+            get_gguf_weight_transform,
+        )
+
+        weights = gguf_quant_weights_iterator(model_name_or_path, gguf_to_hf_name_map)
+        # Some architectures need the *values* converted, not just renamed:
+        # llama.cpp may store a tensor in a different head order or a different
+        # value domain from the HF checkpoint it was converted from.
+        transform = (
+            None
+            if model_config is None
+            else get_gguf_weight_transform(model_config.hf_config)
+        )
+        if transform is None:
+            return weights
+        return apply_gguf_weight_transform(weights, transform)
 
     def download_model(self, model_config: ModelConfig) -> None:
         self._prepare_weights(model_config.model_path)
@@ -3219,9 +3246,21 @@ class GGUFModelLoader(BaseModelLoader):
         with set_default_torch_dtype(model_config.dtype):
             with target_device:
                 model = _initialize_model(model_config, self.load_config, quant_config)
-            model.load_weights(
-                self._get_weights_iterator(local_model_path, gguf_weights_map)
+            loaded_params = model.load_weights(
+                self._get_weights_iterator(
+                    local_model_path, gguf_weights_map, model_config
+                )
             )
+
+            if model_config.hf_config.model_type == "qwen3_5_text":
+                all_params = set(dict(model.named_parameters(remove_duplicate=False)))
+                missing = sorted(all_params - set(loaded_params or ()))
+                logger.info(
+                    "Qwen3.5 GGUF load audit: loaded=%d total=%d missing=%s",
+                    len(loaded_params or ()), len(all_params), missing,
+                )
+                if missing:
+                    raise RuntimeError(f"Incomplete Qwen3.5 GGUF weights: {missing}")
 
             for _, module in model.named_modules():
                 quant_method = getattr(module, "quant_method", None)

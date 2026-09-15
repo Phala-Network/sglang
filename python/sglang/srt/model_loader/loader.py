@@ -3132,11 +3132,13 @@ class GGUFModelLoader(BaseModelLoader):
                 f"load format {load_config.load_format}"
             )
 
-    def _prepare_weights(self, model_name_or_path: str):
+    def _prepare_weights(self, model_name_or_path: str, allow_mmproj: bool = False):
         if os.path.isfile(model_name_or_path):
             return model_name_or_path
         elif os.path.isdir(model_name_or_path):
             gguf_files = glob.glob(os.path.join(model_name_or_path, "*.gguf"))
+            if allow_mmproj:
+                gguf_files = [path for path in gguf_files if not os.path.basename(path).startswith("mmproj-")]
             if len(gguf_files) == 1:
                 return gguf_files[0]
             raise ValueError(
@@ -3224,7 +3226,7 @@ class GGUFModelLoader(BaseModelLoader):
         return apply_gguf_weight_transform(weights, transform)
 
     def download_model(self, model_config: ModelConfig) -> None:
-        self._prepare_weights(model_config.model_path)
+        self._prepare_weights(model_config.model_path, model_config.hf_config.model_type == "qwen3_5")
 
     def load_model(
         self,
@@ -3233,7 +3235,16 @@ class GGUFModelLoader(BaseModelLoader):
         device_config: DeviceConfig,
     ) -> nn.Module:
 
-        local_model_path = self._prepare_weights(model_config.model_path)
+        has_vision = model_config.hf_config.model_type == "qwen3_5" and not getattr(
+            model_config.hf_config, "language_model_only", False
+        )
+        local_model_path = self._prepare_weights(model_config.model_path, has_vision)
+        mmproj_path = None
+        if has_vision:
+            candidates = glob.glob(os.path.join(os.path.dirname(local_model_path), "mmproj-*.gguf"))
+            if len(candidates) != 1:
+                raise ValueError(f"Qwen multimodal GGUF requires exactly one mmproj file, found {len(candidates)}")
+            mmproj_path = candidates[0]
         gguf_weights_map = self._get_gguf_weights_map(model_config)
         # we can only know if tie word embeddings after mapping weights
         if "lm_head.weight" in get_gguf_extra_tensor_names(
@@ -3246,13 +3257,17 @@ class GGUFModelLoader(BaseModelLoader):
         with set_default_torch_dtype(model_config.dtype):
             with target_device:
                 model = _initialize_model(model_config, self.load_config, quant_config)
-            loaded_params = model.load_weights(
-                self._get_weights_iterator(
-                    local_model_path, gguf_weights_map, model_config
-                )
+            weights = self._get_weights_iterator(
+                local_model_path, gguf_weights_map, model_config
             )
+            if mmproj_path is not None:
+                from itertools import chain
+                from sglang.srt.model_loader.gguf_vision import qwen35_vision_weights_iterator
 
-            if model_config.hf_config.model_type == "qwen3_5_text":
+                weights = chain(weights, qwen35_vision_weights_iterator(mmproj_path, model_config.hf_config))
+            loaded_params = model.load_weights(weights)
+
+            if model_config.hf_config.model_type in ("qwen3_5", "qwen3_5_text"):
                 from sglang.srt.model_loader.gguf_name_maps import get_missing_gguf_parameters
 
                 all_params = dict(model.named_parameters())

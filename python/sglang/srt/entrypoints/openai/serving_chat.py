@@ -1010,6 +1010,12 @@ class OpenAIServingChat(OpenAIServingBase):
             tool_call_constraint=processed_messages.tool_call_constraint,
             renderer_handles_response_format=self.chat_encoding_spec == "kimi_k3",
         )
+        from sglang.srt.entrypoints.openai.mode_sampling_defaults import apply_mode_sampling_defaults
+
+        sampling_params = apply_mode_sampling_defaults(
+            request, sampling_params, self.tokenizer_manager.model_config,
+            processed_messages.require_reasoning,
+        )
 
         # Handle single vs multiple requests
         if request.input_ids is not None:

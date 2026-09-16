@@ -1297,7 +1297,13 @@ class OpenAIServingChat(OpenAIServingBase):
                 stop=request.stop or [],
             )
         elif self.template_manager.chat_template_name is None:
-            result = self._apply_jinja_template(request, tools, is_multimodal)
+            if self.reasoning_parser == "muse":
+                result = self._apply_jinja_template(
+                    request, tools, is_multimodal,
+                    tool_call_constraint=tool_call_constraint,
+                )
+            else:
+                result = self._apply_jinja_template(request, tools, is_multimodal)
         else:
             result = self._apply_conversation_template(request, is_multimodal)
 
@@ -1321,6 +1327,7 @@ class OpenAIServingChat(OpenAIServingBase):
         request: ChatCompletionRequest,
         tools: Optional[List[Dict]],
         is_multimodal: bool,
+        tool_call_constraint=None,
     ) -> MessageProcessingResult:
         """Apply Jinja chat template"""
         prompt = ""

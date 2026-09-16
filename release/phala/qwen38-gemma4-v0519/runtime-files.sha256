@@ -1,4 +1,5 @@
 804d5a5166bbac424eb23878c5faa116cf64f77d8434fc3c06c219b0167b91fe  python/sglang/srt/layers/linear.py
+aabff61e60354259ee5789f41b302828cc835285d64cad20291621f12d27d04c  python/sglang/srt/layers/quantization/gguf.py
 e6723969d43acb9d7b328b3e7696716ef2b8668938ab48615577fd58356ac591  python/sglang/srt/model_loader/gguf_name_maps.py
 0019c96a2a4acba20499aee2db543dfcfc6c0ff5f792a80c980a82f690052848  python/sglang/srt/model_loader/loader.py
 72a79fea40ab51fd0232e3ea8aa9ac8a49ff6c2cd8da801cff006420189cb8d4  python/sglang/srt/models/qwen3_5.py

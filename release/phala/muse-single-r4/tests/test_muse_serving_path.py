@@ -1,5 +1,7 @@
 """Exercise the actual message-processing to Jinja call chain without a GPU."""
 import sys
+import importlib.util
+import os
 from pathlib import Path
 
 import pytest
@@ -8,6 +10,12 @@ sys.path.insert(0, '/nearby')
 from test_serving_chat import _MockTemplateManager, _MockTokenizerManager
 from sglang.srt.entrypoints.openai.protocol import ChatCompletionRequest
 from sglang.srt.entrypoints.openai.serving_chat import OpenAIServingChat
+if os.environ.get('MUSE_SERVING_SOURCE'):
+    spec=importlib.util.spec_from_file_location('phala_source_serving_chat',os.environ['MUSE_SERVING_SOURCE'])
+    source_module=importlib.util.module_from_spec(spec)
+    sys.modules[spec.name]=source_module
+    spec.loader.exec_module(source_module)
+    OpenAIServingChat=source_module.OpenAIServingChat
 
 
 def server():

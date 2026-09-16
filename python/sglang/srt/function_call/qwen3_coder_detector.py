@@ -179,7 +179,17 @@ class Qwen3CoderDetector(BaseFormatDetector):
 
     def _get_param_type(self, param_schema: Any) -> str:
         """Infer the parser conversion type from a JSON schema parameter."""
-        inferred_type = infer_type_from_json_schema(param_schema)
+        # A const intersects the other constraints: it narrows a mixed union
+        # or enum to the literal's JSON type. Inferring from the broader type
+        # first can turn valid XML `7` / `false` into invalid JSON strings.
+        # Infer only the conversion type; never replace the generated value
+        # with the constant, and leave the caller's schema untouched.
+        type_schema = (
+            {"enum": [param_schema["const"]]}
+            if isinstance(param_schema, dict) and "const" in param_schema
+            else param_schema
+        )
+        inferred_type = infer_type_from_json_schema(type_schema)
         if inferred_type is None:
             return "string"
         return str(inferred_type).strip().lower()

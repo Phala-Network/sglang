@@ -81,8 +81,6 @@ class PrefillCandidateBlocks(CandidateMetadata, msgspec.Struct):
                 for blocks, length in zip(self.request_blocks, lengths)
             ]
         )
-
-
 def published_masks(candidate) -> CandidateMasks:
     assert isinstance(candidate, CandidateMasks), "candidate masks missing"
     return candidate

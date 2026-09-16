@@ -189,6 +189,19 @@ def dequantize_gguf_weight(
     return ggml_dequantize(qweight, qweight_type, *shape, dtype)
 
 
+def _use_bf16_gguf_prefill(x: torch.Tensor, qweight_type: int) -> bool:
+    # Q8_0 MMQ is optimized for small batches. Hopper's tensor-core GEMM is
+    # substantially faster for prefill, even including a transient dequant.
+    # Restrict the qualified path to BF16 Q8_0 CUDA matrices; keep decode and
+    # every other quantization/device path unchanged.
+    return (
+        x.device.type == "cuda"
+        and x.dtype == torch.bfloat16
+        and qweight_type == WeightType.Q8_0
+        and x.shape[0] >= 128
+    )
+
+
 def fused_mul_mat_gguf(
     x: torch.Tensor, qweight: torch.Tensor, qweight_type: int
 ) -> torch.Tensor:
@@ -203,6 +216,8 @@ def fused_mul_mat_gguf(
     # there is no need to call any kernel for fp16/bf16
     if qweight_type in UNQUANTIZED_TYPES:
         return x @ qweight.T
+    if _use_bf16_gguf_prefill(x, qweight_type):
+        return x @ dequantize_gguf_weight(qweight, qweight_type, x.dtype).T
     # enable MMVQ in contiguous batching with batch_size=1
     if x.shape[0] <= mmvq_safe and qweight_type in MMVQ_QUANT_TYPES:
         y = ggml_mul_mat_vec_a8(qweight, x, qweight_type, qweight.shape[0])

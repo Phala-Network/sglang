@@ -295,6 +295,29 @@ def _build_video_config(request: ChatCompletionRequest) -> Optional[Dict[str, An
     return config or None
 
 
+def muse_format_template_kwargs(request, reasoning_parser, tool_call_constraint):
+    """Describe Muse's actual constrained format in its opt-in baked template.
+
+    Required/named tools currently use an array schema, while the checkpoint's
+    normal tool instructions describe ATEM. Expose the exact selected constraint
+    so the template can teach the format being enforced. Automatic native calls
+    and other model families keep their current prompts and constraints.
+    """
+    if reasoning_parser != "muse":
+        return {}
+    if tool_call_constraint is not None and tool_call_constraint[0] == "json_schema":
+        return {"_phala_muse_tool_schema": tool_call_constraint[1]}
+    if request.response_format is not None and request.response_format.type in {
+        "json_object", "json_schema"
+    }:
+        return {
+            "_phala_muse_response_format": request.response_format.model_dump(
+                mode="json", by_alias=True, exclude_none=True
+            )
+        }
+    return {}
+
+
 def apply_muse_structured_output_reasoning_default(
     request: ChatCompletionRequest, reasoning_parser: Optional[str]
 ) -> None:
@@ -1451,6 +1474,11 @@ class OpenAIServingChat(OpenAIServingBase):
                 extra_template_kwargs["reasoning_effort"] = request.reasoning_effort
             if request.chat_template_kwargs:
                 extra_template_kwargs.update(request.chat_template_kwargs)
+            extra_template_kwargs.update(
+                muse_format_template_kwargs(
+                    request, self.reasoning_parser, tool_call_constraint
+                )
+            )
 
             rc = self.template_manager.reasoning_config
             if rc is not None and rc.effort_kwarg is not None:

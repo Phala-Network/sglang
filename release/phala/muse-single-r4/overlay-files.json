@@ -1,0 +1,14 @@
+[
+  {
+    "source_path": "python/sglang/srt/entrypoints/openai/serving_chat.py",
+    "image_path": "/sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_chat.py",
+    "before_sha256": "b9150bc84144afe1e82b0db1b52c910794b2438af02e2c5b8376bc626fde6a5a",
+    "after_sha256": "c841df268e20ee598f85186887faf6adcefd470d54e68a2976b7103ac3f99650"
+  },
+  {
+    "source_path": "release/phala/muse-nemotron-colocation-v0519/muse-glimmer-chat-template.jinja",
+    "image_path": "/opt/muse-glimmer-chat-template.jinja",
+    "before_sha256": "0bef34aa26e59fd316164486e6001ec121a49a1f0f353ed7fd683c0ef1c6fb1a",
+    "after_sha256": "900db3effc316e33295ec3d7dfa2df83ea2735228cba73adba8fecc2e83343f7"
+  }
+]

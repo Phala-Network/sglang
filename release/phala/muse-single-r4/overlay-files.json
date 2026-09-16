@@ -14,5 +14,21 @@
     "after_sha256": "900db3effc316e33295ec3d7dfa2df83ea2735228cba73adba8fecc2e83343f7",
     "before_source_normalized_sha256": "0bef34aa26e59fd316164486e6001ec121a49a1f0f353ed7fd683c0ef1c6fb1a",
     "source_match_note": "Exact installed template equals Git blob with CRLF line endings; replacement uses canonical LF."
+  },
+  {
+    "source_path": "python/sglang/srt/managers/tokenizer_manager.py",
+    "image_path": "/sgl-workspace/sglang/python/sglang/srt/managers/tokenizer_manager.py",
+    "before_sha256": "f3ffa0fbdf3cadc722386a743a7fbd7d4b332b0be083a2a554822e20778a7603",
+    "before_source_normalized_sha256": "bdfaa4f4f214515f2138a3a82e8215882735490dfa85c271d2c41830b682ad33",
+    "after_sha256": "8fdab38dc7f46d8a667e5f690c63d9dfc542a75c396df4314db70b847b9a2d2a",
+    "adopted_patch_source": "ec6f1c44c8a7eccd2cd3587919defad01abf5929"
+  },
+  {
+    "source_path": "python/sglang/srt/managers/scheduler.py",
+    "image_path": "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler.py",
+    "before_sha256": "341a9bb86dc852b20ca9b8649c849985e986f8f85b9165887e77f1513ae57033",
+    "before_source_normalized_sha256": "3a12fdfb9c21571d8007ba60aedd7e84b67636583bac8243373c75d6a2ab324e",
+    "after_sha256": "9f413ce51409c48138b915274b538f10bcb7b20499f87ab8ab1c2d950d667c07",
+    "adopted_patch_source": "ec6f1c44c8a7eccd2cd3587919defad01abf5929"
   }
 ]

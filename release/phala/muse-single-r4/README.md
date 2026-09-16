@@ -27,3 +27,5 @@ long-context, cancellation and AgentX qualification remain separate gates.
 Only serving_chat.py and the baked Muse template change. The immutable r3 base
 provides all dependencies; Dockerfile guards before and after hashes. This
 branch is local and is not pushed as part of the model rollout authorization.
+
+Runtime acceptance reproduced the r3 cancellation lifecycle defect: closing the stream left its scheduler request running beyond 60 seconds. The candidate additionally adopts the exact scoped tokenizer-manager/scheduler changes and behavior regressions from ec6f1c44c8 (upstream #35255 adaptation), including related parallel parent-placeholder cleanup. No other framework changes are imported.

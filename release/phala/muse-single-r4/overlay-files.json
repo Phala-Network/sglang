@@ -3,7 +3,7 @@
     "source_path": "python/sglang/srt/entrypoints/openai/serving_chat.py",
     "image_path": "/sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_chat.py",
     "before_sha256": "437b392484f80f208f275eb71abbc6be6f52939fbe99c0408421e9828589df84",
-    "after_sha256": "c841df268e20ee598f85186887faf6adcefd470d54e68a2976b7103ac3f99650",
+    "after_sha256": "2d6140b0c06016ced68324386affce8a24c2a57d64cabfd8906fd84214993304",
     "before_source_normalized_sha256": "b9150bc84144afe1e82b0db1b52c910794b2438af02e2c5b8376bc626fde6a5a",
     "source_match_note": "Installed r3 uses CRLF; exact normalized source equals declared Git blob. Raw base hash is verified, replacement remains canonical LF."
   },

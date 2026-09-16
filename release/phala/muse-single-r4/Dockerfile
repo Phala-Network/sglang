@@ -4,7 +4,7 @@ ARG SOURCE_REVISION
 ARG RELEASE_VERSION
 RUN echo '437b392484f80f208f275eb71abbc6be6f52939fbe99c0408421e9828589df84  /sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_chat.py' | sha256sum -c -
 COPY python/sglang/srt/entrypoints/openai/serving_chat.py /sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_chat.py
-RUN echo 'c841df268e20ee598f85186887faf6adcefd470d54e68a2976b7103ac3f99650  /sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_chat.py' | sha256sum -c -
+RUN echo '2d6140b0c06016ced68324386affce8a24c2a57d64cabfd8906fd84214993304  /sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_chat.py' | sha256sum -c -
 RUN echo 'cc83aeb512c78b227224bf3d201eca0570b321fd6802ee6b9622e8a2a38b5007  /opt/muse-glimmer-chat-template.jinja' | sha256sum -c -
 COPY release/phala/muse-nemotron-colocation-v0519/muse-glimmer-chat-template.jinja /opt/muse-glimmer-chat-template.jinja
 RUN echo '900db3effc316e33295ec3d7dfa2df83ea2735228cba73adba8fecc2e83343f7  /opt/muse-glimmer-chat-template.jinja' | sha256sum -c -

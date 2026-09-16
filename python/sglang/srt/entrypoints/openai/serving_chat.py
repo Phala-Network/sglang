@@ -1061,6 +1061,27 @@ class OpenAIServingChat(OpenAIServingBase):
             f"received unsupported content type '{media_type}'."
         )
 
+    async def _convert_to_internal_request_async(
+        self,
+        request: ChatCompletionRequest,
+        raw_request: Request = None,
+    ) -> tuple[GenerateReqInput, ChatCompletionRequest]:
+        # V4.1's native chat encoder produces input_ids before GenerateReqInput
+        # reaches TokenizerManager. Its synchronous encode therefore bypasses
+        # the normal async text-tokenization path and can block active streams.
+        # The batcher exists only when --enable-dynamic-batch-tokenizer was
+        # enabled at initialization. Reuse its one serialized worker rather
+        # than introducing concurrent calls into the same tokenizer instance.
+        if self.chat_encoding_spec == "dsv41" and request.input_ids is None:
+            batcher = getattr(
+                self.tokenizer_manager, "async_dynamic_batch_tokenizer", None
+            )
+            if batcher is not None:
+                return await batcher.run_sync(
+                    self._convert_to_internal_request, request, raw_request
+                )
+        return self._convert_to_internal_request(request, raw_request)
+
     def _convert_to_internal_request(
         self,
         request: ChatCompletionRequest,
@@ -2897,15 +2918,20 @@ class OpenAIServingChat(OpenAIServingBase):
 
         return None
 
+
 # Phala source-integrated compatibility (no runtime source overlays).
 import sys as _phala_sys
+
 from sglang.srt.phala_compat import dsv41_tool_choice_none as _phala_compat_0
+
 _phala_compat_0.apply(_phala_sys.modules[__name__])
 del _phala_compat_0
 from sglang.srt.phala_compat import dsv41_media_hardening as _phala_compat_1
+
 _phala_compat_1._patch_serving_chat(_phala_sys.modules[__name__])
 del _phala_compat_1
 from sglang.srt.phala_compat import dsv41_protocol_compat as _phala_compat_2
+
 _phala_compat_2._patch_reasoning_exclude(_phala_sys.modules[__name__])
 del _phala_compat_2
 del _phala_sys

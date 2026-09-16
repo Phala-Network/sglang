@@ -1,0 +1,16 @@
+{
+  "schema": "phala-inherited-dependencies-v1",
+  "base_image": "ghcr.io/phala-network/sglang:dev-dsv41-phala-r3-pdstream@sha256:8d496a07f28301612fe8938552aefdcaa196f952b07589882d69954e13322357",
+  "runtime_dependency_policy": "All Python, OS, CUDA, and native-library bytes are inherited from this immutable base. No runtime dependency installation or update is performed.",
+  "additional_runtime_dependencies": [],
+  "standard_library_used": ["contextvars", "concurrent.futures", "functools", "asyncio"],
+  "test_only_dependencies": [
+    {
+      "name": "pytest-asyncio",
+      "version": "1.4.0",
+      "wheel": "pytest_asyncio-1.4.0-py3-none-any.whl",
+      "sha256": "933ca923a23075a87fb7070c0ec272a6848489824d887c85c812670932835aa1",
+      "included_in_runtime_image": false
+    }
+  ]
+}

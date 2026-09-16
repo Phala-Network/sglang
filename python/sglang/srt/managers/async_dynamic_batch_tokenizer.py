@@ -6,10 +6,11 @@ to reduce tokenization overhead when multiple requests arrive concurrently.
 """
 
 import asyncio
+import contextvars
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,21 @@ class AsyncDynamicbatchTokenizer:
         result_future: asyncio.Future = asyncio.get_running_loop().create_future()
         await self._queue.put((prompt, kwargs, result_future))
         return await result_future
+
+    async def run_sync(self, function: Callable[..., Any], *args, **kwargs) -> Any:
+        """Run a blocking template/tokenizer operation on the shared worker.
+
+        This does not batch or change the operation's arguments/results.
+        Sharing the executor with encode() prevents overlapping tokenizer
+        calls, and copying ContextVars preserves the caller's request context.
+        Cancellation cancels a queued future when possible; already running
+        CPU work finishes without submitting an inference request on its own.
+        """
+        context = contextvars.copy_context()
+        operation = partial(function, *args, **kwargs)
+        return await asyncio.get_running_loop().run_in_executor(
+            self._executor, context.run, operation
+        )
 
     async def _dynamic_batch_loop(self):
         """Dynamically batch incoming encode requests for efficiency."""

@@ -90,6 +90,29 @@ def has_standard_gqa_for_all_local_layers(
     return attention_layer_count >= end_layer - start_layer
 
 
+def should_disable_prefill_graph_for_nonstandard_gqa(
+    *,
+    prefill_backend: str,
+    attention_layer_count: int,
+    start_layer: int,
+    end_layer: int,
+) -> bool:
+    """Keep the all-attention-layer gate for backends without eager breaks.
+
+    Breakable graphs can leave hybrid Mamba/linear-attention layers outside the
+    captured segments through their ``eager_on_graph`` boundaries. Counting
+    those layers as missing Standard-GQA attention must not disable the target
+    prefill graph. Full and tc-piecewise graphs retain the conservative gate.
+    """
+    return prefill_backend != Backend.BREAKABLE and not (
+        has_standard_gqa_for_all_local_layers(
+            attention_layer_count=attention_layer_count,
+            start_layer=start_layer,
+            end_layer=end_layer,
+        )
+    )
+
+
 def index_attention_layers_by_global_id(
     attention_layers: list[Any],
     mha_companion_layers: list[Any],
@@ -454,7 +477,8 @@ def capture_prefill_graph(
         layer_model,
     )
 
-    if not has_standard_gqa_for_all_local_layers(
+    if should_disable_prefill_graph_for_nonstandard_gqa(
+        prefill_backend=prefill_backend,
         attention_layer_count=sum(
             layer is not None for layer in model_runner.attention_layers
         ),

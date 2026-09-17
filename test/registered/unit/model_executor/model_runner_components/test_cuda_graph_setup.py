@@ -3,12 +3,14 @@ from types import SimpleNamespace
 
 import pytest
 
+from sglang.srt.model_executor.cuda_graph_config import Backend
 from sglang.srt.model_executor.model_runner_components import cuda_graph_setup
 from sglang.srt.model_executor.model_runner_components.cuda_graph_setup import (
     _align_pipeline_layers,
     capture_decode_graph,
     has_standard_gqa_for_all_local_layers,
     index_attention_layers_by_global_id,
+    should_disable_prefill_graph_for_nonstandard_gqa,
 )
 from sglang.test.ci.ci_register import register_cpu_ci
 
@@ -28,6 +30,37 @@ def test_standard_gqa_gate_uses_pipeline_local_layer_range():
 def test_standard_gqa_gate_is_unchanged_without_pipeline_parallelism():
     assert has_standard_gqa_for_all_local_layers(
         attention_layer_count=92, start_layer=0, end_layer=92
+    )
+
+
+@pytest.mark.parametrize("backend", [Backend.FULL, Backend.TC_PIECEWISE])
+def test_nonstandard_gqa_still_disables_non_breakable_prefill_graphs(backend):
+    assert should_disable_prefill_graph_for_nonstandard_gqa(
+        prefill_backend=backend,
+        attention_layer_count=23,
+        start_layer=0,
+        end_layer=46,
+    )
+
+
+def test_breakable_prefill_graph_accepts_hybrid_nonstandard_gqa_layers():
+    assert not should_disable_prefill_graph_for_nonstandard_gqa(
+        prefill_backend=Backend.BREAKABLE,
+        attention_layer_count=23,
+        start_layer=0,
+        end_layer=46,
+    )
+
+
+@pytest.mark.parametrize(
+    "backend", [Backend.FULL, Backend.TC_PIECEWISE, Backend.BREAKABLE]
+)
+def test_standard_gqa_does_not_disable_any_prefill_graph_backend(backend):
+    assert not should_disable_prefill_graph_for_nonstandard_gqa(
+        prefill_backend=backend,
+        attention_layer_count=46,
+        start_layer=0,
+        end_layer=46,
     )
 
 

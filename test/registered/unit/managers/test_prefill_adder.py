@@ -451,6 +451,29 @@ class TestPrefillAdder(CustomTestCase):
         self.assertEqual(adder2.rem_chunk_tokens, 0)  # 3 - 3 = 0
         self.assertEqual(result3, AddReqResult.OTHER)
 
+    def test_chunk_budget_exhausted_requires_a_complete_kv_page(self):
+        running_batch = self.create_running_batch()
+
+        partial_page = self.create_adder(
+            running_batch,
+            page_size=64,
+            rem_chunk_tokens=63,
+        )
+        exact_page = self.create_adder(
+            running_batch,
+            page_size=64,
+            rem_chunk_tokens=64,
+        )
+        unlimited = self.create_adder(
+            running_batch,
+            page_size=64,
+            rem_chunk_tokens=None,
+        )
+
+        self.assertTrue(partial_page.chunk_budget_exhausted())
+        self.assertFalse(exact_page.chunk_budget_exhausted())
+        self.assertFalse(unlimited.chunk_budget_exhausted())
+
     def _build_hybrid_swa_chunked_req(
         self,
         *,

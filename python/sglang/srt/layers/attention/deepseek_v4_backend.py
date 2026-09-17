@@ -815,7 +815,7 @@ class DSV4AttnMetadata:
         "swa_topk_lengths",
         "page_table",
     ]
-    # Same treatment, None for models without that compress ratio.
+    # Same treatment, None for stages without that compress ratio.
     _CP_REINDEX_OPTIONAL_FIELDS = [
         "c4_topk_lengths_raw",
         "c4_topk_lengths_clamp1",

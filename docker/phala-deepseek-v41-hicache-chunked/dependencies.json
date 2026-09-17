@@ -1,0 +1,9 @@
+{
+  "schema": "phala-inherited-dependencies-v1",
+  "base_image": "ghcr.io/phala-network/sglang:dev-dsv41-phala-r4-async-chat@sha256:008012d040b4e954d7673e6767373acbfebe903f4b600bcf8ded876e2c5e762b",
+  "runtime_dependency_policy": "All Python, OS, CUDA, native-library, DSpark, and kernel bytes are inherited from the immutable r4 base. This overlay installs no dependencies.",
+  "additional_runtime_dependencies": [],
+  "changed_runtime_files": [
+    "/sgl-workspace/sglang/python/sglang/srt/mem_cache/unified_radix_cache.py"
+  ]
+}

@@ -1182,6 +1182,8 @@ class UnifiedRadixCache(BasePrefixCache):
                 )
             return
 
+        self._backup_completed_write_through_chunk(result, chunked=chunked)
+
         # Match prefix. SWA insertion retains one extra window before the
         # page-aligned boundary, so the normal match remains safe to repoint.
         match_result = self.match_prefix(MatchPrefixParams(key=radix_key, req=req))
@@ -1239,6 +1241,27 @@ class UnifiedRadixCache(BasePrefixCache):
             )
 
     # ---- Internal Helpers ----
+
+    def _backup_completed_write_through_chunk(
+        self, result: InsertResult, *, chunked: bool
+    ) -> None:
+        """Back up completed chunks without counting the request as a cache hit."""
+        if (
+            not chunked
+            or not self.tree_core.enable_hicache
+            or self.cache_controller is None
+            or self.cache_controller.write_policy != "write_through"
+            or self._tree_core_backend != "python"
+            or self.buffer_pipeline is not None
+            or self.linker is not None
+            or result.last_device_node is None
+            or self.tree_core.is_root(result.last_device_node)
+            or self.tree_core.is_backuped(result.last_device_node)
+        ):
+            return
+
+        node = self.tree_core.node_by_id(result.last_device_node)
+        self._apply_cache_actions([self.tree_core._build_backup_kv_action(node)])
 
     def _apply_cache_actions(
         self, actions: list[CacheAction | ComponentAction]

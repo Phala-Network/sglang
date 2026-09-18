@@ -436,7 +436,10 @@ class Mxfp4FlashinferTrtllmMoEMethod:
         # (kernels.ops.communication.all_reduce_fusion).
         defer_finalize = is_deferred_finalize_enabled()
         symm_output = None
-        if not defer_finalize:
+        # Keep the ordinary output shape in FlashInfer's autotuner key for the
+        # medium deferred path. The deferred ABI ignores this allocation and
+        # returns the expanded GEMM output to the fused epilogue.
+        if not defer_finalize or 96 < num_tokens <= 384:
             with use_symmetric_memory(
                 get_tp_group(), disabled=not is_allocation_symmetric()
             ):
@@ -538,36 +541,89 @@ def maybe_fuse_routed_scale_and_shared_add(
 
 
 # Fused finalize + shared add + TP all-reduce
-_fused_finalize_all_reduce_world_size: Optional[int] = None
-_fused_finalize_all_reduce_probed = False
+_fused_finalize_all_reduce_comms = {}
+_fused_finalize_all_reduce_probed: set[str] = set()
+_fused_finalize_all_reduce_selected: set[str] = set()
 
 
-def _fused_finalize_all_reduce_comm_world_size() -> Optional[int]:
-    """Register the TP group's CustomAllReduceV2 push plane with the fused
-    kernel once; None when the TP group has no usable v2 communicator."""
-    global _fused_finalize_all_reduce_world_size, _fused_finalize_all_reduce_probed
-    if not _fused_finalize_all_reduce_probed:
-        _fused_finalize_all_reduce_probed = True
-        from sglang.kernels.ops.communication import all_reduce_fusion
+def _fused_finalize_all_reduce_comm_world_size(comm_key: str) -> Optional[int]:
+    """Register one named CustomAllReduceV2 push plane before graph capture."""
+    from sglang.kernels.ops.communication import all_reduce_fusion
+
+    if comm_key not in (
+        all_reduce_fusion.DEFAULT_COMM_KEY,
+        all_reduce_fusion.DSV41_MEDIUM_COMM_KEY,
+    ):
+        raise ValueError(f"unknown fused finalize communicator key: {comm_key!r}")
+
+    if comm_key not in _fused_finalize_all_reduce_probed:
+        # Creating a symmetric-memory communicator during capture would leave
+        # graph ownership and peer rendezvous ambiguous. Eager warmup must
+        # initialize the medium plane first; otherwise this graph falls back.
+        if (
+            comm_key == all_reduce_fusion.DSV41_MEDIUM_COMM_KEY
+            and torch.cuda.is_current_stream_capturing()
+        ):
+            return None
+        _fused_finalize_all_reduce_probed.add(comm_key)
+
         from sglang.srt.distributed.device_communicators.custom_all_reduce_v2 import (
             CustomAllReduceV2,
         )
 
         ca_comm = get_tp_group().ca_comm
-        if isinstance(ca_comm, CustomAllReduceV2) and not ca_comm.disabled:
-            all_reduce_fusion.register_comm(ca_comm.obj)
-            _fused_finalize_all_reduce_world_size = ca_comm.world_size
-        else:
+        if not isinstance(ca_comm, CustomAllReduceV2) or ca_comm.disabled:
             log_info_on_rank0(
                 logger,
                 "Fused MoE finalize: TP group has no "
                 "CustomAllReduceV2 push plane; keeping the unfused finalize path",
             )
-    return _fused_finalize_all_reduce_world_size
+            return None
+
+        fused_comm = ca_comm
+        if comm_key == all_reduce_fusion.DSV41_MEDIUM_COMM_KEY:
+            if ca_comm.world_size != 4:
+                log_info_on_rank0(
+                    logger,
+                    "DSV4.1 medium fused finalize requires TP4; keeping the "
+                    f"unfused finalize path for TP{ca_comm.world_size}",
+                )
+                return None
+            from sglang.kernels.ops.communication.mp import register_comm_cleanup
+
+            fused_comm = CustomAllReduceV2(
+                ca_comm.group,
+                ca_comm.device,
+                max_pull_size=0,
+                max_pull_blocks=0,
+                max_push_size=4 * 1024 * 1024,
+                max_push_blocks=512,
+            )
+            register_comm_cleanup(fused_comm)
+
+        if fused_comm.disabled:
+            return None
+        _fused_finalize_all_reduce_comms[comm_key] = fused_comm
+        all_reduce_fusion.register_comm(fused_comm.obj, comm_key=comm_key)
+        log_info_on_rank0(
+            logger,
+            f"Fused MoE finalize initialized comm_key={comm_key} "
+            f"world_size={fused_comm.world_size} "
+            f"push_slot_bytes={fused_comm.max_push_size} "
+            f"push_counters={fused_comm.config.num_push_blocks}",
+        )
+
+    comm = _fused_finalize_all_reduce_comms.get(comm_key)
+    return None if comm is None else comm.world_size
+
+
+def initialize_fused_finalize_all_reduce_comm(comm_key: str) -> bool:
+    """Eagerly initialize a named plane before any CUDA graph capture."""
+    return _fused_finalize_all_reduce_comm_world_size(comm_key) is not None
 
 
 def should_use_fuse_finalize_all_reduce(
-    experts, num_tokens: int, hidden_dim: int
+    experts, num_tokens: int, hidden_dim: int, *, comm_key: str
 ) -> bool:
     """Whether ``moe_finalize_all_reduce`` can replace finalize + shared add +
     TP all-reduce for this layer and batch.
@@ -585,18 +641,34 @@ def should_use_fuse_finalize_all_reduce(
         return False
     if not experts.should_fuse_routed_scaling_factor_in_topk:
         return False
-    if num_tokens <= 0:
-        return False
     from sglang.kernels.ops.communication import all_reduce_fusion
 
+    if comm_key == all_reduce_fusion.DSV41_MEDIUM_COMM_KEY:
+        if not 96 < num_tokens <= 384:
+            return False
+        from sglang.srt.batch_invariant_ops import is_batch_invariant_mode_enabled
+
+        if is_batch_invariant_mode_enabled():
+            return False
+    elif comm_key != all_reduce_fusion.DEFAULT_COMM_KEY:
+        return False
+    if num_tokens <= 0:
+        return False
     if not all_reduce_fusion.valid_cluster_sizes(hidden_dim):
         return False
     tp_group = get_tp_group()
-    if _fused_finalize_all_reduce_comm_world_size() != tp_group.world_size:
+    if _fused_finalize_all_reduce_comm_world_size(comm_key) != tp_group.world_size:
         return False
-    # one push phase counter per row (the plane has num_sm of them)
-    if num_tokens > tp_group.ca_comm.config.num_push_blocks:
+    comm = _fused_finalize_all_reduce_comms[comm_key]
+    # One push phase counter per token row.
+    if num_tokens > comm.config.num_push_blocks:
         return False
-    return all_reduce_fusion.fits_push_slot(
-        tp_group.ca_comm.max_push_size, num_tokens, hidden_dim
-    )
+    fits = all_reduce_fusion.fits_push_slot(comm.max_push_size, num_tokens, hidden_dim)
+    if fits and comm_key not in _fused_finalize_all_reduce_selected:
+        _fused_finalize_all_reduce_selected.add(comm_key)
+        log_info_on_rank0(
+            logger,
+            f"Fused MoE finalize selected comm_key={comm_key} "
+            f"rows={num_tokens} hidden_dim={hidden_dim}",
+        )
+    return fits

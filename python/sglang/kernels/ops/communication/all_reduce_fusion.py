@@ -23,8 +23,10 @@ keeps the plane's phase counters uniform; ``cluster_size`` blocks share a
 row (``hidden / cluster_size`` dims each). :func:`default_cluster_size` holds
 the tuned default per hidden size and can be overridden per call.
 
-Needs :func:`register_comm` once per process (the CustomAllReduceV2
-``Communicator``); the ops key on ``world_size`` alone, like the K3 ones.
+Needs :func:`register_comm` once per process and storage plane (the
+CustomAllReduceV2 ``Communicator``). The plane key is part of the custom-op
+signature so a larger medium-batch workspace cannot silently replace the
+existing small-batch/draft plane.
 """
 
 from __future__ import annotations
@@ -49,29 +51,32 @@ if TYPE_CHECKING:
 
 # Storage plane: the CustomAllReduceV2 Communicator (push plane only)
 
-_COMM_MAP: dict[int, Communicator] = {}
+DEFAULT_COMM_KEY = "default"
+DSV41_MEDIUM_COMM_KEY = "dsv41_medium"
+_COMM_MAP: dict[tuple[int, str], Communicator] = {}
 
 
-def register_comm(comm: Communicator) -> None:
+def register_comm(comm: Communicator, comm_key: str = DEFAULT_COMM_KEY) -> None:
     """Register the CustomAllReduceV2 communicator whose push plane the fused
     kernel stages through.
 
-    ``world_size`` is the whole key (the custom op takes nothing else), so at
-    most one communicator per size may be registered in a process; a second
-    group of the same size would silently inherit the first one's peer
-    pointers and the symptom would be a hang, hence the assert.
+    At most one communicator may be registered for each ``(world_size,
+    comm_key)`` pair. Keeping the plane name explicit prevents a graph from
+    inheriting peer pointers for another same-size communicator.
     """
-    prev = _COMM_MAP.get(comm.world_size)
+    key = (comm.world_size, comm_key)
+    prev = _COMM_MAP.get(key)
     assert prev is None or prev is comm, (
-        f"a different communicator is already registered for world_size="
-        f"{comm.world_size}; these ops key only on world_size, so two groups of "
-        f"the same size cannot coexist in one process"
+        f"a different communicator is already registered for {key=}; "
+        "use a distinct comm_key for an independent storage plane"
     )
-    _COMM_MAP[comm.world_size] = comm
+    _COMM_MAP[key] = comm
 
 
-def get_registered_comm(world_size: int) -> Optional[Communicator]:
-    return _COMM_MAP.get(world_size)
+def get_registered_comm(
+    world_size: int, comm_key: str = DEFAULT_COMM_KEY
+) -> Optional[Communicator]:
+    return _COMM_MAP.get((world_size, comm_key))
 
 
 # Geometry
@@ -150,6 +155,7 @@ def compile_moe_finalize_all_reduce(
 @register_custom_op(mutates_args=["out"])
 def _moe_finalize_all_reduce_op(
     world_size: int,
+    comm_key: str,
     hidden_dim: int,
     top_k: int,
     cluster_size: int,
@@ -162,10 +168,11 @@ def _moe_finalize_all_reduce_op(
     norm_eps: float,
     prefetch_metadata: bool,
 ) -> None:
-    comm = _COMM_MAP.get(world_size)
+    comm = _COMM_MAP.get((world_size, comm_key))
     assert comm is not None, (
-        f"no communicator registered for world_size={world_size}; call "
-        "all_reduce_fusion.register_comm(comm.obj) first"
+        f"no communicator registered for world_size={world_size}, "
+        f"comm_key={comm_key!r}; call "
+        "all_reduce_fusion.register_comm(comm.obj, comm_key=...) first"
     )
     _jit_module(world_size, hidden_dim, top_k, cluster_size).run(
         comm,
@@ -191,6 +198,7 @@ def moe_finalize_all_reduce(
     *,
     world_size: int,
     hidden_dim: int,
+    comm_key: str = DEFAULT_COMM_KEY,
     cluster_size: Optional[int] = None,
     prefetch_metadata: bool = False,
 ) -> torch.Tensor:
@@ -203,6 +211,8 @@ def moe_finalize_all_reduce(
     :param shared_output: optional ``[T, hidden_dim]`` bf16 added before the reduce.
     :param norm_weight: optional ``[hidden_dim]`` bf16 RMSNorm weight; with
                         ``norm_eps`` it turns on the fused norm epilogue.
+    :param comm_key: registered push-plane namespace. The default preserves the
+                     original small-batch and draft path.
     :param prefetch_metadata: let the kernel read the plane's phase counter and
                               the routing metadata before its PDL wait. Under
                               PDL the kernel may start as soon as the preceding
@@ -228,6 +238,7 @@ def moe_finalize_all_reduce(
         return out
     _moe_finalize_all_reduce_op(
         world_size,
+        comm_key,
         hidden_dim,
         top_k,
         cluster_size or default_cluster_size(hidden_dim),

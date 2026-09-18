@@ -529,6 +529,10 @@ class Envs:
     SGLANG_DSPARK_OPT_FUSED_GREEDY_MARKOV = EnvBool(False)
     SGLANG_DSPARK_ENABLE_MULTI_STREAM = EnvBool(True)
     SGLANG_DSPARK_CONFIDENCE_RELAY_LAG_STEPS = EnvInt(2)
+    # Opt-in DSV4.1 target-verify path for 97-384 deferred MXFP4 rows. The
+    # small/draft plane remains unchanged and the medium plane is separately
+    # allocated before CUDA graph capture.
+    SGLANG_DSV41_MEDIUM_FUSED_FINALIZE_ALL_REDUCE = EnvBool(False)
 
     # ===================================================================
     # Memory pools and KV-cache sizing

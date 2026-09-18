@@ -131,6 +131,7 @@ from sglang.srt.layers.quantization.fp8_utils import (
 from sglang.srt.layers.quantization.mxfp4_flashinfer_trtllm_moe import (
     Mxfp4FlashinferTrtllmMoEMethod,
     Mxfp8RoutedInputPreQuant,
+    initialize_fused_finalize_all_reduce_comm,
     maybe_fuse_routed_scale_and_shared_add,
     routed_hidden_size,
     should_use_fuse_finalize_all_reduce,
@@ -573,12 +574,35 @@ class MoEGate(nn.Module):
         return logits
 
 
-# Fused finalize + shared add + TP all-reduce:
-# batch cap for routing onto the fused kernel. It stages the whole [T, hidden]
-# row view through one CustomAllReduceV2 push slot; 96 rows of 5120 bf16 fit
-# the 1 MiB slot the plane allocates, and larger batches keep the unfused
-# finalize + all-reduce chain (the slot fit itself is re-checked in the gate).
+# Fused finalize + shared add + TP all-reduce. The existing 1 MiB push slot
+# holds 96 rows of 5120 bf16; an opt-in, separately named 4 MiB plane covers
+# target-verify batches through 384 rows.
 _FUSED_FINALIZE_ALL_REDUCE_MAX_TOKENS = 96
+_FUSED_FINALIZE_ALL_REDUCE_MEDIUM_MAX_TOKENS = 384
+
+
+def _select_fused_finalize_comm_key(
+    num_tokens: int,
+    *,
+    is_nextn: bool,
+    is_target_verify: bool,
+    medium_enabled: bool,
+) -> Optional[str]:
+    """Choose the original small plane or the opt-in target-only medium plane."""
+    from sglang.kernels.ops.communication import all_reduce_fusion
+
+    if 0 < num_tokens <= _FUSED_FINALIZE_ALL_REDUCE_MAX_TOKENS:
+        return all_reduce_fusion.DEFAULT_COMM_KEY
+    if (
+        medium_enabled
+        and not is_nextn
+        and is_target_verify
+        and _FUSED_FINALIZE_ALL_REDUCE_MAX_TOKENS
+        < num_tokens
+        <= _FUSED_FINALIZE_ALL_REDUCE_MEDIUM_MAX_TOKENS
+    ):
+        return all_reduce_fusion.DSV41_MEDIUM_COMM_KEY
+    return None
 
 
 class DeepseekV2MoE(nn.Module):
@@ -636,6 +660,16 @@ class DeepseekV2MoE(nn.Module):
         self._fuse_finalize_all_reduce = (
             is_deepseek_v4 and get_platform().is_blackwell and self.tp_size == 4
         )
+        if (
+            self._fuse_finalize_all_reduce
+            and not self.is_nextn
+            and envs.SGLANG_DSV41_MEDIUM_FUSED_FINALIZE_ALL_REDUCE.get()
+        ):
+            from sglang.kernels.ops.communication import all_reduce_fusion
+
+            initialize_fused_finalize_all_reduce_comm(
+                all_reduce_fusion.DSV41_MEDIUM_COMM_KEY
+            )
 
         n_hash_layers = getattr(config, "num_hash_layers", 0)
         self.is_hash = layer_id < n_hash_layers and not (is_deepseek_v4 and is_nextn)
@@ -964,6 +998,12 @@ class DeepseekV2MoE(nn.Module):
                     input_ids,
                     input_ids_global=input_ids_global,
                     num_token_non_padded=num_token_non_padded,
+                    allow_medium_fused_finalize=(
+                        envs.SGLANG_DSV41_MEDIUM_FUSED_FINALIZE_ALL_REDUCE.get()
+                        and not self.is_nextn
+                        and forward_batch is not None
+                        and forward_batch.forward_mode.is_target_verify()
+                    ),
                 )
             else:
                 return self.forward_normal(
@@ -986,6 +1026,7 @@ class DeepseekV2MoE(nn.Module):
         input_ids: Optional[torch.Tensor] = None,
         input_ids_global: Optional[torch.Tensor] = None,
         num_token_non_padded: Optional[torch.Tensor] = None,
+        allow_medium_fused_finalize: bool = False,
     ) -> torch.Tensor:
         # Note(kpham-sgl): issue order satisfies 3 constraints:
         # - no stream explosion: main (routed) issued before alt block -> capture reuses 1 alt stream;
@@ -1061,6 +1102,12 @@ class DeepseekV2MoE(nn.Module):
                     expert_location_dispatch_info=dispatch_info,
                     **topk_kwargs,
                 )
+        fused_finalize_comm_key = _select_fused_finalize_comm_key(
+            hidden_states.shape[0],
+            is_nextn=self.is_nextn,
+            is_target_verify=allow_medium_fused_finalize,
+            medium_enabled=allow_medium_fused_finalize,
+        )
         # The mHC post-split consumes the reduced row without an RMSNorm.
         use_fused_finalize_all_reduce = (
             self._fuse_finalize_all_reduce
@@ -1068,10 +1115,13 @@ class DeepseekV2MoE(nn.Module):
             and hidden_states.shape[-1] == 5120
             and not self._shared_expert_tp1
             and self.tp_size > 1
-            and hidden_states.shape[0] <= _FUSED_FINALIZE_ALL_REDUCE_MAX_TOKENS
+            and fused_finalize_comm_key is not None
             and not should_skip_post_experts_all_reduce(is_tp_path=True)
             and should_use_fuse_finalize_all_reduce(
-                self.experts, hidden_states.shape[0], hidden_states.shape[-1]
+                self.experts,
+                hidden_states.shape[0],
+                hidden_states.shape[-1],
+                comm_key=fused_finalize_comm_key,
             )
         )
         deferred_finalize = use_fused_finalize_all_reduce or (
@@ -1136,6 +1186,7 @@ class DeepseekV2MoE(nn.Module):
                     shared_output,
                     world_size=self.tp_size,
                     hidden_dim=hidden_states.shape[-1],
+                    comm_key=fused_finalize_comm_key,
                     # Routing metadata must be ready before it is consumed.
                     prefetch_metadata=False,
                 )

@@ -2403,7 +2403,9 @@ class MQALayer(MqaAttentionBase):
             else:
                 wo_a_weight = getattr(self.wo_a, "weight", None)
                 if wo_a_weight is not None:
-                    wo_a = wo_a_weight.view(self.n_local_groups, self.o_lora_rank, -1)
+                    wo_a = wo_a_weight.view(
+                        self.n_local_groups, self.o_lora_rank, -1
+                    )
                     o = _apply_wo_a_bf16_matmul(
                         o,
                         wo_a,

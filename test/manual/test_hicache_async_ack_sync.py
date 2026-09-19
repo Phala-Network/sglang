@@ -19,11 +19,16 @@ from unittest.mock import MagicMock, patch
 SOURCE = (
     Path(sys.argv.pop(1))
     if len(sys.argv) > 1 and not sys.argv[1].startswith("-")
-    else Path(__file__).resolve().parents[2]
+    else Path(os.environ.get("HICACHE_ACK_TEST_SOURCE_ROOT", Path(__file__).resolve().parents[2]))
 )
-RUN_GLOO = "--gloo" in sys.argv
+RUN_GLOO = "--gloo" in sys.argv or os.environ.get("HICACHE_ACK_TEST_GLOO") == "1"
+# Spawn imports this file afresh after the CLI arguments have been consumed.
+# Preserve the selected installed-source shadow and real-tensor mode in workers.
+os.environ["HICACHE_ACK_TEST_SOURCE_ROOT"] = str(SOURCE.resolve())
+os.environ["HICACHE_ACK_TEST_GLOO"] = "1" if RUN_GLOO else "0"
 if RUN_GLOO:
-    sys.argv.remove("--gloo")
+    if "--gloo" in sys.argv:
+        sys.argv.remove("--gloo")
     import torch
     import torch.distributed as dist
     import torch.multiprocessing as mp

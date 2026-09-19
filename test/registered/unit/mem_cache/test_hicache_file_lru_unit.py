@@ -138,6 +138,29 @@ class _BackendBuilder:
         return HiCacheFile(cfg, file_path=d)
 
 
+class TestMLAMambaOwnershipCausal(unittest.TestCase):
+    """Keep the negative control's assertion outside the CI retry wrapper."""
+
+    def test_mamba_ranks_do_not_share_storage_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = _BackendBuilder(directory)
+            common = dict(
+                max_size="500", mamba_max_size="200", is_mla=True,
+                tp_size=2, model="kimi-k3", subdir="shared",
+                enable_metadata_cache=False,
+            )
+            rank0 = build(tp_rank=0, **common)
+            rank1 = build(tp_rank=1, **common)
+            self.assertEqual(
+                rank0._get_component_key("same", PoolName.KV),
+                rank1._get_component_key("same", PoolName.KV),
+            )
+            self.assertNotEqual(
+                rank0._get_component_key("same", PoolName.MAMBA),
+                rank1._get_component_key("same", PoolName.MAMBA),
+            )
+
+
 class TestParseSize(CustomTestCase):
     def test_zero_and_none(self):
         self.assertEqual(_parse_size_to_bytes(None), 0)

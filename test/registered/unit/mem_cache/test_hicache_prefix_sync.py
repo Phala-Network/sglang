@@ -25,6 +25,7 @@ from sglang.srt.mem_cache.hicache_storage import (
     PoolName,
     PoolTransfer,
 )
+from sglang.srt.mem_cache.base_prefix_cache import CacheRequestHandle
 from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
     HybridCacheController,
 )
@@ -142,7 +143,7 @@ def _check_file_prefetch(rank, groups, scenario):
         controller = _controller(controller_cls, groups, backend)
         if controller_cls is HybridCacheController:
             operation = HybridPrefetchOperation(
-                "request",
+                CacheRequestHandle("request", 0),
                 _TOKENS,
                 pool_transfers=[
                     PoolTransfer(

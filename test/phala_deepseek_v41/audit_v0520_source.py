@@ -100,6 +100,10 @@ for relative in changed:
 protected = [
     "python/sglang/srt/entrypoints/openai/serving_chat.py",
     "python/sglang/srt/constrained/xgrammar_backend.py",
+    "python/sglang/srt/mem_cache/unified_cache/components/swa.py",
+    "python/sglang/srt/model_executor/runner_utils/pool.py",
+    "python/sglang/srt/runtime_context.py",
+    "python/sglang/srt/managers/scheduler.py",
 ]
 unexpected = subprocess.check_output(
     ["git", "diff", "--name-only", BASE, "--", *protected], cwd=ROOT, text=True

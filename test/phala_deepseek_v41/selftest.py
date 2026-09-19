@@ -225,7 +225,21 @@ check("explicit chat_template_kwargs wins over a routed budget",
 # The encoder must accept what we route to it.
 from sglang.srt.entrypoints.openai import chat_encoding  # noqa: E402
 
-check("encoder accepts the routed budget", chat_encoding.resolve_dsv41_reasoning_effort(50), 50)
+check("encoder accepts the routed budget", chat_encoding.parse_dsv41_reasoning_effort(50), 50)
+check("encoder preserves both integer budget boundaries",
+      [chat_encoding.parse_dsv41_reasoning_effort(value) for value in (1, 100)], [1, 100])
+check("encoder preserves legal OpenAI fractional efforts",
+      [chat_encoding.parse_dsv41_reasoning_effort(value) for value in (0.0, 0.5, 0.99)],
+      [1, 50, 99])
+check("invalid budget values do not become an accepted effort",
+      [chat_encoding.parse_dsv41_reasoning_effort(value) for value in (True, 0, 101, -0.1, 1.0)],
+      [None, None, None, None, None])
+check("serving resolver uses the parsed integer instead of the deployment default",
+      SC.OpenAIServingChat._resolve_dsv41_reasoning_effort(
+          SimpleNamespace(_dsv41_default_reasoning_effort="high"), 50), 50)
+check("serving resolver retains the deployment default when effort is absent",
+      SC.OpenAIServingChat._resolve_dsv41_reasoning_effort(
+          SimpleNamespace(_dsv41_default_reasoning_effort="high"), None), "high")
 
 # ==========================================================================
 section("D3: reasoning.exclude withholds reasoning_content")

@@ -5,6 +5,7 @@ import importlib.util
 import os
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Union
 import unittest
 from unittest.mock import patch
 
@@ -25,6 +26,69 @@ tools = load("dsv41_tool_choice_none")
 
 
 class ProtocolContracts(unittest.TestCase):
+    def test_current_parser_and_serving_resolver_keep_budget_semantics(self):
+        chat_path = ROOT / "python/sglang/srt/entrypoints/openai/chat_encoding.py"
+        parsed = ast.parse(chat_path.read_text(encoding="utf-8"))
+        parser = next(
+            node
+            for node in parsed.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "parse_dsv41_reasoning_effort"
+        )
+        encoding = load("dsv41_reasoning_effort")
+        namespace = {"Any": object, "Union": Union, "encoding_dsv41": encoding}
+        exec(
+            compile(
+                ast.fix_missing_locations(ast.Module(body=[parser], type_ignores=[])),
+                str(chat_path),
+                "exec",
+            ),
+            namespace,
+        )
+        parse = namespace[parser.name]
+        for value, expected in (
+            (1, 1),
+            (50, 50),
+            (100, 100),
+            (0.0, 1),
+            (0.5, 50),
+            (0.99, 99),
+            ("high", "high"),
+            (True, None),
+            (0, None),
+            (101, None),
+            (-0.1, None),
+            (1.0, None),
+            (None, None),
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(parse(value), expected)
+
+        serving_path = ROOT / "python/sglang/srt/entrypoints/openai/serving_chat.py"
+        cls = next(
+            node
+            for node in ast.parse(serving_path.read_text(encoding="utf-8")).body
+            if isinstance(node, ast.ClassDef) and node.name == "OpenAIServingChat"
+        )
+        resolver = next(
+            node
+            for node in cls.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_resolve_dsv41_reasoning_effort"
+        )
+        namespace["chat_encoding"] = SimpleNamespace(parse_dsv41_reasoning_effort=parse)
+        exec(
+            compile(
+                ast.fix_missing_locations(ast.Module(body=[resolver], type_ignores=[])),
+                str(serving_path),
+                "exec",
+            ),
+            namespace,
+        )
+        owner = SimpleNamespace(_dsv41_default_reasoning_effort="high")
+        self.assertEqual(namespace[resolver.name](owner, 50), 50)
+        self.assertEqual(namespace[resolver.name](owner, None), "high")
+
     def test_developer_preserves_caller_and_standalone_generation_role(self):
         solo = [{"role": "developer", "content": "one"}]
         self.assertIs(roles._prepare_messages(solo), solo)

@@ -1069,6 +1069,33 @@ class SchedulerMetricsReporter:
             self.scheduler.kv_events_publisher.emit_kv_metrics()
         self.scheduler.kv_events_publisher.publish_kv_events()
 
+    def _refresh_local_idle_running_gauge(self) -> None:
+        """Publish an empty local DP without resetting any TPS accounting."""
+        if not self.current_scheduler_metrics_enabled:
+            return
+        scheduler = self.scheduler
+        # A completed idle result can overlap a newer local decode/prefill.
+        if scheduler.running_batch.reqs or not scheduler._pp_microbatches_drained():
+            return
+        current_batch = scheduler.cur_batch_for_debug
+        if current_batch is not None and not current_batch.forward_mode.is_idle():
+            return
+        if scheduler.enable_overlap and any(
+            pending.reqs for pending, _ in getattr(scheduler, "result_queue", ())
+        ):
+            return
+        running = QueueCount.from_reqs(
+            scheduler.running_batch.reqs, scheduler.enable_priority_scheduling
+        )
+        if self.stats.num_running_reqs == running:
+            return
+        self.stats.num_running_reqs = running
+        # Only the gauge (including priority children) changes. Do not call
+        # reset_metrics/log_stats or reset decode timing/token accumulators.
+        self.metrics_collector._log_gauge_queue_count(
+            self.metrics_collector.num_running_reqs, running
+        )
+
     def log_batch_result_stats(
         self,
         batch: ScheduleBatch,
@@ -1076,6 +1103,9 @@ class SchedulerMetricsReporter:
     ):
         if not isinstance(result, GenerationBatchResult):
             return
+
+        if batch.forward_mode.is_idle():
+            self._refresh_local_idle_running_gauge()
 
         if (m := result.expert_distribution_metrics) is not None:
             balancedness = m.eplb_balancedness.item()

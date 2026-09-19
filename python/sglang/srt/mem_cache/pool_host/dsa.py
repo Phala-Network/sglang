@@ -16,6 +16,10 @@ from sglang.kernels.ops.kvcache.hicache import (
     transfer_hicache_all_layer_mla_staged_lf_pf as jit_transfer_hicache_all_layer_mla_staged_lf_pf,
 )
 from sglang.srt.mem_cache.memory_pool import DSATokenToKVPool
+from sglang.srt.mem_cache.pool_host.allocation_budget import (
+    active_host_allocation_budget,
+    host_slot_metadata_bytes,
+)
 from sglang.srt.mem_cache.pool_host.base import (
     _WRITE_BACK_STAGING_PAGE_CHUNK,
     HostKVCache,
@@ -109,9 +113,16 @@ class DSAIndexerPoolHost(HostKVCache):
             self.clear()
             return
 
-        buf_elem_size = self.page_num * self.layer_num * self.indexer_page_stride_size
+        buf_elem_size = (
+            self.indexer_page_num * self.layer_num * self.indexer_page_stride_size
+        )
         requested_bytes = buf_elem_size * self.indexer_dtype.itemsize
-        available_bytes = host_memory_budget_bytes()
+        budget = active_host_allocation_budget()
+        available_bytes = (
+            budget.register_pool(self, host_slot_metadata_bytes(self.logical_size))
+            if budget is not None
+            else host_memory_budget_bytes()
+        )
         if requested_bytes > available_bytes:
             raise ValueError(
                 f"Not enough host memory for DSA indexer hierarchical cache. "

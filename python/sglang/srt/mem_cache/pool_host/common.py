@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import mmap
 import os
 from collections import defaultdict
 from functools import lru_cache
@@ -9,7 +11,9 @@ from functools import lru_cache
 import torch
 
 from sglang.srt.environ import envs
+from sglang.srt.mem_cache.pool_host.allocation_budget import active_host_allocation_budget
 from sglang.srt.mem_cache.storage.mmap import alloc_mmap
+from sglang.srt.mem_cache.storage.mmap.mmap_allocator import requested_hugepage_bytes
 from sglang.srt.runtime_context import get_memory
 from sglang.srt.utils import is_hip
 
@@ -70,6 +74,16 @@ class ShmHostTensorAllocator(HostTensorAllocator):
                 except OSError:
                     pass
         self.fds = []
+
+
+def host_mapping_page_size(allocator) -> int:
+    hugepage_bytes = requested_hugepage_bytes()
+    if hugepage_bytes and type(allocator) is not HostTensorAllocator:
+        raise ValueError(
+            "Strict HugeTLB requires the default mmap host allocator; "
+            f"got {type(allocator).__name__}. SHM/native allocators are not certified."
+        )
+    return hugepage_bytes or mmap.PAGESIZE
 
 
 def get_allocator_from_storage(allocator_type):
@@ -155,6 +169,9 @@ def _cuda_host_register(
             chunk_limit_bytes // registration_granularity_bytes
         ) * registration_granularity_bytes
     registered_ranges: list[tuple[int, int]] = []
+    # Empty metadata distinguishes a failed first registration from a legacy
+    # tensor whose original registration metadata was never recorded.
+    setattr(buffer, _CUDA_HOST_REGISTERED_RANGES_ATTR, registered_ranges)
     try:
         offset = 0
         while offset < total:
@@ -179,8 +196,7 @@ def _cuda_host_register(
         remaining_ranges = _cuda_host_unregister_ranges(
             cudart, registered_ranges, operation="registration rollback"
         )
-        if remaining_ranges:
-            setattr(buffer, _CUDA_HOST_REGISTERED_RANGES_ATTR, remaining_ranges)
+        setattr(buffer, _CUDA_HOST_REGISTERED_RANGES_ATTR, remaining_ranges)
         raise
 
 
@@ -233,7 +249,15 @@ def alloc_with_host_register(
     Allocate tensor and register host memory with cudaHostRegister.
     CudaHostRegister only applies when pin_memory=True.
     """
+    # Admission and tracking exist only while the complete DSA stack is built.
+    # Always validate an explicit HugeTLB request, even outside that transaction.
+    host_mapping_page_size(allocator)
+    budget = active_host_allocation_budget()
+    if budget is not None:
+        budget.claim_mapping(math.prod(dims) * dtype.itemsize, allocator)
     buffer = allocator.allocate(dims, dtype=dtype, device=device)
+    if budget is not None:
+        budget.record_buffer(buffer)
     if pin_memory:
         _cuda_host_register(buffer, registration_granularity_bytes)
     return buffer
@@ -250,7 +274,14 @@ def alloc_with_pin_memory(
     """
     Allocate tensor using PyTorch's built-in pin_memory flag.
     """
+    if requested_hugepage_bytes():
+        raise ValueError("Built-in pin_memory allocator cannot certify HugeTLB backing")
+    budget = active_host_allocation_budget()
+    if budget is not None:
+        budget.claim_mapping(math.prod(dims) * dtype.itemsize, allocator)
     buffer = torch.empty(dims, dtype=dtype, device=device, pin_memory=pin_memory)
+    if budget is not None:
+        budget.record_buffer(buffer)
     return buffer
 
 

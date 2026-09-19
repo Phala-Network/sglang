@@ -769,6 +769,8 @@ class Envs:
     # "use_direct_io": false key in --hicache-storage-backend-extra-config.
     SGLANG_HICACHE_NIXL_USE_DIRECT_IO = EnvBool(True)
     SGLANG_HUGEPAGE_SIZE = EnvStr("")
+    # Opt-in single-host DSA startup accounting; external L3 is not supported.
+    SGLANG_HICACHE_DSA_STARTUP_BUDGET = EnvBool(False)
 
     # ===================================================================
     # KV-transfer staging and Mooncake transport

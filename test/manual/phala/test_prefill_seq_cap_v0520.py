@@ -81,7 +81,7 @@ def import_installed():
     global torch, msgspec, ServerArgs, prepare_server_args, ExecGraph
     global get_context, get_exec, Backend, CaptureHiddenMode, ForwardMode
     global ForwardBatch, ScheduleBatch, PrefillCudaGraphRunner, dp_attn
-    global SpeculativeAlgorithm
+    global SpeculativeAlgorithm, parse_cuda_graph_config
     import msgspec
     import torch
     if torch.cuda.is_initialized():
@@ -93,6 +93,7 @@ def import_installed():
     bootstrap.resolve_once()
     get_context().set_server_args(bootstrap)
     from sglang.srt.arg_groups.fields.exec_ import ExecGraph
+    from sglang.srt.arg_groups.cuda_graph_hook import parse_cuda_graph_config
     from sglang.srt.model_executor.cuda_graph_config import Backend
     from sglang.srt.model_executor.forward_batch_info import (
         CaptureHiddenMode, ForwardBatch, ForwardMode,
@@ -122,9 +123,11 @@ def resolved(cli=()):
         "--cuda-graph-backend-prefill","breakable", "--cuda-graph-max-bs-prefill","16384",
         *cli,
     ])
-    # v0.5.20 resolves the graph hook in the real resolution pipeline. Publish
-    # the real resolved record; do not invoke the hook a second time.
+    # The real pipeline returns early for model_path=dummy, before graph
+    # hooks (pipeline.py/server_args.py). Invoke the real hook exactly once
+    # for this CPU fixture, then publish its real resolution declarations.
     args.resolve_once()
+    parse_cuda_graph_config(args)
     get_context().set_server_args(args)
     return args, get_exec().graph.cuda_graph_config.prefill
 

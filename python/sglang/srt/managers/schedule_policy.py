@@ -1144,12 +1144,28 @@ class PrefillAdder:
                 _rem_tokens = min(
                     _rem_tokens, int(self.rem_swa_tokens) - self.page_size
                 )
-            # The chunked_req must be added to the list; otherwise, it will cause a memory leak.
-            # Therefore, in certain cases where _rem_tokens <= 0, it should be replaced with rem_chunk_tokens.
+            # Estimated future decode reservations may exhaust rem_total_tokens
+            # before physical KV is exhausted. A continuation may still progress,
+            # but the fallback must remain bounded by allocatable KV below.
             if _rem_tokens <= 0:
                 if self.is_hybrid_swa:
                     return req
                 _rem_tokens = self.rem_chunk_tokens
+
+            # Reserve the page slack charged by _update_prefill_budget and
+            # alloc_paged_token_slots_extend. Page-align the cap so rounding the
+            # admitted extension cannot consume that slack. In particular, never
+            # turn an exhausted decode estimate into an unchecked full chunk.
+            physical_cap = (
+                (int(self.cur_rem_tokens) - self.page_size)
+                // self.page_size
+                * self.page_size
+            )
+            _rem_tokens = min(_rem_tokens, physical_cap)
+            if _rem_tokens <= 0:
+                # Keep ownership of the cached prefix and request slot. The
+                # scheduler can run decode/retraction and retry this chunk.
+                return req
 
         # A mid-chunk rank prefills this pass regardless of the delayer
         # verdict, so report prefillable=True and ignore the result.

@@ -3857,6 +3857,11 @@ class Scheduler(
         if self.chunked_req is not None:
             self.chunked_req.init_next_round_input()
             self.chunked_req = adder.add_chunked_req(self.chunked_req)
+            if not adder.can_run_list:
+                # A parked continuation still owns its KV and request slot.
+                # Let decode/retraction free space before retrying. Do not attach
+                # it to another prefill batch or increment its in-flight count.
+                return None, running_batch
 
         if self.enable_lora:
             running_loras = {

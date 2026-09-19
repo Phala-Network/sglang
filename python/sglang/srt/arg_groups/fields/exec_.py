@@ -485,6 +485,14 @@ class ExecGraph(msgspec.Struct):
     cuda_graph_max_bs_prefill: A[
         Optional[int], "Maximum batch size captured for the prefill cuda graph."
     ] = None
+    cuda_graph_max_seq_len_prefill: A[
+        Optional[int],
+        "Maximum per-request total sequence length (cached prefix plus new tokens) "
+        "eligible for prefill CUDA graph replay. Longer sequences run eagerly. "
+        "Folds into cuda_graph_config[prefill].max_seq_len; explicit JSON wins. "
+        "None leaves replay unrestricted by sequence length; model context and "
+        "capture token buckets are unchanged.",
+    ] = None
     cuda_graph_bs_decode: A[
         Optional[List[int]],
         "Explicit list of batch sizes to capture for the decode cuda graph.",

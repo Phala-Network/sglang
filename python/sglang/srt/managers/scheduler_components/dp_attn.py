@@ -346,6 +346,9 @@ def _local_prefill_cuda_graph_vote(
         input_embeds=input_embeds,
         replace_embeds=replace_embeds,
         prefix_lens=prefix_lens,
+        # prepare_for_decode's host lengths already describe the converted
+        # one-token extend view; convert_decode_to_extend preserves them.
+        seq_lens_cpu=getattr(local_batch, "seq_lens_cpu", None),
         is_target_verify=mode.is_target_verify(),
         capture_hidden_mode=None,
         return_logprob=return_logprob,

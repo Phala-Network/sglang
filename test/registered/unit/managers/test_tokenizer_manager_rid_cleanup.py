@@ -638,6 +638,111 @@ class TestParallelStreamTaskCleanup(CustomTestCase):
         asyncio.run(drive())
 
 
+class TestParallelSampleParentStateLifecycle(CustomTestCase):
+    """Use real GenerateReqInput normalization with the real state initializer."""
+
+    @staticmethod
+    def _parallel_obj(text, *, rid, n):
+        obj = GenerateReqInput(text=text, rid=rid, sampling_params={"n": n})
+        obj.normalize_batch_and_arguments()
+        obj.received_time = 0.0
+        return obj
+
+    def test_single_prompt_parallel_samples_create_one_parent_state(self):
+        obj = self._parallel_obj("hello", rid="client-request", n=3)
+        self.assertEqual(obj.batch_size, 1)
+        self.assertEqual(len(obj.rid), 3)
+
+        tm = _make_tokenizer_manager(self)
+        tm._init_req_state(obj)
+
+        self.assertEqual(list(tm.rid_to_state), [obj.rid[0]])
+        self.assertIs(tm.rid_to_state[obj.rid[0]].obj, obj[0])
+
+    def test_two_prompt_parallel_samples_create_two_parent_states(self):
+        obj = self._parallel_obj(["first", "second"], rid="batch-request", n=2)
+        self.assertEqual(obj.batch_size, 2)
+        self.assertEqual(len(obj.rid), 4)
+
+        tm = _make_tokenizer_manager(self)
+        tm._init_req_state(obj)
+
+        self.assertEqual(list(tm.rid_to_state), obj.rid[: obj.batch_size])
+        self.assertIs(tm.rid_to_state[obj.rid[0]].obj, obj[0])
+        self.assertIs(tm.rid_to_state[obj.rid[1]].obj, obj[1])
+
+    def test_explicit_parent_rids_keep_existing_batch_behavior(self):
+        obj = self._parallel_obj(
+            ["first", "second"], rid=["parent-a", "parent-b"], n=2
+        )
+        self.assertEqual(obj.batch_size, 2)
+        self.assertEqual(obj.rid, ["parent-a", "parent-b"])
+
+        tm = _make_tokenizer_manager(self)
+        tm._init_req_state(obj)
+
+        self.assertEqual(list(tm.rid_to_state), ["parent-a", "parent-b"])
+
+
+class TestBackgroundAbortRequestOwnership(CustomTestCase):
+    @staticmethod
+    def _run(background):
+        async def drive():
+            with patch("asyncio.sleep", new=AsyncMock()):
+                await background()
+
+        asyncio.run(drive())
+
+    @staticmethod
+    def _normalized_obj(text, *, rid, sampling_params=None):
+        obj = GenerateReqInput(
+            text=text,
+            rid=rid,
+            sampling_params={} if sampling_params is None else sampling_params,
+        )
+        obj.normalize_batch_and_arguments()
+        obj.received_time = 0.0
+        return obj
+
+    def test_pre_normalization_background_abort_is_a_noop(self):
+        tm = _make_tokenizer_manager(self)
+        tm.abort_request = Mock()
+        obj = GenerateReqInput(text="hello", sampling_params={})
+
+        self._run(tm.create_abort_task(obj))
+
+        tm.abort_request.assert_not_called()
+
+    def test_background_abort_only_aborts_its_state_owner(self):
+        tm = _make_tokenizer_manager(self)
+        tm.abort_request = Mock()
+        old_obj = self._normalized_obj("hello", rid="reused", sampling_params={})
+        background = tm.create_abort_task(old_obj)
+        new_obj = self._normalized_obj("hello", rid="reused", sampling_params={})
+        tm._init_req_state(new_obj)
+
+        self._run(background)
+
+        tm.abort_request.assert_not_called()
+
+    def test_parallel_batch_background_abort_uses_original_parent_count(self):
+        tm = _make_tokenizer_manager(self)
+        tm.abort_request = Mock()
+        obj = self._normalized_obj(
+            ["first", "second"], rid="parallel", sampling_params={"n": 2}
+        )
+        self.assertEqual(obj.batch_size, 2)
+        self.assertEqual(len(obj.rid), 4)
+        tm._init_req_state(obj)
+
+        self._run(tm.create_abort_task(obj))
+
+        self.assertEqual(
+            [call.args[0] for call in tm.abort_request.call_args_list],
+            obj.rid[: obj.batch_size],
+        )
+
+
 class TestGenerateRequestCleanupOnDispatchFailure(CustomTestCase):
     """generate_request must not leak rid_to_state when dispatch fails.
 

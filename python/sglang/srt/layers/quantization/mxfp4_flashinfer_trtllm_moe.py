@@ -110,6 +110,8 @@ class Mxfp8RoutedInputPreQuant(NamedTuple):
     x_q: torch.Tensor
     x_sf: torch.Tensor
     ready: Optional[torch.cuda.Event]
+
+
 class Mxfp4FlashinferTrtllmMoEMethod:
     fuse_routed_scaling_factor_in_topk = True
 
@@ -212,6 +214,8 @@ class Mxfp4FlashinferTrtllmMoEMethod:
 
         if getattr(layer, "_mega_moe_weights_built", False):
             return
+
+        _pad_intermediate_size(layer)
 
         w13_w, w13_s = reorder_w1w3_to_w3w1(
             layer.w13_weight.data, layer.w13_weight_scale_inv.data

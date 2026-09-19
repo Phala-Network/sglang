@@ -1,0 +1,14 @@
+{
+  "schema": "phala.dependency-overlay.v1",
+  "base_image": "lmsysorg/sglang:v0.5.20-cu130@sha256:06e4f2ed21afde4ff513cda65070124e727ba23ccaeff7712b8c40e1097d611f",
+  "package": "flashinfer-python",
+  "version": "0.6.18",
+  "files": [
+    {
+      "path": "flashinfer/comm/allreduce.py",
+      "before_sha256": "3bfe75852207d474cb44c66c074fc9ae7f5b4e13d398b494845b6a0e56ac25a8",
+      "after_sha256": "d4c7b2bdb3be18814e626baeb45c1d02127ab2f5ae6b0a1e0995281b56ccfcc0"
+    }
+  ],
+  "scope": "TRTLLM workspace destruction only; release registry and creation tuple, including non-CC ownership. No CC dispatch/allocation-vote/PPCIE patches."
+}

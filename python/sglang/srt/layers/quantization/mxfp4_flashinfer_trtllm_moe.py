@@ -110,6 +110,8 @@ class Mxfp8RoutedInputPreQuant(NamedTuple):
     x_q: torch.Tensor
     x_sf: torch.Tensor
     ready: Optional[torch.cuda.Event]
+
+
 class Mxfp4FlashinferTrtllmMoEMethod:
     fuse_routed_scaling_factor_in_topk = True
 

@@ -51,6 +51,67 @@ def make_weights(intermediate, hidden=256, device="cpu"):
 
 
 class TestMxfp4TrtllmPadding(CustomTestCase):
+    def test_cpu_weight_load_pads_before_reorder(self):
+        """Exercise the real caller and padding helper, stopping before GPU shuffle."""
+        weights = make_weights(576)
+        layer = make_layer([tensor.clone() for tensor in weights])
+        layer.intermediate_size_per_partition = 576
+        method = object.__new__(mxfp4.Mxfp4FlashinferTrtllmMoEMethod)
+        method._fp8 = Mock()
+
+        class ReorderReached(Exception):
+            pass
+
+        def check_reorder(weight, scales):
+            self.assertEqual(layer.intermediate_size_per_partition, 640)
+            self.assertEqual(weight.shape, (8, 1280, 128))
+            self.assertEqual(scales.shape, (8, 1280, 8))
+            self.assertEqual(layer.w2_weight.shape, (8, 256, 320))
+            self.assertEqual(layer.w2_weight_scale_inv.shape, (8, 256, 20))
+            torch.testing.assert_close(weight[:, :576], weights[0][:, :576])
+            torch.testing.assert_close(weight[:, 640:1216], weights[0][:, 576:])
+            torch.testing.assert_close(scales[:, :576], weights[2][:, :576])
+            torch.testing.assert_close(scales[:, 640:1216], weights[2][:, 576:])
+            self.assertEqual(torch.count_nonzero(weight[:, 576:640]).item(), 0)
+            self.assertEqual(torch.count_nonzero(weight[:, 1216:]).item(), 0)
+            self.assertTrue(torch.all(scales[:, 576:640] == 1).item())
+            self.assertTrue(torch.all(scales[:, 1216:] == 1).item())
+            torch.testing.assert_close(layer.w2_weight[..., :288], weights[1])
+            torch.testing.assert_close(layer.w2_weight_scale_inv[..., :18], weights[3])
+            self.assertEqual(torch.count_nonzero(layer.w2_weight[..., 288:]).item(), 0)
+            self.assertTrue(torch.all(layer.w2_weight_scale_inv[..., 18:] == 1).item())
+            raise ReorderReached
+
+        with (
+            patch(
+                "sglang.srt.layers.quantization.utils.reorder_w1w3_to_w3w1",
+                side_effect=check_reorder,
+            ),
+            patch.object(mxfp4, "print_warning_once"),
+            self.assertRaises(ReorderReached),
+        ):
+            method.process_weights_after_loading(layer)
+        method._fp8.process_weights_after_loading.assert_called_once_with(layer)
+
+    def test_cpu_aligned_padding_is_identity(self):
+        layer = make_layer(make_weights(640))
+        layer.intermediate_size_per_partition = 640
+        before = {name: value.data_ptr() for name, value in layer.named_parameters()}
+        mxfp4._pad_intermediate_size(layer)
+        self.assertEqual(
+            before, {name: value.data_ptr() for name, value in layer.named_parameters()}
+        )
+        self.assertEqual(layer.intermediate_size_per_partition, 640)
+
+    def test_cpu_mega_moe_does_not_enter_padding(self):
+        method = object.__new__(mxfp4.Mxfp4FlashinferTrtllmMoEMethod)
+        method._fp8 = Mock()
+        layer = SimpleNamespace(_mega_moe_weights_built=True)
+        with patch.object(mxfp4, "_pad_intermediate_size") as pad:
+            method.process_weights_after_loading(layer)
+        method._fp8.process_weights_after_loading.assert_called_once_with(layer)
+        pad.assert_not_called()
+
     @unittest.skipUnless(
         torch.cuda.is_available() and torch.cuda.get_device_capability()[0] == 10,
         "Requires Blackwell",

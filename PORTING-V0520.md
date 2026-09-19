@@ -13,6 +13,8 @@ This is an actual v0.5.20 source branch, rooted at `94602c9c2b7cbdb8efd5c52802da
 
 The final candidate commit and archive/tree hashes belong in the parent's build-input manifest after this file is committed. They are deliberately not self-referenced here.
 
+Post-freeze review correction: source `2d625cff` omitted the donor's `_pad_intermediate_size(layer)` call in MXFP4 weight postprocessing. A follow-up commit restores it after the MegaMoE bypass and before gate/up reorder or byte shuffling. The former source archive/build is superseded. The actual-method CPU-stub regression reproduced one failure before the correction and all three cases pass afterward; the padding helper, create/load/scale registration and routed quantization functions are AST-identical to donor `a6cf0581`. Real torch CPU fixtures additionally check 576→640 zero/one padding and aligned/no-op behavior; run those in the image because local Windows has no torch.
+
 ## Donor closure and adaptations
 
 | Donor commit | Upstream change | Candidate role |
@@ -65,7 +67,7 @@ Required changed native extension interfaces:
 1. `sglang.srt.rust_extensions._multimodal`: `_multimodal.dsv41.resize_patchify` from `rust/sglang-mm`.
 2. `sglang.srt.mem_cache.rust_tree_core.mem_cache`: updated C1/C2 pool-name serialization from `rust/sglang-radix-tree`.
 
-Build these through **the main `python/setup.py`**, not `pip install rust/sglang-radix-tree` (that crate has no standalone Python pyproject). The setup discovers the independent radix manifest, its `torch_2_13_compat.h`, and passes Cargo `--locked`.
+Build these through **the main `python/setup.py`**, not `pip install rust/sglang-radix-tree` (that crate has no standalone Python pyproject). The setup discovers the independent radix manifest, its `torch_2_13_compat.h`, and passes Cargo `--locked`. Explicitly set `RUSTUP_TOOLCHAIN=1.92.0` for metadata and build invocations: Cargo launched from the `python/` cwd does not necessarily discover the sibling `rust/rust-toolchain.toml`. Record `rustc --version` and `cargo --version` under that override.
 
 Parent packaging design uses a fresh measured `/opt/phala-source`, explicitly copies unchanged `_server`/`_grpc` extensions from the immutable base, builds `SGLANG_BUILD_RUST_EXTS=multimodal,mem_cache`, installs editable with `--no-deps --no-build-isolation`, and binds import resolution to that source tree. Verify all four extension files after installation; a partial wheel reinstall must not silently uninstall the two inherited binaries. Alternatively build all extensions when publishing a full replacement wheel.
 
@@ -75,7 +77,7 @@ Source-archive install outline (commands for the parent builder, not executed he
 
 ```sh
 python3 -c 'import setuptools_rust, setuptools_scm, torch; assert torch.__version__.startswith("2.13.0")'
-SGLANG_BUILD_RUST_EXTS=multimodal,mem_cache python3 -m pip install --no-deps --no-build-isolation -e /opt/phala-source/python
+RUSTUP_TOOLCHAIN=1.92.0 SGLANG_BUILD_RUST_EXTS=multimodal,mem_cache python3 -m pip install --no-deps --no-build-isolation -e /opt/phala-source/python
 python3 -c 'from sglang.srt.rust_extensions import _multimodal, _grpc, _server; assert callable(_multimodal.dsv41.resize_patchify); import sglang.srt.mem_cache.rust_tree_core.mem_cache'
 ```
 
@@ -95,6 +97,7 @@ Run in the source-bound/final-image CPU environment (separate final-image tests 
 ```sh
 python3 test/phala_deepseek_v41/audit_v0520_source.py
 python3 test/phala_deepseek_v41/test_cpu_contracts_v0520.py -v
+python3 test/phala_deepseek_v41/test_mxfp4_weight_load_contract.py -v
 python3 test/phala_deepseek_v41/selftest.py
 python3 -m pytest -q test/registered/unit/entrypoints/openai/test_async_dsv41_conversion.py test/registered/unit/layers/test_dsv41_candidate_blocks.py test/registered/unit/models/test_dsv41_medium_finalize_selection.py
 python3 -m pytest -q test/registered/unit/layers/quantization/test_mxfp4_trtllm_padding.py test/registered/unit/model_executor/test_pool_configurator.py test/registered/unit/mem_cache/test_unified_radix_hicache_dispatch.py

@@ -3835,4 +3835,8 @@ from sglang.srt.phala_compat import dsv41_media_hardening as _phala_compat_1
 
 _phala_compat_1._patch_serving_chat(_phala_sys.modules[__name__])
 del _phala_compat_1
+from sglang.srt.phala_compat import dsv41_protocol_compat as _phala_compat_2
+
+_phala_compat_2._patch_reasoning_exclude(_phala_sys.modules[__name__])
+del _phala_compat_2
 del _phala_sys

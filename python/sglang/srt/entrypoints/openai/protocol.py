@@ -2332,3 +2332,13 @@ class TranscriptionStreamResponse(BaseModel):
     model: str
     choices: List[TranscriptionStreamChoice]
     usage: Optional[UsageInfo] = None
+
+# Phala source-integrated compatibility (no runtime source overlays).
+import sys as _phala_sys
+from sglang.srt.phala_compat import dsv41_protocol_compat as _phala_compat_0
+_phala_compat_0._patch_reasoning_inputs(_phala_sys.modules[__name__])
+del _phala_compat_0
+from sglang.srt.phala_compat import dsv41_protocol_compat as _phala_compat_1
+_phala_compat_1._patch_usage_details(_phala_sys.modules[__name__])
+del _phala_compat_1
+del _phala_sys

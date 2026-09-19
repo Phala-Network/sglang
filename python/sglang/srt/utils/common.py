@@ -4839,3 +4839,10 @@ def init_cublas():
     b = torch.ones((16, 16), dtype=dtype, device=device)
     c = a @ b
     return c
+
+# Phala source-integrated compatibility (no runtime source overlays).
+import sys as _phala_sys
+from sglang.srt.phala_compat import dsv41_media_hardening as _phala_compat_0
+_phala_compat_0._widen_client_media_exceptions(_phala_sys.modules[__name__])
+del _phala_compat_0
+del _phala_sys

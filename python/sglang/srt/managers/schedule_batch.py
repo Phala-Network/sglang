@@ -1839,6 +1839,12 @@ class Req(ReqDllmMixin):
         if self.finished_len is not None and self.finished_len > max_new_tokens:
             self.finished_reason = FINISH_LENGTH(length=max_new_tokens)
             self.finished_len = max_new_tokens
+        self._cap_reasoning_tokens_at_finished_len()
+
+    def _cap_reasoning_tokens_at_finished_len(self) -> None:
+        """Preserve Phala's emitted-prefix usage cap (upstream PR #37450)."""
+        if self.finished_len is not None and self.reasoning_tokens > self.finished_len:
+            self.reasoning_tokens = self.finished_len
 
     def update_finish_state(self, new_accepted_len: int = 1):
         if self.finished():
@@ -1876,6 +1882,7 @@ class Req(ReqDllmMixin):
                 length=self.sampling_params.max_new_tokens
             )
             self.finished_len = self.sampling_params.max_new_tokens
+            self._cap_reasoning_tokens_at_finished_len()
             return
 
         if self.grammar is not None and self.grammar.is_terminated():

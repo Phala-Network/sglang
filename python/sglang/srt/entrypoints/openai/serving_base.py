@@ -89,9 +89,10 @@ class OpenAIServingBase(ABC):
                 request_logger.log_openai_received_request(request, request=raw_request)
 
             # Convert to internal format
-            adapted_request, processed_request = self._convert_to_internal_request(
-                request, raw_request
-            )
+            (
+                adapted_request,
+                processed_request,
+            ) = await self._convert_to_internal_request_async(request, raw_request)
 
             if isinstance(adapted_request, (GenerateReqInput, EmbeddingReqInput)):
                 # Only set timing fields if adapted_request supports them
@@ -146,6 +147,14 @@ class OpenAIServingBase(ABC):
             return rid
 
         return f"{self._request_id_prefix()}{uuid.uuid4().hex}"
+
+    async def _convert_to_internal_request_async(
+        self,
+        request: OpenAIServingRequest,
+        raw_request: Request = None,
+    ) -> tuple[GenerateReqInput, OpenAIServingRequest]:
+        """Preserve synchronous conversion unless an endpoint opts into a worker."""
+        return self._convert_to_internal_request(request, raw_request)
 
     @abstractmethod
     def _convert_to_internal_request(

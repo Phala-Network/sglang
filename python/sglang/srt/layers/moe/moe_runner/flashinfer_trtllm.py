@@ -99,18 +99,23 @@ def _make_deferred_finalize_output(
     result,
     *,
     top_k: int,
+    expected_expert_weights_dtype: torch.dtype,
 ) -> FlashInferTrtllmDeferredFinalizeOutput:
     """Validate and adapt FlashInfer's ``do_finalize=False`` output ABI."""
     gemm2_out, expert_weights, expanded_idx_to_permuted_idx = result[:3]
-    # Some FlashInfer versions size this buffer from routing_logits dtype while
-    # writing BF16 weights into it. Reinterpret only the live BF16 prefix.
-    if expert_weights.dtype == torch.float32:
-        n, k = expert_weights.shape
-        expert_weights = expert_weights.view(torch.bfloat16).view(-1, k)[:n]
-    if expert_weights.dtype != torch.bfloat16:
+    # FlashInfer 0.6.18 owns a BF16 buffer for FromLogits/packed routing but
+    # returns the caller-owned BF16/FP32 weights unchanged for unpacked routing.
+    # Make each caller declare that routing ABI; dtype alone must never trigger
+    # a bit reinterpretation between genuine FP32 values and packed BF16 bits.
+    if expected_expert_weights_dtype not in (torch.bfloat16, torch.float32):
         raise RuntimeError(
-            "FlashInfer deferred finalize must return BF16 expert weights, got "
-            f"{expert_weights.dtype}"
+            "FlashInfer deferred finalize only supports BF16 or FP32 expert "
+            f"weights, got expected dtype {expected_expert_weights_dtype}"
+        )
+    if expert_weights.dtype != expected_expert_weights_dtype:
+        raise RuntimeError(
+            "FlashInfer deferred finalize expert weights dtype mismatch: "
+            f"expected {expected_expert_weights_dtype}, got {expert_weights.dtype}"
         )
     if gemm2_out.dtype != torch.bfloat16:
         raise RuntimeError(
@@ -926,6 +931,7 @@ def fused_experts_none_to_flashinfer_trtllm_fp8(
                 output = _make_deferred_finalize_output(
                     trtllm_fp8_block_scale_moe(**deferred_kwargs),
                     top_k=topk_config.top_k,
+                    expected_expert_weights_dtype=torch.bfloat16,
                 )
             else:
                 trtllm_fp8_block_scale_moe_out_wrapper(

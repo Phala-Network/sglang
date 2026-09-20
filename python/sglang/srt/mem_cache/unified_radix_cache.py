@@ -1182,6 +1182,23 @@ class UnifiedRadixCache(BasePrefixCache):
                 )
             return
 
+        # Preserve completed chunks before the final non-chunked insert.
+        # Do not count a request's own chunks as hits or bypass the selective
+        # policy. The existing backup path owns component transfers and locks.
+        if (
+            chunked
+            and self.tree_core.enable_hicache
+            and self.cache_controller is not None
+            and self.cache_controller.write_policy == "write_through"
+            and result.last_device_node is not None
+            and not self.tree_core.is_root(result.last_device_node)
+        ):
+            node = self.tree_core.node_by_id(result.last_device_node)
+            if not node.backuped:
+                self._apply_cache_actions(
+                    [self.tree_core._build_backup_kv_action(node)]
+                )
+
         # Match prefix. SWA insertion retains one extra window before the
         # page-aligned boundary, so the normal match remains safe to repoint.
         match_result = self.match_prefix(MatchPrefixParams(key=radix_key, req=req))

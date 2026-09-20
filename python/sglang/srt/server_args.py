@@ -301,7 +301,8 @@ class ServerArgs:
 
     @property
     def launch_command(self) -> str | None:
-        """Original CLI arguments or Engine call, with secrets redacted."""
+        """Original CLI arguments or Engine call, with watermark secrets and
+        explicit credential flags redacted."""
         return getattr(self, "_launch_command", None)
 
     def __repr__(self) -> str:
@@ -331,6 +332,12 @@ class ServerArgs:
         # TODO: drop together with `--enable-dp-attention` after 2026-12-31.
         resolved["enable_dp_attention"] = resolving_view(self).attn_dp_size > 1
         return resolved
+
+    def diagnostic_dict(self) -> dict[str, Any]:
+        """Resolved configuration for logs/readbacks, never runtime IPC."""
+        from sglang.srt.arg_groups.token_auth import redact_auth_config
+
+        return redact_auth_config(self.resolved_dict())
 
     LANGUAGE_MODEL_ONLY_ARCHITECTURES = (
         "DeepseekV4ForCausalLM",
@@ -712,10 +719,11 @@ def prepare_server_args(argv: list[str]) -> ServerArgs:
     # the configuration was asked for. It rides along on the record so a
     # subprocess copy can answer the same question the launcher can.
     # lazy: watermark imports torch, outside server_args' top-level boundary.
+    from sglang.srt.arg_groups.token_auth import redact_auth_argv
     from sglang.srt.sampling.watermarking.core import redact_watermark_command_line
 
     server_args._launch_command = redact_watermark_command_line(
-        argv, raw_args.watermark_config
+        redact_auth_argv(argv), raw_args.watermark_config
     )
     return server_args
 

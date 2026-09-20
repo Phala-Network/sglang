@@ -16,6 +16,7 @@ from fastapi.encoders import jsonable_encoder
 from pydantic import ValidationError
 
 from sglang.srt.arg_groups.overrides import resolving_view
+from sglang.srt.arg_groups.token_auth import redact_auth_config
 from sglang.srt.configs.embedding_model_spec import resolved_embedding_plan
 from sglang.srt.runtime_context import get_lora, get_serving
 from sglang.srt.sampling.watermarking.core import redact_watermark_secrets
@@ -429,9 +430,11 @@ class RuntimeHandle:
     def get_server_info(self) -> str:
         return json.dumps(
             msgspec_to_builtins(
-                redact_watermark_secrets(
-                    build_server_info(
-                        self.tokenizer_manager.server_args, self.scheduler_info
+                redact_auth_config(
+                    redact_watermark_secrets(
+                        build_server_info(
+                            self.tokenizer_manager.server_args, self.scheduler_info
+                        )
                     )
                 )
             ),

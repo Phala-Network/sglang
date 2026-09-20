@@ -69,6 +69,7 @@ from fastapi.routing import APIRoute
 from uvicorn.supervisors.multiprocess import Multiprocess
 
 from sglang.srt.arg_groups.overrides import resolving_view
+from sglang.srt.arg_groups.token_auth import redact_auth_config
 from sglang.srt.configs.embedding_model_spec import resolved_embedding_plan
 from sglang.srt.configs.model_config import load_joint_head_config, load_pointer_head
 from sglang.srt.constants import HEALTH_CHECK_RID_PREFIX
@@ -910,17 +911,21 @@ async def server_info():
     )
 
     return msgspec_to_builtins(
-        redact_watermark_secrets(
-            {
-                **build_server_info(server_args, _global_state.scheduler_info),
-                "startup_time": _global_state.tokenizer_manager.startup_time,
-                "internal_states": internal_states,
-                "tokenizer_request_states": (
-                    request_state_summary() if callable(request_state_summary) else None
-                ),
-                "version": __version__,
-                "frontend": "python",
-            }
+        redact_auth_config(
+            redact_watermark_secrets(
+                {
+                    **build_server_info(server_args, _global_state.scheduler_info),
+                    "startup_time": _global_state.tokenizer_manager.startup_time,
+                    "internal_states": internal_states,
+                    "tokenizer_request_states": (
+                        request_state_summary()
+                        if callable(request_state_summary)
+                        else None
+                    ),
+                    "version": __version__,
+                    "frontend": "python",
+                }
+            )
         )
     )
 

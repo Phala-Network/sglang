@@ -56,6 +56,7 @@ import zmq
 import zmq.asyncio
 from fastapi import BackgroundTasks
 
+from sglang.srt.arg_groups.token_auth import redact_auth_argv, redact_auth_config
 from sglang.srt.beam_search.output import (
     build_beam_search_out,
     try_build_beam_search_out_dict,
@@ -2369,8 +2370,10 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         part that cannot be reconstructed afterwards.
         """
         try:
-            return redact_watermark_secrets(
-                self.resolved_config_dict(self.server_args.resolved_dict())
+            return redact_auth_config(
+                redact_watermark_secrets(
+                    self.resolved_config_dict(self.server_args.resolved_dict())
+                )
             )
         except Exception as e:
             logger.error(f"Failed to snapshot the resolved config for the dump: {e!r}")
@@ -3504,7 +3507,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     "resolved_config": self._dump_config_snapshot(),
                     "requests": redact_watermark_secrets(data_to_dump),
                     "launch_command": redact_watermark_command_line(
-                        sys.argv, self.server_args.watermark_config
+                        redact_auth_argv(sys.argv), self.server_args.watermark_config
                     ),
                 }
                 with open(filename, "wb") as f:

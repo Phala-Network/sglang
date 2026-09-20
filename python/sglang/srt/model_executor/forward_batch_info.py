@@ -763,9 +763,15 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
         *,
         capture_hidden_mode: Optional[CaptureHiddenMode] = None,
         return_hidden_states_before_norm: bool,
+        extend_metadata: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ):
         # init_new must not mutate the input ScheduleBatch; per-forward
         # overrides go through explicit keyword arguments.
+        if extend_metadata is not None and (
+            batch.forward_mode.is_decode_or_idle()
+            or batch.forward_mode.is_target_verify()
+        ):
+            raise ValueError("Device extend metadata requires an extend forward")
 
         # capture_hidden_mode=None means no override: capture the server's
         # configured maximum so lower-mode requests can share one graph.
@@ -932,19 +938,38 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
                 ret.positions = clamp_position(batch.seq_lens)
         else:
             if isinstance(extend_seq_lens, list):
-                # Main path: H2D from host lists; populate *_cpu mirrors.
+                # CPU mirrors remain real host metadata even when a caller
+                # supplies equivalent device lengths for this forward.
                 assert isinstance(extend_prefix_lens, list)
-                pin_memory = is_pin_memory_available(device)
-                ret.extend_seq_lens = torch.tensor(
-                    extend_seq_lens, dtype=torch.int32, pin_memory=pin_memory
-                ).to(device, non_blocking=True)
-                ret.extend_prefix_lens = torch.tensor(
-                    extend_prefix_lens, dtype=torch.int32, pin_memory=pin_memory
-                ).to(device, non_blocking=True)
+                if extend_metadata is None:
+                    pin_memory = is_pin_memory_available(device)
+                    ret.extend_seq_lens = torch.tensor(
+                        extend_seq_lens, dtype=torch.int32, pin_memory=pin_memory
+                    ).to(device, non_blocking=True)
+                    ret.extend_prefix_lens = torch.tensor(
+                        extend_prefix_lens, dtype=torch.int32, pin_memory=pin_memory
+                    ).to(device, non_blocking=True)
+                else:
+                    if (
+                        len(extend_seq_lens) != ret.batch_size
+                        or len(extend_prefix_lens) != ret.batch_size
+                        or len(extend_metadata) != 2
+                        or any(
+                            not isinstance(value, torch.Tensor)
+                            or value.shape != (ret.batch_size,)
+                            or value.dtype != torch.int32
+                            or value.device != batch.seq_lens.device
+                            for value in extend_metadata
+                        )
+                    ):
+                        raise ValueError("Invalid per-forward extend metadata")
+                    ret.extend_seq_lens, ret.extend_prefix_lens = extend_metadata
                 ret.extend_prefix_lens_cpu = extend_prefix_lens
                 ret.extend_seq_lens_cpu = extend_seq_lens
             else:
                 # gpu_only: device tensors handed in directly; leave *_cpu unset.
+                if extend_metadata is not None:
+                    raise ValueError("Device extend inputs cannot also be overridden")
                 assert isinstance(extend_seq_lens, torch.Tensor)
                 ret.extend_seq_lens = extend_seq_lens
                 ret.extend_prefix_lens = extend_prefix_lens

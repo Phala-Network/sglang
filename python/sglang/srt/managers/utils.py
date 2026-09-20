@@ -4,7 +4,7 @@ import dataclasses
 import logging
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, List, Optional, Union
+from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union
 
 import msgspec
 import torch
@@ -101,6 +101,11 @@ class GenerationBatchResult:
 
     # relay path: forward stream -> next step forward
     next_draft_input: Optional[SpecInput] = None
+
+    # Original per-forward target-prefill metadata, before graph/DP padding.
+    # The same-stream EAGLE prefill consumer takes and clears these references;
+    # they are not scheduler-owned state and must not be copied to the CPU.
+    prefill_extend_metadata: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
 
     # Refs the worker wants scheduler to keep alive for the same 2-iter window
     # as batch_record_buf. Used for cross-stream tensor lifetime (e.g. a spec

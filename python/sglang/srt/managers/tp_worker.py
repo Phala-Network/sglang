@@ -46,6 +46,7 @@ from sglang.srt.mem_cache.memory_pool import ReqToTokenPool
 from sglang.srt.model_executor.forward_batch_info import (
     CaptureHiddenMode,
     ForwardBatch,
+    ForwardMode,
     PPProxyTensors,
 )
 from sglang.srt.model_executor.graph_memory_usage import (
@@ -599,6 +600,7 @@ class TpModelWorker(BaseTpWorker):
         skip_attn_backend_init: Optional[bool] = None,  # deprecated
         *,
         capture_hidden_mode: Optional[CaptureHiddenMode] = None,
+        capture_prefill_extend_metadata: bool = False,
     ) -> GenerationBatchResult:
         # Get forward batch from schedule batch
         if batch is not None:
@@ -625,6 +627,41 @@ class TpModelWorker(BaseTpWorker):
             return self._forward_batch_generation_dllm(forward_batch, batch)
 
         if self.pp_group.is_last_rank:
+            prefill_extend_metadata = None
+            if (
+                capture_prefill_extend_metadata
+                and batch is not None
+                and not self.enable_overlap
+                and not batch.enable_overlap
+                and get_schedule().disable_overlap_schedule
+                and not envs.SGLANG_ENABLE_OVERLAP_PLAN_STREAM.get()
+                and forward_batch.forward_mode
+                in (ForwardMode.EXTEND, ForwardMode.MIXED)
+                and forward_batch.batch_size > 0
+                and isinstance(forward_batch.extend_seq_lens_cpu, list)
+                and isinstance(forward_batch.extend_prefix_lens_cpu, list)
+                and len(forward_batch.extend_seq_lens_cpu) == forward_batch.batch_size
+                and len(forward_batch.extend_prefix_lens_cpu)
+                == forward_batch.batch_size
+                and all(
+                    isinstance(value, torch.Tensor)
+                    and value.is_cuda
+                    and value.dtype == torch.int32
+                    and value.shape == (forward_batch.batch_size,)
+                    and value.device == forward_batch.seq_lens.device
+                    for value in (
+                        forward_batch.extend_seq_lens,
+                        forward_batch.extend_prefix_lens,
+                    )
+                )
+            ):
+                # Capture fresh init_new tensors before forward can rebind the
+                # fields to padded tensors or graph views. Ordinary extend
+                # consumers read these original tensors without in-place writes.
+                prefill_extend_metadata = (
+                    forward_batch.extend_seq_lens,
+                    forward_batch.extend_prefix_lens,
+                )
             out = self.model_runner.forward(
                 forward_batch,
                 pp_proxy_tensors=pp_proxy_tensors,
@@ -636,6 +673,7 @@ class TpModelWorker(BaseTpWorker):
                 expert_distribution_metrics=out.expert_distribution_metrics,
                 routed_experts_output=out.routed_experts_output,
                 indexer_topk_output=out.indexer_topk_output,
+                prefill_extend_metadata=prefill_extend_metadata,
             )
 
             capture_pre_sample_logits(batch, forward_batch, logits_output)

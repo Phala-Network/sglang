@@ -2,7 +2,7 @@ import contextlib
 import logging
 import time
 from dataclasses import replace
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import torch
 
@@ -50,6 +50,7 @@ from sglang.srt.model_executor.cuda_graph_config import (
 from sglang.srt.model_executor.forward_batch_info import (
     CaptureHiddenMode,
     ForwardBatch,
+    ForwardMode,
     PPProxyTensors,
 )
 from sglang.srt.model_executor.forward_context import ForwardContext, forward_context
@@ -869,6 +870,8 @@ class EagleDraftWorker(EagleDraftWorkerBase):
         target_hidden_states: torch.Tensor,
         next_token_ids: torch.Tensor,
         mm_input_embeds: Optional[torch.Tensor] = None,
+        *,
+        extend_metadata: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ):
         """
         Run draft model extend to correctly fill the KV cache.
@@ -878,6 +881,19 @@ class EagleDraftWorker(EagleDraftWorkerBase):
             target_hidden_states: Hidden states from the target model forward
             next_token_ids: Next token ids generated from the target forward.
         """
+        if extend_metadata is not None and not (
+            not batch.enable_overlap
+            and get_schedule().disable_overlap_schedule
+            and not envs.SGLANG_ENABLE_OVERLAP_PLAN_STREAM.get()
+            and isinstance(batch.extend_lens, list)
+            and isinstance(batch.prefix_lens, list)
+            and len(batch.extend_lens) == len(batch.reqs)
+            and len(batch.prefix_lens) == len(batch.reqs)
+        ):
+            # Some padding paths append CPU mirrors in place. Keep that native
+            # input representation intact and use the original construction.
+            extend_metadata = None
+
         # Construct input_ids
         if not batch.forward_mode.is_idle():
             # Chunked-prefill-aware tail tokens (see PR #26329).
@@ -928,6 +944,11 @@ class EagleDraftWorker(EagleDraftWorkerBase):
             self.draft_runner,
             capture_hidden_mode=capture_hidden_mode,
             return_hidden_states_before_norm=False,
+            **(
+                {"extend_metadata": extend_metadata}
+                if extend_metadata is not None
+                else {}
+            ),
         )
         forward_batch.return_logprob = False
         if mm_input_embeds is not None:
@@ -1274,11 +1295,28 @@ class EAGLEWorkerV2(BaseSpecWorker):
                 if self.speculative_algorithm.is_standalone()
                 else CaptureHiddenMode.FULL
             )
+            capture_metadata = (
+                self._draft_worker is not None
+                and batch.forward_mode in (ForwardMode.EXTEND, ForwardMode.MIXED)
+                and batch.seq_lens is not None
+                and batch.seq_lens.is_cuda
+                and not batch.enable_overlap
+                and get_schedule().disable_overlap_schedule
+                and not envs.SGLANG_ENABLE_OVERLAP_PLAN_STREAM.get()
+            )
             batch_output = self.target_worker.forward_batch_generation(
                 batch,
                 pp_proxy_tensors=pp_proxy_tensors,
                 capture_hidden_mode=target_capture_mode,
+                **(
+                    {"capture_prefill_extend_metadata": True}
+                    if capture_metadata
+                    else {}
+                ),
             )
+            extend_metadata = getattr(batch_output, "prefill_extend_metadata", None)
+            if extend_metadata is not None:
+                batch_output.prefill_extend_metadata = None
 
             # Spec_v2 convention: batch.seq_lens = length BEFORE this iter's tokens.
             # Extend processed L prompt tokens; next verify iter expects same L.
@@ -1307,6 +1345,11 @@ class EAGLEWorkerV2(BaseSpecWorker):
                         batch_output.logits_output.hidden_states,
                         batch_output.next_token_ids,
                         batch_output.logits_output.mm_input_embeds,
+                        **(
+                            {"extend_metadata": extend_metadata}
+                            if extend_metadata is not None
+                            else {}
+                        ),
                     )
                 )
                 return batch_output

@@ -8,6 +8,7 @@ from sglang.kernels.ops.speculative.cache_locs import (
     assign_draft_cache_locs_contiguous,
 )
 from sglang.kernels.ops.speculative.eagle import fill_bonus_tokens_func
+from sglang.srt.environ import envs
 from sglang.srt.layers.logprob_processor import compute_spec_logprobs
 from sglang.srt.managers.utils import GenerationBatchResult
 from sglang.srt.model_executor.forward_batch_info import (
@@ -15,6 +16,7 @@ from sglang.srt.model_executor.forward_batch_info import (
     ForwardBatch,
     ForwardMode,
 )
+from sglang.srt.runtime_context import get_schedule
 from sglang.srt.speculative.eagle_info import EagleDraftInput, EagleVerifyInput
 from sglang.srt.speculative.eagle_utils import (
     TreeMaskMode,
@@ -125,6 +127,7 @@ def prepare_for_draft_extend(
     extend_num_tokens = bs * num_window_tokens
     # When seq_lens_cpu is absent, stay on GPU-only path -- no .tolist()/.cpu().
     gpu_only = batch.seq_lens_cpu is None
+    extend_metadata = None
 
     batch.spec_info = draft_extend_input
     # Do NOT cast predict dtype here. The caller (e.g., _draft_extend_for_decode)
@@ -164,6 +167,27 @@ def prepare_for_draft_extend(
             max(int(x) - front_offset, 0) for x in batch.seq_lens_cpu.tolist()
         ]
         batch.extend_lens = [num_window_tokens] * bs
+        if (
+            bs > 0
+            and batch.seq_lens.is_cuda
+            and not batch.enable_overlap
+            and get_schedule().disable_overlap_schedule
+            and not envs.SGLANG_ENABLE_OVERLAP_PLAN_STREAM.get()
+        ):
+            # In non-overlap the scheduler updates seq_lens and its CPU mirror
+            # from the same completed result before the next iteration. Target
+            # verify does not rewrite either pre-write length. Build equivalent
+            # metadata on the current forward stream, retaining both CPU lists
+            # for the backends that need them. No new stream/dependency or D2H.
+            extend_metadata = (
+                torch.full(
+                    (bs,),
+                    num_window_tokens,
+                    dtype=torch.int32,
+                    device=batch.seq_lens.device,
+                ),
+                (batch.seq_lens - front_offset).clamp(min=0).to(torch.int32),
+            )
     batch.extend_num_tokens = extend_num_tokens
     capture_mode = (
         CaptureHiddenMode.NULL
@@ -180,6 +204,7 @@ def prepare_for_draft_extend(
         draft_model_runner,
         capture_hidden_mode=capture_mode,
         return_hidden_states_before_norm=return_hidden_states_before_norm,
+        **({"extend_metadata": extend_metadata} if extend_metadata is not None else {}),
     )
     # Forward sees post-write length (draft extend writes num_draft_tokens
     # slots); mutation stays on forward_batch to preserve SB.seq_lens.

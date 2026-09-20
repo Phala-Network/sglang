@@ -133,6 +133,13 @@ def normalize_json_schema_types(schema: Any) -> None:
     if not isinstance(schema, dict):
         return
 
+    # Some SDKs serialize optional JSON-Schema keywords as null. ``required``
+    # must be an array and ``properties`` must be an object; null is equivalent
+    # to omitting either keyword, but Draft 2020-12 validation rejects it.
+    for key in ("required", "properties"):
+        if key in schema and schema[key] is None:
+            del schema[key]
+
     if "type" in schema:
         t = schema["type"]
         if isinstance(t, str):

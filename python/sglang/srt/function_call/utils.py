@@ -13,10 +13,25 @@ import orjson
 import partial_json_parser
 from jsonschema import Draft202012Validator
 from partial_json_parser.core.options import Allow
+from referencing import Registry
+from referencing.exceptions import NoSuchResource
 
 from sglang.srt.entrypoints.openai.protocol import Tool, ToolChoice
 
 logger = logging.getLogger(__name__)
+
+
+def _deny_schema_retrieval(uri: str):
+    """Keep client-provided tool schemas from resolving remote resources."""
+    raise NoSuchResource(ref=uri)
+
+
+# ``jsonschema`` otherwise uses a registry that retrieves unknown references.
+# An explicit denying registry still crawls this schema's local ``$defs`` and
+# embedded ``$id`` resources, while unresolved local or remote references use
+# the existing coercion fallback below.
+_NO_NETWORK_SCHEMA_REGISTRY = Registry(retrieve=_deny_schema_retrieval)
+
 
 _STANDARD_JSON_SCHEMA_TYPES = {
     "null",
@@ -416,17 +431,6 @@ def _is_finite_json_value(value: Any) -> bool:
     return value is None or isinstance(value, (str, bool, int))
 
 
-def _has_external_schema_ref(schema: Any) -> bool:
-    if isinstance(schema, dict):
-        ref = schema.get("$ref")
-        if isinstance(ref, str) and not ref.startswith("#"):
-            return True
-        return any(_has_external_schema_ref(value) for value in schema.values())
-    if isinstance(schema, list):
-        return any(_has_external_schema_ref(value) for value in schema)
-    return False
-
-
 def _schema_value_candidates(raw_value: str, schema: dict) -> List[Any]:
     """Build conservative JSON-compatible candidates from raw argument text."""
     stripped = raw_value.strip()
@@ -535,12 +539,11 @@ def _schema_value_candidates(raw_value: str, schema: dict) -> List[Any]:
 
 def coerce_argument_to_schema(raw_value: str, schema: dict) -> Tuple[Any, bool]:
     """Return a schema-valid candidate without inventing values from the schema."""
-    if _has_external_schema_ref(schema):
-        return raw_value, False
-
     try:
         Draft202012Validator.check_schema(schema)
-        validator = Draft202012Validator(schema)
+        validator = Draft202012Validator(
+            schema, registry=_NO_NETWORK_SCHEMA_REGISTRY
+        )
         valid_candidates = [
             candidate
             for candidate in _schema_value_candidates(raw_value, schema)

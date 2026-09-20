@@ -311,6 +311,7 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
 
         # --- runner bounds --------------------------------------------
         self.max_num_tokens = max(self.capture_num_tokens)
+        self.max_seq_len_prefill = prefill_config.max_seq_len
         self.max_bs = model_runner.req_to_token_pool.size
 
         # --- capture modes --------------------------------------------
@@ -1138,6 +1139,7 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
         capture_hidden_mode,
         return_logprob: bool,
         lora_ineligible: bool = False,
+        seq_lens_cpu=None,
     ) -> bool:
         """Rank-local replay eligibility: the single source of truth for
         ``can_run_graph`` (ForwardBatch, forward time) and the dp mlp-sync
@@ -1146,6 +1148,19 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
         ``capture_hidden_mode=None`` when unknown at the call site (it is
         rank-uniform; forward-time-only checking cannot split the group).
         """
+        # seq_lens_cpu includes both cached prefix and this forward's new
+        # tokens. Use the existing host mirror: never read a GPU tensor here.
+        # Schedule-time DP voting and forward-time eligibility share this gate.
+        max_seq_len = getattr(self, "max_seq_len_prefill", None)
+        if max_seq_len is not None:
+            if (
+                seq_lens_cpu is None
+                or seq_lens_cpu.device.type != "cpu"
+                or len(seq_lens_cpu) < batch_size
+            ):
+                return False
+            if max(seq_lens_cpu[:batch_size].tolist(), default=0) > max_seq_len:
+                return False
         if self._is_full_backend and batch_size > self._capture_req_slots:
             return False
         # LoRA replays need prepare_lora_batch's static metadata. lora_manager
@@ -1212,6 +1227,7 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
             input_embeds=forward_batch.input_embeds,
             replace_embeds=forward_batch.replace_embeds,
             prefix_lens=forward_batch.extend_prefix_lens_cpu,
+            seq_lens_cpu=getattr(forward_batch, "seq_lens_cpu", None),
             is_target_verify=forward_batch.forward_mode.is_target_verify(),
             capture_hidden_mode=forward_batch.capture_hidden_mode,
             return_logprob=forward_batch.return_logprob,

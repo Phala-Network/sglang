@@ -648,6 +648,10 @@ class SchedulerReqTimeStats(ReqTimeStatsBase):
 
     has_timing_data: bool = False
 
+    # Telemetry-only first queue timestamp. It is intentionally trailing to
+    # preserve the existing positional construction order above.
+    first_wait_queue_entry_time: float = 0.0
+
     def __getstate__(self) -> object:
         # send to detokenizer/tokenizer
         if not (self.enable_metrics or self.has_timing_data):
@@ -656,6 +660,9 @@ class SchedulerReqTimeStats(ReqTimeStatsBase):
         state = {
             "has_timing_data": True,
             "wait_queue_entry_time": self.wait_queue_entry_time,
+            "first_wait_queue_entry_time": getattr(
+                self, "first_wait_queue_entry_time", 0.0
+            ),
             "forward_entry_time": self.forward_entry_time,
             "prefill_finished_time": self.prefill_finished_time,
             "diff_realtime_monotonic": global_diff_realtime_monotonic,
@@ -732,6 +739,7 @@ class SchedulerReqTimeStats(ReqTimeStatsBase):
 
     def reset_prefill_retry_time(self):
         self.wait_queue_entry_time = 0.0
+        self.first_wait_queue_entry_time = 0.0
         self.forward_entry_time = 0.0
         self.prefill_finished_time = 0.0
         self.completion_time = 0.0
@@ -760,6 +768,10 @@ class SchedulerReqTimeStats(ReqTimeStatsBase):
         else:
             self.set_retract_time(ts)
 
+        # Retractions need a fresh wait timestamp for scheduling and traces. The
+        # first timestamp remains telemetry-only and pairs with first forward.
+        if self.first_wait_queue_entry_time == 0.0:
+            self.first_wait_queue_entry_time = self.wait_queue_entry_time or ts
         self.wait_queue_entry_time = ts
 
     def set_forward_entry_time(self, ts=None):
@@ -1051,7 +1063,12 @@ class SchedulerReqTimeStats(ReqTimeStatsBase):
         self.trace_slice(stage, self.last_forward_entry_time, ts)
 
     def get_queueing_time(self) -> float:
-        return self.forward_entry_time - self.wait_queue_entry_time
+        # Old serialized/directly populated records may not have the first-wait
+        # field. Fall back to their current wait timestamp; never clamp values.
+        first_wait_queue_entry_time = getattr(
+            self, "first_wait_queue_entry_time", 0.0
+        ) or self.wait_queue_entry_time
+        return self.forward_entry_time - first_wait_queue_entry_time
 
     def convert_to_duration(self) -> str:
         if self.disagg_mode == DisaggregationMode.NULL:

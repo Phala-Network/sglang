@@ -458,6 +458,58 @@ class TestResubmitAfterCompletion(CustomTestCase):
         self.assertIn(rid, tm.rid_to_state)
 
 
+class TestRequestStateSummary(CustomTestCase):
+    def test_server_info_exposes_local_counts_or_explicit_unavailable(self):
+        from types import SimpleNamespace
+        from sglang.srt.entrypoints import http_server
+
+        tm = _make_tokenizer_manager(self)
+        tm.get_internal_state = AsyncMock(return_value=[])
+        tm.server_args.resolved_dict.return_value = {}
+        tm.server_args.launch_command = ["test"]
+        tm.startup_time = 0.0
+        tm.rid_to_state["private-request-id"] = _make_req_state("private-request-id")
+        state = SimpleNamespace(tokenizer_manager=tm, scheduler_info={})
+        with patch.object(http_server, "_global_state", state), patch.object(
+            http_server, "describe_kv_events_publisher", return_value=None
+        ):
+            result = asyncio.run(http_server.server_info())
+            self.assertEqual(result["tokenizer_request_states"]["total"], 1)
+            self.assertNotIn("private-request-id", str(result))
+            state.tokenizer_manager = SimpleNamespace(
+                get_internal_state=AsyncMock(return_value=[]),
+                server_args=tm.server_args, startup_time=0.0,
+            )
+            result = asyncio.run(http_server.server_info())
+            self.assertIsNone(result["tokenizer_request_states"])
+
+    def test_summary_tracks_actual_failure_and_abort_cleanup(self):
+        tm = _make_tokenizer_manager(self)
+        tm._dispatch_to_scheduler = Mock()
+        waiting = _make_req_state("waiting-private-rid")
+        running = _make_req_state("running-private-rid")
+        running.dispatched = True
+        tm.rid_to_state = {waiting.obj.rid: waiting, running.obj.rid: running}
+        ready = asyncio.Event()
+        tm.encoder_dispatch_ready[waiting.obj.rid] = ready
+        before = tm.request_state_summary()
+        self.assertEqual(before, {
+            "total": 2, "undelivered": 1, "dispatched": 1,
+            "abort_pending": 0, "finished": 0, "encoder_dispatch_pending": 1,
+        })
+        self.assertIs(tm.rid_to_state[running.obj.rid], running)
+        self.assertFalse(ready.is_set())
+        tm._release_req_states_on_failure([waiting.obj.rid, running.obj.rid])
+        self.assertTrue(ready.is_set())
+        self.assertEqual(tm.request_state_summary(), {
+            "total": 1, "undelivered": 0, "dispatched": 1,
+            "abort_pending": 1, "finished": 0, "encoder_dispatch_pending": 0,
+        })
+        tm._handle_abort_req(_make_abort_req(running.obj.rid))
+        self.assertTrue(all(value == 0 for value in tm.request_state_summary().values()))
+        self.assertEqual(before["total"], 2, "snapshot must not be a live mutable view")
+
+
 class _DummyAsyncCM:
     """Reusable no-op async context manager (stands in for an RW lock)."""
 
@@ -494,6 +546,7 @@ def _make_generate_obj(rid, is_single):
     obj.received_time = 0.0
     obj.external_trace_header = None
     obj.bootstrap_room = None
+    obj.min_thinking_tokens = None
     obj.max_thinking_tokens = None
     obj.normalize_batch_and_arguments = Mock()
     if not is_single:

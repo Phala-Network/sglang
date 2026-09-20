@@ -856,5 +856,71 @@ class TestDisconnectAfterDispatchAbortsRequest(CustomTestCase):
         self.assertIn(rid, tm.rid_to_state)
 
 
+class TestBackgroundAbortRequestOwnership(CustomTestCase):
+    """Ported from Kimi5256c311; common RID-reuse regression, not model-specific."""
+
+    @staticmethod
+    def _run(background):
+        async def drive():
+            with patch("asyncio.sleep", new=AsyncMock()):
+                await background()
+
+        asyncio.run(drive())
+
+    @staticmethod
+    def _normalized_obj(text, *, rid, sampling_params=None):
+        obj = GenerateReqInput(
+            text=text,
+            rid=rid,
+            sampling_params={} if sampling_params is None else sampling_params,
+        )
+        obj.normalize_batch_and_arguments()
+        obj.received_time = 0.0
+        return obj
+
+    def test_pre_normalization_background_abort_is_a_noop(self):
+        tm = _make_tokenizer_manager(self)
+        tm.abort_request = Mock()
+        obj = GenerateReqInput(text="hello", sampling_params={})
+        self._run(tm.create_abort_task(obj))
+        tm.abort_request.assert_not_called()
+
+    def test_background_abort_does_not_abort_reused_rid(self):
+        tm = _make_tokenizer_manager(self)
+        tm.abort_request = Mock()
+        old_obj = self._normalized_obj("hello", rid="reused")
+        tm._init_req_state(old_obj)
+        background = tm.create_abort_task(old_obj)
+        del tm.rid_to_state["reused"]
+        new_obj = self._normalized_obj("hello", rid="reused")
+        tm._init_req_state(new_obj)
+        self._run(background)
+        tm.abort_request.assert_not_called()
+
+    def test_background_abort_still_aborts_original_owner(self):
+        tm = _make_tokenizer_manager(self)
+        tm.abort_request = Mock()
+        obj = self._normalized_obj("hello", rid="owned")
+        background = tm.create_abort_task(obj)
+        tm._init_req_state(obj)
+        self._run(background)
+        tm.abort_request.assert_called_once_with("owned")
+
+    def test_parallel_batch_abort_uses_original_parent_count(self):
+        tm = _make_tokenizer_manager(self)
+        tm.abort_request = Mock()
+        obj = self._normalized_obj(
+            ["first", "second"], rid="parallel", sampling_params={"n": 2}
+        )
+        self.assertEqual(obj.batch_size, 2)
+        self.assertEqual(len(obj.rid), 4)
+        tm._init_req_state(obj)
+        self._run(tm.create_abort_task(obj))
+        self.assertEqual(
+            [call.args[0] for call in tm.abort_request.call_args_list],
+            obj.rid[: obj.batch_size],
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

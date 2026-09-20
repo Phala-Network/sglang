@@ -64,6 +64,7 @@ from fastapi.responses import ORJSONResponse, Response, StreamingResponse
 from fastapi.routing import APIRoute
 
 from sglang.srt.arg_groups.overrides import resolving_view
+from sglang.srt.arg_groups.token_auth import redact_auth_config
 from sglang.srt.configs.embedding_model_spec import resolved_embedding_plan
 from sglang.srt.constants import HEALTH_CHECK_RID_PREFIX
 from sglang.srt.disaggregation.utils import FAKE_BOOTSTRAP_HOST, DisaggregationMode
@@ -841,7 +842,7 @@ async def server_info():
     )
 
     return msgspec_to_builtins(
-        {
+        redact_auth_config({
             **server_args.resolved_dict(),
             "launch_command": server_args.launch_command,
             **_global_state.scheduler_info,
@@ -855,7 +856,7 @@ async def server_info():
             # `None` when publishing is disabled or misconfigured; see
             # `runtime_context.describe_kv_events_publisher` for the contract.
             "kv_events": describe_kv_events_publisher(server_args),
-        }
+        })
     )
 
 

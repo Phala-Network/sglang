@@ -65,6 +65,10 @@ def run_resolution_pipeline(server_args: Any) -> None:
 
     cfg = resolving_view(server_args)
 
+    from sglang.srt.arg_groups.token_auth import handle_token_auth
+
+    run_hook(handle_token_auth, server_args)
+
     from sglang.srt.arg_groups.mega_moe_hook import handle_mega_moe
 
     run_hook(handle_mega_moe, server_args)

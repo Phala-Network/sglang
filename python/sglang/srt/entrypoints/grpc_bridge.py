@@ -15,6 +15,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from pydantic import ValidationError
 
 from sglang.srt.arg_groups.overrides import resolving_view
+from sglang.srt.arg_groups.token_auth import redact_auth_config
 from sglang.srt.configs.embedding_model_spec import resolved_embedding_plan
 from sglang.srt.runtime_context import (
     describe_kv_events_publisher,
@@ -437,7 +438,7 @@ class RuntimeHandle:
         result["kv_events"] = describe_kv_events_publisher(
             self.tokenizer_manager.server_args
         )
-        return json.dumps(msgspec_to_builtins(result), default=str)
+        return json.dumps(msgspec_to_builtins(redact_auth_config(result)), default=str)
 
     def health_check(self) -> bool:
         from sglang.srt.managers.tokenizer_manager import ServerStatus

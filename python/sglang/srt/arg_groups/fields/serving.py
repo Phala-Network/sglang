@@ -154,11 +154,17 @@ class Serving(msgspec.Struct):
     # -------------------------------------------------------------------------
     api_key: A[
         Optional[str],
-        "Set API key of the server. It is also used in the OpenAI API compatible server.",
+        Arg(
+            help="Set API key of the server. PIG_AUTH_FROM_TOKEN=1 resolves this and the admin key from TOKEN.",
+            resolvable=True,
+        ),
     ] = None
     admin_api_key: A[
         Optional[str],
-        "Set admin API key for sensitive management endpoints (e.g. /clear_hicache_storage_backend). When set, admin endpoints require this key and do NOT accept --api-key.",
+        Arg(
+            help="Set admin API key for sensitive management endpoints (e.g. /clear_hicache_storage_backend). When set, admin endpoints require this key and do NOT accept --api-key.",
+            resolvable=True,
+        ),
     ] = None
     served_model_name: A[
         Optional[str],

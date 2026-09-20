@@ -2216,7 +2216,11 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         part that cannot be reconstructed afterwards.
         """
         try:
-            return self.resolved_config_dict(self.server_args.resolved_dict())
+            from sglang.srt.arg_groups.token_auth import redact_auth_config
+
+            return redact_auth_config(
+                self.resolved_config_dict(self.server_args.resolved_dict())
+            )
         except Exception as e:
             logger.error(f"Failed to snapshot the resolved config for the dump: {e!r}")
             return None
@@ -3248,7 +3252,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     "config_updates": get_context().overrides_log(),
                     "resolved_config": self._dump_config_snapshot(),
                     "requests": data_to_dump,
-                    "launch_command": " ".join(sys.argv),
+                    "launch_command": self.server_args.launch_command,
                 }
                 with open(filename, "wb") as f:
                     try:

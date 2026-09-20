@@ -42,6 +42,7 @@ from typing import Any, Callable, Dict, FrozenSet, List
 # because the name is all `run_hook` has to key on.
 _OVERRIDABLE_HOOKS: FrozenSet[str] = frozenset(
     {
+        "handle_token_auth",
         "handle_mega_moe",
         "handle_return_hidden_states_mode",
         "handle_media_url_security",

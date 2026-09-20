@@ -293,7 +293,7 @@ class ServerArgs:
 
     @property
     def launch_command(self) -> str | None:
-        """How this record was created, verbatim.
+        """How this record was created, with explicit credential flags redacted.
 
         `resolved_dict` answers with what resolution decided; this answers with
         what the operator asked for, which is a different question and the one
@@ -323,6 +323,12 @@ class ServerArgs:
             field.name: _plain(resolution_result(self, field.name))
             for field in record_fields(type(self))
         }
+
+    def diagnostic_dict(self) -> dict[str, Any]:
+        """Resolved configuration for logs/readbacks, never runtime IPC."""
+        from sglang.srt.arg_groups.token_auth import redact_auth_config
+
+        return redact_auth_config(self.resolved_dict())
 
     # ------------------------------------------------------------------
     # CUDA graph configuration resolution
@@ -733,7 +739,9 @@ def prepare_server_args(argv: list[str]) -> ServerArgs:
     # Not a field: the record's fields are the configuration, and this is how
     # the configuration was asked for. It rides along on the record so a
     # subprocess copy can answer the same question the launcher can.
-    server_args._launch_command = " ".join(argv)
+    from sglang.srt.arg_groups.token_auth import redact_auth_argv
+
+    server_args._launch_command = " ".join(redact_auth_argv(argv))
     return server_args
 
 

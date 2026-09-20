@@ -39,6 +39,9 @@ _CHAT_TEMPLATE_CLIENT_ERRORS: tuple[type[BaseException], ...] = (
 from fastapi.responses import ORJSONResponse, StreamingResponse
 from jsonschema import Draft202012Validator, SchemaError
 
+from sglang.srt.constrained.xgrammar_schema import (
+    has_xgrammar_unsupported_json_features,
+)
 from sglang.srt.entrypoints.openai import chat_encoding, encoding_dsv4, encoding_dsv32
 from sglang.srt.entrypoints.openai.protocol import (
     ChatCompletionMessageContentTextPart,
@@ -270,6 +273,7 @@ class OpenAIServingChat(OpenAIServingBase):
         self.template_manager = template_manager
         self.tool_call_parser = self.tokenizer_manager.config_value("tool_call_parser")
         self.reasoning_parser = self.tokenizer_manager.config_value("reasoning_parser")
+        self._grammar_backend = self.tokenizer_manager.config_value("grammar_backend")
         self.default_chat_template_kwargs = (
             get_serving().default_chat_template_kwargs or {}
         )
@@ -999,6 +1003,13 @@ class OpenAIServingChat(OpenAIServingBase):
                 # a 400 instead of crashing into a 500.
                 normalize_json_schema_types(tool.function.parameters)
                 Draft202012Validator.check_schema(tool.function.parameters)
+                if self._grammar_backend == "xgrammar" and (
+                    has_xgrammar_unsupported_json_features(tool.function.parameters)
+                ):
+                    return (
+                        f"Tool {i} function has a 'parameters' schema containing "
+                        "features unsupported by xgrammar."
+                    )
             except SchemaError as e:
                 return f"Tool {i} function has invalid 'parameters' schema: {str(e)}"
             except RecursionError:
@@ -1023,6 +1034,17 @@ class OpenAIServingChat(OpenAIServingBase):
             schema = getattr(request.response_format.json_schema, "schema_", None)
             if schema is None:
                 return "schema_ is required for json_schema response format request."
+            try:
+                Draft202012Validator.check_schema(schema)
+            except SchemaError as e:
+                return f"Invalid response_format JSON schema: {str(e)}"
+            if self._grammar_backend == "xgrammar" and (
+                has_xgrammar_unsupported_json_features(schema)
+            ):
+                return (
+                    "response_format JSON schema contains features unsupported "
+                    "by xgrammar."
+                )
 
         return None
 

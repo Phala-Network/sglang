@@ -802,9 +802,7 @@ class Glm47MoeDetector(BaseFormatDetector):
                     "Error parsing complete GLM tool call: %s", e, exc_info=True
                 )
 
-        return StreamingParseResult(
-            normal_text="".join(normal_parts), calls=calls
-        )
+        return StreamingParseResult(normal_text="".join(normal_parts), calls=calls)
 
     def _parse_argument_pairs(
         self, pairs: List[Tuple[str, str]], func_name: str, tools: List[Tool]

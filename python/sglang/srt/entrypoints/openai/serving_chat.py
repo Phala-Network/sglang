@@ -1739,23 +1739,8 @@ class OpenAIServingChat(OpenAIServingBase):
         """Handle streaming chat completion request"""
         generator = self._generate_chat_stream(adapted_request, request, raw_request)
 
-        # Kick-start the generator to trigger validation before HTTP 200 is sent.
-        # If validation fails (e.g., context length exceeded), we can still return
-        # a proper HTTP 400 error response instead of streaming it as SSE payload.
-        try:
-            first_chunk = await generator.__anext__()
-        except ValueError as e:
-            return self.create_error_response(str(e))
-
-        async def prepend_first_chunk():
-            yield first_chunk
-            async for chunk in generator:
-                yield chunk
-
-        return StreamingResponse(
-            prepend_first_chunk(),
-            media_type="text/event-stream",
-            background=self.tokenizer_manager.create_abort_task(adapted_request),
+        return await self._streaming_response_before_headers(
+            generator, adapted_request, raw_request
         )
 
     async def _generate_chat_stream(
@@ -1793,6 +1778,9 @@ class OpenAIServingChat(OpenAIServingBase):
 
         stream_started = False
         error_aborted = False
+        generator = self.tokenizer_manager.generate_request(
+            adapted_request, raw_request
+        )
         try:
             include_usage, continuous_usage_stats = should_include_usage(
                 request.stream_options,
@@ -1807,9 +1795,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 and raw_request.headers.get("x-sglext-ids-framed") == "1"
             )
 
-            async for content in self.tokenizer_manager.generate_request(
-                adapted_request, raw_request
-            ):
+            async for content in generator:
                 index = content.get("index", 0)
 
                 prompt_tokens[index] = self._reported_prompt_tokens(
@@ -2086,6 +2072,8 @@ class OpenAIServingChat(OpenAIServingBase):
                 raise
             error = self.create_streaming_error_response(str(e))
             yield f"data: {error}\n\n"
+        finally:
+            await generator.aclose()
 
         yield "data: [DONE]\n\n"
 
@@ -2097,9 +2085,7 @@ class OpenAIServingChat(OpenAIServingBase):
     ) -> Union[ChatCompletionResponse, ErrorResponse, ORJSONResponse]:
         """Handle non-streaming chat completion request"""
         try:
-            ret = await self.tokenizer_manager.generate_request(
-                adapted_request, raw_request
-            ).__anext__()
+            ret = await self._first_generated_response(adapted_request, raw_request)
         except ValueError as e:
             return self.create_error_response(str(e))
 

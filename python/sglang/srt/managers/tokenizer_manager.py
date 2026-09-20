@@ -29,7 +29,7 @@ import threading
 import time
 from array import array
 from collections import deque
-from contextlib import nullcontext
+from contextlib import aclosing, nullcontext
 from datetime import datetime
 from enum import Enum
 from functools import lru_cache
@@ -64,6 +64,7 @@ from sglang.srt.constants import HEALTH_CHECK_RID_PREFIX
 from sglang.srt.disaggregation.encoder.receiver import create_mm_receiver
 from sglang.srt.disaggregation.utils import DisaggregationMode
 from sglang.srt.environ import envs
+from sglang.srt.entrypoints.request_disconnect import response_disconnect_watched
 from sglang.srt.lora.lora_registry import LoRARef, LoRARegistry
 from sglang.srt.managers.async_dynamic_batch_tokenizer import AsyncDynamicbatchTokenizer
 from sglang.srt.managers.disagg_service import start_disagg_service
@@ -104,7 +105,7 @@ from sglang.srt.managers.io_struct import (
     unwrap_from_pickle,
 )
 from sglang.srt.managers.load_snapshot import create_load_snapshot_reader
-from sglang.srt.managers.mm_utils import wrap_shm_features
+from sglang.srt.managers.mm_utils import discard_shm_features, wrap_shm_features
 from sglang.srt.managers.multimodal_processor import get_mm_processor, import_processors
 from sglang.srt.managers.schedule_batch import (
     MultimodalDataItem,
@@ -898,12 +899,13 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     if obj.return_prompt_token_ids:
                         state.prompt_token_ids = list(tokenized_obj.input_ids)
                     await self._send_one_request(tokenized_obj)
-                    async for response in self._wait_one_response(obj, request):
-                        yield response
+                    responses = self._wait_one_response(obj, request)
                 else:
-                    async for response in self._handle_batch_request(
+                    responses = self._handle_batch_request(
                         obj, request, request_rids
-                    ):
+                    )
+                async with aclosing(responses):
+                    async for response in responses:
                         yield response
         except BaseException:
             # _init_req_state created a rid_to_state entry per (sub-)request up
@@ -1663,6 +1665,11 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         tokenized_obj: Union[TokenizedGenerateReqInput, TokenizedEmbeddingReqInput],
     ):
         prepared_mm_items = []
+        # Serialization replaces mm_inputs with bytes. Retain the producer's
+        # mutable MM object so failed dispatch can release any SHM it created.
+        shm_owner = (
+            copy.copy(tokenized_obj) if tokenized_obj.mm_inputs is not None else None
+        )
         dispatched = False
         try:
             prepared_mm_items = (
@@ -1684,7 +1691,13 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             tokenized_obj.time_stats.set_api_server_dispatch_finish_time()
         finally:
             if not dispatched:
-                self.cuda_vmm_feature_transport.cancel_for_dispatch(prepared_mm_items)
+                try:
+                    if shm_owner is not None:
+                        discard_shm_features(shm_owner)
+                finally:
+                    self.cuda_vmm_feature_transport.cancel_for_dispatch(
+                        prepared_mm_items
+                    )
 
     def _mark_state_dispatched(self, rid: str):
         """Record that *rid* reached the scheduler.
@@ -1838,6 +1851,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 if (
                     request is not None
                     and not obj.background
+                    and not response_disconnect_watched(request)
                     and await request.is_disconnected()
                 ):
                     # Abort the request for disconnected requests (non-streaming, waiting queue)
@@ -1926,6 +1940,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 if (
                     request is not None
                     and not obj.background
+                    and not response_disconnect_watched(request)
                     and await request.is_disconnected()
                 ):
                     # Abort the request for disconnected requests (non-streaming, running)
@@ -2010,7 +2025,10 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 self._init_req_state(tmp_obj)
                 request_rids.add(tmp_obj.rid)
                 await self._send_one_request(tokenized_obj)
-                await self._wait_one_response(tmp_obj, request).__anext__()
+                async with aclosing(
+                    self._wait_one_response(tmp_obj, request)
+                ) as waiter:
+                    await waiter.__anext__()
 
             # Expand requests, assign new rids for them, and send them
             for i in range(batch_size):
@@ -2043,8 +2061,11 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             outputs = await self._collect_batch_responses(generators)
             yield outputs
         else:
-            async for response in self._stream_batch_responses(generators, rids):
-                yield response
+            async with aclosing(
+                self._stream_batch_responses(generators, rids)
+            ) as stream:
+                async for response in stream:
+                    yield response
 
     async def _collect_batch_responses(self, generators):
         tasks = [asyncio.create_task(gen.__anext__()) for gen in generators]

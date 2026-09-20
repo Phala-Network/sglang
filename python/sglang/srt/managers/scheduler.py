@@ -3497,6 +3497,11 @@ class Scheduler(
             req.pending_bootstrap = False
         self._release_aborted_request(req)
         release_kv_cache(req, self.tree_cache, is_insert=False)
+        # Non-overlap has resolved the launched chunk before this safe boundary.
+        # Overlap retains MM inputs until its outstanding result is processed.
+        if not self.enable_overlap and req.multimodal_inputs is not None and req.session is None:
+            req.multimodal_inputs.release_features()
+            req.multimodal_inputs = None
 
         self.chunked_req = None
         self._pending_chunked_abort_req = None
@@ -5236,6 +5241,9 @@ class Scheduler(
             # This only works for requests that have not started anything.
             # We still need to send something back to TokenizerManager to clean up the state.
             req = self.waiting_queue.pop(i)
+            if req.multimodal_inputs is not None and req.session is None:
+                req.multimodal_inputs.release_features()
+                req.multimodal_inputs = None
             self._release_aborted_request(req)
             self.beam_coordinator.retire_group(req)
             # Without the initiator's reason the tokenizer falls back to a

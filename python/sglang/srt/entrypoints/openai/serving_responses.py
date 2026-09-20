@@ -8,14 +8,14 @@ import asyncio
 import json
 import logging
 import time
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, aclosing
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, AsyncGenerator, AsyncIterator, Optional, Union
 
 import jinja2
 import openai.types.responses as openai_responses_types
 import orjson
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.responses import ORJSONResponse
 from openai.types.responses import (
     ResponseOutputText,
@@ -78,9 +78,11 @@ from sglang.srt.entrypoints.openai.responses_adapters import (
     encode_reasoning_state,
     label_developer_content,
 )
+from sglang.srt.entrypoints.openai.serving_base import GenerationStreamingResponse
 from sglang.srt.entrypoints.openai.serving_chat import OpenAIServingChat
 from sglang.srt.entrypoints.openai.tool_server import MCPToolServer, ToolServer
 from sglang.srt.entrypoints.openai.utils import to_openai_style_logprobs
+from sglang.srt.entrypoints.request_disconnect import await_response_or_disconnect
 from sglang.srt.function_call.function_call_parser import FunctionCallParser
 from sglang.srt.function_call.json_array_parser import JsonArrayParser
 from sglang.srt.managers.io_struct import GenerateReqInput
@@ -286,7 +288,7 @@ class OpenAIServingResponses(OpenAIServingChat):
         self,
         request: ResponsesRequest,
         raw_request: Optional[Request] = None,
-    ) -> Union[AsyncGenerator[str, None], ResponsesResponse, ORJSONResponse]:
+    ) -> Union[GenerationStreamingResponse, ResponsesResponse, ORJSONResponse]:
         # Validate model
         if not self.tokenizer_manager:
             return self.create_error_response("Model not loaded")
@@ -627,7 +629,7 @@ class OpenAIServingResponses(OpenAIServingChat):
 
             if request.stream:
                 if self.use_harmony:
-                    return self.responses_stream_generator(
+                    events = self.responses_stream_generator(
                         request,
                         sampling_params,
                         result_generator,
@@ -637,14 +639,23 @@ class OpenAIServingResponses(OpenAIServingChat):
                         request_metadata,
                         require_reasoning=require_reasoning,
                     )
-                return self.responses_stream_generator_non_harmony(
-                    request,
-                    sampling_params,
-                    result_generator,
-                    model_name,
-                    tokenizer,
-                    request_metadata,
-                    require_reasoning=require_reasoning,
+                else:
+                    events = self.responses_stream_generator_non_harmony(
+                        request,
+                        sampling_params,
+                        result_generator,
+                        model_name,
+                        tokenizer,
+                        request_metadata,
+                        require_reasoning=require_reasoning,
+                    )
+                # Responses emits named lifecycle events before model output.
+                # Keep that protocol and explicitly own both generator layers.
+                return GenerationStreamingResponse(
+                    events,
+                    generation=result_generator,
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
                 )
             try:
                 result: Union[
@@ -658,8 +669,11 @@ class OpenAIServingResponses(OpenAIServingChat):
                     tokenizer,
                     request_metadata,
                     require_reasoning=require_reasoning,
+                    raw_request=raw_request,
                 )
                 return result
+            except HTTPException as exc:
+                return self.create_error_response(exc.detail, status_code=exc.status_code)
             except Exception as e:
                 return self.create_error_response(str(e))
         return self.create_error_response("Unknown error")
@@ -752,15 +766,22 @@ class OpenAIServingResponses(OpenAIServingChat):
         *,
         require_reasoning: bool,
         output_items: Optional[list] = None,
+        raw_request: Optional[Request] = None,
     ) -> Union[ResponsesResponse, ORJSONResponse]:
         if created_time is None:
             created_time = int(time.time())
 
+        async def consume_results():
+            async with aclosing(result_generator):
+                async for _ in result_generator:
+                    pass
+
         try:
-            async for _ in result_generator:
-                pass
-        except asyncio.CancelledError:
-            return self.create_error_response("Client disconnected")
+            await await_response_or_disconnect(
+                consume_results(), raw_request, background=request.background
+            )
+        except HTTPException as exc:
+            return self.create_error_response(exc.detail, status_code=exc.status_code)
         except ValueError as e:
             return self.create_error_response(str(e))
 
@@ -1896,7 +1917,7 @@ class OpenAIServingResponses(OpenAIServingChat):
             bool(self._response_tools_to_chat_tools(request))
             and request.effective_tool_choice() != "none"
         )
-        async for event in self._responses_stream_generator_non_harmony(
+        events = self._responses_stream_generator_non_harmony(
             request,
             sampling_params,
             result_generator,
@@ -1905,34 +1926,36 @@ class OpenAIServingResponses(OpenAIServingChat):
             request_metadata,
             created_time,
             require_reasoning=require_reasoning,
-        ):
-            if not can_call_tools:
-                yield event
-                continue
-            payload = orjson.loads(event.split("data: ", 1)[1])
-            event_type = payload["type"]
-            item_type = payload.get("item", {}).get("type")
-            opens_item = event_type == "response.output_item.added"
-            if pending or (opens_item and item_type == "message"):
-                pending.append(payload)
-                tool_follows = opens_item and item_type in (
-                    "function_call",
-                    "custom_tool_call",
-                )
-                terminal = event_type in (
-                    "response.completed",
-                    "response.incomplete",
-                    "response.failed",
-                )
-                if tool_follows or terminal:
-                    phase = "commentary" if tool_follows else "final_answer"
-                    for buffered in pending:
-                        if buffered.get("item", {}).get("type") == "message":
-                            buffered["item"]["phase"] = phase
-                        yield f"event: {buffered['type']}\ndata: {orjson.dumps(buffered).decode()}\n\n"
-                    pending.clear()
-            else:
-                yield event
+        )
+        async with aclosing(events):
+            async for event in events:
+                if not can_call_tools:
+                    yield event
+                    continue
+                payload = orjson.loads(event.split("data: ", 1)[1])
+                event_type = payload["type"]
+                item_type = payload.get("item", {}).get("type")
+                opens_item = event_type == "response.output_item.added"
+                if pending or (opens_item and item_type == "message"):
+                    pending.append(payload)
+                    tool_follows = opens_item and item_type in (
+                        "function_call",
+                        "custom_tool_call",
+                    )
+                    terminal = event_type in (
+                        "response.completed",
+                        "response.incomplete",
+                        "response.failed",
+                    )
+                    if tool_follows or terminal:
+                        phase = "commentary" if tool_follows else "final_answer"
+                        for buffered in pending:
+                            if buffered.get("item", {}).get("type") == "message":
+                                buffered["item"]["phase"] = phase
+                            yield f"event: {buffered['type']}\ndata: {orjson.dumps(buffered).decode()}\n\n"
+                        pending.clear()
+                else:
+                    yield event
 
     async def _responses_stream_generator_non_harmony(
         self,
@@ -2675,10 +2698,11 @@ class OpenAIServingResponses(OpenAIServingChat):
                 adapted_request, raw_request
             )
 
-            async for res in generator:
-                context.append_output(res)
-                # NOTE(woosuk): The stop condition is handled by the engine.
-                yield context
+            async with aclosing(generator):
+                async for res in generator:
+                    context.append_output(res)
+                    # NOTE(woosuk): The stop condition is handled by the engine.
+                    yield context
 
             if not context.need_builtin_tool_call():
                 # The model did not ask for a tool call, so we're done.

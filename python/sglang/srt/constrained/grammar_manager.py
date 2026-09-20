@@ -118,12 +118,16 @@ class GrammarManager:
                     req.grammar.cancel()
                 req.set_finish_with_abort("Aborted by AbortReq.")
 
-    def _get_request_thinking_budget(self, req: Req) -> int | None:
+    def _get_request_thinking_bounds(self, req: Req) -> tuple[int | None, int | None]:
         custom_params = req.sampling_params.custom_params
         if not isinstance(custom_params, dict):
-            return None
+            return None, None
+        min_thinking_budget = custom_params.get("min_thinking_budget")
         thinking_budget = custom_params.get("thinking_budget")
-        return thinking_budget if isinstance(thinking_budget, int) else None
+        return (
+            min_thinking_budget if isinstance(min_thinking_budget, int) else None,
+            thinking_budget if isinstance(thinking_budget, int) else None,
+        )
 
     def _apply_request_reasoning_config(self, req: Req) -> None:
         if not isinstance(req.grammar, ReasonerGrammarObject):
@@ -138,9 +142,18 @@ class GrammarManager:
         )
         if think_end_ids is not None:
             req.grammar.set_request_think_end_ids(think_end_ids)
-        thinking_budget = self._get_request_thinking_budget(req)
+        min_thinking_budget, thinking_budget = self._get_request_thinking_bounds(req)
+        if min_thinking_budget is not None:
+            req.grammar.min_think_tokens = min_thinking_budget
         if thinking_budget is not None:
             req.grammar.max_think_tokens = thinking_budget
+
+    def _strict_thinking_grammar_disabled(self, req: Req) -> bool:
+        custom_params = req.sampling_params.custom_params
+        return (
+            isinstance(custom_params, dict)
+            and custom_params.get("disable_strict_thinking_grammar") is True
+        )
 
     def process_req_with_grammar(self, req: Req) -> bool:
         # Init grammar cache for this request
@@ -187,7 +200,10 @@ class GrammarManager:
                         req.set_finish_with_abort(error_msg)
                     else:
                         self._apply_request_reasoning_config(req)
-        elif self._enable_strict_thinking:
+        elif (
+            self._enable_strict_thinking
+            and not self._strict_thinking_grammar_disabled(req)
+        ):
             grammar_obj = self.grammar_backend.init_strict_reasoning_grammar(
                 req.require_reasoning
             )

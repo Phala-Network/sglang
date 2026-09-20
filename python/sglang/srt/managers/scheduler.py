@@ -466,6 +466,11 @@ class Scheduler(
 
         # Parse args
         self.server_args = server_args
+        self.governor = None
+        if os.environ.get("PIG_GOVERNOR_ENABLE") == "1":
+            from pig_governor.sglang import create
+
+            self.governor = create(server_args)
         self.nccl_port = port_args.nccl_port
         self.schedule_policy = get_schedule().schedule_policy
         self.enable_priority_scheduling = get_schedule().enable_priority_scheduling
@@ -1340,7 +1345,11 @@ class Scheduler(
         if sizer.profile_and_fit():
             self.dynamic_chunk_sizer = sizer
 
-    def _should_defer_prefill(self) -> bool:
+    def _should_defer_prefill(self, running_batch=None) -> bool:
+        if self.governor is not None and self.governor.before_prefill(
+            running_batch, self.waiting_queue, self.chunked_req, time.monotonic()
+        ):
+            return True
         if self._prefill_decode_interval_remaining == 0:
             return False
 
@@ -3654,7 +3663,7 @@ class Scheduler(
 
         if self.dllm_config is not None:
             new_batch = self.get_new_batch_dllm(running_batch)
-        elif self._should_defer_prefill():
+        elif self._should_defer_prefill(running_batch):
             new_batch = None
         else:
             prefill_plan = self.get_new_batch_prefill(running_batch)
@@ -4627,6 +4636,8 @@ class Scheduler(
         elif batch.forward_mode.is_idle():
             self.batch_result_processor.process_batch_result_idle(batch, result)
 
+        if self.governor is not None:
+            self.governor.after_result(batch, time.monotonic())
         self._record_step_counters(batch, result)
 
         self.metrics_reporter.log_batch_result_stats(batch, result)
@@ -5018,6 +5029,8 @@ class Scheduler(
         # Resolved config (pristine server_args + post-publish overrides) so a
         # readback reflects values changed via /set_internal_state, not startup.
         ret = get_context().resolved_server_args_dict()
+        if self.governor is not None:
+            ret["pig_governor"] = self.governor.core.snapshot(time.monotonic())
         ret["world_size"] = compute_world_size(
             enable_dp_attention=get_parallel().enable_dp_attention,
             dp_size=get_parallel().dp_size,
@@ -5077,6 +5090,14 @@ class Scheduler(
 
     def set_internal_state(self, recv_req: SetInternalStateReq):
         server_args_dict = recv_req.server_args
+        if set(server_args_dict) == {"pig_governor"} and self.governor is not None:
+            from pig_governor.admin import execute
+
+            try:
+                execute(self.governor.core, "patch", time.monotonic(), server_args_dict["pig_governor"])
+                return SetInternalStateReqOutput(updated=True, control_nonce=recv_req.control_nonce)
+            except ValueError:
+                return SetInternalStateReqOutput(updated=False, control_nonce=recv_req.control_nonce)
         args_allow_update = set(
             [
                 "pp_max_micro_batch_size",
@@ -5891,6 +5912,10 @@ def run_scheduler_process(
 def _make_abort_req(
     req: Req, finished_reason: Optional[FinishReasonDict] = None
 ) -> AbortReq:
+    if getattr(req, "governor_progress", None) is not None:
+        from pig_governor.sglang import on_abort_emitted
+
+        on_abort_emitted(req)
     return AbortReq(
         rid=req.rid,
         finished_reason=finished_reason,

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
+import re
 import threading
 import time
 import uuid
@@ -386,6 +388,10 @@ class HiCacheFile(HiCacheStorage):
         )
         attn_cp_rank = storage_config.attn_cp_rank
         attn_cp_size = storage_config.attn_cp_size
+        if is_mla_model and (not model_name or not model_name.strip()):
+            raise ValueError(
+                "MLA HiCacheFile requires a non-empty model_name for namespace ownership"
+            )
         model_name = "-".join(model_name.split("/")) if model_name else ""
         enable_pp = pp_size > 1
         self.config_suffix = f"_{model_name}"
@@ -398,9 +404,96 @@ class HiCacheFile(HiCacheStorage):
         if attn_cp_size > 1:
             self.config_suffix += f"_cp{attn_cp_rank}_{attn_cp_size}"
 
+        self._tp_rank = tp_rank
+        self._tp_size = tp_size
+        self._is_mla_model = is_mla_model
+        # MLA KV is replicated and keeps the historical TP-independent suffix.
+        # Kimi-K3 Mamba/KDA state is TP-sharded, so it needs a rank-qualified
+        # namespace even though both pools use this HiCacheFile instance.
+        self._mamba_config_suffix = (
+            f"{self.config_suffix}_mamba_tp{tp_rank}_{tp_size}"
+            if is_mla_model
+            else self.config_suffix
+        )
+
+        owned_file_suffixes = []
+        if not is_mla_model or tp_rank == 0:
+            owned_file_suffixes.append(self.config_suffix)
+        if is_mla_model:
+            owned_file_suffixes.append(self._mamba_config_suffix)
+        self._owned_file_suffixes = tuple(owned_file_suffixes)
+        self._owned_temp_prefixes = tuple(
+            ".sglang-" + hashlib.sha256(suffix.encode()).hexdigest() + "-"
+            for suffix in self._owned_file_suffixes
+        )
+
+        # Validate the complete budget contract before creating a directory or
+        # inspecting any files. Invalid topology/configuration must have no
+        # filesystem side effects.
+        from sglang.srt.mem_cache.storage.file.lru_file_evictor import (
+            LRUFileEvictor,
+            _parse_size_to_bytes,
+        )
+
+        extra_config = dict(storage_config.extra_config or {})
+        total_max_size = _parse_size_to_bytes(
+            extra_config.get("max_size")
+            if extra_config.get("max_size") is not None
+            else envs.SGLANG_HICACHE_FILE_BACKEND_MAX_SIZE.get()
+        )
+        mamba_max_size_raw = extra_config.get("mamba_max_size")
+        mamba_max_size = _parse_size_to_bytes(mamba_max_size_raw)
+
+        shared_extra_config = dict(extra_config)
+        mamba_extra_config = dict(extra_config)
+        # With an MLA File backend, max_size is the aggregate budget for one
+        # DP1/PP1/CP1 TP-group namespace. mamba_max_size allocates part of it to
+        # all TP-sharded Mamba writers; the remainder belongs to replicated KV
+        # and legacy files. A deployment with another instance sharing the same
+        # directory must allocate a separate outer namespace/budget.
+        self._mamba_budget_required = (
+            is_mla_model and total_max_size > 0 and mamba_max_size_raw is None
+        )
+        if mamba_max_size_raw is not None:
+            if not is_mla_model:
+                raise ValueError("mamba_max_size is only valid for an MLA File backend")
+            if pp_size != 1 or attn_cp_size != 1:
+                raise ValueError(
+                    "MLA File mamba_max_size currently requires PP1 and CP1; "
+                    "allocate independent outer budgets for other topologies"
+                )
+            if total_max_size <= 0:
+                raise ValueError("mamba_max_size requires a positive max_size")
+            if not 0 < mamba_max_size < total_max_size:
+                raise ValueError("mamba_max_size must be positive and smaller than max_size")
+            if tp_size <= 0 or mamba_max_size // tp_size == 0:
+                raise ValueError("mamba_max_size must allocate at least one byte per TP rank")
+            shared_extra_config["max_size"] = total_max_size - mamba_max_size
+            mamba_extra_config["max_size"] = mamba_max_size // tp_size
+            logger.info(
+                "HiCacheFile MLA TP-group budget: aggregate=%s B, "
+                "replicated_and_legacy=%s B, mamba_aggregate=%s B, "
+                "mamba_per_rank=%s B, tp_size=%s",
+                total_max_size,
+                shared_extra_config["max_size"],
+                mamba_max_size,
+                mamba_extra_config["max_size"],
+                tp_size,
+            )
+        else:
+            # Never let each Mamba rank inherit the full aggregate max_size.
+            # If a cap is configured, set() rejects Mamba writes until an
+            # explicit aggregate allocation is supplied.
+            mamba_extra_config["max_size"] = 0
+
         if not os.path.exists(self.file_path) and tp_rank == 0 and attn_cp_rank == 0:
             os.makedirs(self.file_path)
             logger.info(f"Created HiCacheFile storage directory at {self.file_path}")
+
+        # A temp file may belong to a live same-rank writer. Without a process
+        # identity/lock proving it stale, never unlink it automatically. Refuse
+        # startup so a controller can clean it only after stopping all writers.
+        self._assert_no_unaccounted_temp_files()
 
         # Metadata cache positive lookup toggle & TTL
         enable_cache_raw = None
@@ -427,29 +520,87 @@ class HiCacheFile(HiCacheStorage):
             self.metadata_cache = None
 
         # All LRU / size accounting and disk eviction lives in the evictor so
-        # this backend stays a thin raw-bytes store. Imported lazily: the storage
-        # package __init__ pulls in the backend factory, which imports this
-        # module, so a top-level import here would be circular.
-        from sglang.srt.mem_cache.storage.file.lru_file_evictor import LRUFileEvictor
-
+        # this backend stays a thin raw-bytes store.
         self._evictor = LRUFileEvictor(
             self.file_path,
             self.config_suffix,
             tp_rank=tp_rank,
             is_mla_model=is_mla_model,
-            extra_config=storage_config.extra_config,
+            extra_config=shared_extra_config,
             on_evict=(
                 self.metadata_cache.remove if self.metadata_cache is not None else None
             ),
         )
+        self._mamba_evictor = None
+        if is_mla_model:
+            self._mamba_evictor = LRUFileEvictor(
+                self.file_path,
+                self._mamba_config_suffix,
+                tp_rank=tp_rank,
+                is_mla_model=False,
+                extra_config=mamba_extra_config,
+                on_evict=(
+                    self.metadata_cache.remove
+                    if self.metadata_cache is not None
+                    else None
+                ),
+            )
+
+    def _assert_no_unaccounted_temp_files(self) -> None:
+        try:
+            names = os.listdir(self.file_path)
+        except FileNotFoundError:
+            return
+        unaccounted = []
+        for name in names:
+            # Upstream's anonymous short names carry no namespace ownership.
+            # Do not silently exclude their bytes or unlink a possibly live write.
+            if re.fullmatch(r"\.[0-9a-f]{32}\.tmp", name):
+                unaccounted.append(name)
+                continue
+            if name.startswith(self._owned_temp_prefixes) and name.endswith(".tmp"):
+                unaccounted.append(name)
+                continue
+            marker = ".bin.tmp."
+            if marker not in name:
+                continue
+            stem = name.split(marker, 1)[0]
+            if stem.endswith(self._owned_file_suffixes):
+                unaccounted.append(name)
+        if unaccounted:
+            raise RuntimeError(
+                "HiCacheFile found unaccounted temporary files in this writer "
+                "namespace; stop every writer and remove them before restart: "
+                + ", ".join(sorted(unaccounted))
+            )
+
+    def register_mem_host_pool_v2(self, host_pool: HostKVCache, host_pool_name):
+        if host_pool_name == PoolName.MAMBA and self._mamba_budget_required:
+            raise ValueError(
+                "MLA File Mamba storage requires extra_config.mamba_max_size "
+                "when max_size is configured"
+            )
+        super().register_mem_host_pool_v2(host_pool, host_pool_name)
 
     def _get_suffixed_key(self, key: str) -> str:
         return key + self.config_suffix
 
-    def _get_component_key(self, key: str, component_name: Optional[str] = None) -> str:
+    def _get_component_key(
+        self, key: str, component_name: Optional[str] = None
+    ) -> str:
         if component_name is None or component_name in ("__default__", PoolName.KV):
             return self._get_suffixed_key(key)
-        return self._get_suffixed_key(f"{key}.{component_name}")
+        suffix = (
+            self._mamba_config_suffix
+            if component_name == PoolName.MAMBA
+            else self.config_suffix
+        )
+        return f"{key}.{component_name}{suffix}"
+
+    def _get_component_evictor(self, component_name: Optional[str] = None):
+        if self._is_mla_model and component_name == PoolName.MAMBA:
+            return self._mamba_evictor
+        return self._evictor
 
     def _get_component_path(
         self, key: str, component_name: Optional[str] = None
@@ -468,7 +619,7 @@ class HiCacheFile(HiCacheStorage):
                 continue
             stem = fn[:-4]
             # Only files belonging to this rank/model.
-            if stem.endswith(self.config_suffix):
+            if stem.endswith((self.config_suffix, self._mamba_config_suffix)):
                 self.metadata_cache.add(stem)
 
     def get(
@@ -476,16 +627,18 @@ class HiCacheFile(HiCacheStorage):
         key: str,
         target_location: torch.Tensor,
         target_sizes: Optional[Any] = None,
+        component_name: Optional[str] = None,
     ) -> torch.Tensor | None:
-        suffixed = self._get_suffixed_key(key)
+        suffixed = self._get_component_key(key, component_name)
         tensor_path = os.path.join(self.file_path, f"{suffixed}.bin")
+        evictor = self._get_component_evictor(component_name)
         try:
             expected = target_location.numel() * target_location.element_size()
             with open(tensor_path, "rb", buffering=0) as f:
                 buf = memoryview(target_location.view(torch.uint8).contiguous().numpy())
                 if f.readinto(buf) != expected:
                     raise IOError(f"Short read for {suffixed}")
-            self._evictor.touch(suffixed, tensor_path)
+            evictor.touch(suffixed, tensor_path)
             if self.metadata_cache is not None:
                 self.metadata_cache.add(suffixed)
             return target_location
@@ -514,29 +667,48 @@ class HiCacheFile(HiCacheStorage):
         value: Optional[Any] = None,
         target_location: Optional[Any] = None,
         target_sizes: Optional[Any] = None,
+        component_name: Optional[str] = None,
     ) -> bool:
-        suffixed = self._get_suffixed_key(key)
+        suffixed = self._get_component_key(key, component_name)
         tensor_path = os.path.join(self.file_path, f"{suffixed}.bin")
+        evictor = self._get_component_evictor(component_name)
 
         # Fast path: same key already on disk. Refresh recency and skip rewrite.
-        if self.exists(key):
+        if self.exists(key, component_name=component_name):
             logger.debug(f"Key {key} already exists. Skipped.")
-            self._evictor.touch(suffixed, tensor_path)
+            evictor.touch(suffixed, tensor_path)
             return True
+
+        if component_name == PoolName.MAMBA and self._mamba_budget_required:
+            logger.error(
+                "HiCacheFile MLA Mamba writes require extra_config.mamba_max_size "
+                "when max_size is configured; refusing an unbounded TP shard."
+            )
+            return False
 
         tmp_path = None
         reserved = False
         try:
             value_bytes = value.numel() * value.element_size()
             # Ask the evictor to admit + reserve disk space (evicting if needed).
-            if not self._evictor.reserve(suffixed, value_bytes, key=key):
+            if not evictor.reserve(suffixed, value_bytes, key=key):
                 return False
             reserved = True
 
-            tmp_path = os.path.join(self.file_path, f".{uuid.uuid4().hex}.tmp")
+            # Keep the upstream NAME_MAX fix while retaining namespace ownership
+            # for fail-closed accounting of abandoned writes after a restart.
+            namespace = (
+                self._mamba_config_suffix
+                if component_name == PoolName.MAMBA
+                else self.config_suffix
+            )
+            owner = hashlib.sha256(namespace.encode()).hexdigest()
+            tmp_path = os.path.join(
+                self.file_path, f".sglang-{owner}-{uuid.uuid4().hex}.tmp"
+            )
             value.contiguous().view(dtype=torch.uint8).numpy().tofile(tmp_path)
             os.replace(tmp_path, tensor_path)
-            self._evictor.commit(suffixed)
+            evictor.commit(suffixed)
             if self.metadata_cache is not None:
                 self.metadata_cache.add(suffixed)
             return True
@@ -544,7 +716,7 @@ class HiCacheFile(HiCacheStorage):
             logger.error(f"Failed to save tensor {key}: {e}")
             # Roll back the reservation and clean up any half-written file.
             if reserved:
-                self._evictor.abort(suffixed)
+                evictor.abort(suffixed)
             if tmp_path is not None:
                 try:
                     os.remove(tmp_path)
@@ -566,8 +738,8 @@ class HiCacheFile(HiCacheStorage):
                 return False
         return True
 
-    def exists(self, key: str) -> bool:
-        key = self._get_suffixed_key(key)
+    def exists(self, key: str, component_name: Optional[str] = None) -> bool:
+        key = self._get_component_key(key, component_name)
         if self.metadata_cache is not None and self.metadata_cache.contains(key):
             return True
         tensor_path = os.path.join(self.file_path, f"{key}.bin")
@@ -657,13 +829,13 @@ class HiCacheFile(HiCacheStorage):
 
         return PoolTransferResult(final_pages, hit_count)
 
-    def _log_key(self, pool_name: str, key: str) -> str:
-        return key if pool_name == PoolName.KV else f"{key}.{pool_name}"
-
     def _read_page(self, pool_name: str, key: str, host_pool, page_offset: int) -> bool:
         """Read one page from storage into host_pool at page_offset."""
-        storage_key = self._log_key(pool_name, key)
-        data_page = self.get(storage_key, host_pool.get_dummy_flat_data_page())
+        data_page = self.get(
+            key,
+            host_pool.get_dummy_flat_data_page(),
+            component_name=pool_name,
+        )
         if data_page is None:
             return False
         host_pool.set_from_flat_data_page(page_offset, data_page)
@@ -673,9 +845,8 @@ class HiCacheFile(HiCacheStorage):
         self, pool_name: str, key: str, host_pool, page_offset: int
     ) -> bool:
         """Write one page from host_pool at page_offset to storage as raw bytes."""
-        storage_key = self._log_key(pool_name, key)
         data_page = host_pool.get_data_page(page_offset, flat=True)
-        return self.set(storage_key, data_page)
+        return self.set(key, data_page, component_name=pool_name)
 
     def _batch_io_v2(self, transfers: List[PoolTransfer], op_fn):
         results: dict[str, List[bool]] = {}
@@ -719,11 +890,21 @@ class HiCacheFile(HiCacheStorage):
 
     def clear(self) -> bool:
         try:
+            # This is intentionally rank-local. The scheduler request receiver
+            # broadcasts the HTTP clear control request to every TP rank, so a
+            # group reset calls each namespace owner without cross-rank deletes.
             for filename in os.listdir(self.file_path):
+                if not filename.endswith(".bin"):
+                    continue
+                stem = filename[:-4]
+                if not stem.endswith(self._owned_file_suffixes):
+                    continue
                 file_path = os.path.join(self.file_path, filename)
                 if os.path.isfile(file_path):
                     os.remove(file_path)
             self._evictor.clear()
+            if self._mamba_evictor is not None:
+                self._mamba_evictor.clear()
             if self.metadata_cache is not None:
                 self.metadata_cache.clear()
             logger.info("Cleared all entries in HiCacheFile storage.")

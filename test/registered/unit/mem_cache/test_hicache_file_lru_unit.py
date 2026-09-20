@@ -30,6 +30,9 @@ from sglang.srt.mem_cache.hicache_storage import (
     HiCacheFile,
     HiCacheStorageConfig,
     MetadataCache,
+    PoolHitPolicy,
+    PoolName,
+    PoolTransfer,
 )
 from sglang.srt.mem_cache.storage.file.lru_file_evictor import _parse_size_to_bytes
 from sglang.test.test_utils import CustomTestCase
@@ -38,6 +41,22 @@ from sglang.test.test_utils import CustomTestCase
 def _t(n_bytes: int, fill: int = 0) -> torch.Tensor:
     """Build a uint8 CPU tensor of n_bytes filled with `fill`."""
     return torch.full((n_bytes,), fill, dtype=torch.uint8)
+
+
+class _FakeHostPool:
+    page_size = 1
+
+    def __init__(self, pages):
+        self.pages = [page.clone() for page in pages]
+
+    def get_data_page(self, page_offset, flat=True):
+        return self.pages[page_offset]
+
+    def get_dummy_flat_data_page(self):
+        return torch.zeros_like(self.pages[0])
+
+    def set_from_flat_data_page(self, page_offset, data_page):
+        self.pages[page_offset] = data_page.clone()
 
 
 def _make_config(
@@ -77,10 +96,13 @@ class _BackendBuilder:
         self,
         *,
         max_size=None,
+        mamba_max_size=None,
         min_free=None,
         eviction_ratio=None,
         tp_rank=0,
         tp_size=1,
+        pp_rank=0,
+        pp_size=1,
         attn_cp_rank=0,
         attn_cp_size=1,
         is_mla=False,
@@ -98,12 +120,15 @@ class _BackendBuilder:
         cfg = _make_config(
             tp_rank=tp_rank,
             tp_size=tp_size,
+            pp_rank=pp_rank,
+            pp_size=pp_size,
             attn_cp_rank=attn_cp_rank,
             attn_cp_size=attn_cp_size,
             is_mla=is_mla,
             model=model,
             extra_config={
                 "max_size": max_size,
+                "mamba_max_size": mamba_max_size,
                 "eviction_ratio": eviction_ratio,
                 "min_free_space": min_free,
                 "metadata_ttl": metadata_ttl,
@@ -111,6 +136,29 @@ class _BackendBuilder:
             },
         )
         return HiCacheFile(cfg, file_path=d)
+
+
+class TestMLAMambaOwnershipCausal(unittest.TestCase):
+    """Keep the negative control's assertion outside the CI retry wrapper."""
+
+    def test_mamba_ranks_do_not_share_storage_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = _BackendBuilder(directory)
+            common = dict(
+                max_size="500", mamba_max_size="200", is_mla=True,
+                tp_size=2, model="kimi-k3", subdir="shared",
+                enable_metadata_cache=False,
+            )
+            rank0 = build(tp_rank=0, **common)
+            rank1 = build(tp_rank=1, **common)
+            self.assertEqual(
+                rank0._get_component_key("same", PoolName.KV),
+                rank1._get_component_key("same", PoolName.KV),
+            )
+            self.assertNotEqual(
+                rank0._get_component_key("same", PoolName.MAMBA),
+                rank1._get_component_key("same", PoolName.MAMBA),
+            )
 
 
 class TestParseSize(CustomTestCase):
@@ -328,6 +376,346 @@ class TestMLAOwnerGating(HiCacheFileLRUTestBase):
         b = self.make_backend(max_size="200", is_mla=False, tp_rank=3, tp_size=4)
         self.assertTrue(b._evictor.is_storage_owner)
         self.assertTrue(b._evictor.enabled)
+
+
+class TestMLAMambaRankShards(HiCacheFileLRUTestBase):
+    def _make_tp2(
+        self,
+        *,
+        max_size="1000",
+        mamba_max_size="400",
+        enable_metadata_cache=None,
+    ):
+        common = dict(
+            max_size=max_size,
+            mamba_max_size=mamba_max_size,
+            eviction_ratio=1.0,
+            is_mla=True,
+            tp_size=2,
+            model="kimi-k3",
+            subdir="shared",
+            metadata_ttl=-1.0,
+            enable_metadata_cache=enable_metadata_cache,
+        )
+        return (
+            self.make_backend(tp_rank=0, **common),
+            self.make_backend(tp_rank=1, **common),
+        )
+
+    @staticmethod
+    def _transfer(key):
+        return PoolTransfer(
+            name=PoolName.MAMBA,
+            host_indices=torch.tensor([0]),
+            keys=[key],
+            hit_policy=PoolHitPolicy.TRAILING_PAGES,
+        )
+
+    def test_rank_specific_write_exists_and_restore(self):
+        rank0, rank1 = self._make_tp2()
+        key = "same-hash"
+
+        # Replicated MLA KV retains its historical key and TP0 ownership.
+        self.assertTrue(rank0.set(key, _t(8, 3)))
+        self.assertTrue(rank1.exists(key))
+        self.assertFalse(rank1.set("rank1-kv", _t(8, 4)))
+
+        pool0 = _FakeHostPool([_t(8, 11)])
+        pool1 = _FakeHostPool([_t(8, 22)])
+        rank0.register_mem_host_pool_v2(pool0, PoolName.MAMBA)
+        rank1.register_mem_host_pool_v2(pool1, PoolName.MAMBA)
+        self.assertEqual(
+            rank0.batch_set_v2([self._transfer(key)]), {PoolName.MAMBA: [True]}
+        )
+        self.assertEqual(
+            rank1.batch_set_v2([self._transfer(key)]), {PoolName.MAMBA: [True]}
+        )
+
+        key0 = rank0._get_component_key(key, PoolName.MAMBA)
+        key1 = rank1._get_component_key(key, PoolName.MAMBA)
+        self.assertNotEqual(key0, key1)
+        self.assertFalse(key0.endswith(rank0.config_suffix))
+        self.assertFalse(key1.endswith(rank1.config_suffix))
+        self.assertTrue(os.path.exists(os.path.join(rank0.file_path, f"{key0}.bin")))
+        self.assertTrue(os.path.exists(os.path.join(rank1.file_path, f"{key1}.bin")))
+
+        # Existence and restore must resolve the same rank-qualified key.
+        for backend in (rank0, rank1):
+            hit = backend.batch_exists_v2([key], [self._transfer(key)])
+            self.assertEqual(hit.kv_hit_pages, 1)
+            self.assertEqual(hit.extra_pool_hit_pages[PoolName.MAMBA], 1)
+        pool0.pages[0].zero_()
+        pool1.pages[0].zero_()
+        self.assertEqual(
+            rank0.batch_get_v2([self._transfer(key)]), {PoolName.MAMBA: [True]}
+        )
+        self.assertEqual(
+            rank1.batch_get_v2([self._transfer(key)]), {PoolName.MAMBA: [True]}
+        )
+        self.assertTrue(torch.equal(pool0.pages[0], _t(8, 11)))
+        self.assertTrue(torch.equal(pool1.pages[0], _t(8, 22)))
+
+    def test_aggregate_budget_is_split_without_multiplying_by_tp(self):
+        rank0, rank1 = self._make_tp2(max_size="1000", mamba_max_size="400")
+        self.assertEqual(rank0._evictor.max_size_bytes, 600)
+        self.assertEqual(rank1._evictor.max_size_bytes, 600)
+        self.assertTrue(rank0._evictor.is_storage_owner)
+        self.assertFalse(rank1._evictor.is_storage_owner)
+        self.assertEqual(rank0._mamba_evictor.max_size_bytes, 200)
+        self.assertEqual(rank1._mamba_evictor.max_size_bytes, 200)
+        self.assertTrue(rank0._mamba_evictor.is_storage_owner)
+        self.assertTrue(rank1._mamba_evictor.is_storage_owner)
+        self.assertEqual(
+            rank0._evictor.max_size_bytes
+            + rank0._mamba_evictor.max_size_bytes
+            + rank1._mamba_evictor.max_size_bytes,
+            1000,
+        )
+
+    def test_mamba_lru_cannot_scan_or_evict_other_namespaces(self):
+        rank0, rank1 = self._make_tp2(max_size="500", mamba_max_size="200")
+        self.assertTrue(rank0.set("shared-kv", _t(80, 1)))
+        for backend, fill in ((rank0, 10), (rank1, 20)):
+            self.assertTrue(
+                backend.set("old", _t(60, fill), component_name=PoolName.MAMBA)
+            )
+
+        # Rank0 pressure can evict only rank0 Mamba, not shared KV or rank1 Mamba.
+        self.assertTrue(rank0.set("new", _t(60, 30), component_name=PoolName.MAMBA))
+        self.assertFalse(rank0.exists("old", component_name=PoolName.MAMBA))
+        self.assertTrue(rank1.exists("old", component_name=PoolName.MAMBA))
+        self.assertTrue(rank0.exists("shared-kv"))
+
+        # A fresh startup scan keeps the shared LRU disjoint from rank Mamba.
+        legacy_stem = rank0._get_suffixed_key("legacy.mamba")
+        with open(os.path.join(rank0.file_path, f"{legacy_stem}.bin"), "wb") as f:
+            f.write(b"l" * 20)
+        restarted = self.make_backend(
+            max_size="500",
+            mamba_max_size="200",
+            eviction_ratio=1.0,
+            is_mla=True,
+            tp_rank=0,
+            tp_size=2,
+            model="kimi-k3",
+            subdir="shared",
+        )
+        self.assertIn(legacy_stem, restarted._evictor._lru)
+        self.assertNotIn(
+            restarted._get_component_key("new", PoolName.MAMBA),
+            restarted._evictor._lru,
+        )
+        self.assertTrue(
+            all(
+                stem.endswith(restarted._mamba_config_suffix)
+                for stem in restarted._mamba_evictor._lru
+            )
+        )
+
+    def test_historical_unsuffixed_mamba_is_not_restored(self):
+        rank0, _ = self._make_tp2()
+        key = "legacy-hash"
+        self.assertTrue(rank0.set(key, _t(8, 1)))
+        legacy = rank0._get_suffixed_key(f"{key}.{PoolName.MAMBA}")
+        with open(os.path.join(rank0.file_path, f"{legacy}.bin"), "wb") as f:
+            f.write(bytes([99]) * 8)
+        hit = rank0.batch_exists_v2([key], [self._transfer(key)])
+        self.assertEqual(hit.kv_hit_pages, 0)
+        self.assertNotIn(PoolName.MAMBA, hit.extra_pool_hit_pages)
+
+    def test_startup_refuses_owned_temp_without_deleting_any_file(self):
+        shared_dir = os.path.join(self.tmpdir, "shared")
+        os.makedirs(shared_dir, exist_ok=True)
+        names = {
+            "shared": "kv_kimi-k3.bin.tmp.1.1.dead",
+            "rank0": "h.mamba_kimi-k3_mamba_tp0_2.bin.tmp.1.1.dead",
+            "rank1": "h.mamba_kimi-k3_mamba_tp1_2.bin.tmp.1.1.dead",
+            "other": "kv_deepseek.bin.tmp.1.1.dead",
+            "committed": "kv_kimi-k3.bin",
+        }
+        for name in names.values():
+            with open(os.path.join(shared_dir, name), "wb") as f:
+                f.write(b"stale")
+
+        common = dict(
+            max_size="500",
+            mamba_max_size="200",
+            is_mla=True,
+            tp_size=2,
+            model="kimi-k3",
+            subdir="shared",
+        )
+        with self.assertRaisesRegex(RuntimeError, "stop every writer"):
+            self.make_backend(tp_rank=0, **common)
+        with self.assertRaisesRegex(RuntimeError, "stop every writer"):
+            self.make_backend(tp_rank=1, **common)
+        for name in names.values():
+            self.assertTrue(os.path.exists(os.path.join(shared_dir, name)))
+
+    def test_bounded_temp_name_preserves_rank_ownership_on_restart(self):
+        rank0, rank1 = self._make_tp2()
+        key = "k" * 140
+        seen = []
+        replace = os.replace
+
+        def capture(source, target):
+            seen.append(os.path.basename(source))
+            self.assertLess(len(os.path.basename(source).encode()), 255)
+            return replace(source, target)
+
+        with mock.patch("os.replace", side_effect=capture):
+            self.assertTrue(rank0.set(key, _t(8), component_name=PoolName.MAMBA))
+        self.assertEqual(len(seen), 1)
+        self.assertTrue(seen[0].startswith(rank0._owned_temp_prefixes[-1]))
+        stale = os.path.join(rank0.file_path, seen[0])
+        with open(stale, "wb") as handle:
+            handle.write(b"unfinished")
+        with self.assertRaisesRegex(RuntimeError, "stop every writer"):
+            rank0._assert_no_unaccounted_temp_files()
+        rank1._assert_no_unaccounted_temp_files()
+        self.assertTrue(os.path.exists(stale))
+
+    def test_anonymous_upstream_temp_is_not_silently_unaccounted(self):
+        rank0, rank1 = self._make_tp2()
+        stale = os.path.join(rank0.file_path, "." + "a" * 32 + ".tmp")
+        with open(stale, "wb") as handle:
+            handle.write(b"unknown-owner")
+        for backend in (rank0, rank1):
+            with self.assertRaisesRegex(RuntimeError, "stop every writer"):
+                backend._assert_no_unaccounted_temp_files()
+        self.assertTrue(os.path.exists(stale))
+
+    def test_invalid_budget_has_no_filesystem_side_effect(self):
+        target = os.path.join(self.tmpdir, "existing")
+        os.makedirs(target)
+        protected = os.path.join(target, "h.mamba_kimi-k3_mamba_tp0_2.bin.tmp.live")
+        with open(protected, "wb") as f:
+            f.write(b"active-writer")
+        cfg = _make_config(
+            tp_size=2,
+            is_mla=True,
+            model="kimi-k3",
+            extra_config={"max_size": "500", "mamba_max_size": "500"},
+        )
+        with self.assertRaisesRegex(ValueError, "smaller than max_size"):
+            HiCacheFile(cfg, file_path=target)
+        self.assertTrue(os.path.exists(protected))
+
+    def test_empty_mla_model_namespace_fails_before_filesystem_access(self):
+        target = os.path.join(self.tmpdir, "must-not-be-created")
+        cfg = _make_config(
+            tp_size=2,
+            is_mla=True,
+            model=None,
+            extra_config={"max_size": "500", "mamba_max_size": "200"},
+        )
+        with self.assertRaisesRegex(ValueError, "non-empty model_name"):
+            HiCacheFile(cfg, file_path=target)
+        self.assertFalse(os.path.exists(target))
+
+    def test_rank_owned_clear_preserves_other_rank_mamba_state(self):
+        rank0, rank1 = self._make_tp2(max_size="500", mamba_max_size="200")
+        self.assertTrue(rank0.set("shared-kv", _t(8, 1)))
+        self.assertTrue(
+            rank0.set("rank0", _t(40, 10), component_name=PoolName.MAMBA)
+        )
+        self.assertTrue(
+            rank1.set("rank1", _t(40, 20), component_name=PoolName.MAMBA)
+        )
+        rank1_stem = rank1._get_component_key("rank1", PoolName.MAMBA)
+        rank1_path = os.path.join(rank1.file_path, f"{rank1_stem}.bin")
+        rank1_lru_before = dict(rank1._mamba_evictor._lru)
+        foreign_path = os.path.join(rank0.file_path, "kv_deepseek.bin")
+        live_temp_path = os.path.join(
+            rank0.file_path,
+            f"{rank0._get_component_key('active', PoolName.MAMBA)}.bin.tmp.live",
+        )
+        for path in (foreign_path, live_temp_path):
+            with open(path, "wb") as f:
+                f.write(b"do-not-delete")
+
+        self.assertTrue(rank0.clear())
+        self.assertTrue(os.path.exists(rank1_path))
+        self.assertTrue(os.path.exists(foreign_path))
+        self.assertTrue(os.path.exists(live_temp_path))
+        self.assertEqual(dict(rank1._mamba_evictor._lru), rank1_lru_before)
+        self.assertTrue(rank1.exists("rank1", component_name=PoolName.MAMBA))
+        # An existing key remains a no-op and a new key uses the same live LRU.
+        self.assertTrue(
+            rank1.set("rank1", _t(40, 99), component_name=PoolName.MAMBA)
+        )
+        self.assertTrue(
+            rank1.set("rank1-new", _t(40, 30), component_name=PoolName.MAMBA)
+        )
+        self.assertTrue(rank1.exists("rank1", component_name=PoolName.MAMBA))
+        self.assertTrue(rank1.exists("rank1-new", component_name=PoolName.MAMBA))
+        self.assertFalse(rank1.exists("shared-kv"))
+
+    def test_group_clear_requires_every_rank_and_clears_local_metadata(self):
+        rank0, rank1 = self._make_tp2(
+            max_size="500", mamba_max_size="200", enable_metadata_cache=True
+        )
+        self.assertTrue(rank0.set("shared-kv", _t(8, 1)))
+        self.assertTrue(
+            rank1.set("rank1", _t(40, 20), component_name=PoolName.MAMBA)
+        )
+        # The HTTP control request is broadcast to all TP schedulers. Model that
+        # group reset by calling each rank-local backend once.
+        self.assertTrue(rank0.clear())
+        self.assertTrue(rank1.clear())
+        self.assertFalse(rank0.exists("shared-kv"))
+        self.assertFalse(rank1.exists("shared-kv"))
+        self.assertFalse(rank1.exists("rank1", component_name=PoolName.MAMBA))
+        self.assertFalse(rank0._evictor._lru)
+        self.assertFalse(rank1._mamba_evictor._lru)
+        self.assertFalse(rank0.metadata_cache.cache)
+        self.assertFalse(rank1.metadata_cache.cache)
+
+    def test_capped_mamba_requires_explicit_aggregate_allocation(self):
+        rank0 = self.make_backend(
+            max_size="500", is_mla=True, tp_rank=0, tp_size=2
+        )
+        with self.assertRaisesRegex(ValueError, "requires extra_config.mamba_max_size"):
+            rank0.register_mem_host_pool_v2(_FakeHostPool([_t(8)]), PoolName.MAMBA)
+        self.assertFalse(
+            rank0.set("k", _t(8, 1), component_name=PoolName.MAMBA)
+        )
+
+    def test_invalid_or_unisolated_budget_fails_closed(self):
+        with self.assertRaisesRegex(ValueError, "smaller than max_size"):
+            self.make_backend(
+                max_size="500",
+                mamba_max_size="500",
+                is_mla=True,
+                tp_size=2,
+            )
+        with self.assertRaisesRegex(ValueError, "requires PP1 and CP1"):
+            self.make_backend(
+                max_size="500",
+                mamba_max_size="200",
+                is_mla=True,
+                tp_size=2,
+                attn_cp_size=2,
+            )
+        with self.assertRaisesRegex(ValueError, "requires PP1 and CP1"):
+            self.make_backend(
+                max_size="500",
+                mamba_max_size="200",
+                is_mla=True,
+                tp_size=2,
+                pp_size=2,
+            )
+
+    def test_failed_atomic_replace_refunds_mamba_reservation(self):
+        rank0, _ = self._make_tp2()
+        with mock.patch("os.replace", side_effect=OSError("injected failure")):
+            self.assertFalse(
+                rank0.set("k", _t(80, 1), component_name=PoolName.MAMBA)
+            )
+        self.assertEqual(rank0._mamba_evictor._total_bytes, 0)
+        self.assertFalse(rank0._mamba_evictor._pending_writes)
+        self.assertFalse(rank0.exists("k", component_name=PoolName.MAMBA))
+        self.assertFalse(any(".tmp." in name for name in os.listdir(rank0.file_path)))
 
 
 class TestTrackOrTouch(HiCacheFileLRUTestBase):

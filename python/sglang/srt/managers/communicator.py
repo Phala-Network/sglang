@@ -4,6 +4,7 @@ import asyncio
 import copy
 import logging
 from typing import Callable, Generic, List, Optional, TypeVar
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class FanOutCommunicator(Generic[T]):
         send: Callable[[T], None],
         fan_out: int,
         mode: str = "queueing",
+        correlate: bool = False,
     ):
         self._send = send
         self._fan_out = fan_out
@@ -35,8 +37,12 @@ class FanOutCommunicator(Generic[T]):
         self._result_values: Optional[List[T]] = None
         self._result_fan_out: Optional[int] = None
         self._queueing_lock = asyncio.Lock()
+        self._correlate = correlate
+        self._nonce = None
 
         assert mode in ["queueing", "watching"]
+        if correlate and mode != "queueing":
+            raise ValueError("Correlated control requires queueing mode")
 
     async def queueing_call(self, obj: T):
         # asyncio.Lock is FIFO-fair: a new caller cannot acquire while earlier
@@ -44,17 +50,20 @@ class FanOutCommunicator(Generic[T]):
         # arrival order. It also releases on exception/cancellation, so a
         # failed caller never blocks the callers queued behind it.
         async with self._queueing_lock:
-            if obj is not None:
-                self._send(obj)
-
             self._result_event = asyncio.Event()
             self._result_values = []
             self._result_fan_out = self._fan_out
-            await self._result_event.wait()
-            result_values = self._result_values
-            self._result_event = self._result_values = None
-            self._result_fan_out = None
-            return result_values
+            self._nonce = uuid4().hex if self._correlate else None
+            try:
+                if obj is not None:
+                    if self._correlate:
+                        obj.control_nonce = self._nonce
+                    self._send(obj)
+                await self._result_event.wait()
+                return self._result_values
+            finally:
+                self._result_event = self._result_values = None
+                self._result_fan_out = self._nonce = None
 
     async def watching_call(self, obj):
         if self._result_event is None:
@@ -88,6 +97,10 @@ class FanOutCommunicator(Generic[T]):
         self._fan_out = fan_out
 
     def handle_recv(self, recv_obj: T):
+        if self._correlate and (
+            self._nonce is None or getattr(recv_obj, "control_nonce", None) != self._nonce
+        ):
+            return
         if (
             self._result_values is None
             or self._result_event is None

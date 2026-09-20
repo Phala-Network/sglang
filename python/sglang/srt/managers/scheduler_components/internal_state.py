@@ -60,7 +60,10 @@ class SchedulerInternalStateController:
         # A bound signal handler is not msgpack-serializable, and no reader
         # consumes it.
         state.pop("custom_sigquit_handler", None)
-        return GetInternalStateReqOutput(internal_state=msgspec_to_builtins(state))
+        return GetInternalStateReqOutput(
+            internal_state=msgspec_to_builtins(state),
+            control_nonce=recv_req.control_nonce,
+        )
 
     def _add_topology(self, state: Dict[str, Any]) -> None:
         scheduler = self.scheduler
@@ -154,7 +157,9 @@ class SchedulerInternalStateController:
                 handler.validate(key, value)
         except UpdateRejected as rejection:
             logger.warning(str(rejection))
-            return SetInternalStateReqOutput(updated=False)
+            return SetInternalStateReqOutput(
+                updated=False, control_nonce=recv_req.control_nonce
+            )
 
         # Worker commands apply directly; config keys land in one override.
         overrides = {}
@@ -163,7 +168,9 @@ class SchedulerInternalStateController:
         if overrides:
             get_context().override(source="update_server_args", **overrides)
             logger.info(f"Config updated via context override: {overrides}")
-        return SetInternalStateReqOutput(updated=True)
+        return SetInternalStateReqOutput(
+            updated=True, control_nonce=recv_req.control_nonce
+        )
 
     def _update_handlers(self) -> Dict[str, _UpdateHandler]:
         return {

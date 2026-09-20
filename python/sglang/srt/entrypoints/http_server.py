@@ -816,6 +816,16 @@ async def get_server_info():
     return await server_info()
 
 
+@app.api_route("/admin/v1/predictive-policy", methods=["GET", "PATCH"])
+@auth_level(AuthLevel.ADMIN_OPTIONAL)
+async def governor_policy(request: Request):
+    if os.environ.get("PIG_GOVERNOR_ENABLE") != "1":
+        raise HTTPException(status_code=404, detail="Governor not enabled")
+    from pig_governor.http import endpoint
+
+    return await endpoint(_global_state.tokenizer_manager, request)
+
+
 @app.get("/server_info")
 async def server_info():
     """The startup configuration, plus live scheduler state.

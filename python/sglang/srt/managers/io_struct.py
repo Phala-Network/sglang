@@ -2113,8 +2113,8 @@ class GetInternalStateReqOutput(BaseReq, kw_only=True):
 
 
 class SetInternalStateReq(BaseReq, kw_only=True):
-    # Only numeric scheduler knobs are accepted (see Scheduler.set_internal_state).
-    server_args: Dict[str, Union[int, float]]
+    # Numeric knobs or a namespaced extension payload; scheduler validates keys.
+    server_args: Dict[str, Union[int, float, Dict[str, Any]]]
     control_nonce: Optional[str] = None
 
 

@@ -962,6 +962,7 @@ class PrefillAdder:
         mamba_gap_reserve: int = 0,
         is_chunked_continuation: bool = False,
         compute_charge: Optional[int] = None,
+        allocation_page_size: Optional[int] = None,
     ):
         """Charge one admitted request against the prefill budgets.
 
@@ -979,9 +980,13 @@ class PrefillAdder:
         extend_input_len = self.ceil_paged_tokens(extend_input_len)
         if compute_charge is None:
             compute_charge = extend_input_len
+        if allocation_page_size is not None:
+            extend_input_len = (
+                -(-raw_extend_input_len // allocation_page_size) * allocation_page_size
+            )
 
         # alloc_extend reserves an extra page_size per request to make sure the budget doesn't over-commit
-        page_overhead = self.page_size
+        page_overhead = allocation_page_size or self.page_size
         # `mamba_gap_reserve` (shared Mamba pool only; 0 otherwise) charges the new
         # mamba state's shared-gap cost to BOTH full budgets: the slot is allocated
         # immediately (counts against `cur_rem`) and held for the request lifetime
@@ -1133,6 +1138,13 @@ class PrefillAdder:
         )
 
     def add_chunked_req(self, req: Req):
+        # DCP allocators expose virtual pages (e.g. 512), while the scheduling
+        # configuration can retain physical rows (64). Capacity and reservations
+        # must use allocator units; compute chunk accounting stays unchanged.
+        allocation_page_size = max(
+            self.page_size,
+            getattr(self.token_to_kv_pool_allocator, "page_size", self.page_size),
+        )
         if self.dllm_config is not None:
             _rem_tokens = self._get_dllm_remain_tokens()
         else:
@@ -1157,9 +1169,9 @@ class PrefillAdder:
             # admitted extension cannot consume that slack. In particular, never
             # turn an exhausted decode estimate into an unchecked full chunk.
             physical_cap = (
-                (int(self.cur_rem_tokens) - self.page_size)
-                // self.page_size
-                * self.page_size
+                (int(self.cur_rem_tokens) - allocation_page_size)
+                // allocation_page_size
+                * allocation_page_size
             )
             _rem_tokens = min(_rem_tokens, physical_cap)
             if _rem_tokens <= 0:
@@ -1197,6 +1209,7 @@ class PrefillAdder:
             mamba_gap_reserve=self._mamba_gap_budget_for_req(req),
             is_chunked_continuation=True,
             compute_charge=req.extend_range.length if self.exact_chunk_fill else None,
+            allocation_page_size=allocation_page_size,
         )
 
         # Return if chunked prefill not finished

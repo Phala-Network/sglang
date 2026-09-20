@@ -883,6 +883,12 @@ async def server_info():
 
     server_args = _global_state.tokenizer_manager.server_args
 
+    # A multi-worker router may not own a local request table. Report that
+    # observation as unavailable, rather than inventing a drained zero.
+    request_state_summary = getattr(
+        _global_state.tokenizer_manager, "request_state_summary", None
+    )
+
     return msgspec_to_builtins(
         {
             **server_args.resolved_dict(),
@@ -890,6 +896,9 @@ async def server_info():
             **_global_state.scheduler_info,
             "startup_time": _global_state.tokenizer_manager.startup_time,
             "internal_states": internal_states,
+            "tokenizer_request_states": (
+                request_state_summary() if callable(request_state_summary) else None
+            ),
             "version": __version__,
             "frontend": "python",
             # Structured KV-event publisher descriptor for KV-aware routers.

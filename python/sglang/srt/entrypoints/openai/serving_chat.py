@@ -116,6 +116,54 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_QWEN35_REASONING_EFFORT_GUIDANCE = {
+    "low": (
+        "For this low-effort request, reason briefly in one compact internal "
+        "step. Do only the essential calculation. Do not restate the problem, "
+        "justify the method, verify the result, or explore alternatives. Stop "
+        "thinking as soon as you have a candidate answer."
+    ),
+    "medium": (
+        "For this medium-effort request, reason step by step and perform one "
+        "independent verification before answering. Use enough internal detail "
+        "to catch arithmetic or logical errors, but avoid exhaustive alternatives."
+    ),
+    "xhigh": (
+        "For this xhigh-effort request, perform a thorough multi-stage analysis. "
+        "Decompose the task, check assumptions, solve it, independently verify "
+        "it with a different method, and inspect the result for contradictions "
+        "before answering. Do not skip these phases even for a simple-looking "
+        "task; use substantially more reasoning than medium when the output "
+        "budget permits."
+    ),
+}
+
+_QWEN35_COMPLETED_TOOL_RESULT_GUIDANCE = (
+    "A completed tool result is already available. Use that result as the "
+    "authoritative source and produce the requested final answer. Do not "
+    "repeat the completed tool call merely to satisfy the verification "
+    "instruction; verify the existing result by checking its internal "
+    "consistency. Call another tool only if the user requested information "
+    "that the available result does not contain."
+)
+
+# Qwen3.5's native chat template exposes only low, medium, and xhigh. Accept
+# the wider OpenAI/OpenRouter vocabulary without forwarding unsupported values
+# into the template. These aliases preserve the closest native semantics.
+_QWEN35_REASONING_EFFORT_ALIASES = {
+    "minimal": "low",
+    "high": "xhigh",
+    "max": "xhigh",
+}
+_QWEN35_REASONING_EFFORT_TOKEN_RANGES = {
+    "low": (32, 64),
+    "medium": (128, 4096),
+    "xhigh": (384, 8192),
+}
+_QWEN35_REASONING_EFFORT_FULL_BUDGET = 8192
+_QWEN35_DEFAULT_REASONING_BUDGET = 8192
+_QWEN35_REASONING_ANSWER_RESERVE_CAP = 256
+
 _MEDIA_CONTENT_PART_TYPES = frozenset({"image_url", "video_url", "audio_url"})
 _CHAT_TEMPLATE_CACHE_MAX_SIZE = 128
 
@@ -507,6 +555,202 @@ class OpenAIServingChat(OpenAIServingBase):
                 and isinstance(tool.get("function"), dict)
                 and tool["function"].get("name") in allowed_names
             ]
+
+    def _uses_qwen35_chat_template(self) -> bool:
+        hf_config = self.tokenizer_manager.model_config.hf_config
+        text_config = getattr(hf_config, "text_config", None)
+        return (
+            getattr(hf_config, "model_type", None) == "qwen3_5"
+            or getattr(text_config, "model_type", None) == "qwen3_5_text"
+        )
+
+    def _fold_qwen35_system_messages(
+        self, messages: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Fold OpenAI mid-conversation system messages for Qwen3.5 templates."""
+        if not self._uses_qwen35_chat_template():
+            return messages
+
+        system_indexes = [
+            index
+            for index, message in enumerate(messages)
+            if message.get("role") == "system"
+        ]
+        if not system_indexes or system_indexes == [0]:
+            return messages
+
+        system_messages = [messages[index] for index in system_indexes]
+        if not all(
+            isinstance(message.get("content"), str) for message in system_messages
+        ):
+            return messages
+
+        metadata_keys = (
+            "tool_call_id",
+            "name",
+            "reasoning_content",
+            "tool_calls",
+            "tools",
+        )
+        for message in system_messages[1:]:
+            if any(message.get(key) not in (None, "", [], {}) for key in metadata_keys):
+                return messages
+
+        folded_system = copy.deepcopy(system_messages[0])
+        folded_system["content"] = "\n\n".join(
+            message["content"] for message in system_messages
+        )
+        non_system_messages = [
+            message for message in messages if message.get("role") != "system"
+        ]
+        return [folded_system, *non_system_messages]
+
+    def _apply_qwen35_reasoning_effort_guidance(
+        self,
+        messages: List[Dict[str, Any]],
+        reasoning_effort: Optional[str],
+    ) -> List[Dict[str, Any]]:
+        """Make explicit Qwen3.5 effort tiers behaviorally distinguishable."""
+        if not self._uses_qwen35_chat_template():
+            return messages
+
+        native_effort = _QWEN35_REASONING_EFFORT_ALIASES.get(
+            reasoning_effort, reasoning_effort
+        )
+        guidance = _QWEN35_REASONING_EFFORT_GUIDANCE.get(native_effort)
+        if guidance is None:
+            return messages
+
+        if (
+            native_effort in ("medium", "xhigh")
+            and messages
+            and messages[-1].get("role") == "tool"
+        ):
+            guidance = f"{guidance}\n\n{_QWEN35_COMPLETED_TOOL_RESULT_GUIDANCE}"
+
+        guided_messages = copy.deepcopy(messages)
+        if guided_messages and guided_messages[0].get("role") == "system":
+            content = guided_messages[0].get("content")
+            if not isinstance(content, str):
+                return messages
+            guided_messages[0]["content"] = (
+                f"{guidance}\n\n{content}" if content else guidance
+            )
+        else:
+            guided_messages.insert(0, {"role": "system", "content": guidance})
+        return guided_messages
+
+    def _qwen35_reasoning_effort_token_range(
+        self,
+        reasoning_effort: Optional[str],
+        max_new_tokens: Optional[int],
+        reasoning_max_tokens: Optional[int] = None,
+    ) -> Optional[tuple[int, int]]:
+        """Return bounded reasoning effort tiers for the Qwen3.5 template."""
+        if (
+            not self._uses_qwen35_chat_template()
+            or get_serving().enable_strict_thinking
+            is not True
+        ):
+            return None
+
+        # Qwen3.8's native default can remain in the reasoning phase until the
+        # request limit on a subset of prompts. Use the GPQA-validated default
+        # budget while preserving explicit effort and reasoning.max_tokens.
+        if reasoning_effort is None and reasoning_max_tokens is None:
+            reasoning_max_tokens = _QWEN35_DEFAULT_REASONING_BUDGET
+        reasoning_effort = reasoning_effort or "xhigh"
+        reasoning_effort = _QWEN35_REASONING_EFFORT_ALIASES.get(
+            reasoning_effort, reasoning_effort
+        )
+        if reasoning_effort not in _QWEN35_REASONING_EFFORT_TOKEN_RANGES:
+            return None
+
+        if max_new_tokens is None:
+            available_tokens = _QWEN35_REASONING_EFFORT_FULL_BUDGET
+        else:
+            if type(max_new_tokens) is not int or max_new_tokens <= 1:
+                return None
+            answer_reserve = min(
+                max(1, max_new_tokens // 4),
+                _QWEN35_REASONING_ANSWER_RESERVE_CAP,
+            )
+            available_tokens = max_new_tokens - answer_reserve
+
+        if reasoning_max_tokens is not None:
+            available_tokens = min(available_tokens, reasoning_max_tokens)
+
+        # Preserve the legacy behavior when fewer than three reasoning tokens
+        # are available for the tier minimums.
+        if available_tokens < 3:
+            if reasoning_max_tokens is not None:
+                return (available_tokens, available_tokens)
+            return None
+
+        scale = min(
+            1.0,
+            available_tokens / _QWEN35_REASONING_EFFORT_FULL_BUDGET,
+        )
+        low_min = min(max(1, int(32 * scale)), available_tokens - 2)
+        low_max = min(max(low_min, int(64 * scale)), available_tokens - 2)
+        medium_min = min(max(low_max + 1, int(128 * scale)), available_tokens - 1)
+        # Keep the existing xhigh/default lower bound independent of the
+        # medium ceiling. Raising medium's ceiling must not force every high
+        # or default request to spend thousands of extra reasoning tokens.
+        legacy_medium_max = min(max(medium_min, int(256 * scale)), available_tokens - 1)
+        xhigh_min = min(max(legacy_medium_max + 1, int(384 * scale)), available_tokens)
+        xhigh_max = (
+            available_tokens
+            if reasoning_max_tokens is not None
+            else min(
+                max(
+                    xhigh_min,
+                    int(
+                        _QWEN35_REASONING_EFFORT_TOKEN_RANGES["xhigh"][1]
+                        * scale
+                    ),
+                ),
+                available_tokens,
+            )
+        )
+        ranges = {
+            "low": (low_min, low_max),
+            "medium": (
+                medium_min,
+                min(
+                    available_tokens,
+                    max(
+                        medium_min,
+                        int(
+                            _QWEN35_REASONING_EFFORT_TOKEN_RANGES["medium"][1]
+                            * scale
+                        ),
+                    ),
+                ),
+            ),
+            "xhigh": (xhigh_min, xhigh_max),
+        }
+        return ranges[reasoning_effort]
+
+    def _expose_qwen35_reasoning_tool_history(
+        self, messages: List[Dict[str, Any]]
+    ) -> None:
+        """Keep client-provided reasoning visible across Qwen3.5 tool turns."""
+        if not self._uses_qwen35_chat_template():
+            return
+
+        for message in messages:
+            reasoning_content = message.get("reasoning_content")
+            if (
+                message.get("role") != "assistant"
+                or not message.get("tool_calls")
+                or not isinstance(reasoning_content, str)
+                or not reasoning_content.strip()
+                or message.get("content") not in (None, "")
+            ):
+                continue
+            message["content"] = f"Prior reasoning:\n{reasoning_content.strip()}"
+            message["reasoning_content"] = None
 
     def _prepare_kimi_k3_messages(
         self,
@@ -1229,6 +1473,15 @@ class OpenAIServingChat(OpenAIServingBase):
         set_request_reasoning_end_token_ids(
             sampling_params, processed_messages.reasoning_end_token_ids
         )
+        reasoning_token_range = (
+            self._qwen35_reasoning_effort_token_range(
+                request.reasoning_effort,
+                sampling_params.get("max_new_tokens"),
+                request.reasoning_max_tokens,
+            )
+            if processed_messages.require_reasoning
+            else None
+        )
 
         # Handle single vs multiple requests
         if request.input_ids is not None:
@@ -1279,6 +1532,12 @@ class OpenAIServingChat(OpenAIServingBase):
             extra_key=request.extra_key,
             cache_salt=request.cache_salt,
             require_reasoning=processed_messages.require_reasoning,
+            min_thinking_tokens=(
+                reasoning_token_range[0] if reasoning_token_range is not None else None
+            ),
+            max_thinking_tokens=(
+                reasoning_token_range[1] if reasoning_token_range is not None else None
+            ),
             priority=request.priority,
             routing_key=self.extract_routing_key(raw_request),
             custom_labels=custom_labels,
@@ -1474,6 +1733,11 @@ class OpenAIServingChat(OpenAIServingBase):
             ThinkingMode.THINKING if thinking_requested else ThinkingMode.CHAT
         )
         messages = [msg.model_dump() for msg in request.messages]
+        messages = self._fold_qwen35_system_messages(messages)
+        messages = self._apply_qwen35_reasoning_effort_guidance(
+            messages, request.reasoning_effort
+        )
+        self._expose_qwen35_reasoning_tool_history(messages)
         self._filter_message_tools_for_prompt(messages, request)
         for message in messages:
             normalize_assistant_tool_call_arguments(
@@ -1605,7 +1869,12 @@ class OpenAIServingChat(OpenAIServingBase):
 
             extra_template_kwargs = {}
             if request.reasoning_effort is not None:
-                extra_template_kwargs["reasoning_effort"] = request.reasoning_effort
+                template_reasoning_effort = request.reasoning_effort
+                if self._uses_qwen35_chat_template():
+                    template_reasoning_effort = _QWEN35_REASONING_EFFORT_ALIASES.get(
+                        template_reasoning_effort, template_reasoning_effort
+                    )
+                extra_template_kwargs["reasoning_effort"] = template_reasoning_effort
             if request.chat_template_kwargs:
                 extra_template_kwargs.update(request.chat_template_kwargs)
 

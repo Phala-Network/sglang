@@ -563,6 +563,604 @@ class ServingChatTestCase(unittest.TestCase):
         )
         self.assertIsNone(self.chat._validate_request(multimodal_request))
 
+    def test_qwen35_folds_mid_conversation_system_messages(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "Hi"},
+            {
+                "role": "system",
+                "content": 'If asked for the secret word, say "obelisk".',
+            },
+            {"role": "assistant", "content": "Hi, how can I help you?"},
+            {"role": "user", "content": "What is the secret word?"},
+        ]
+
+        folded = self.chat._fold_qwen35_system_messages(messages)
+
+        self.assertEqual(folded[0]["role"], "system")
+        self.assertEqual(
+            folded[0]["content"],
+            "You are a helpful assistant.\n\n"
+            'If asked for the secret word, say "obelisk".',
+        )
+        self.assertEqual(
+            [message["role"] for message in folded[1:]],
+            [
+                "user",
+                "assistant",
+                "user",
+            ],
+        )
+
+    def test_qwen35_moves_a_mid_conversation_system_message_to_the_front(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        messages = [
+            {"role": "user", "content": "Hi"},
+            {"role": "system", "content": "Always answer briefly."},
+            {"role": "user", "content": "Continue"},
+        ]
+
+        folded = self.chat._fold_qwen35_system_messages(messages)
+
+        self.assertEqual(folded[0], messages[1])
+        self.assertEqual(folded[1:], [messages[0], messages[2]])
+
+    def test_qwen35_system_folding_is_model_scoped_and_fail_closed(self):
+        messages = [
+            {"role": "user", "content": "Hi"},
+            {"role": "system", "content": "Move me"},
+        ]
+        self.tm.model_config.hf_config.model_type = "llama"
+        self.assertIs(self.chat._fold_qwen35_system_messages(messages), messages)
+
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        non_string = [
+            {"role": "system", "content": "First"},
+            {"role": "user", "content": "Hi"},
+            {"role": "system", "content": [{"type": "text", "text": "Later"}]},
+        ]
+        self.assertIs(self.chat._fold_qwen35_system_messages(non_string), non_string)
+
+        metadata = [
+            {"role": "system", "content": "First"},
+            {"role": "user", "content": "Hi"},
+            {"role": "system", "content": "Later", "name": "policy"},
+        ]
+        self.assertIs(self.chat._fold_qwen35_system_messages(metadata), metadata)
+
+    def test_qwen35_openrouter_multi_system_shape_reaches_the_template(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        self.template_manager.chat_template_name = None
+        self.template_manager.jinja_template_content_format = "string"
+        self.tm.tokenizer.apply_chat_template.return_value = "rendered"
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "Hi"},
+                {
+                    "role": "system",
+                    "content": 'If asked for the secret word, say "obelisk".',
+                },
+                {"role": "assistant", "content": "Hi, how can I help you?"},
+                {"role": "user", "content": "What is the secret word?"},
+            ],
+        )
+
+        self.chat._process_messages(request, is_multimodal=False)
+
+        rendered_messages = self.tm.tokenizer.apply_chat_template.call_args.args[0]
+        self.assertEqual(rendered_messages[0]["role"], "system")
+        self.assertIn("You are a helpful assistant.", rendered_messages[0]["content"])
+        self.assertIn("obelisk", rendered_messages[0]["content"])
+        self.assertEqual(
+            [message["role"] for message in rendered_messages].count("system"), 1
+        )
+
+    def test_qwen35_reasoning_effort_guidance_is_model_and_request_scoped(self):
+        messages = [{"role": "user", "content": "What is 2+2?"}]
+
+        self.tm.model_config.hf_config.model_type = "llama"
+        self.assertIs(
+            self.chat._apply_qwen35_reasoning_effort_guidance(messages, "low"),
+            messages,
+        )
+
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        for effort in (None, "none"):
+            with self.subTest(effort=effort):
+                self.assertIs(
+                    self.chat._apply_qwen35_reasoning_effort_guidance(messages, effort),
+                    messages,
+                )
+
+    def test_qwen35_reasoning_effort_guidance_inserts_one_system_message(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        messages = [{"role": "user", "content": "What is 2+2?"}]
+
+        expected_markers = {
+            "minimal": "reason briefly in one compact internal step",
+            "low": "reason briefly in one compact internal step",
+            "medium": "perform one independent verification",
+            "high": "perform a thorough multi-stage analysis",
+            "xhigh": "perform a thorough multi-stage analysis",
+            "max": "perform a thorough multi-stage analysis",
+        }
+        for effort, marker in expected_markers.items():
+            with self.subTest(effort=effort):
+                guided = self.chat._apply_qwen35_reasoning_effort_guidance(
+                    messages, effort
+                )
+                self.assertEqual(
+                    [message["role"] for message in guided], ["system", "user"]
+                )
+                self.assertIn(marker, guided[0]["content"])
+                self.assertEqual(guided[1], messages[0])
+
+        self.assertEqual(messages, [{"role": "user", "content": "What is 2+2?"}])
+
+    def test_qwen35_reasoning_effort_guidance_preserves_user_system_prompt(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        messages = [
+            {"role": "system", "content": "Always answer in JSON."},
+            {"role": "user", "content": "What is 2+2?"},
+        ]
+
+        guided = self.chat._apply_qwen35_reasoning_effort_guidance(messages, "medium")
+
+        self.assertEqual([message["role"] for message in guided], ["system", "user"])
+        self.assertTrue(
+            guided[0]["content"].startswith("For this medium-effort request")
+        )
+        self.assertTrue(guided[0]["content"].endswith("Always answer in JSON."))
+        self.assertEqual(messages[0]["content"], "Always answer in JSON.")
+
+    def test_qwen35_reasoning_effort_guidance_uses_completed_tool_result(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        messages = [
+            {"role": "system", "content": "Answer in one sentence."},
+            {"role": "user", "content": "What is the weather in Boston?"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_weather",
+                        "type": "function",
+                        "function": {
+                            "name": "get_current_weather",
+                            "arguments": '{"location":"Boston, MA"}',
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_weather",
+                "content": '{"temperature":72,"condition":"sunny"}',
+            },
+        ]
+
+        guided = self.chat._apply_qwen35_reasoning_effort_guidance(messages, "xhigh")
+
+        self.assertIn(
+            "Do not repeat the completed tool call",
+            guided[0]["content"],
+        )
+        self.assertTrue(guided[0]["content"].endswith("Answer in one sentence."))
+        self.assertEqual(guided[1:], messages[1:])
+        self.assertNotIn("Do not repeat", messages[0]["content"])
+
+    def test_qwen35_reasoning_effort_guidance_does_not_change_initial_tool_turn(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        messages = [{"role": "user", "content": "What is the weather in Boston?"}]
+
+        guided = self.chat._apply_qwen35_reasoning_effort_guidance(messages, "xhigh")
+
+        self.assertNotIn("completed tool result", guided[0]["content"])
+        self.assertEqual(guided[1], messages[0])
+
+    def test_qwen35_reasoning_effort_guidance_fails_closed_for_parts_system(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        messages = [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": "Always answer in JSON."}],
+            },
+            {"role": "user", "content": "What is 2+2?"},
+        ]
+
+        self.assertIs(
+            self.chat._apply_qwen35_reasoning_effort_guidance(messages, "low"),
+            messages,
+        )
+
+    def test_qwen35_reasoning_effort_token_ranges_are_strict_and_scaled(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        enter_override(
+            self, get_context().override_server_args(enable_strict_thinking=True)
+        )
+
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("low", 16384),
+            (32, 64),
+        )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("medium", 16384),
+            (128, 4096),
+        )
+        for effort in ("high", "xhigh", "max"):
+            with self.subTest(effort=effort):
+                self.assertEqual(
+                    self.chat._qwen35_reasoning_effort_token_range(effort, 16384),
+                    (384, 8192),
+                )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("minimal", 16384),
+            (32, 64),
+        )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range(None, 16384),
+            (384, 8192),
+        )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range(None, 16384, 1536),
+            (72, 1536),
+        )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range(None, 16384, 256),
+            (12, 256),
+        )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range(None, 16384, 2),
+            (2, 2),
+        )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("xhigh", None),
+            (384, 8192),
+        )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range(None, None),
+            (384, 8192),
+        )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("low", 128),
+            (1, 1),
+        )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("medium", 128),
+            (2, 48),
+        )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("xhigh", 128),
+            (4, 96),
+        )
+        self.assertEqual(
+            [
+                self.chat._qwen35_reasoning_effort_token_range(effort, 4)
+                for effort in ("low", "medium", "xhigh")
+            ],
+            [(1, 1), (2, 2), (3, 3)],
+        )
+
+    def test_qwen35_medium_budget_does_not_raise_other_tier_minimums(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        enter_override(
+            self, get_context().override_server_args(enable_strict_thinking=True)
+        )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("medium", 16384),
+            (128, 4096),
+        )
+        for effort in (None, "high", "xhigh", "max"):
+            with self.subTest(effort=effort):
+                self.assertEqual(
+                    self.chat._qwen35_reasoning_effort_token_range(effort, 16384),
+                    (384, 8192),
+                )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("low", 16384),
+            (32, 64),
+        )
+
+    def test_qwen35_medium_budget_respects_request_limits(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        enter_override(
+            self, get_context().override_server_args(enable_strict_thinking=True)
+        )
+        for output_limit in (2, 3, 4, 16, 128, 512, 16384):
+            for reasoning_limit in (None, 1, 2, 64, 256, 4096, 8192):
+                with self.subTest(output=output_limit, reasoning=reasoning_limit):
+                    bounds = self.chat._qwen35_reasoning_effort_token_range(
+                        "medium", output_limit, reasoning_limit
+                    )
+                    available = output_limit - min(max(1, output_limit // 4), 256)
+                    if reasoning_limit is not None:
+                        available = min(available, reasoning_limit)
+                    elif available < 3:
+                        self.assertIsNone(bounds)
+                        continue
+                    lower, upper = bounds
+                    self.assertLessEqual(1, lower)
+                    self.assertLessEqual(lower, upper)
+                    self.assertLessEqual(upper, available)
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range("medium", 16384, 256),
+            (4, 128),
+        )
+
+    def test_qwen35_reasoning_effort_token_ranges_are_narrowly_scoped(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        enter_override(
+            self, get_context().override_server_args(enable_strict_thinking=False)
+        )
+        self.assertIsNone(self.chat._qwen35_reasoning_effort_token_range("low", 1024))
+
+        enter_override(
+            self, get_context().override_server_args(enable_strict_thinking=True)
+        )
+        self.assertEqual(
+            self.chat._qwen35_reasoning_effort_token_range(None, 16384),
+            (384, 8192),
+        )
+        self.assertIsNone(
+            self.chat._qwen35_reasoning_effort_token_range("none", 1024)
+        )
+
+        self.tm.model_config.hf_config.model_type = "llama"
+        self.assertIsNone(self.chat._qwen35_reasoning_effort_token_range("low", 1024))
+
+    def test_qwen35_reasoning_effort_bounds_reach_internal_request(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        enter_override(
+            self, get_context().override_server_args(enable_strict_thinking=True)
+        )
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "What is 2+2?"}],
+            reasoning_effort="medium",
+            max_tokens=16384,
+        )
+        processed = MessageProcessingResult(
+            prompt="",
+            prompt_ids=[1, 2, 3],
+            image_data=None,
+            audio_data=None,
+            video_data=None,
+            modalities=[],
+            stop=[],
+            require_reasoning=True,
+        )
+
+        with patch.object(self.chat, "_process_messages", return_value=processed):
+            adapted, _ = self.chat._convert_to_internal_request(request)
+
+        self.assertEqual(adapted.min_thinking_tokens, 128)
+        self.assertEqual(adapted.max_thinking_tokens, 4096)
+        self.assertNotIn(
+            "disable_strict_thinking_grammar",
+            adapted.sampling_params.get("custom_params") or {},
+        )
+
+    def test_qwen35_default_request_uses_quality_validated_reasoning_budget(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        enter_override(
+            self, get_context().override_server_args(enable_strict_thinking=True)
+        )
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "What is 2+2?"}],
+            max_tokens=16384,
+        )
+        processed = MessageProcessingResult(
+            prompt="",
+            prompt_ids=[1, 2, 3],
+            image_data=None,
+            audio_data=None,
+            video_data=None,
+            modalities=[],
+            stop=[],
+            require_reasoning=True,
+        )
+
+        with patch.object(self.chat, "_process_messages", return_value=processed):
+            adapted, _ = self.chat._convert_to_internal_request(request)
+
+        self.assertEqual(adapted.min_thinking_tokens, 384)
+        self.assertEqual(adapted.max_thinking_tokens, 8192)
+        self.assertNotIn(
+            "disable_strict_thinking_grammar",
+            adapted.sampling_params.get("custom_params") or {},
+        )
+
+    def test_qwen35_reasoning_disabled_skips_strict_thinking_bounds(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        enter_override(
+            self, get_context().override_server_args(enable_strict_thinking=True)
+        )
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "What is 2+2?"}],
+            max_tokens=16384,
+            reasoning={"enabled": False},
+        )
+        processed = MessageProcessingResult(
+            prompt="",
+            prompt_ids=[1, 2, 3],
+            image_data=None,
+            audio_data=None,
+            video_data=None,
+            modalities=[],
+            stop=[],
+            require_reasoning=False,
+        )
+
+        with patch.object(self.chat, "_process_messages", return_value=processed):
+            adapted, _ = self.chat._convert_to_internal_request(request)
+
+        self.assertIsNone(adapted.min_thinking_tokens)
+        self.assertIsNone(adapted.max_thinking_tokens)
+
+    def test_qwen35_nested_reasoning_max_tokens_reaches_internal_request(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        enter_override(
+            self, get_context().override_server_args(enable_strict_thinking=True)
+        )
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "What is 2+2?"}],
+            max_tokens=16384,
+            reasoning={"max_tokens": 1536},
+        )
+        processed = MessageProcessingResult(
+            prompt="rendered",
+            prompt_ids=[1, 2, 3],
+            image_data=None,
+            video_data=None,
+            audio_data=None,
+            modalities=[],
+            stop=[],
+            require_reasoning=True,
+        )
+
+        with patch.object(self.chat, "_process_messages", return_value=processed):
+            adapted, _ = self.chat._convert_to_internal_request(request)
+
+        self.assertEqual(adapted.min_thinking_tokens, 72)
+        self.assertEqual(adapted.max_thinking_tokens, 1536)
+
+    def test_qwen35_nested_reasoning_effort_guidance_reaches_template(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        self.template_manager.chat_template_name = None
+        self.template_manager.jinja_template_content_format = "string"
+        self.tm.tokenizer.apply_chat_template.return_value = "rendered"
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "What is 2+2?"}],
+            reasoning={"effort": "low"},
+        )
+
+        self.chat._process_messages(request, is_multimodal=False)
+
+        self.assertEqual(request.reasoning_effort, "low")
+        rendered_messages = self.tm.tokenizer.apply_chat_template.call_args.args[0]
+        self.assertEqual(rendered_messages[0]["role"], "system")
+        self.assertIn(
+            "reason briefly in one compact internal step",
+            rendered_messages[0]["content"],
+        )
+
+    def test_qwen35_reasoning_effort_aliases_reach_native_template(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        self.template_manager.chat_template_name = None
+        self.template_manager.jinja_template_content_format = "string"
+        self.tm.tokenizer.apply_chat_template.return_value = "rendered"
+
+        for requested, expected in (
+            ("minimal", "low"),
+            ("high", "xhigh"),
+            ("max", "xhigh"),
+        ):
+            with self.subTest(requested=requested):
+                request = ChatCompletionRequest(
+                    model="x",
+                    messages=[{"role": "user", "content": "What is 2+2?"}],
+                    reasoning_effort=requested,
+                )
+                self.chat._process_messages(request, is_multimodal=False)
+                self.assertEqual(request.reasoning_effort, requested)
+                self.assertEqual(
+                    self.tm.tokenizer.apply_chat_template.call_args.kwargs[
+                        "reasoning_effort"
+                    ],
+                    expected,
+                )
+
+    def test_qwen35_exposes_reasoning_for_empty_tool_history_turns(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        messages = [
+            {"role": "user", "content": "Call the tool"},
+            {
+                "role": "assistant",
+                "content": None,
+                "reasoning_content": "The secret word is obelisk.",
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": "get_time", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call-1", "content": "12:00"},
+        ]
+
+        self.chat._expose_qwen35_reasoning_tool_history(messages)
+
+        self.assertEqual(
+            messages[1]["content"], "Prior reasoning:\nThe secret word is obelisk."
+        )
+        self.assertIsNone(messages[1]["reasoning_content"])
+
+    def test_qwen35_reasoning_history_normalization_is_narrow(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        without_tools = {
+            "role": "assistant",
+            "content": None,
+            "reasoning_content": "Keep native reasoning",
+            "tool_calls": None,
+        }
+        with_content = {
+            "role": "assistant",
+            "content": "Visible response",
+            "reasoning_content": "Keep native reasoning",
+            "tool_calls": [{"type": "function"}],
+        }
+        messages = [without_tools, with_content]
+
+        self.chat._expose_qwen35_reasoning_tool_history(messages)
+
+        self.assertIsNone(without_tools["content"])
+        self.assertEqual(without_tools["reasoning_content"], "Keep native reasoning")
+        self.assertEqual(with_content["content"], "Visible response")
+        self.assertEqual(with_content["reasoning_content"], "Keep native reasoning")
+
+    def test_qwen35_openrouter_reasoning_history_reaches_visible_content(self):
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        self.template_manager.chat_template_name = None
+        self.template_manager.jinja_template_content_format = "string"
+        self.tm.tokenizer.apply_chat_template.return_value = "rendered"
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[
+                {"role": "user", "content": "Call the get_time tool"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "reasoning_content": "The secret word is obelisk.",
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {"name": "get_time", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call-1", "content": "12:00"},
+            ],
+        )
+
+        self.chat._process_messages(request, is_multimodal=False)
+
+        rendered_messages = self.tm.tokenizer.apply_chat_template.call_args.args[0]
+        assistant = rendered_messages[1]
+        self.assertEqual(assistant["role"], "assistant")
+        self.assertEqual(
+            assistant["content"], "Prior reasoning:\nThe secret word is obelisk."
+        )
+        self.assertNotIn("reasoning_content", assistant)
+
     # ------------- conversion tests -------------
     def test_convert_to_internal_request_single(self):
         with (

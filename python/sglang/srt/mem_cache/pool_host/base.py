@@ -11,6 +11,10 @@ import torch
 
 from sglang.srt.distributed.parallel_state import get_world_group
 from sglang.srt.mem_cache.memory_pool import KVCache
+from sglang.srt.mem_cache.pool_host.allocation_budget import (
+    active_host_allocation_budget,
+    host_slot_metadata_bytes,
+)
 from sglang.srt.mem_cache.pool_host.common import (
     _cuda_host_unregister,
     get_allocator_from_storage,
@@ -23,7 +27,7 @@ logger = logging.getLogger(__name__)
 _is_cuda = is_cuda()
 _is_hip = is_hip()
 
-# Host RAM to leave free when sizing HiCache pools (OS, other processes).
+# Preserve the legacy path when the startup budget is not opted in.
 HICACHE_HOST_MEMORY_RESERVE_BYTES: int = 10 * (1024**3)
 
 _WRITE_BACK_STAGING_PAGE_CHUNK = 64
@@ -172,7 +176,12 @@ class HostKVCache(abc.ABC):
 
         # Verify there is enough available host memory.
         requested_bytes = self.size * self.size_per_token
-        available_bytes = host_memory_budget_bytes()
+        budget = active_host_allocation_budget()
+        available_bytes = (
+            budget.register_pool(self, host_slot_metadata_bytes(self.logical_size))
+            if budget is not None
+            else host_memory_budget_bytes()
+        )
         if requested_bytes > available_bytes:
             raise ValueError(
                 f"Not enough host memory available. Requesting "
@@ -220,14 +229,23 @@ class HostKVCache(abc.ABC):
         if getattr(self, "_destroyed", False):
             return
         self._destroyed = True
-        buffers = getattr(self, "kv_buffer", None)
-        if buffers is not None and self.pin_memory and (_is_cuda or _is_hip):
-            if not isinstance(buffers, (list, tuple)):
-                buffers = [buffers]
-            for buf in buffers:
-                if buf is not None:
-                    _cuda_host_unregister(buf)
-        self.kv_buffer = None
+        # DSA stores its physical side buffer under a different attribute.
+        # Include it also for partially constructed pools during startup rollback.
+        for name in ("kv_buffer", "index_k_with_scale_buffer"):
+            buffers = getattr(self, name, None)
+            if buffers is not None and self.pin_memory and (_is_cuda or _is_hip):
+                if not isinstance(buffers, (list, tuple)):
+                    buffers = [buffers]
+                for buf in buffers:
+                    if buf is not None:
+                        _cuda_host_unregister(buf)
+            if hasattr(self, name):
+                setattr(self, name, None)
+        # Layer views otherwise retain the mmap owner after its anchor is cleared.
+        for name in ("data_refs", "index_k_data_refs", "mem_state", "free_slots", "slot_used"):
+            if hasattr(self, name):
+                setattr(self, name, None)
+        self.release_slots = []
 
     @abc.abstractmethod
     def get_size_per_token(self):

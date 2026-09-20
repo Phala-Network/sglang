@@ -259,7 +259,18 @@ class SamplingBatchInfo:
             return
 
         # Find a grammar from the list
-        first_grammar = next(grammar for grammar in self.grammars if grammar)
+        first_grammar = next(
+            (
+                grammar
+                for grammar in self.grammars
+                if grammar
+                and getattr(grammar, "vocab_mask_is_unconstrained", False) is not True
+            ),
+            None,
+        )
+        if first_grammar is None:
+            self.grammar_mask = None
+            return
 
         vocab_mask = first_grammar.allocate_vocab_mask(
             vocab_size=self.vocab_size,
@@ -272,7 +283,10 @@ class SamplingBatchInfo:
         entries = [
             GrammarRow(row=row, grammar=grammar)
             for row, grammar in enumerate(self.grammars)
-            if grammar and not grammar.finished and not grammar.is_terminated()
+            if grammar
+            and not grammar.finished
+            and not grammar.is_terminated()
+            and getattr(grammar, "vocab_mask_is_unconstrained", False) is not True
         ]
         first_grammar.fill_vocab_mask_batched(entries, vocab_mask)
 

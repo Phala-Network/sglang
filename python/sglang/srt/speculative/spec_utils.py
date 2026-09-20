@@ -631,11 +631,22 @@ def build_grammar_vocab_mask(
     """
     if barrier is not None:
         barrier()
+    mask_is_unconstrained = all(
+        req.grammar is None
+        or getattr(req.grammar, "vocab_mask_is_unconstrained", False) is True
+        for req in reqs
+    )
     vocab_mask, grammar = generate_token_bitmask(
         reqs,
         *tree.resolve(),
         sampling_info.vocab_size,
     )
+    # Keep the existing tree resolution and accept/rollback bookkeeping.
+    # An identity mask needs no H2D or logits application. Clear an older
+    # Prefill mask too, including the transition out of constrained thinking.
+    if mask_is_unconstrained:
+        sampling_info.grammar_mask = None
+        return None
     if vocab_mask is None:
         return None
 

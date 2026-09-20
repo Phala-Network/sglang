@@ -100,6 +100,13 @@ class ReasonerGrammarObject(BaseGrammarObject):
     def _is_generation(self):
         return self.tokens_after_end >= 0
 
+    @property
+    def vocab_mask_is_unconstrained(self):
+        # Forward generation cannot re-enter thinking. Speculative DFS may
+        # still run for its state bookkeeping, but every descendant mask is
+        # also an identity mask. Re-evaluate after any explicit rollback.
+        return self.grammar is None and self._is_generation()
+
     def transfer_state(self, token: int) -> None:
         if self._is_thinking():
             previous_match = self._matched_think_end_tokens

@@ -34,7 +34,10 @@ class Assets(unittest.TestCase):
     def test_wire_preserves_original_schema_order(self):
         value = self.manifest["cases"][0]["body"]
         sent = json.loads(fixtures.wire(value))
-        self.assertEqual(list(sent["response_format"]["json_schema"]["schema"]["properties"]), ["city", "country", "population", "notable"])
+        self.assertEqual(
+            list(sent["response_format"]["json_schema"]["schema"]["properties"]),
+            ["city", "country", "population", "notable"],
+        )
         sorted_manifest = json.loads(fixtures.canonical(self.manifest))
         self.assertEqual(fixtures.sha(sorted_manifest), fixtures.sha(self.manifest))
         with self.assertRaisesRegex(AssertionError, "wire ordering"):
@@ -47,17 +50,21 @@ class Assets(unittest.TestCase):
             runner.verify_manifest(value)
 
     def test_exchange_sends_the_bound_wire_bytes(self):
-        case = self.manifest['cases'][0]
-        with patch.object(runner.http.client, 'HTTPConnection') as connection:
+        case = self.manifest["cases"][0]
+        with patch.object(runner.http.client, "HTTPConnection") as connection:
             response = connection.return_value.getresponse.return_value
             response.status = 200
             response.getheaders.return_value = []
             response.read.return_value = b'{"choices":[]}'
-            runner.exchange(urlsplit(fixtures.ENDPOINT), 'offline-fixture-only', case['body'])
-            sent = connection.return_value.request.call_args.kwargs['body']
-        self.assertEqual(hashlib.sha256(sent).hexdigest(), case['body_wire_sha256'])
-        properties = json.loads(sent)['response_format']['json_schema']['schema']['properties']
-        self.assertEqual(list(properties), ['city', 'country', 'population', 'notable'])
+            runner.exchange(
+                urlsplit(fixtures.ENDPOINT), "offline-fixture-only", case["body"]
+            )
+            sent = connection.return_value.request.call_args.kwargs["body"]
+        self.assertEqual(hashlib.sha256(sent).hexdigest(), case["body_wire_sha256"])
+        properties = json.loads(sent)["response_format"]["json_schema"]["schema"][
+            "properties"
+        ]
+        self.assertEqual(list(properties), ["city", "country", "population", "notable"])
 
     def test_notable_partial_parser_handles_escapes_and_nested_false_keys(self):
         text = '{"other":{"notable":["not-root"]},"notable":["a,]b","escaped \\" quote","unfinished'

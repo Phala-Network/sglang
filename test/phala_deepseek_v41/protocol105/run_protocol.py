@@ -34,7 +34,10 @@ def verify_manifest(manifest):
     assert len({c["case_id"] for c in cases}) == len(cases)
     for case in cases:
         assert sha(case["body"]) == case["body_sha256"], case["case_id"]
-        assert hashlib.sha256(wire(case["body"]).encode()).hexdigest() == case["body_wire_sha256"], "wire ordering/hash mismatch"
+        assert (
+            hashlib.sha256(wire(case["body"]).encode()).hexdigest()
+            == case["body_wire_sha256"]
+        ), "wire ordering/hash mismatch"
     conflict = [c for c in cases if c["group"] == "conflict35"]
     assert len(conflict) == 35
     assert Counter(c["cohort"] for c in conflict) == {"fixed15": 15, "random20": 20}

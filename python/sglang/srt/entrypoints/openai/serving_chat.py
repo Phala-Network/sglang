@@ -44,6 +44,7 @@ from sglang.srt.constrained.xgrammar_schema import (
 )
 from sglang.srt.entrypoints.openai import chat_encoding, encoding_dsv4, encoding_dsv32
 from sglang.srt.entrypoints.openai.protocol import (
+    AllowedToolsChoice,
     ChatCompletionMessageContentTextPart,
     ChatCompletionMessageContentVideoPart,
     ChatCompletionMessageGenericParam,
@@ -431,8 +432,8 @@ class OpenAIServingChat(OpenAIServingBase):
     def _request_id_prefix(self) -> str:
         return "chatcmpl-"
 
-    def _effective_tools(self, request: ChatCompletionRequest) -> List[Tool]:
-        tools = list(request.tools or [])
+    def _all_tools(self, request: ChatCompletionRequest) -> List[Tool]:
+        tools = list(getattr(request, "tools", None) or [])
         for message in request.messages:
             if (
                 isinstance(message, ChatCompletionMessageGenericParam)
@@ -441,6 +442,71 @@ class OpenAIServingChat(OpenAIServingBase):
             ):
                 tools.extend(message.tools)
         return tools
+
+    @staticmethod
+    def _allowed_tool_names(request: ChatCompletionRequest) -> Optional[set[str]]:
+        tool_choice = getattr(request, "tool_choice", None)
+        if not isinstance(tool_choice, AllowedToolsChoice):
+            return None
+        return {tool.function.name for tool in tool_choice.allowed_tools.tools}
+
+    @staticmethod
+    def _effective_tool_choice(
+        request: ChatCompletionRequest,
+    ) -> Union[ToolChoice, str, None]:
+        tool_choice = getattr(request, "tool_choice", None)
+        if isinstance(tool_choice, AllowedToolsChoice):
+            return tool_choice.allowed_tools.mode
+        return tool_choice
+
+    def _effective_tools(self, request: ChatCompletionRequest) -> List[Tool]:
+        tools = self._all_tools(request)
+        allowed_names = self._allowed_tool_names(request)
+        if allowed_names is None:
+            return tools
+        return [tool for tool in tools if tool.function.name in allowed_names]
+
+    def _request_tools_for_prompt(
+        self,
+        request: ChatCompletionRequest,
+        *,
+        exclude_unset: bool = False,
+    ) -> List[Dict[str, Any]]:
+        tools = list(request.tools or [])
+        if isinstance(request.tool_choice, ToolChoice):
+            tools = [
+                tool
+                for tool in tools
+                if tool.function.name == request.tool_choice.function.name
+            ]
+        else:
+            allowed_names = self._allowed_tool_names(request)
+            if allowed_names is not None:
+                tools = [tool for tool in tools if tool.function.name in allowed_names]
+        return [
+            tool.model_dump(exclude_unset=exclude_unset, by_alias=True)
+            for tool in tools
+        ]
+
+    def _filter_message_tools_for_prompt(
+        self,
+        messages: List[Dict[str, Any]],
+        request: ChatCompletionRequest,
+    ) -> None:
+        allowed_names = self._allowed_tool_names(request)
+        if allowed_names is None:
+            return
+        for message in messages:
+            message_tools = message.get("tools")
+            if not isinstance(message_tools, list):
+                continue
+            message["tools"] = [
+                tool
+                for tool in message_tools
+                if isinstance(tool, dict)
+                and isinstance(tool.get("function"), dict)
+                and tool["function"].get("name") in allowed_names
+            ]
 
     def _prepare_kimi_k3_messages(
         self,
@@ -569,6 +635,8 @@ class OpenAIServingChat(OpenAIServingBase):
             messages, image_count, assistant_prefix = self._prepare_kimi_k3_messages(
                 messages, request
             )
+            # The Kimi preparer restores message tools from the typed request.
+            self._filter_message_tools_for_prompt(messages, request)
             template_kwargs = dict(request.chat_template_kwargs or {})
             template_kwargs.pop("tokenize", None)
             template_kwargs.pop("return_dict", None)
@@ -595,12 +663,13 @@ class OpenAIServingChat(OpenAIServingBase):
                 )
 
             effective_tools = self._effective_tools(request)
+            effective_tool_choice = self._effective_tool_choice(request)
             if (
                 effective_tools
-                and isinstance(request.tool_choice, str)
-                and request.tool_choice in ("required", "none")
+                and isinstance(effective_tool_choice, str)
+                and effective_tool_choice in ("required", "none")
             ):
-                template_kwargs.setdefault("tool_choice", request.tool_choice)
+                template_kwargs.setdefault("tool_choice", effective_tool_choice)
             if request.response_format is not None:
                 template_kwargs.setdefault(
                     "response_format",
@@ -610,12 +679,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 )
 
             request_tools = (
-                [
-                    tool.model_dump(exclude_unset=True, by_alias=True)
-                    for tool in request.tools
-                ]
-                if request.tools
-                else None
+                self._request_tools_for_prompt(request, exclude_unset=True) or None
             )
             prompt_ids = self.tokenizer_manager.tokenizer.apply_chat_template(
                 messages,
@@ -946,7 +1010,7 @@ class OpenAIServingChat(OpenAIServingBase):
         keep their framing intact exactly when a tool-call parser consumes it.
         """
         return bool(
-            request.tool_choice != "none"
+            self._effective_tool_choice(request) != "none"
             and self._effective_tools(request)
             and self.tool_call_parser
         )
@@ -963,21 +1027,30 @@ class OpenAIServingChat(OpenAIServingBase):
         if media_error:
             return media_error
 
+        all_tools = self._all_tools(request)
         effective_tools = self._effective_tools(request)
+        effective_tool_choice = self._effective_tool_choice(request)
         has_message_tools = any(
             isinstance(message, ChatCompletionMessageGenericParam)
             and message.role in ("system", "developer")
             and message.tools
             for message in request.messages
         )
-        if (
-            isinstance(request.tool_choice, str)
-            and request.tool_choice.lower() == "required"
-            and not effective_tools
-        ):
+        if isinstance(request.tool_choice, AllowedToolsChoice):
+            available_names = {tool.function.name for tool in all_tools}
+            allowed_names = self._allowed_tool_names(request) or set()
+            missing_names = sorted(allowed_names - available_names)
+            if missing_names:
+                return (
+                    "Allowed tool(s) not found in tools list: "
+                    + ", ".join(missing_names)
+                    + "."
+                )
+
+        if effective_tool_choice == "required" and not effective_tools:
             return "Tools cannot be empty if tool choice is set to required."
 
-        if request.tool_choice is not None and not isinstance(request.tool_choice, str):
+        if isinstance(request.tool_choice, ToolChoice):
             if not effective_tools:
                 return "Tools cannot be empty if tool choice is set to a specific tool."
             tool_name = request.tool_choice.function.name
@@ -1256,6 +1329,7 @@ class OpenAIServingChat(OpenAIServingBase):
         tool_call_constraint = None
 
         effective_tools = self._effective_tools(request)
+        effective_tool_choice = self._effective_tool_choice(request)
         glm_constraint = self.tool_call_parser == "glm47" and not any(
             tool.function.strict for tool in effective_tools
         )
@@ -1263,9 +1337,9 @@ class OpenAIServingChat(OpenAIServingBase):
             enable_thinking = (request.chat_template_kwargs or {}).get(
                 "enable_thinking"
             )
-            parser = FunctionCallParser(request.tools or [], self.tool_call_parser)
+            parser = FunctionCallParser(effective_tools, self.tool_call_parser)
             tool_call_constraint = parser.get_structure_constraint(
-                request.tool_choice,
+                effective_tool_choice,
                 parallel_tool_calls=request.parallel_tool_calls,
                 thinking_mode=True
                 if enable_thinking is None
@@ -1276,16 +1350,9 @@ class OpenAIServingChat(OpenAIServingBase):
         tools = None
         tool_call_stop = None
         required_parsed_natively = glm_constraint
-        if effective_tools and request.tool_choice != "none":
+        if effective_tools and effective_tool_choice != "none":
             request.skip_special_tokens = False
-            if not isinstance(request.tool_choice, str):
-                tools = [
-                    item.model_dump()
-                    for item in request.tools or []
-                    if item.function.name == request.tool_choice.function.name
-                ] or None
-            elif request.tools:
-                tools = [item.model_dump() for item in request.tools]
+            tools = self._request_tools_for_prompt(request) or None
             if self.tool_call_parser and not glm_constraint:
                 parser = FunctionCallParser(
                     effective_tools,
@@ -1293,7 +1360,7 @@ class OpenAIServingChat(OpenAIServingBase):
                     tokenizer=self.tokenizer_manager.tokenizer,
                 )
                 tool_call_constraint = parser.get_structure_constraint(
-                    request.tool_choice,
+                    effective_tool_choice,
                     parallel_tool_calls=request.parallel_tool_calls,
                     thinking_mode=xgrammar_reasoning,
                 )
@@ -1308,13 +1375,13 @@ class OpenAIServingChat(OpenAIServingBase):
                     and self.tool_call_parser == "kimi_k3"
                 )
                 and (
-                    request.tool_choice == "required"
-                    or isinstance(request.tool_choice, ToolChoice)
+                    effective_tool_choice == "required"
+                    or isinstance(effective_tool_choice, ToolChoice)
                 )
             ):
                 json_schema = get_json_schema_constraint(
                     effective_tools,
-                    request.tool_choice,
+                    effective_tool_choice,
                     parallel_tool_calls=request.parallel_tool_calls,
                 )
                 tool_call_constraint = ("json_schema", json_schema)
@@ -1402,6 +1469,7 @@ class OpenAIServingChat(OpenAIServingBase):
             ThinkingMode.THINKING if thinking_requested else ThinkingMode.CHAT
         )
         messages = [msg.model_dump() for msg in request.messages]
+        self._filter_message_tools_for_prompt(messages, request)
         for message in messages:
             normalize_assistant_tool_call_arguments(
                 message, strict=self.chat_encoding_spec != "kimi_k3"
@@ -1463,7 +1531,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 # insert an empty system prompt to help render tool system prompt
                 messages.insert(0, {"role": "system", "content": ""})
             if request.tools:
-                messages[0]["tools"] = [tool.model_dump() for tool in request.tools]
+                messages[0]["tools"] = self._request_tools_for_prompt(request)
 
             # Default encoding (dsv4/dsv32)
             if self.chat_encoding_spec == "dsv4":
@@ -2238,7 +2306,7 @@ class OpenAIServingChat(OpenAIServingBase):
                     text,
                     effective_tools,
                     finish_reason,
-                    request.tool_choice,
+                    self._effective_tool_choice(request),
                     history_tool_calls_cnt,
                 )
 
@@ -2835,8 +2903,9 @@ class OpenAIServingChat(OpenAIServingBase):
         """
         effective_tools = self._effective_tools(request)
         if index not in parser_dict:
-            is_required = request.tool_choice == "required" or isinstance(
-                request.tool_choice, ToolChoice
+            effective_tool_choice = self._effective_tool_choice(request)
+            is_required = effective_tool_choice == "required" or isinstance(
+                effective_tool_choice, ToolChoice
             )
             # For required/named tool choice: use JsonArrayParser when the
             # constrained output is plain JSON (detector doesn't support

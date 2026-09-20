@@ -1951,6 +1951,8 @@ def _load_image(
     try:
         image = Image.open(BytesIO(image_bytes))
     except (OSError, SyntaxError) as e:
+        if isinstance(e, OSError) and e.errno is not None:
+            raise
         raise ValueError(f"Could not decode image: {e}") from e
     return _fully_load_pil_image(image)
 
@@ -1960,6 +1962,10 @@ def _fully_load_pil_image(image: Image.Image) -> Image.Image:
     try:
         image.load()
     except (OSError, SyntaxError) as e:
+        # PIL uses broad built-in exceptions for malformed in-memory payloads.
+        # Preserve real OS errors (for example EMFILE) as server faults.
+        if isinstance(e, OSError) and e.errno is not None:
+            raise
         raise ValueError(f"Could not decode image: {e}") from e
     return image
 

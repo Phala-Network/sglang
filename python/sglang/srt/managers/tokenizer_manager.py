@@ -3656,6 +3656,21 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         # dummy prefill and every sample regenerate and initialize child rids.
         if not hasattr(obj, "is_single") or obj.is_single:
             items = [(obj.rid, obj, getattr(obj, "bootstrap_room", None))]
+        elif isinstance(obj, GenerateReqInput) and hasattr(obj, "batch_size"):
+            # Parallel sampling expands per-sample fields, including rid, but
+            # this initial registration owns only the original prompt batch.
+            items = [
+                (
+                    obj.rid[i],
+                    obj[i],
+                    (
+                        obj.bootstrap_room[i]
+                        if hasattr(obj, "bootstrap_room") and obj.bootstrap_room
+                        else None
+                    ),
+                )
+                for i in range(obj.batch_size)
+            ]
         else:
             items = [
                 (

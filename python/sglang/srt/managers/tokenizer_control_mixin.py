@@ -168,6 +168,7 @@ class TokenizerControlMixin:
                 self._dispatch_to_scheduler,
                 get_parallel().dp_size,
                 mode,
+                correlate=name in ("get_internal_state", "set_internal_state"),
             )
             setattr(self, f"{name}_communicator", comm)
             dispatch_pairs.append((resp_type, comm.handle_recv))

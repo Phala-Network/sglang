@@ -5068,7 +5068,7 @@ class Scheduler(
         # consumes it.
         ret.pop("custom_sigquit_handler", None)
 
-        return GetInternalStateReqOutput(internal_state=msgspec_to_builtins(ret))
+        return GetInternalStateReqOutput(internal_state=msgspec_to_builtins(ret), control_nonce=recv_req.control_nonce)
 
     def set_internal_state(self, recv_req: SetInternalStateReq):
         server_args_dict = recv_req.server_args
@@ -5148,7 +5148,7 @@ class Scheduler(
                 get_context().override(source="update_server_args", **remaining)
             logger.info(f"Config updated via context override: {remaining}")
 
-        return SetInternalStateReqOutput(updated=if_success)
+        return SetInternalStateReqOutput(updated=if_success, control_nonce=recv_req.control_nonce)
 
     def save_remote_model(self, **kwargs):
         self.weight_updater.save_remote_model(kwargs)

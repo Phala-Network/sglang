@@ -2100,7 +2100,7 @@ class ScaleElasticEPReqOutput(BaseReq, kw_only=True):
 
 
 class GetInternalStateReq(BaseReq, kw_only=True):
-    pass
+    control_nonce: Optional[str] = None
 
 
 class GetInternalStateReqOutput(BaseReq, kw_only=True):
@@ -2108,15 +2108,18 @@ class GetInternalStateReqOutput(BaseReq, kw_only=True):
     # producer sanitizes it with msgspec_to_builtins so every value is
     # msgpack-native.
     internal_state: Dict[str, Any]
+    control_nonce: Optional[str] = None
 
 
 class SetInternalStateReq(BaseReq, kw_only=True):
     # Only numeric scheduler knobs are accepted (see Scheduler.set_internal_state).
     server_args: Dict[str, Union[int, float]]
+    control_nonce: Optional[str] = None
 
 
 class SetInternalStateReqOutput(BaseReq, kw_only=True):
     updated: bool
+    control_nonce: Optional[str] = None
 
 
 class ProfileReqType(Enum):

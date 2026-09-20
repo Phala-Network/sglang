@@ -40,6 +40,7 @@ class ReasonerGrammarObject(BaseGrammarObject):
         grammar: Optional[BaseGrammarObject],
         think_end_ids: Sequence[int],
         think_excluded_token_ids: Optional[List[int]] = None,
+        min_think_tokens: int = -1,
         max_think_tokens: int = -1,
         enable_token_filter: bool = False,
         token_filter_fn=None,
@@ -52,6 +53,7 @@ class ReasonerGrammarObject(BaseGrammarObject):
         self.think_end_ids = tuple(think_end_ids)
         self._think_end_matcher = TokenSequenceMatcher(self.think_end_ids)
         self.think_excluded_token_ids = think_excluded_token_ids
+        self.min_think_tokens = min_think_tokens
         self.max_think_tokens = max_think_tokens
         self.enable_token_filter = enable_token_filter
         self.token_filter_fn = token_filter_fn
@@ -170,6 +172,13 @@ class ReasonerGrammarObject(BaseGrammarObject):
             < self.max_think_tokens
         )
 
+    def _must_think_more(self):
+        return (
+            self.min_think_tokens >= 0
+            and self.tokens_in_think + self._matched_think_end_tokens
+            < self.min_think_tokens
+        )
+
     def _do_token_filter(self, vocab_mask, token_ids, idx, is_allowed=True):
         if self.token_filter_fn is not None:
             self.token_filter_fn(vocab_mask, token_ids, idx, is_allowed)
@@ -178,7 +187,17 @@ class ReasonerGrammarObject(BaseGrammarObject):
         if self._is_thinking():
             if not self.enable_token_filter:
                 return
-            if self._can_think_more():
+            if self._must_think_more():
+                blocked_token_ids = [self.think_end_ids[self._matched_think_end_tokens]]
+                if self.think_excluded_token_ids is not None:
+                    blocked_token_ids.extend(self.think_excluded_token_ids)
+                self._do_token_filter(
+                    vocab_mask,
+                    blocked_token_ids,
+                    idx,
+                    is_allowed=False,
+                )
+            elif self._can_think_more():
                 if self.think_excluded_token_ids is not None:
                     self._do_token_filter(
                         vocab_mask,
@@ -222,6 +241,7 @@ class ReasonerGrammarObject(BaseGrammarObject):
             grammar=self.grammar.copy() if self.grammar is not None else None,
             think_end_ids=self.think_end_ids,
             think_excluded_token_ids=self.think_excluded_token_ids,
+            min_think_tokens=self.min_think_tokens,
             max_think_tokens=self.max_think_tokens,
             enable_token_filter=self.enable_token_filter,
             token_filter_fn=self.token_filter_fn,

@@ -337,10 +337,11 @@ class TestProcessReqWithGrammar(unittest.TestCase):
 
         req = _make_req(
             json_schema="schema",
-            custom_params={"thinking_budget": 7},
+            custom_params={"min_thinking_budget": 5, "thinking_budget": 7},
         )
         mgr.process_req_with_grammar(req)
 
+        self.assertEqual(req.grammar.min_think_tokens, 5)
         self.assertEqual(req.grammar.max_think_tokens, 7)
 
     def test_cache_hit_applies_only_request_selected_terminator(self):
@@ -384,12 +385,24 @@ class TestProcessReqWithGrammar(unittest.TestCase):
         )
         mgr.grammar_backend.init_strict_reasoning_grammar.return_value = grammar_obj
 
-        req = _make_req(custom_params={"thinking_budget": 3})
+        req = _make_req(custom_params={"min_thinking_budget": 2, "thinking_budget": 3})
         req.require_reasoning = True
         mgr.process_req_with_grammar(req)
 
         self.assertIs(req.grammar, grammar_obj)
+        self.assertEqual(req.grammar.min_think_tokens, 2)
         self.assertEqual(req.grammar.max_think_tokens, 3)
+
+    def test_strict_reasoning_grammar_can_be_disabled_per_request(self):
+        mgr = self._make_mgr()
+        mgr._enable_strict_thinking = True
+        req = _make_req(custom_params={"disable_strict_thinking_grammar": True})
+        req.require_reasoning = True
+
+        mgr.process_req_with_grammar(req)
+
+        self.assertIsNone(req.grammar)
+        mgr.grammar_backend.init_strict_reasoning_grammar.assert_not_called()
 
 
 class TestAbortRequests(unittest.TestCase):
@@ -650,7 +663,10 @@ class TestGetReadyGrammarRequests(unittest.TestCase):
         future = Future()
         future.set_result(grammar_obj)
 
-        req = _make_req(json_schema="schema", custom_params={"thinking_budget": 4})
+        req = _make_req(
+            json_schema="schema",
+            custom_params={"min_thinking_budget": 2, "thinking_budget": 4},
+        )
         req.grammar = future
         req.grammar_key = ("json", "schema")
         mgr.grammar_queue.append(req)
@@ -658,9 +674,11 @@ class TestGetReadyGrammarRequests(unittest.TestCase):
         result = mgr.get_ready_grammar_requests()
 
         self.assertEqual(len(result), 1)
+        self.assertEqual(req.grammar.min_think_tokens, 2)
         self.assertEqual(req.grammar.max_think_tokens, 4)
         cached_key, cached_value = mgr.grammar_backend.set_cache.call_args[0]
         self.assertEqual(cached_key, ("json", "schema"))
+        self.assertEqual(cached_value.min_think_tokens, -1)
         self.assertEqual(cached_value.max_think_tokens, 99)
 
     @patch("sglang.srt.constrained.grammar_manager.torch.distributed.all_gather_object")

@@ -72,6 +72,69 @@ class TestModelList(unittest.TestCase):
         self.assertEqual(model_list.data[1].id, "model-2")
 
 
+class TestReasoningVisibility(unittest.TestCase):
+    def request(self, **kwargs):
+        return ChatCompletionRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "Think."}],
+            **kwargs,
+        )
+
+    def assert_toggle(self, request, enabled: bool):
+        self.assertEqual(request.chat_template_kwargs["thinking"], enabled)
+        self.assertEqual(request.chat_template_kwargs["enable_thinking"], enabled)
+
+    def test_include_reasoning_legacy_visibility_and_default_enable(self):
+        included = self.request(include_reasoning=True)
+        self.assertTrue(included.include_reasoning)
+        self.assertFalse(included.reasoning_exclude)
+        self.assert_toggle(included, True)
+
+        excluded = self.request(include_reasoning=False)
+        self.assertFalse(excluded.include_reasoning)
+        self.assertTrue(excluded.reasoning_exclude)
+        self.assertIsNone(excluded.chat_template_kwargs)
+
+    def test_nested_reasoning_exclude_wins_legacy_visibility(self):
+        request = self.request(
+            include_reasoning=True,
+            reasoning={"enabled": True, "exclude": True},
+        )
+        self.assertTrue(request.reasoning_exclude)
+        self.assert_toggle(request, True)
+
+        request = self.request(
+            include_reasoning=False,
+            reasoning={"effort": "high", "exclude": False},
+        )
+        self.assertFalse(request.reasoning_exclude)
+        self.assertEqual(request.reasoning_effort, "high")
+        self.assert_toggle(request, True)
+
+    def test_explicit_reasoning_disable_wins_include_reasoning(self):
+        request = self.request(
+            include_reasoning=True,
+            reasoning={"enabled": False},
+        )
+        self.assertFalse(request.reasoning_exclude)
+        self.assert_toggle(request, False)
+
+    def test_reasoning_visibility_controls_require_booleans(self):
+        for value in (1, 0, "true", "false", {}, []):
+            with self.subTest(include_reasoning=value):
+                with self.assertRaisesRegex(
+                    ValidationError, "include_reasoning must be a boolean"
+                ):
+                    self.request(include_reasoning=value)
+
+        for value in (1, 0, "true", "false", {}, []):
+            with self.subTest(reasoning_exclude=value):
+                with self.assertRaisesRegex(
+                    ValidationError, "reasoning.exclude must be a boolean"
+                ):
+                    self.request(reasoning={"exclude": value})
+
+
 class TestCompletionRequest(unittest.TestCase):
     """Test CompletionRequest protocol model"""
 
@@ -287,6 +350,26 @@ class TestChatCompletionRequest(unittest.TestCase):
             {"thinking": True, "enable_thinking": True},
         )
 
+    def test_chat_completion_reasoning_max_tokens(self):
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "Hello"}],
+            reasoning={"max_tokens": 1536},
+        )
+
+        self.assertEqual(request.reasoning_max_tokens, 1536)
+        self.assertNotIn("reasoning_max_tokens", request.model_dump())
+
+        from pydantic import ValidationError
+
+        for value in (0, -1, True, 1.5, "1536"):
+            with self.subTest(value=value), self.assertRaises(ValidationError):
+                ChatCompletionRequest(
+                    model="test-model",
+                    messages=[{"role": "user", "content": "Hello"}],
+                    reasoning={"max_tokens": value},
+                )
+
     def test_chat_completion_reasoning_effort_high_enables_thinking(self):
         """Top-level reasoning_effort='high' enables thinking."""
         messages = [{"role": "user", "content": "Hello"}]
@@ -335,6 +418,33 @@ class TestChatCompletionRequest(unittest.TestCase):
         self.assertEqual(request.reasoning_effort, "none")
         self.assertFalse(request.chat_template_kwargs.get("thinking"))
         self.assertFalse(request.chat_template_kwargs.get("enable_thinking"))
+
+    def test_chat_completion_nested_reasoning_enabled_false_disables_thinking(self):
+        messages = [{"role": "user", "content": "Hello"}]
+        for key in ("enabled", "enable"):
+            for value in (False, 0, "false"):
+                with self.subTest(key=key, value=value):
+                    request = ChatCompletionRequest(
+                        model="test-model",
+                        messages=messages,
+                        reasoning={key: value},
+                    )
+                    self.assertIsNone(request.reasoning_effort)
+                    self.assertFalse(request.chat_template_kwargs.get("thinking"))
+                    self.assertFalse(
+                        request.chat_template_kwargs.get("enable_thinking")
+                    )
+
+    def test_chat_completion_nested_effort_overrides_enabled_false(self):
+        messages = [{"role": "user", "content": "Hello"}]
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=messages,
+            reasoning={"enabled": False, "effort": "low"},
+        )
+        self.assertEqual(request.reasoning_effort, "low")
+        self.assertTrue(request.chat_template_kwargs.get("thinking"))
+        self.assertTrue(request.chat_template_kwargs.get("enable_thinking"))
 
     def test_chat_completion_extended_reasoning_effort_levels(self):
         """Extended effort levels work in both supported request forms."""

@@ -1,0 +1,4324 @@
+{
+  "schema": "phala.dsv41.protocol105.v2",
+  "wire_serialization": "UTF-8 compact JSON, insertion order preserved; canonical hashes remain order-insensitive",
+  "model": "deepseek/deepseek-v4.1-flash",
+  "endpoint": "http://127.0.0.1:18301/v1/chat/completions",
+  "headers_without_auth": {
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/event-stream"
+  },
+  "generation": {
+    "seed": 20260919,
+    "generator": "Python random.Random.choice/randint",
+    "python_version": "3.13.3"
+  },
+  "adaptations": [
+    "Original GLM-5.3 conflict fixture changes only model and endpoint; all 35 request constraints/prompts/schema preserved.",
+    "P0 is a finite selected subset, one attempt per case, with declared reasoning-off control; not a full 22-case/repetition/cross-model corpus pass.",
+    "No inference model seed is added; no retry, no budget escalation, no answer repair.",
+    "Direct localhost backend proves only this boundary; external logs/metrics must prove cancellation cleanup and absence of engine restart."
+  ],
+  "request_order": [
+    "fixed-osaka-1",
+    "fixed-osaka-2",
+    "fixed-osaka-3",
+    "fixed-osaka-4",
+    "fixed-osaka-5",
+    "fixed-cordoba-1",
+    "fixed-cordoba-2",
+    "fixed-cordoba-3",
+    "fixed-cordoba-4",
+    "fixed-cordoba-5",
+    "fixed-tallinn-1",
+    "fixed-tallinn-2",
+    "fixed-tallinn-3",
+    "fixed-tallinn-4",
+    "fixed-tallinn-5",
+    "random-01",
+    "random-02",
+    "random-03",
+    "random-04",
+    "random-05",
+    "random-06",
+    "random-07",
+    "random-08",
+    "random-09",
+    "random-10",
+    "random-11",
+    "random-12",
+    "random-13",
+    "random-14",
+    "random-15",
+    "random-16",
+    "random-17",
+    "random-18",
+    "random-19",
+    "random-20",
+    "chat-basic",
+    "chat-sse",
+    "weather-auto",
+    "weather-required",
+    "weather-sse",
+    "named-defs",
+    "parallel-catalog",
+    "tool-result-final",
+    "legitimate-second-tool",
+    "tool-union-types",
+    "strict-basic",
+    "strict-sse",
+    "strict-n2",
+    "legacy-json-object",
+    "reasoning-on",
+    "reasoning-exclude",
+    "image-red",
+    "cancel-sse",
+    "post-cancel-chat"
+  ],
+  "cases": [
+    {
+      "case_id": "fixed-osaka-1",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Osaka before answering. Give facts about Osaka. [r217058]"
+          }
+        ]
+      },
+      "body_sha256": "11465d8a593cdd854c34af1f645c8614d963cfe22e500b514c752c01ab0ddcbd",
+      "body_wire_sha256": "5d00b598ffbdb73d874dc0f6e0755df8adaa10e2c619edfd0a22539fc3312b11",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/fixed",
+      "city": "Osaka",
+      "suffix": "r217058",
+      "cohort": "fixed15"
+    },
+    {
+      "case_id": "fixed-osaka-2",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Osaka before answering. Give facts about Osaka. [r217058]"
+          }
+        ]
+      },
+      "body_sha256": "11465d8a593cdd854c34af1f645c8614d963cfe22e500b514c752c01ab0ddcbd",
+      "body_wire_sha256": "5d00b598ffbdb73d874dc0f6e0755df8adaa10e2c619edfd0a22539fc3312b11",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/fixed",
+      "city": "Osaka",
+      "suffix": "r217058",
+      "cohort": "fixed15"
+    },
+    {
+      "case_id": "fixed-osaka-3",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Osaka before answering. Give facts about Osaka. [r217058]"
+          }
+        ]
+      },
+      "body_sha256": "11465d8a593cdd854c34af1f645c8614d963cfe22e500b514c752c01ab0ddcbd",
+      "body_wire_sha256": "5d00b598ffbdb73d874dc0f6e0755df8adaa10e2c619edfd0a22539fc3312b11",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/fixed",
+      "city": "Osaka",
+      "suffix": "r217058",
+      "cohort": "fixed15"
+    },
+    {
+      "case_id": "fixed-osaka-4",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Osaka before answering. Give facts about Osaka. [r217058]"
+          }
+        ]
+      },
+      "body_sha256": "11465d8a593cdd854c34af1f645c8614d963cfe22e500b514c752c01ab0ddcbd",
+      "body_wire_sha256": "5d00b598ffbdb73d874dc0f6e0755df8adaa10e2c619edfd0a22539fc3312b11",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/fixed",
+      "city": "Osaka",
+      "suffix": "r217058",
+      "cohort": "fixed15"
+    },
+    {
+      "case_id": "fixed-osaka-5",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Osaka before answering. Give facts about Osaka. [r217058]"
+          }
+        ]
+      },
+      "body_sha256": "11465d8a593cdd854c34af1f645c8614d963cfe22e500b514c752c01ab0ddcbd",
+      "body_wire_sha256": "5d00b598ffbdb73d874dc0f6e0755df8adaa10e2c619edfd0a22539fc3312b11",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/fixed",
+      "city": "Osaka",
+      "suffix": "r217058",
+      "cohort": "fixed15"
+    },
+    {
+      "case_id": "fixed-cordoba-1",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Cordoba before answering. Give facts about Cordoba. [r594224]"
+          }
+        ]
+      },
+      "body_sha256": "831bea3e1f65ed9c5bff9963c7394c45c32f326096094108c25d4201fe4138bc",
+      "body_wire_sha256": "22497c1acbec1113845c60d715ef52862b7114cd8eaecc4828013c9bf7424b3e",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/fixed",
+      "city": "Cordoba",
+      "suffix": "r594224",
+      "cohort": "fixed15"
+    },
+    {
+      "case_id": "fixed-cordoba-2",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Cordoba before answering. Give facts about Cordoba. [r594224]"
+          }
+        ]
+      },
+      "body_sha256": "831bea3e1f65ed9c5bff9963c7394c45c32f326096094108c25d4201fe4138bc",
+      "body_wire_sha256": "22497c1acbec1113845c60d715ef52862b7114cd8eaecc4828013c9bf7424b3e",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/fixed",
+      "city": "Cordoba",
+      "suffix": "r594224",
+      "cohort": "fixed15"
+    },
+    {
+      "case_id": "fixed-cordoba-3",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Cordoba before answering. Give facts about Cordoba. [r594224]"
+          }
+        ]
+      },
+      "body_sha256": "831bea3e1f65ed9c5bff9963c7394c45c32f326096094108c25d4201fe4138bc",
+      "body_wire_sha256": "22497c1acbec1113845c60d715ef52862b7114cd8eaecc4828013c9bf7424b3e",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/fixed",
+      "city": "Cordoba",
+      "suffix": "r594224",
+      "cohort": "fixed15"
+    },
+    {
+      "case_id": "fixed-cordoba-4",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Cordoba before answering. Give facts about Cordoba. [r594224]"
+          }
+        ]
+      },
+      "body_sha256": "831bea3e1f65ed9c5bff9963c7394c45c32f326096094108c25d4201fe4138bc",
+      "body_wire_sha256": "22497c1acbec1113845c60d715ef52862b7114cd8eaecc4828013c9bf7424b3e",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/fixed",
+      "city": "Cordoba",
+      "suffix": "r594224",
+      "cohort": "fixed15"
+    },
+    {
+      "case_id": "fixed-cordoba-5",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Cordoba before answering. Give facts about Cordoba. [r594224]"
+          }
+        ]
+      },
+      "body_sha256": "831bea3e1f65ed9c5bff9963c7394c45c32f326096094108c25d4201fe4138bc",
+      "body_wire_sha256": "22497c1acbec1113845c60d715ef52862b7114cd8eaecc4828013c9bf7424b3e",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/fixed",
+      "city": "Cordoba",
+      "suffix": "r594224",
+      "cohort": "fixed15"
+    },
+    {
+      "case_id": "fixed-tallinn-1",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Tallinn before answering. Give facts about Tallinn. [r646439]"
+          }
+        ]
+      },
+      "body_sha256": "65a4e71bb6804b7fa71188c20071710dcba34a6347fba383eea32006cd730282",
+      "body_wire_sha256": "52a321ee6bcd132520da1c06b94c4556fe79f7c67932999ad7f539aa574cc9f7",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/fixed",
+      "city": "Tallinn",
+      "suffix": "r646439",
+      "cohort": "fixed15"
+    },
+    {
+      "case_id": "fixed-tallinn-2",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Tallinn before answering. Give facts about Tallinn. [r646439]"
+          }
+        ]
+      },
+      "body_sha256": "65a4e71bb6804b7fa71188c20071710dcba34a6347fba383eea32006cd730282",
+      "body_wire_sha256": "52a321ee6bcd132520da1c06b94c4556fe79f7c67932999ad7f539aa574cc9f7",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/fixed",
+      "city": "Tallinn",
+      "suffix": "r646439",
+      "cohort": "fixed15"
+    },
+    {
+      "case_id": "fixed-tallinn-3",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Tallinn before answering. Give facts about Tallinn. [r646439]"
+          }
+        ]
+      },
+      "body_sha256": "65a4e71bb6804b7fa71188c20071710dcba34a6347fba383eea32006cd730282",
+      "body_wire_sha256": "52a321ee6bcd132520da1c06b94c4556fe79f7c67932999ad7f539aa574cc9f7",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/fixed",
+      "city": "Tallinn",
+      "suffix": "r646439",
+      "cohort": "fixed15"
+    },
+    {
+      "case_id": "fixed-tallinn-4",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Tallinn before answering. Give facts about Tallinn. [r646439]"
+          }
+        ]
+      },
+      "body_sha256": "65a4e71bb6804b7fa71188c20071710dcba34a6347fba383eea32006cd730282",
+      "body_wire_sha256": "52a321ee6bcd132520da1c06b94c4556fe79f7c67932999ad7f539aa574cc9f7",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/fixed",
+      "city": "Tallinn",
+      "suffix": "r646439",
+      "cohort": "fixed15"
+    },
+    {
+      "case_id": "fixed-tallinn-5",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Tallinn before answering. Give facts about Tallinn. [r646439]"
+          }
+        ]
+      },
+      "body_sha256": "65a4e71bb6804b7fa71188c20071710dcba34a6347fba383eea32006cd730282",
+      "body_wire_sha256": "52a321ee6bcd132520da1c06b94c4556fe79f7c67932999ad7f539aa574cc9f7",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/fixed",
+      "city": "Tallinn",
+      "suffix": "r646439",
+      "cohort": "fixed15"
+    },
+    {
+      "case_id": "random-01",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Bilbao before answering. Give facts about Bilbao. [r103136]"
+          }
+        ]
+      },
+      "body_sha256": "ce835b6e1c5c9e3534cdce9260dea889f9745beb5e6743c3e3d2da98833df6e9",
+      "body_wire_sha256": "928fd253c80bfc7652ecca107b54f4d301348647ffe99352b7ec47038318daea",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Bilbao",
+      "suffix": "r103136",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "random-02",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Bergen before answering. Give facts about Bergen. [r146186]"
+          }
+        ]
+      },
+      "body_sha256": "d1ed2de65869ca5baad8de85b109a50fad3fa997113b7fb65775bfb784dad148",
+      "body_wire_sha256": "fc4eb262d5a04aa55079efa60585842c1e9bd7939a4d7837880a3531d3ff8e0a",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Bergen",
+      "suffix": "r146186",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "random-03",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Bilbao before answering. Give facts about Bilbao. [r784826]"
+          }
+        ]
+      },
+      "body_sha256": "9beba90629349dcb93f87e1d0d1a223ff9a30ee09f5d8986627785711ffd6dfc",
+      "body_wire_sha256": "fa653b67468c891e4fc3579fb5b13af1b1b81dee34fb45b7ef3726667dd23e54",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Bilbao",
+      "suffix": "r784826",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "random-04",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Bergen before answering. Give facts about Bergen. [r421766]"
+          }
+        ]
+      },
+      "body_sha256": "05bf80676a26733a11581ee8b70353eece78226be04c14fa7be1849a8e3cffcd",
+      "body_wire_sha256": "9f54061d49341431458c3a7d00513c5428936fd2a18a63ddbba2453141aa9dcc",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Bergen",
+      "suffix": "r421766",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "random-05",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Nagoya before answering. Give facts about Nagoya. [r587609]"
+          }
+        ]
+      },
+      "body_sha256": "d8486c933df4540bdfc34cbf5e661f902bf2b581f4996d9abee33b8cade3adc7",
+      "body_wire_sha256": "3b1ab84153bc0406cf109bad7aadd2aa35538c751eb3571f603d936a9d17a264",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Nagoya",
+      "suffix": "r587609",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "random-06",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Katowice before answering. Give facts about Katowice. [r58135]"
+          }
+        ]
+      },
+      "body_sha256": "4572757204daa96572529f5a76f33e35d9eb11e5fb15fba20dbacd84a60a8b3a",
+      "body_wire_sha256": "923cfb440e3b905f36088e244f9a13fe3df37e294c879a31b879c50636b2119e",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Katowice",
+      "suffix": "r58135",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "random-07",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Cordoba before answering. Give facts about Cordoba. [r448811]"
+          }
+        ]
+      },
+      "body_sha256": "c183c3d797e016a1487e48ed2da6b5fdd6c84a4cea3c6394453a090fffcccce1",
+      "body_wire_sha256": "d00b5b39eeabc3a1798e8857981eb8987558af36d0480cd87f762accafa7ad0a",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Cordoba",
+      "suffix": "r448811",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "random-08",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Cordoba before answering. Give facts about Cordoba. [r564066]"
+          }
+        ]
+      },
+      "body_sha256": "9120aa5de4143a6b55f5c44842a3bc5afd68032b62689f95b1e6f0aa861ffb58",
+      "body_wire_sha256": "a39551dde1b17b036759fc5e761971218682c8da0a8d908e99987c1af140484e",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Cordoba",
+      "suffix": "r564066",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "random-09",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Osaka before answering. Give facts about Osaka. [r985700]"
+          }
+        ]
+      },
+      "body_sha256": "8ef206866f2242d258eee0e96e92b5035499581997cfec24eaefcfcb0f86103c",
+      "body_wire_sha256": "f6d0656ed91dbcc70be5008447a770f91ff92c250a72645a256a5bd334d8d64a",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Osaka",
+      "suffix": "r985700",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "random-10",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Bergen before answering. Give facts about Bergen. [r617562]"
+          }
+        ]
+      },
+      "body_sha256": "a29e1005b9c2ff730aad15fdb1fa6d97e690b41319d3a9b705cfcd6efdfb8b5a",
+      "body_wire_sha256": "a50662748c3faa2dd4c52b882a9fa3ae214fbc56fee2445a50da4ba6d462b7a2",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Bergen",
+      "suffix": "r617562",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "random-11",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Bilbao before answering. Give facts about Bilbao. [r24623]"
+          }
+        ]
+      },
+      "body_sha256": "6813ab2f14a412600475ef7ac4a5584257722afeaf3cf10d37f9f98296710bf0",
+      "body_wire_sha256": "c88ec607e580d2ab95f75faf820a22aa319722f5f8cdad56f5901e24c268335b",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Bilbao",
+      "suffix": "r24623",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "random-12",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Cebu before answering. Give facts about Cebu. [r3979]"
+          }
+        ]
+      },
+      "body_sha256": "8c93b1420f3f317a19a8ea9cf89d7505903d29d8050a73a4e5d86e31a15687db",
+      "body_wire_sha256": "d3ae42451842c67711f3da104a47fbaf73369adab5c973f2344a0798bb9a2dd4",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Cebu",
+      "suffix": "r3979",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "random-13",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Osaka before answering. Give facts about Osaka. [r706890]"
+          }
+        ]
+      },
+      "body_sha256": "841d38f6d44490a6a8f1d8f6028f14ca7003b72efaa069ebef63650aaf860ab4",
+      "body_wire_sha256": "4188cd01f3296c581dc3f7ad9ffdc9b842e40d9cace188214c164115d3a1e6ac",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Osaka",
+      "suffix": "r706890",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "random-14",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Bilbao before answering. Give facts about Bilbao. [r524214]"
+          }
+        ]
+      },
+      "body_sha256": "c825c7143ea0736cb4e4c41d9692d0dd3d1d4e9b93de2c970a6b96a447736cfb",
+      "body_wire_sha256": "e3ed22de98e17f905b7d9efcc8d0ec831dd5e7981fc7de0acd18ce2825acccc2",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Bilbao",
+      "suffix": "r524214",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "random-15",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Kigali before answering. Give facts about Kigali. [r242202]"
+          }
+        ]
+      },
+      "body_sha256": "3dbcb0cce29208a2f20ffc3552ae8ab5b815841997abcd9e228f4c88658f2c22",
+      "body_wire_sha256": "cb833ccf7de487d59d084bcc2f6b2c9c60d5935f1fa57a6f704ed19d5b6dddda",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Kigali",
+      "suffix": "r242202",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "random-16",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Lyon before answering. Give facts about Lyon. [r24701]"
+          }
+        ]
+      },
+      "body_sha256": "432e01cae6b05ff714e257ebcaaa0e08a2af9a4796a30db8328dfdb64116f8d0",
+      "body_wire_sha256": "cd15434ccfade4a0d7bfa483a4878dfaaceed0d78f832c8c3d779fa128ef70c5",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Lyon",
+      "suffix": "r24701",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "random-17",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Katowice before answering. Give facts about Katowice. [r865133]"
+          }
+        ]
+      },
+      "body_sha256": "06469f98f12a1eceed7b93ca0ff5ed265361a9016a01f44c4cfd310243ad2316",
+      "body_wire_sha256": "c178d48a2194a002139df9b8e152e37ba26cb398d80994ce8e4f721d50ddc45c",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Katowice",
+      "suffix": "r865133",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "random-18",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Lyon before answering. Give facts about Lyon. [r563216]"
+          }
+        ]
+      },
+      "body_sha256": "9736c24307108f8df565925771f226473a19b7e2c75979adf74a017d76be0179",
+      "body_wire_sha256": "d7ece119046a4c054e5a9d8d92eb4112e210452bdc8ef267223d4904e10fc2fc",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Lyon",
+      "suffix": "r563216",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "random-19",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Tallinn before answering. Give facts about Tallinn. [r736826]"
+          }
+        ]
+      },
+      "body_sha256": "ae6bda385101d4d1bd9492900d6379a3b04b4b346ed98c39de7176c4c2b94f68",
+      "body_wire_sha256": "bd8f993dca679a252dff396421f81c9372986042fab1ebd3ce6991305c3ebf85",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Tallinn",
+      "suffix": "r736826",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "random-20",
+      "group": "conflict35",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "temperature": 0,
+        "max_tokens": 2000,
+        "reasoning_effort": "none",
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "city_facts",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                },
+                "population": {
+                  "type": "integer"
+                },
+                "notable": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "city",
+                "country",
+                "population",
+                "notable"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "Think about it carefully, step by step, and reason through what you know about Tallinn before answering. Give facts about Tallinn. [r340852]"
+          }
+        ]
+      },
+      "body_sha256": "9c54e2ddee86bef89a80e2be7e2c2317ee736e2694e473f6be8c84096c81cde0",
+      "body_wire_sha256": "7621d388c9b844038c3dc6a28a14d758b5010fa7d8e7fa2f6492dad7b6b65341",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            },
+            "country": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer"
+            },
+            "notable": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "city",
+            "country",
+            "population",
+            "notable"
+          ],
+          "additionalProperties": false
+        },
+        "reasoning": "off"
+      },
+      "source": "reasoning-off-prompt-conflict/random",
+      "city": "Tallinn",
+      "suffix": "r340852",
+      "cohort": "random20"
+    },
+    {
+      "case_id": "chat-basic",
+      "group": "p0",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Reply with exactly READY."
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 64,
+        "stream": false,
+        "reasoning_effort": "none"
+      },
+      "body_sha256": "9784cbd8e9d91bb7f594149fe1427bcbe209406c099c687ecfeed67dfb70ffa8",
+      "body_wire_sha256": "a1046b8baa8beda71ba2eccaf353ec1955cc5f197e9c9cd055ff828f6a70f43a",
+      "expect": {
+        "kind": "text",
+        "text": "READY",
+        "reasoning": "off"
+      },
+      "source": "corpus/Tier0"
+    },
+    {
+      "case_id": "chat-sse",
+      "group": "p0",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Reply with exactly STREAM_READY."
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 64,
+        "stream": true,
+        "reasoning_effort": "none"
+      },
+      "body_sha256": "d03231d0592c1664c647ea176fb2ba790c39ce77171b521d3ca64df5ac88c907",
+      "body_wire_sha256": "19feaded817f99b829e3bdccb15587dea73cc4f3bf69b199bb5694d4bc471833",
+      "expect": {
+        "kind": "text",
+        "text": "STREAM_READY",
+        "reasoning": "off"
+      },
+      "source": "corpus/Tier0"
+    },
+    {
+      "case_id": "weather-auto",
+      "group": "p0",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Use the supplied tool. Do not invent tool names."
+          },
+          {
+            "role": "user",
+            "content": "Use get_weather to obtain the current weather in Paris using celsius."
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 768,
+        "stream": false,
+        "reasoning_effort": "none",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "description": "Get current weather for a city",
+              "strict": true,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "location": {
+                    "type": "string"
+                  },
+                  "unit": {
+                    "type": "string",
+                    "enum": [
+                      "celsius",
+                      "fahrenheit"
+                    ]
+                  }
+                },
+                "required": [
+                  "location",
+                  "unit"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        ],
+        "tool_choice": "auto"
+      },
+      "body_sha256": "3940fcfdbac68d5fb3a7d325fd95820d1228610fee029de43deb8893ec5c990b",
+      "body_wire_sha256": "8fda754b18bfea815c9daf34458361ed67612a2759c3d71b3953b6b203757f07",
+      "expect": {
+        "kind": "tools",
+        "calls": [
+          {
+            "name": "get_weather",
+            "arguments": {
+              "location": "Paris",
+              "unit": "celsius"
+            }
+          }
+        ],
+        "reasoning": "off"
+      },
+      "source": "corpus/TC-P0-01,02"
+    },
+    {
+      "case_id": "weather-required",
+      "group": "p0",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Use the supplied tool. Do not invent tool names."
+          },
+          {
+            "role": "user",
+            "content": "Use get_weather to obtain the current weather in Paris using celsius."
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 768,
+        "stream": false,
+        "reasoning_effort": "none",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "description": "Get current weather for a city",
+              "strict": true,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "location": {
+                    "type": "string"
+                  },
+                  "unit": {
+                    "type": "string",
+                    "enum": [
+                      "celsius",
+                      "fahrenheit"
+                    ]
+                  }
+                },
+                "required": [
+                  "location",
+                  "unit"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        ],
+        "tool_choice": "required"
+      },
+      "body_sha256": "6d74e4c5c616b08d23b00767c088cf7fdbe0ff732ff6dcf3ea45289bc7f62157",
+      "body_wire_sha256": "9ff8700f696e7628e89b9aa915013e2503bbe31df9c8923ffec115b143837799",
+      "expect": {
+        "kind": "tools",
+        "calls": [
+          {
+            "name": "get_weather",
+            "arguments": {
+              "location": "Paris",
+              "unit": "celsius"
+            }
+          }
+        ],
+        "reasoning": "off"
+      },
+      "source": "corpus/TC-P0-01,02"
+    },
+    {
+      "case_id": "weather-sse",
+      "group": "p0",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Use the supplied tool. Do not invent tool names."
+          },
+          {
+            "role": "user",
+            "content": "Use get_weather to obtain the current weather in Paris using celsius."
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 768,
+        "stream": true,
+        "reasoning_effort": "none",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "description": "Get current weather for a city",
+              "strict": true,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "location": {
+                    "type": "string"
+                  },
+                  "unit": {
+                    "type": "string",
+                    "enum": [
+                      "celsius",
+                      "fahrenheit"
+                    ]
+                  }
+                },
+                "required": [
+                  "location",
+                  "unit"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        ],
+        "tool_choice": "auto"
+      },
+      "body_sha256": "6f81ee0ae2b60001036449258283323ecfe6ed6bda5bdffb43e4995584bb1ffa",
+      "body_wire_sha256": "8e21c92fe3f2c8de1536e3ae2ce76693c723a01521c8bcd6e9e861589598e350",
+      "expect": {
+        "kind": "tools",
+        "calls": [
+          {
+            "name": "get_weather",
+            "arguments": {
+              "location": "Paris",
+              "unit": "celsius"
+            }
+          }
+        ],
+        "reasoning": "off"
+      },
+      "source": "corpus/TC-P0-05"
+    },
+    {
+      "case_id": "named-defs",
+      "group": "p0",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Call get_weather_by_coordinate with location lat=48.8566 and lon=2.3522."
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 768,
+        "stream": false,
+        "reasoning_effort": "none",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "get_weather_by_coordinate",
+              "description": "Get weather at the supplied coordinates",
+              "strict": true,
+              "parameters": {
+                "$defs": {
+                  "Location": {
+                    "type": "object",
+                    "properties": {
+                      "lat": {
+                        "type": "number"
+                      },
+                      "lon": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "lat",
+                      "lon"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "type": "object",
+                "properties": {
+                  "location": {
+                    "$ref": "#/$defs/Location"
+                  }
+                },
+                "required": [
+                  "location"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        ],
+        "tool_choice": {
+          "type": "function",
+          "function": {
+            "name": "get_weather_by_coordinate"
+          }
+        }
+      },
+      "body_sha256": "5384aff35b4993d9beea391dcc19a31d4d4eb57f6753632c1e37331581055a23",
+      "body_wire_sha256": "6f17bb0c1080fc5791a463158754f0576bee8f819c495d6f94eb8a92aeb3f54b",
+      "expect": {
+        "kind": "tools",
+        "calls": [
+          {
+            "name": "get_weather_by_coordinate",
+            "arguments": {
+              "location": {
+                "lat": 48.8566,
+                "lon": 2.3522
+              }
+            }
+          }
+        ],
+        "reasoning": "off"
+      },
+      "source": "corpus/TC-P0-03"
+    },
+    {
+      "case_id": "parallel-catalog",
+      "group": "p0",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Make two independent catalog searches in parallel: one for \"wireless keyboard\" with 3 results and one for \"USB-C dock\" with 5 results."
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 1024,
+        "stream": false,
+        "reasoning_effort": "none",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "search_catalog",
+              "description": "Search the product catalog",
+              "strict": true,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "query": {
+                    "type": "string"
+                  },
+                  "max_results": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "query",
+                  "max_results"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        ],
+        "tool_choice": "required",
+        "parallel_tool_calls": true
+      },
+      "body_sha256": "cc9fc13b7653360d6c216409139ba8bfe0546f8d0b1fd4ec72c5feb9a681b161",
+      "body_wire_sha256": "e57650d576cbe2af171d4ab835711ab7020107d4d2aa5b4ba10ce99c93795942",
+      "expect": {
+        "kind": "tools",
+        "calls": [
+          {
+            "name": "search_catalog",
+            "arguments": {
+              "query": "wireless keyboard",
+              "max_results": 3
+            }
+          },
+          {
+            "name": "search_catalog",
+            "arguments": {
+              "query": "USB-C dock",
+              "max_results": 5
+            }
+          }
+        ],
+        "reasoning": "off"
+      },
+      "source": "corpus/TC-P0-04"
+    },
+    {
+      "case_id": "tool-result-final",
+      "group": "p0",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Use available tool results to answer. Call tools only when information is missing."
+          },
+          {
+            "role": "user",
+            "content": "What is the current weather in Paris in celsius?"
+          },
+          {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_weather_1",
+                "type": "function",
+                "function": {
+                  "name": "get_weather",
+                  "arguments": "{\"location\":\"Paris\",\"unit\":\"celsius\"}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call_weather_1",
+            "content": "{\"conditions\":\"sunny\",\"location\":\"Paris\",\"temperature\":21,\"unit\":\"celsius\"}"
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 768,
+        "stream": false,
+        "reasoning_effort": "none",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "description": "Get current weather for a city",
+              "strict": true,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "location": {
+                    "type": "string"
+                  },
+                  "unit": {
+                    "type": "string",
+                    "enum": [
+                      "celsius",
+                      "fahrenheit"
+                    ]
+                  }
+                },
+                "required": [
+                  "location",
+                  "unit"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        ],
+        "tool_choice": "auto"
+      },
+      "body_sha256": "132b862883b5f3719008bcbaa7b5db11560907d9c17aae3f71ad1d0096fe14b8",
+      "body_wire_sha256": "2e5b939ca16766683e170d192e37a8e5c70a4443d5780d83dfcd4b3bfd101957",
+      "expect": {
+        "kind": "text",
+        "contains": [
+          "21"
+        ],
+        "reasoning": "off"
+      },
+      "source": "protocol-repairs/tool-result-history"
+    },
+    {
+      "case_id": "legitimate-second-tool",
+      "group": "p0",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Use available tool results to answer. Call tools only when information is missing."
+          },
+          {
+            "role": "user",
+            "content": "What is the current weather in Paris in celsius?"
+          },
+          {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_weather_1",
+                "type": "function",
+                "function": {
+                  "name": "get_weather",
+                  "arguments": "{\"location\":\"Paris\",\"unit\":\"celsius\"}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call_weather_1",
+            "content": "{\"conditions\":\"sunny\",\"location\":\"Paris\",\"temperature\":21,\"unit\":\"celsius\"}"
+          },
+          {
+            "role": "user",
+            "content": "Now get the current weather in London in celsius; the Paris result does not provide London's weather."
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 768,
+        "stream": false,
+        "reasoning_effort": "none",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "description": "Get current weather for a city",
+              "strict": true,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "location": {
+                    "type": "string"
+                  },
+                  "unit": {
+                    "type": "string",
+                    "enum": [
+                      "celsius",
+                      "fahrenheit"
+                    ]
+                  }
+                },
+                "required": [
+                  "location",
+                  "unit"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        ],
+        "tool_choice": "auto"
+      },
+      "body_sha256": "b881e061dedec8f0396c116a9b39ea93ac7447829aa260f405a5a9ae1d6bf17c",
+      "body_wire_sha256": "9ac147ad2657fb061f607a2a7730237c112d5fdcbbe4cf9bc509c3f6564e7516",
+      "expect": {
+        "kind": "tools",
+        "calls": [
+          {
+            "name": "get_weather",
+            "arguments": {
+              "location": "London",
+              "unit": "celsius"
+            }
+          }
+        ],
+        "reasoning": "off"
+      },
+      "source": "protocol-repairs/legitimate-second-call"
+    },
+    {
+      "case_id": "tool-union-types",
+      "group": "p0",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Call record_union_values with these exact JSON values and types: {\"mode\":\"safe\",\"payload\":7,\"retry\":null,\"selector\":false,\"state\":\"ready\"}"
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 768,
+        "stream": false,
+        "reasoning_effort": "none",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "record_union_values",
+              "description": "Record values with mixed JSON types",
+              "strict": true,
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "retry": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "const": null
+                  },
+                  "payload": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "integer"
+                      }
+                    ],
+                    "const": 7
+                  },
+                  "state": {
+                    "const": "ready"
+                  },
+                  "selector": {
+                    "enum": [
+                      "alpha",
+                      2,
+                      false
+                    ],
+                    "const": false
+                  },
+                  "mode": {
+                    "enum": [
+                      "safe",
+                      "fast"
+                    ],
+                    "const": "safe"
+                  }
+                },
+                "required": [
+                  "retry",
+                  "payload",
+                  "state",
+                  "selector",
+                  "mode"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        ],
+        "tool_choice": "required"
+      },
+      "body_sha256": "94f94b39ed9f8653b0a47d45e9457b30ee3846095fe1ed77d32adb3276c613df",
+      "body_wire_sha256": "98493446163df1c6310e27db8352da2ee6e6936d6ca111da6f87006c170ec58a",
+      "expect": {
+        "kind": "tools",
+        "calls": [
+          {
+            "name": "record_union_values",
+            "arguments": {
+              "retry": null,
+              "payload": 7,
+              "state": "ready",
+              "selector": false,
+              "mode": "safe"
+            }
+          }
+        ],
+        "reasoning": "off"
+      },
+      "source": "corpus/TC-P0-08"
+    },
+    {
+      "case_id": "strict-basic",
+      "group": "p0",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Return only JSON conforming to the supplied schema. Do not use markdown or prose."
+          },
+          {
+            "role": "user",
+            "content": "Return language=typescript, exactly two steps [plan, build], and confidence=0.91."
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 768,
+        "stream": false,
+        "reasoning_effort": "none",
+        "n": 1,
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "basic_json_schema_default",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "language": {
+                  "type": "string",
+                  "enum": [
+                    "typescript"
+                  ]
+                },
+                "steps": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              },
+              "required": [
+                "language",
+                "steps",
+                "confidence"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "body_sha256": "843c5173110edae6cd3f966bb6acc815f1301e27ead2ebf689e058ba5eb0c52e",
+      "body_wire_sha256": "5d2053d713f7b163b4bcc0559949948bb36f6e593265582743ac9848d45dc3c9",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "language": {
+              "type": "string",
+              "enum": [
+                "typescript"
+              ]
+            },
+            "steps": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "string"
+              }
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "language",
+            "steps",
+            "confidence"
+          ],
+          "additionalProperties": false
+        },
+        "value": {
+          "language": "typescript",
+          "steps": [
+            "plan",
+            "build"
+          ],
+          "confidence": 0.91
+        },
+        "reasoning": "off"
+      },
+      "source": "corpus/SO-P0-01,10; finite n2-off control"
+    },
+    {
+      "case_id": "strict-sse",
+      "group": "p0",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Return only JSON conforming to the supplied schema. Do not use markdown or prose."
+          },
+          {
+            "role": "user",
+            "content": "Return language=typescript, exactly two steps [plan, build], and confidence=0.91."
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 768,
+        "stream": true,
+        "reasoning_effort": "none",
+        "n": 1,
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "basic_json_schema_default",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "language": {
+                  "type": "string",
+                  "enum": [
+                    "typescript"
+                  ]
+                },
+                "steps": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              },
+              "required": [
+                "language",
+                "steps",
+                "confidence"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "body_sha256": "1a5e763f3312f0efe65de3751808dea421bcba7e498f5c01496610abbe270abc",
+      "body_wire_sha256": "95188dc1fa97e37087927b816c65052206a48c82c0da25c1eb59343f5f31f0aa",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "language": {
+              "type": "string",
+              "enum": [
+                "typescript"
+              ]
+            },
+            "steps": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "string"
+              }
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "language",
+            "steps",
+            "confidence"
+          ],
+          "additionalProperties": false
+        },
+        "value": {
+          "language": "typescript",
+          "steps": [
+            "plan",
+            "build"
+          ],
+          "confidence": 0.91
+        },
+        "reasoning": "off"
+      },
+      "source": "corpus/SO-P0-01,10; finite n2-off control"
+    },
+    {
+      "case_id": "strict-n2",
+      "group": "p0",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Return only JSON conforming to the supplied schema. Do not use markdown or prose."
+          },
+          {
+            "role": "user",
+            "content": "Return language=typescript, exactly two steps [plan, build], and confidence=0.91."
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 768,
+        "stream": false,
+        "reasoning_effort": "none",
+        "n": 2,
+        "response_format": {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "basic_json_schema_default",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "language": {
+                  "type": "string",
+                  "enum": [
+                    "typescript"
+                  ]
+                },
+                "steps": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              },
+              "required": [
+                "language",
+                "steps",
+                "confidence"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "body_sha256": "1e4f7fce6ffc8f4cffa68fb8263c9ffae0e9d912b5a3efec3959213d3bb33bf1",
+      "body_wire_sha256": "be61eb9f24acc46755f3f8c1a8a086ff1902d03383c4dda121ae76f08264a105",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "language": {
+              "type": "string",
+              "enum": [
+                "typescript"
+              ]
+            },
+            "steps": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "string"
+              }
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "language",
+            "steps",
+            "confidence"
+          ],
+          "additionalProperties": false
+        },
+        "value": {
+          "language": "typescript",
+          "steps": [
+            "plan",
+            "build"
+          ],
+          "confidence": 0.91
+        },
+        "reasoning": "off"
+      },
+      "source": "corpus/SO-P0-01,10; finite n2-off control"
+    },
+    {
+      "case_id": "legacy-json-object",
+      "group": "p0",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Return only JSON conforming to the supplied schema. Do not use markdown or prose."
+          },
+          {
+            "role": "user",
+            "content": "Return language=typescript, exactly two steps [plan, build], and confidence=0.91."
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 768,
+        "stream": false,
+        "reasoning_effort": "none",
+        "n": 1,
+        "response_format": {
+          "type": "json_object"
+        }
+      },
+      "body_sha256": "1f7fba82d157cd2f46deb0d6f315ecd39c9c19a771c25e2aaadf520e580f39a2",
+      "body_wire_sha256": "d7bf50c6fe55f26cab22f9179864e9b13894601e2b14a83fccb2c2b734a0ac1e",
+      "expect": {
+        "kind": "json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "language": {
+              "type": "string",
+              "enum": [
+                "typescript"
+              ]
+            },
+            "steps": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "string"
+              }
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "language",
+            "steps",
+            "confidence"
+          ],
+          "additionalProperties": false
+        },
+        "value": {
+          "language": "typescript",
+          "steps": [
+            "plan",
+            "build"
+          ],
+          "confidence": 0.91
+        },
+        "reasoning": "off"
+      },
+      "source": "corpus/SO-P0-02; local shape separately recorded"
+    },
+    {
+      "case_id": "reasoning-on",
+      "group": "p0",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Calculate 37*43 and reply with the final number."
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 2000,
+        "stream": false,
+        "reasoning": {
+          "effort": "low",
+          "exclude": false
+        }
+      },
+      "body_sha256": "b485776e5d07c55d5f0c2d81094b2f8dc949a3842851a59e6f1925fa5530a2a0",
+      "body_wire_sha256": "eef64c378e45fba84415fa59134783f78d3c931de17fdcfab15a233a25fc56b9",
+      "expect": {
+        "kind": "text",
+        "contains": [
+          "1591"
+        ],
+        "reasoning": "on"
+      },
+      "source": "protocol-repairs/reasoning-on-vs-output-excluded; finite 2000-token control"
+    },
+    {
+      "case_id": "reasoning-exclude",
+      "group": "p0",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Calculate 37*43 and reply with the final number."
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 2000,
+        "stream": false,
+        "reasoning": {
+          "effort": "low",
+          "exclude": true
+        }
+      },
+      "body_sha256": "ba7e506dafa9fe03d795f8785ff4fbe6404291b3e1a2e1697d8a1b14a2954391",
+      "body_wire_sha256": "3661bdfcb9167b0455c4ee2329b4cc09bb8bbcf6010ced62c5bd93bd0b1aa85d",
+      "expect": {
+        "kind": "text",
+        "contains": [
+          "1591"
+        ],
+        "reasoning": "exclude"
+      },
+      "source": "protocol-repairs/reasoning-on-vs-output-excluded; finite 2000-token control"
+    },
+    {
+      "case_id": "image-red",
+      "group": "p0",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "What is the dominant color in this image? Reply with one English color word."
+              },
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAS0lEQVR42u3PQQkAAAgAsetfWiP4FgYrsKZeS0BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEDgsqnc8OJg6Ln3AAAAAElFTkSuQmCC"
+                }
+              }
+            ]
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 256,
+        "stream": false,
+        "reasoning_effort": "none"
+      },
+      "body_sha256": "1c3e89a9b02fbcc07feccb5fb2107076db3c13aad5ec31ea9257683b8a122949",
+      "body_wire_sha256": "c1e007555c4ba1e4ccc7d5a0037b27930087941032dfe42aa18e1bfb3f6e8053",
+      "expect": {
+        "kind": "text",
+        "text": "red",
+        "casefold": true,
+        "reasoning": "off"
+      },
+      "source": "finite vision capability control/generated 64x64 RGB PNG"
+    },
+    {
+      "case_id": "cancel-sse",
+      "group": "p0",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Write the integers from 1 to 1000, one per line, without commentary."
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 1024,
+        "stream": true,
+        "reasoning_effort": "none"
+      },
+      "body_sha256": "fa63c253225b80244a3df7ecc09bfa26e9d428e82ef47c06a1ceda121a8e9801",
+      "body_wire_sha256": "f8fb2f59d326dbfa5e83cac07e510b4574f736beafa7b45490e3785a145975e6",
+      "expect": {
+        "kind": "cancel",
+        "cancel_after_semantic_events": 3
+      },
+      "source": "finite cancellation mechanism; backend-release proof external"
+    },
+    {
+      "case_id": "post-cancel-chat",
+      "group": "p0",
+      "body": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Reply with exactly RECOVERED."
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 64,
+        "stream": false,
+        "reasoning_effort": "none"
+      },
+      "body_sha256": "8d06d2fba818e3df406fab8c0e6bcef7d8ee343f8777a9b484eb6e0c81838081",
+      "body_wire_sha256": "ea18502af4a25bf11385b948b3b5a5a8bfdd1220a20a893b9c878cfdf44d9471",
+      "expect": {
+        "kind": "text",
+        "text": "RECOVERED",
+        "reasoning": "off"
+      },
+      "source": "post-cancel service control"
+    }
+  ],
+  "payload_sha256": "5b88ee3e393e9a18dba53f26c8deb99ddea417e690a58bb9d54e6000c0d6b372"
+}

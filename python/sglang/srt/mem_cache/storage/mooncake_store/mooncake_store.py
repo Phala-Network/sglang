@@ -67,6 +67,20 @@ class MooncakeHostTensorAllocator(HostTensorAllocator):
         return tensor.view(dims)
 
 
+def _ssd_offload_path_for_rank(base_path: str, world_rank: int) -> str:
+    """Give each physical worker a stable, independent native SSD directory."""
+    if (
+        not isinstance(base_path, str)
+        or not base_path
+        or not os.path.isabs(base_path)
+        or ".." in base_path.split(os.sep)
+    ):
+        raise ValueError("SSD offload requires an explicit absolute base directory")
+    if type(world_rank) is not int or world_rank < 0:
+        raise ValueError("SSD offload requires a valid global world rank")
+    return os.path.join(os.path.normpath(base_path), f"rank-{world_rank}")
+
+
 def _parse_global_segment_size(value) -> int:
     if isinstance(value, int):
         return value
@@ -502,8 +516,18 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
 
                 setup_kwargs = {}
                 if self.config.enable_ssd_offload:
+                    from sglang.srt.distributed.parallel_state import get_world_group
+
+                    ssd_path = _ssd_offload_path_for_rank(
+                        self.config.ssd_offload_path, get_world_group().rank
+                    )
+                    os.makedirs(ssd_path, exist_ok=True)
+                    if os.path.islink(ssd_path):
+                        raise ValueError("SSD rank directory must not be a symlink")
                     setup_kwargs["enable_ssd_offload"] = True
-                if self.config.ssd_offload_path is not None:
+                    setup_kwargs["ssd_offload_path"] = ssd_path
+                    logger.info("Mooncake SSD offload directory: %s", ssd_path)
+                elif self.config.ssd_offload_path is not None:
                     setup_kwargs["ssd_offload_path"] = self.config.ssd_offload_path
                 if self.config.tenant_id != DEFAULT_TENANT_ID:
                     setup_kwargs["tenant_id"] = self.config.tenant_id

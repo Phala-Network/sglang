@@ -168,6 +168,13 @@ _MEDIA_CONTENT_PART_TYPES = frozenset({"image_url", "video_url", "audio_url"})
 _CHAT_TEMPLATE_CACHE_MAX_SIZE = 128
 
 
+class _AllowedToolsOutputError(ValueError):
+    """Model/parser output violated an explicit allowed-tools request."""
+
+
+_ALLOWED_TOOLS_OUTPUT_ERROR = "Model generated a tool call outside allowed_tools."
+
+
 def normalize_tool_content(role: str, content):
     """Normalize tool message content from OpenAI array format to plain string.
 
@@ -2431,6 +2438,11 @@ class OpenAIServingChat(OpenAIServingBase):
                 )
                 yield f"data: {usage_chunk.model_dump_json()}\n\n"
 
+        except _AllowedToolsOutputError as e:
+            error = self.create_streaming_error_response(
+                str(e), err_type="InternalServerError", status_code=500
+            )
+            yield f"data: {error}\n\n"
         except ValueError as e:
             if not stream_started:
                 raise
@@ -2583,6 +2595,15 @@ class OpenAIServingChat(OpenAIServingBase):
                     self._effective_tool_choice(request),
                     history_tool_calls_cnt,
                 )
+                allowed_names = self._allowed_tool_names(request)
+                if allowed_names is not None and any(
+                    call.function.name not in allowed_names for call in tool_calls or []
+                ):
+                    return self.create_error_response(
+                        _ALLOWED_TOOLS_OUTPUT_ERROR,
+                        err_type="InternalServerError",
+                        status_code=500,
+                    )
 
             # Extract prompt_token_ids if requested
             choice_prompt_token_ids = (
@@ -3226,6 +3247,17 @@ class OpenAIServingChat(OpenAIServingBase):
                 normal_text = (normal_text or "") + end_text
                 calls = list(calls) + end_calls
 
+        allowed_names = self._allowed_tool_names(request)
+        output_names = None
+        if allowed_names is not None:
+            # Parser instances already belong to one response choice. Keep the
+            # admission record with that parser, including its terminal flush.
+            output_names = getattr(parser, "_allowed_tool_output_names", None)
+            if output_names is None:
+                output_names = parser._allowed_tool_output_names = {}
+            if any(call.name and call.name not in allowed_names for call in calls):
+                raise _AllowedToolsOutputError(_ALLOWED_TOOLS_OUTPUT_ERROR)
+
         # Yield normal text
         if normal_text:
             choice_data = ChatCompletionResponseStreamChoice(
@@ -3257,6 +3289,18 @@ class OpenAIServingChat(OpenAIServingBase):
         # Yield tool calls
         history_tool_calls_cnt = self._get_history_tool_calls_cnt(request)
         for call_item in calls:
+            if output_names is not None:
+                if call_item.name:
+                    previous_name = output_names.get(call_item.tool_index)
+                    if previous_name is not None and previous_name != call_item.name:
+                        raise _AllowedToolsOutputError(
+                            "Model changed a tool call name within allowed_tools output."
+                        )
+                    output_names[call_item.tool_index] = call_item.name
+                elif call_item.tool_index not in output_names:
+                    # Another call in this choice does not authorize this
+                    # index's arguments before its own valid named first chunk.
+                    continue
             # Tool call ID should be generated only once per tool call
             if call_item.name:
                 # Mark only a valid named first chunk as a tool call.
@@ -3346,6 +3390,19 @@ class OpenAIServingChat(OpenAIServingBase):
         tool_index = len(detector.prev_tool_call_arr) - 1
         if tool_index < 0 or tool_index >= len(detector.streamed_args_for_tool):
             return None
+
+        allowed_names = self._allowed_tool_names(request)
+        if allowed_names is not None:
+            name = detector.prev_tool_call_arr[tool_index].get("name")
+            if name and name not in allowed_names:
+                raise _AllowedToolsOutputError(_ALLOWED_TOOLS_OUTPUT_ERROR)
+            output_names = getattr(parser, "_allowed_tool_output_names", {})
+            if tool_index not in output_names:
+                return None
+            if name and name != output_names[tool_index]:
+                raise _AllowedToolsOutputError(
+                    "Model changed a tool call name within allowed_tools output."
+                )
 
         # Get expected vs actual arguments
         expected_args = detector.prev_tool_call_arr[tool_index].get("arguments", {})

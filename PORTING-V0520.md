@@ -15,6 +15,8 @@ The final candidate commit and archive/tree hashes belong in the parent's build-
 
 Post-freeze review correction: source `2d625cff` omitted the donor's `_pad_intermediate_size(layer)` call in MXFP4 weight postprocessing. A follow-up commit restores it after the MegaMoE bypass and before gate/up reorder or byte shuffling. The former source archive/build is superseded. The actual-method CPU-stub regression reproduced one failure before the correction and all three cases pass afterward; the padding helper, create/load/scale registration and routed quantization functions are AST-identical to donor `a6cf0581`. Real torch CPU fixtures additionally check 576→640 zero/one padding and aligned/no-op behavior; run those in the image because local Windows has no torch.
 
+Post-freeze deferred-ABI correction: the exact FlashInfer 0.6.18 Python wrapper treats a tuple `(topk_ids, topk_weights)` as `UnpackedPrecomputed`, consumes BF16/FP32 weights at their native dtype, and returns the caller-owned weight tensor when `do_finalize=False`. The real SM100 probe returned finite FP32 values equal to the supplied top-k scores; reinterpreting those bits as BF16 created huge values and NaNs. Upstream SGLang `0dabef3d` (#39574) removes that reinterpretation. This candidate keeps the fix narrower: every `_make_deferred_finalize_output` caller declares its expected routing-weight ABI. FromLogits remains strictly BF16, while the MXFP4 unpacked caller declares the actual `topk_weights.dtype`; the helper validates BF16/FP32 and preserves the tensor without casting, rounding, or bit reinterpretation.
+
 ## Donor closure and adaptations
 
 | Donor commit | Upstream change | Candidate role |
@@ -32,6 +34,7 @@ Post-freeze review correction: source `2d625cff` omitted the donor's `_pad_inter
 | `464fffbe` | #39665 | Native V4.1 chat encoding and tool/reasoning parser selection |
 | `3401b752` | #39666 | Engram model module and request history |
 | `1f0c73e9` | #39921 | Generalized compression-ratio metadata and pools required by ratios 1/2 |
+| `0dabef3d` | #39574 | FlashInfer 0.6.18 deferred expert-weight ABI; adapted to explicit per-caller dtype instead of global dtype acceptance |
 | `1b200ffa` | #40039 | 32-wide-K UE8M0 dense FP8 weights through MXFP8 GEMMs |
 | `a6cf0581` | #38798 | V4.1 config/model/DSpark/HiCache and runtime integration |
 | `7061256028c67c0cb8dab77e9cc00eecb2d4b8dc` + `6cec021d06fd47e3a54aef323817ec6e1af13bb1` | OPEN #40217 | Separate dense-prefill memory repair and strengthened consumer tests |
@@ -98,11 +101,18 @@ Run in the source-bound/final-image CPU environment (separate final-image tests 
 python3 test/phala_deepseek_v41/audit_v0520_source.py
 python3 test/phala_deepseek_v41/test_cpu_contracts_v0520.py -v
 python3 test/phala_deepseek_v41/test_mxfp4_weight_load_contract.py -v
+python3 -m pytest -q test/phala_deepseek_v41/test_flashinfer_deferred_finalize_abi.py
 python3 test/phala_deepseek_v41/selftest.py
 python3 -m pytest -q test/registered/unit/entrypoints/openai/test_async_dsv41_conversion.py test/registered/unit/layers/test_dsv41_candidate_blocks.py test/registered/unit/models/test_dsv41_medium_finalize_selection.py
 python3 -m pytest -q test/registered/unit/layers/quantization/test_mxfp4_trtllm_padding.py test/registered/unit/model_executor/test_pool_configurator.py test/registered/unit/mem_cache/test_unified_radix_hicache_dispatch.py
 python3 -m pytest -q test/registered/unit/mem_cache/test_unified_radix_cache_unittest.py -k 'TestChunkedWriteThroughBackupDecision or scheduler_hicache_load_back_fallback_keeps_old_anchor'
 ```
+
+The new deferred-ABI CPU regression passed `5/5` in a no-network, no-GPU,
+resource-capped container from image `sha256:304d7190...`, with only the three
+changed source/test files overlaid into that disposable container. This proves
+the helper preserves declared BF16 and genuine FP32 values and rejects routing
+ABI mismatches; it is not final rebuilt-image or GPU parity acceptance.
 
 The structural Git-based audit needs the original checkout or equivalent source identity metadata; a stripped archive image can run its AST/protected-file checks after providing baseline hashes, or run it before archive creation. Do not mistake a missing `.git` failure for runtime failure. Actual imports of V4.1 config/model/DSpark/backend, extension symbols and server-arg resolution are mandatory before GPU startup. GPU suites: `test/registered/kernels/ops/attention/test_dense_prefill_indexer.py`, `test/registered/kernels/ops/communication/test_dsv41_medium_finalize_all_reduce.py`, and the relevant V4.1 KV/HiCache restore tests. Preserve simulated-versus-real acceptance and test only authorized hardware.
 

@@ -471,7 +471,11 @@ class Mxfp4FlashinferTrtllmMoEMethod:
             enable_pdl=trtllm_moe_enable_pdl(num_tokens),
         )
         if defer_finalize:
-            output = _make_deferred_finalize_output(result, top_k=topk_ids.shape[1])
+            output = _make_deferred_finalize_output(
+                result,
+                top_k=topk_ids.shape[1],
+                expected_expert_weights_dtype=topk_weights.dtype,
+            )
         else:
             output = result[0]
 

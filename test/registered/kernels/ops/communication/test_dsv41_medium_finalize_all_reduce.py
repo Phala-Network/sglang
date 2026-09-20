@@ -30,13 +30,14 @@ MB = 1024 * 1024
 
 def _precompile(num_gpus):
     for world_size in num_gpus:
-        all_reduce_fusion._jit_module(
-            world_size,
-            HIDDEN,
-            TOP_K,
-            all_reduce_fusion.default_cluster_size(HIDDEN),
-            torch.bfloat16,
-        )
+        for dtype in (torch.bfloat16, torch.float32):
+            all_reduce_fusion._jit_module(
+                world_size,
+                HIDDEN,
+                TOP_K,
+                all_reduce_fusion.default_cluster_size(HIDDEN),
+                dtype,
+            )
 
 
 @cache_once
@@ -93,7 +94,7 @@ def _init_comms() -> tuple[CustomAllReduceV2, CustomAllReduceV2]:
     return small, medium
 
 
-def _make_inputs(num_tokens: int, seed: int):
+def _make_inputs(num_tokens: int, seed: int, weight_dtype=torch.bfloat16):
     rank = dist.get_rank()
     generator = torch.Generator().manual_seed(seed * 7919 + rank)
     num_slots = num_tokens * TOP_K
@@ -102,9 +103,11 @@ def _make_inputs(num_tokens: int, seed: int):
     )
     weights = (
         torch.randint(0, 3, (num_tokens, TOP_K), generator=generator)
-        .to(torch.bfloat16)
+        .to(weight_dtype)
         .mul_(0.5)
     )
+    if weight_dtype == torch.float32:
+        weights.add_(1 / 32768)
     shared = torch.randint(-2, 3, (num_tokens, HIDDEN), generator=generator).to(
         torch.bfloat16
     )
@@ -125,8 +128,10 @@ def _refresh_inputs(gemm2, indices, weights, shared, seed):
     torch.manual_seed(seed * 7919 + rank)
     gemm2.copy_(torch.randint(-2, 3, gemm2.shape, device=_device()))
     weights.copy_(
-        torch.randint(0, 3, weights.shape, device=_device()).to(torch.bfloat16)
+        torch.randint(0, 3, weights.shape, device=_device()).to(weights.dtype)
     ).mul_(0.5)
+    if weights.dtype == torch.float32:
+        weights.add_(1 / 32768)
     shared.copy_(torch.randint(-2, 3, shared.shape, device=_device()))
     indices.copy_(torch.arange(indices.numel(), dtype=torch.int32, device=_device()))
     indices[(seed + rank) % 13 :: 13] = -1
@@ -134,8 +139,9 @@ def _refresh_inputs(gemm2, indices, weights, shared, seed):
 
 
 @pytest.mark.parametrize("num_tokens", [96, 97, 288, 336, 384])
+@pytest.mark.parametrize("weight_dtype", [torch.bfloat16, torch.float32])
 @torch.inference_mode()
-def test_finalize_shared_rank_sum_graph_replay(num_tokens):
+def test_finalize_shared_rank_sum_graph_replay(num_tokens, weight_dtype):
     small, medium = _init_comms()
     if num_tokens <= 96:
         comm = small
@@ -144,7 +150,7 @@ def test_finalize_shared_rank_sum_graph_replay(num_tokens):
         comm = medium
         comm_key = all_reduce_fusion.DSV41_MEDIUM_COMM_KEY
 
-    gemm2, indices, weights, shared = _make_inputs(num_tokens, seed=17)
+    gemm2, indices, weights, shared = _make_inputs(num_tokens, seed=17, weight_dtype=weight_dtype)
 
     def small_plane_reference():
         chunks = []

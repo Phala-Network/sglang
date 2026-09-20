@@ -1,0 +1,981 @@
+{
+  "date": "2026-09-20",
+  "purpose": "Repository cleanup; retained refs preserve source history, not acceptance claims",
+  "keep": [
+    "codex/dsv41-pr39704-medium-r7",
+    "codex/dsv41-protocol-wire-fidelity-20260920",
+    "codex/dsv41-v0520-11-candidate-bitmap",
+    "codex/five-cvm-v0519-muse",
+    "codex/five-cvm-v0519-nemotron",
+    "codex/five-cvm-v0519-qwen36",
+    "codex/five-cvm-v0519-qwen38-gemma4",
+    "codex/glm53-v0520-atomic-tools-r1",
+    "codex/glm53-v0520-completed-chunks-r1",
+    "codex/glm53-v0520-dsa-host-budget-r1",
+    "codex/glm53-v0520-flashinfer-cleanup-r1",
+    "codex/glm53-v0520-host-async-ack-r1",
+    "codex/glm53-v0520-idle-dp-gauge-r1",
+    "codex/glm53-v0520-mooncake-ssd-ranks-r1",
+    "codex/glm53-v0520-physical-kv-budget-r1",
+    "codex/glm53-v0520-reasoning-usage-r1",
+    "codex/kimi-k3-v0520-0007-chunk-write-through-r1",
+    "codex/kimi-k3-v0520-r12-frozen-provenance",
+    "codex/serving-v0520-0020-allowed-output-r1",
+    "codex/serving-v0520-qwen38-governor-derived-r2",
+    "main"
+  ],
+  "archive_tags": [
+    {
+      "branch": "codex/archive-five-cvm-v0519-muse",
+      "tag": "archive/20260920/archive-five-cvm-v0519-muse",
+      "sha": "eec6b2e25ee098d04475e4784caad7b18021393b"
+    },
+    {
+      "branch": "codex/archive-five-cvm-v0519-nemotron",
+      "tag": "archive/20260920/archive-five-cvm-v0519-nemotron",
+      "sha": "cfe6dbb89416065555d4a2f0d2260704680136ec"
+    },
+    {
+      "branch": "codex/archive-five-cvm-v0519-qwen38-gemma4",
+      "tag": "archive/20260920/archive-five-cvm-v0519-qwen38-gemma4",
+      "sha": "82da9278e229402abcb50b46ee5a57e801bb651c"
+    },
+    {
+      "branch": "codex/deepseek-v4-flash-hardening-20260807-r1",
+      "tag": "archive/20260920/deepseek-v4-flash-hardening-20260807-r1",
+      "sha": "b272ab972354a5c916e7e72025846c789ff7be46"
+    },
+    {
+      "branch": "codex/deepseek-v4-pro-0813-sglang",
+      "tag": "archive/20260920/deepseek-v4-pro-0813-sglang",
+      "sha": "a42731b07a7a1f256d0a68142b0a86f381a80bb1"
+    },
+    {
+      "branch": "codex/deepseek-v4-v0517-no33288-20260809-r2",
+      "tag": "archive/20260920/deepseek-v4-v0517-no33288-20260809-r2",
+      "sha": "20fdb3815a33e693b5edf786d8f3e0bc60cca3ff"
+    },
+    {
+      "branch": "codex/glm52-structured-hardening-20260807-r2",
+      "tag": "archive/20260920/glm52-structured-hardening-20260807-r2",
+      "sha": "1c15c898856e35bf2bc932a4259c7422de903ce4"
+    },
+    {
+      "branch": "codex/glm52-v0517-r8-grammar-cache-failclosed-20260812",
+      "tag": "archive/20260920/glm52-v0517-r8-grammar-cache-failclosed-20260812",
+      "sha": "b14c6df53df7d03acddfdf52f76975928182e073"
+    },
+    {
+      "branch": "codex/glm53-bf16-production",
+      "tag": "archive/20260920/glm53-bf16-production",
+      "sha": "2253c598b2d4bfb736148b274bc841c72f9a90ca"
+    },
+    {
+      "branch": "codex/glm53-glm47-unknown-stream-r16",
+      "tag": "archive/20260920/glm53-glm47-unknown-stream-r16",
+      "sha": "f9bd4aae3eae870a23c23cdb8415128c16547f24"
+    },
+    {
+      "branch": "codex/glm53-native-cli-r4",
+      "tag": "archive/20260920/glm53-native-cli-r4",
+      "sha": "61cb9d21e16530469583b70991c0079f6045da0b"
+    },
+    {
+      "branch": "codex/gptoss-qwen25-harmony-tool-fix-20260904",
+      "tag": "archive/20260920/gptoss-qwen25-harmony-tool-fix-20260904",
+      "sha": "dcb73950e7554bc35b4142db6787d9c95dfe1747"
+    },
+    {
+      "branch": "codex/muse-glimmer-llguidance-pinned-mask-r11-20260818",
+      "tag": "archive/20260920/muse-glimmer-llguidance-pinned-mask-r11-20260818",
+      "sha": "5ca52b059830fa98dbb066818c4c128d072a3a50"
+    },
+    {
+      "branch": "codex/muse-glimmer-structured-budget-r11-20260814",
+      "tag": "archive/20260920/muse-glimmer-structured-budget-r11-20260814",
+      "sha": "fbadf3056c7b789c313083ffea8f781abec7b37f"
+    },
+    {
+      "branch": "codex/qwen38-flash-next-phala-20260826",
+      "tag": "archive/20260920/qwen38-flash-next-phala-20260826",
+      "sha": "ea52ea090009930ca3bf99d5e45128ea2b35564c"
+    },
+    {
+      "branch": "codex/qwen38-r15-flat-official-base",
+      "tag": "archive/20260920/qwen38-r15-flat-official-base",
+      "sha": "98f40b15259586b7a818affa17890709e4cd84a1"
+    },
+    {
+      "branch": "codex/qwen38-reasoning-budget-r12",
+      "tag": "archive/20260920/qwen38-reasoning-budget-r12",
+      "sha": "c0fc2cfcd2f9ea2c482155b2126f9036300a3813"
+    },
+    {
+      "branch": "codex/qwen38-v0519-null-schema-response-format-20260914",
+      "tag": "archive/20260920/qwen38-v0519-null-schema-response-format-20260914",
+      "sha": "fb70a0ac9fd5c9f85ef95917db5351e3b229f025"
+    },
+    {
+      "branch": "codex/serving-v0520-qwen38-governor-derived-r1",
+      "tag": "archive/20260920/serving-v0520-qwen38-governor-derived-r1",
+      "sha": "cb88b5675f50a26090407f2dc155de8bdd0e42fd"
+    },
+    {
+      "branch": "codex/v0.5.17-deepseek-v4-b-repair-20260816",
+      "tag": "archive/20260920/v0.5.17-deepseek-v4-b-repair-20260816",
+      "sha": "7423800c750affa9f6eccfee0c65ab70a21edd15"
+    }
+  ],
+  "delete": [
+    {
+      "branch": "codex/archive-five-cvm-v0519-muse",
+      "sha": "eec6b2e25ee098d04475e4784caad7b18021393b",
+      "retained_ref": "refs/tags/archive/20260920/archive-five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/archive-five-cvm-v0519-nemotron",
+      "sha": "cfe6dbb89416065555d4a2f0d2260704680136ec",
+      "retained_ref": "refs/tags/archive/20260920/archive-five-cvm-v0519-nemotron"
+    },
+    {
+      "branch": "codex/archive-five-cvm-v0519-qwen36",
+      "sha": "1a56fbb0dc48ec3fb2b4b629fc4e74a3b57c639a",
+      "retained_ref": "refs/tags/qwen38-27b-sglang-v0.5.19-phala-r5-1a56fbb0dc-20260914"
+    },
+    {
+      "branch": "codex/archive-five-cvm-v0519-qwen38-gemma4",
+      "sha": "82da9278e229402abcb50b46ee5a57e801bb651c",
+      "retained_ref": "refs/tags/archive/20260920/archive-five-cvm-v0519-qwen38-gemma4"
+    },
+    {
+      "branch": "codex/deepseek-v4-flash-hardening-20260807-r1",
+      "sha": "b272ab972354a5c916e7e72025846c789ff7be46",
+      "retained_ref": "refs/tags/archive/20260920/deepseek-v4-flash-hardening-20260807-r1"
+    },
+    {
+      "branch": "codex/deepseek-v4-pro-0813-sglang",
+      "sha": "a42731b07a7a1f256d0a68142b0a86f381a80bb1",
+      "retained_ref": "refs/tags/archive/20260920/deepseek-v4-pro-0813-sglang"
+    },
+    {
+      "branch": "codex/deepseek-v4-v0517-no33288-20260809-r2",
+      "sha": "20fdb3815a33e693b5edf786d8f3e0bc60cca3ff",
+      "retained_ref": "refs/tags/archive/20260920/deepseek-v4-v0517-no33288-20260809-r2"
+    },
+    {
+      "branch": "codex/deepseek-v4-v0517-paged-chunk-20260811-r1",
+      "sha": "00dd7bed7f12f534359ded418bcd79fbda095aa5",
+      "retained_ref": "refs/tags/archive/20260920/v0.5.17-deepseek-v4-b-repair-20260816"
+    },
+    {
+      "branch": "codex/deepseek-v41-async-chat-r1",
+      "sha": "aa54beb47f1953d0a9bda2dc19ccd96783220b8c",
+      "retained_ref": "refs/remotes/phala/codex/dsv41-pr39704-medium-r7"
+    },
+    {
+      "branch": "codex/deepseek-v41-pd-streaming-r1",
+      "sha": "b72c85741895351aab79c5434831351d5bea6e50",
+      "retained_ref": "refs/remotes/phala/codex/dsv41-pr39704-medium-r7"
+    },
+    {
+      "branch": "codex/dsv41-hicache-chunked-backup-r6",
+      "sha": "b85aa875dd9118270f7c82efde296064807e321f",
+      "retained_ref": "refs/remotes/phala/codex/dsv41-pr39704-medium-r7"
+    },
+    {
+      "branch": "codex/dsv41-v0520-01-native-support",
+      "sha": "9af234a4891a8facbe92626a2c54fffce5f04637",
+      "retained_ref": "refs/remotes/phala/codex/dsv41-protocol-wire-fidelity-20260920"
+    },
+    {
+      "branch": "codex/dsv41-v0520-02-dense-prefill",
+      "sha": "3c0eb7c73d9c51baf236faebd649ea14c6482ecb",
+      "retained_ref": "refs/remotes/phala/codex/dsv41-protocol-wire-fidelity-20260920"
+    },
+    {
+      "branch": "codex/dsv41-v0520-03-hicache-backup",
+      "sha": "f94b624c3e1abf798ca7e0e495a17ca82d9c8dd8",
+      "retained_ref": "refs/remotes/phala/codex/dsv41-protocol-wire-fidelity-20260920"
+    },
+    {
+      "branch": "codex/dsv41-v0520-04-common-serving",
+      "sha": "5ad27e1db0d14d17d920e9040599f20655fbe9df",
+      "retained_ref": "refs/remotes/phala/codex/dsv41-protocol-wire-fidelity-20260920"
+    },
+    {
+      "branch": "codex/dsv41-v0520-05-model-protocol",
+      "sha": "437b982abfdfa1b563122e061ead1a1cd1211c29",
+      "retained_ref": "refs/remotes/phala/codex/dsv41-protocol-wire-fidelity-20260920"
+    },
+    {
+      "branch": "codex/dsv41-v0520-06-medium-finalize",
+      "sha": "ecd9f93317e41aa19487948ddab05f754556a990",
+      "retained_ref": "refs/remotes/phala/codex/dsv41-protocol-wire-fidelity-20260920"
+    },
+    {
+      "branch": "codex/dsv41-v0520-07-integration-audit",
+      "sha": "7a23a97622a8483f3fe6f1e6d37e06bcd933aa27",
+      "retained_ref": "refs/remotes/phala/codex/dsv41-protocol-wire-fidelity-20260920"
+    },
+    {
+      "branch": "codex/dsv41-v0520-08-mxfp4-padding",
+      "sha": "81b67d8f1736b387aff2f908a2cddf011803367a",
+      "retained_ref": "refs/remotes/phala/codex/dsv41-protocol-wire-fidelity-20260920"
+    },
+    {
+      "branch": "codex/dsv41-v0520-09-parser-selftest",
+      "sha": "127a3646891cdefc09b1d59cf1a7fb11e4f23f12",
+      "retained_ref": "refs/remotes/phala/codex/dsv41-protocol-wire-fidelity-20260920"
+    },
+    {
+      "branch": "codex/dsv41-v0520-10-routed-weight-abi",
+      "sha": "6a899fd8296f3b8f6e1a41ace558ed0f7d8b5057",
+      "retained_ref": "refs/remotes/phala/codex/dsv41-protocol-wire-fidelity-20260920"
+    },
+    {
+      "branch": "codex/five-cvm-v0519-muse-nemotron-shared",
+      "sha": "c977122cefeef784c33f0e11c2b841c8111e76cb",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/five-cvm-v0519-upstream",
+      "sha": "0bcd822377da7b5718e674eaf9c870d349424dd1",
+      "retained_ref": "refs/remotes/phala/codex/dsv41-pr39704-medium-r7"
+    },
+    {
+      "branch": "codex/glm52-structured-hardening-20260807-r2",
+      "sha": "1c15c898856e35bf2bc932a4259c7422de903ce4",
+      "retained_ref": "refs/tags/archive/20260920/glm52-structured-hardening-20260807-r2"
+    },
+    {
+      "branch": "codex/glm52-v0517-r7-safeunpickler-adminforce-20260812",
+      "sha": "784fecf1a9c44a7f9ccaab0b5802ed14e4a2c2a3",
+      "retained_ref": "refs/tags/archive/20260920/glm52-v0517-r8-grammar-cache-failclosed-20260812"
+    },
+    {
+      "branch": "codex/glm52-v0517-r8-grammar-cache-failclosed-20260812",
+      "sha": "b14c6df53df7d03acddfdf52f76975928182e073",
+      "retained_ref": "refs/tags/archive/20260920/glm52-v0517-r8-grammar-cache-failclosed-20260812"
+    },
+    {
+      "branch": "codex/glm52-v0517-structured-toolcall-r5-20260811",
+      "sha": "2440f17ab55c0aed9d8e0469cb4feabf6441d85e",
+      "retained_ref": "refs/tags/archive/20260920/glm52-v0517-r8-grammar-cache-failclosed-20260812"
+    },
+    {
+      "branch": "codex/glm52-v0517-toolcall-schema-coercion-r6-20260812",
+      "sha": "0544418a81e0cfa138bff4203905a1ff4367a7e0",
+      "retained_ref": "refs/tags/archive/20260920/glm52-v0517-r8-grammar-cache-failclosed-20260812"
+    },
+    {
+      "branch": "codex/glm53-bf16-production",
+      "sha": "2253c598b2d4bfb736148b274bc841c72f9a90ca",
+      "retained_ref": "refs/tags/archive/20260920/glm53-bf16-production"
+    },
+    {
+      "branch": "codex/glm53-cc-ipc-fusion-r2",
+      "sha": "f11a9d585868a7a3ea0b3efb3d75159a1637a6f1",
+      "retained_ref": "refs/tags/archive/20260920/glm53-native-cli-r4"
+    },
+    {
+      "branch": "codex/glm53-cc-ipc-lifecycle-r3",
+      "sha": "883836dc7ae08c10b4295c1d489e5e6ac41f7141",
+      "retained_ref": "refs/tags/archive/20260920/glm53-native-cli-r4"
+    },
+    {
+      "branch": "codex/glm53-glm47-unknown-stream-r16",
+      "sha": "f9bd4aae3eae870a23c23cdb8415128c16547f24",
+      "retained_ref": "refs/tags/archive/20260920/glm53-glm47-unknown-stream-r16"
+    },
+    {
+      "branch": "codex/glm53-mm-cache-mismatch-r9",
+      "sha": "a652801e8fd8803b6009ccc298a7bb834fce8ac4",
+      "retained_ref": "refs/tags/archive/20260920/glm53-glm47-unknown-stream-r16"
+    },
+    {
+      "branch": "codex/glm53-mm-embedding-isolation-r12",
+      "sha": "26f67bd9fbbb07e4f14a66f64b0a623ef1c55cd9",
+      "retained_ref": "refs/tags/archive/20260920/glm53-glm47-unknown-stream-r16"
+    },
+    {
+      "branch": "codex/glm53-mmcache-video-budget-r10",
+      "sha": "276866ce25f3c9f387e3fe32750979e56f9253ee",
+      "retained_ref": "refs/tags/archive/20260920/glm53-glm47-unknown-stream-r16"
+    },
+    {
+      "branch": "codex/glm53-mmcache-videobudget-badmedia-r11",
+      "sha": "af261009d5e411a8dc74be62dbe2da193cf78403",
+      "retained_ref": "refs/tags/archive/20260920/glm53-glm47-unknown-stream-r16"
+    },
+    {
+      "branch": "codex/glm53-native-cli-r4",
+      "sha": "61cb9d21e16530469583b70991c0079f6045da0b",
+      "retained_ref": "refs/tags/archive/20260920/glm53-native-cli-r4"
+    },
+    {
+      "branch": "codex/glm53-nvfp4-const-types-ccf9fe",
+      "sha": "c1ff6d9b34a3c5257c8eaf5222e8a0b18c017517",
+      "retained_ref": "refs/tags/archive/20260920/glm53-native-cli-r4"
+    },
+    {
+      "branch": "codex/gptoss-qwen25-harmony-tool-fix-20260904",
+      "sha": "dcb73950e7554bc35b4142db6787d9c95dfe1747",
+      "retained_ref": "refs/tags/archive/20260920/gptoss-qwen25-harmony-tool-fix-20260904"
+    },
+    {
+      "branch": "codex/kimi-k3-v0520-0001-prefill-seq-cap-r1",
+      "sha": "37d88dc627e4ab0560bc24e2825b912ffc7f3a0e",
+      "retained_ref": "refs/remotes/phala/codex/kimi-k3-v0520-0007-chunk-write-through-r1"
+    },
+    {
+      "branch": "codex/kimi-k3-v0520-0002-chat-stream-close-r1",
+      "sha": "6e6e743682adb5449c072879502afbf6bc41f0b5",
+      "retained_ref": "refs/remotes/phala/codex/kimi-k3-v0520-0007-chunk-write-through-r1"
+    },
+    {
+      "branch": "codex/kimi-k3-v0520-0003-request-owner-r1",
+      "sha": "5256c3113810f97a156e9847b79f586009cb3c51",
+      "retained_ref": "refs/remotes/phala/codex/kimi-k3-v0520-0007-chunk-write-through-r1"
+    },
+    {
+      "branch": "codex/kimi-k3-v0520-0004-mamba-checkpoint-r1",
+      "sha": "bda19ad5a7a3d6044d6825c4f492929ef7d85182",
+      "retained_ref": "refs/remotes/phala/codex/kimi-k3-v0520-0007-chunk-write-through-r1"
+    },
+    {
+      "branch": "codex/kimi-k3-v0520-0005-file-storage-ownership-r1",
+      "sha": "cf08f42ebf1a0018d0e6768dd0b014ead9afdfed",
+      "retained_ref": "refs/remotes/phala/codex/kimi-k3-v0520-0007-chunk-write-through-r1"
+    },
+    {
+      "branch": "codex/kimi-k3-v0520-0006-restorable-prefix-r1",
+      "sha": "530bf4c75e7fbad0010a47ccc51d968cc10c53c5",
+      "retained_ref": "refs/remotes/phala/codex/kimi-k3-v0520-0007-chunk-write-through-r1"
+    },
+    {
+      "branch": "codex/muse-glimmer-30b-sglang-r5-20260812",
+      "sha": "6a58f6b029fe8bf98db79479eda76383e9aa23b4",
+      "retained_ref": "refs/tags/archive/20260920/muse-glimmer-llguidance-pinned-mask-r11-20260818"
+    },
+    {
+      "branch": "codex/muse-glimmer-llguidance-pinned-mask-r11-20260818",
+      "sha": "5ca52b059830fa98dbb066818c4c128d072a3a50",
+      "retained_ref": "refs/tags/archive/20260920/muse-glimmer-llguidance-pinned-mask-r11-20260818"
+    },
+    {
+      "branch": "codex/muse-glimmer-openrouter-run-tests-r9-20260813",
+      "sha": "fd5f91baf3754cbfd0c5905e2f0ec18e05235ad6",
+      "retained_ref": "refs/tags/archive/20260920/muse-glimmer-llguidance-pinned-mask-r11-20260818"
+    },
+    {
+      "branch": "codex/muse-glimmer-reasoning-usage-r8-20260813",
+      "sha": "58f34bce3fba4e8a02f9c3951d4b93f922c275b6",
+      "retained_ref": "refs/tags/archive/20260920/muse-glimmer-llguidance-pinned-mask-r11-20260818"
+    },
+    {
+      "branch": "codex/muse-glimmer-response-format-34659-r6-20260813",
+      "sha": "28fede103d201f2622f55f1737887933f9a00c35",
+      "retained_ref": "refs/tags/archive/20260920/muse-glimmer-llguidance-pinned-mask-r11-20260818"
+    },
+    {
+      "branch": "codex/muse-glimmer-structured-budget-r11-20260814",
+      "sha": "fbadf3056c7b789c313083ffea8f781abec7b37f",
+      "retained_ref": "refs/tags/archive/20260920/muse-glimmer-structured-budget-r11-20260814"
+    },
+    {
+      "branch": "codex/muse-glimmer-structured-default-r10-20260817",
+      "sha": "06bbbdb60d681667b356a6202e49165763ed0e4c",
+      "retained_ref": "refs/tags/archive/20260920/muse-glimmer-llguidance-pinned-mask-r11-20260818"
+    },
+    {
+      "branch": "codex/muse-glimmer-tool-required-34577-r7-20260813",
+      "sha": "820245df819e659b00b58fe0205068f2a2313a2e",
+      "retained_ref": "refs/tags/archive/20260920/muse-glimmer-llguidance-pinned-mask-r11-20260818"
+    },
+    {
+      "branch": "codex/muse-nemotron-v0519-20260910",
+      "sha": "0bac23f3947c21a9ca238a151f3c686737d6a5b6",
+      "retained_ref": "refs/tags/archive/20260920/archive-five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/muse-qwen25-v0518-flat-20260903",
+      "sha": "4b46eba4d5f31d8e2b9a5d67827fe889227f2f27",
+      "retained_ref": "refs/tags/archive/20260920/gptoss-qwen25-harmony-tool-fix-20260904"
+    },
+    {
+      "branch": "codex/nemotron-qwen-v0519-20260909",
+      "sha": "5a2055cf386e168140ce35fa53a030229659ea72",
+      "retained_ref": "refs/tags/archive/20260920/archive-five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/nemotron-soe-bounded-whitespace-20260911",
+      "sha": "6ffbe968188a65a364a08f59005aa9b24d9fbf9f",
+      "retained_ref": "refs/tags/archive/20260920/archive-five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/nemotron-soe-r4-20260913",
+      "sha": "4dbfdf98a4d5b1583cdabcf004c158bec3b7ddb7",
+      "retained_ref": "refs/tags/archive/20260920/archive-five-cvm-v0519-nemotron"
+    },
+    {
+      "branch": "codex/nemotron-soe-r5-cancellation-20260914",
+      "sha": "068de9fd66d1a682e9635c8bbe69d77989eea91e",
+      "retained_ref": "refs/tags/archive/20260920/archive-five-cvm-v0519-nemotron"
+    },
+    {
+      "branch": "codex/nemotron-soe-r6-marlin-20260914",
+      "sha": "6d3d45b55d9882e29daa4d2e11b44f5f2ae097ae",
+      "retained_ref": "refs/tags/archive/20260920/archive-five-cvm-v0519-nemotron"
+    },
+    {
+      "branch": "codex/nemotron-soe-r7-grammar-20260914",
+      "sha": "f97b21d20d9334484ea7a447876c433e2770ab07",
+      "retained_ref": "refs/tags/archive/20260920/archive-five-cvm-v0519-nemotron"
+    },
+    {
+      "branch": "codex/nemotron-tools-schema-r3-20260912",
+      "sha": "01433fd331495d42bb6dac05b5f77c29e46e941d",
+      "retained_ref": "refs/tags/archive/20260920/archive-five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/qwen38-flash-next-phala-20260826",
+      "sha": "ea52ea090009930ca3bf99d5e45128ea2b35564c",
+      "retained_ref": "refs/tags/archive/20260920/qwen38-flash-next-phala-20260826"
+    },
+    {
+      "branch": "codex/qwen38-medium-budget-20260910",
+      "sha": "70bcd26c46213cf19dea4ae54e853a78d4240fc8",
+      "retained_ref": "refs/tags/qwen38-27b-sglang-v0.5.19-phala-r4-17cb697778-20260914"
+    },
+    {
+      "branch": "codex/qwen38-openrouter-unhide-r5",
+      "sha": "6a8fe9acd1d844e0a01ed3187c864af6bb0e9510",
+      "retained_ref": "refs/tags/archive/20260920/qwen38-reasoning-budget-r12"
+    },
+    {
+      "branch": "codex/qwen38-openrouter-unhide-r6",
+      "sha": "12c101c74af99956585adce6900556a18126df73",
+      "retained_ref": "refs/tags/archive/20260920/qwen38-reasoning-budget-r12"
+    },
+    {
+      "branch": "codex/qwen38-openrouter-unhide-r7",
+      "sha": "d6f78861f397d07eb70ba11abdb654886039c8c2",
+      "retained_ref": "refs/tags/archive/20260920/qwen38-reasoning-budget-r12"
+    },
+    {
+      "branch": "codex/qwen38-openrouter-unhide-r8",
+      "sha": "364dcd928b695e4add074ef5e1c271bbb24fafa0",
+      "retained_ref": "refs/tags/archive/20260920/qwen38-reasoning-budget-r12"
+    },
+    {
+      "branch": "codex/qwen38-r4-medium-null-20260914",
+      "sha": "17cb69777837cf082db07730da765f617f56b4f1",
+      "retained_ref": "refs/tags/qwen38-27b-sglang-v0.5.19-phala-r4-17cb697778-20260914"
+    },
+    {
+      "branch": "codex/qwen38-r5-xml-schema-20260914",
+      "sha": "1a56fbb0dc48ec3fb2b4b629fc4e74a3b57c639a",
+      "retained_ref": "refs/tags/qwen38-27b-sglang-v0.5.19-phala-r5-1a56fbb0dc-20260914"
+    },
+    {
+      "branch": "codex/qwen38-r14-reasoning-visibility",
+      "sha": "ef132dcc710be48cb362794b47e3e19c6ddb56b5",
+      "retained_ref": "refs/tags/archive/20260920/qwen38-r15-flat-official-base"
+    },
+    {
+      "branch": "codex/qwen38-r15-flat-official-base",
+      "sha": "98f40b15259586b7a818affa17890709e4cd84a1",
+      "retained_ref": "refs/tags/archive/20260920/qwen38-r15-flat-official-base"
+    },
+    {
+      "branch": "codex/qwen38-reasoning-budget-r12",
+      "sha": "c0fc2cfcd2f9ea2c482155b2126f9036300a3813",
+      "retained_ref": "refs/tags/archive/20260920/qwen38-reasoning-budget-r12"
+    },
+    {
+      "branch": "codex/qwen38-sglang-r13-qwen-rebase",
+      "sha": "a8e6b57b02d2d89d65f0ebd54360671ea2710485",
+      "retained_ref": "refs/tags/archive/20260920/qwen38-r15-flat-official-base"
+    },
+    {
+      "branch": "codex/qwen38-tool-structured-r4",
+      "sha": "ee1e7c62e698c31158e5562c956fe8f1570c0941",
+      "retained_ref": "refs/tags/archive/20260920/qwen38-reasoning-budget-r12"
+    },
+    {
+      "branch": "codex/qwen38-v0.5.19-phala-r1",
+      "sha": "3852646c7dfddcfc875bd4aabb8b5495f85352f6",
+      "retained_ref": "refs/tags/archive/20260920/qwen38-v0519-null-schema-response-format-20260914"
+    },
+    {
+      "branch": "codex/qwen38-v0519-null-schema-20260914",
+      "sha": "5bb155635e814c7a94b4b5314f25d341243af1cd",
+      "retained_ref": "refs/tags/archive/20260920/qwen38-v0519-null-schema-response-format-20260914"
+    },
+    {
+      "branch": "codex/qwen38-v0519-null-schema-response-format-20260914",
+      "sha": "fb70a0ac9fd5c9f85ef95917db5351e3b229f025",
+      "retained_ref": "refs/tags/archive/20260920/qwen38-v0519-null-schema-response-format-20260914"
+    },
+    {
+      "branch": "codex/serving-v0520-0001-control-correlation-r1",
+      "sha": "fbd7f3c617461b0360f31fa519b3910be642377f",
+      "retained_ref": "refs/remotes/phala/codex/serving-v0520-0020-allowed-output-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-0002-request-cleanup-r1",
+      "sha": "0bf1ed94ed6e16687de77c0d803ff5bd71367d37",
+      "retained_ref": "refs/remotes/phala/codex/serving-v0520-0020-allowed-output-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-0003-worker-extend-metadata-r1",
+      "sha": "162970e3c9a66c97cc4bd788a45f67841d909cdb",
+      "retained_ref": "refs/remotes/phala/codex/serving-v0520-0020-allowed-output-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-0004-identity-grammar-mask-r1",
+      "sha": "267fc3e0e9575df457c240aae1b39ea40688ee12",
+      "retained_ref": "refs/remotes/phala/codex/serving-v0520-0020-allowed-output-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-0005-lifecycle-observation-r1",
+      "sha": "32857e6556b45a95af4611721fb72e0ccfdaf540",
+      "retained_ref": "refs/remotes/phala/codex/serving-v0520-0020-allowed-output-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-0006-parallel-sampling-owners-r1",
+      "sha": "35fc03abe0b876de2bfaac18dff2a220b2f0a87d",
+      "retained_ref": "refs/remotes/phala/codex/serving-v0520-0020-allowed-output-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-0007-token-auth-redaction-r1",
+      "sha": "0750682477e0c0aebcc055fc748a3b682b172af7",
+      "retained_ref": "refs/remotes/phala/codex/serving-v0520-0020-allowed-output-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-0008-schema-normalization-r1",
+      "sha": "6efe42ec6a59a521d0d54f8c3fcc9bd7e3134efc",
+      "retained_ref": "refs/remotes/phala/codex/serving-v0520-0020-allowed-output-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-0009-schema-argument-coercion-r1",
+      "sha": "c19e475e65b7e6eb259bdc639a62d1c4c9d8a920",
+      "retained_ref": "refs/remotes/phala/codex/serving-v0520-0020-allowed-output-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-0010-xgrammar-schema-rejection-r1",
+      "sha": "83b69e75e77b0db238afc9a3ad479d030bdef058",
+      "retained_ref": "refs/remotes/phala/codex/serving-v0520-0020-allowed-output-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-0011-allowed-tool-subsets-r1",
+      "sha": "abdd4d766e024903cb4666fe2c919baaed1f4670",
+      "retained_ref": "refs/remotes/phala/codex/serving-v0520-0020-allowed-output-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-0012-reasoning-visibility-bounds-r1",
+      "sha": "ffcf7799ff22f25a2970c7c420116b011ec38c67",
+      "retained_ref": "refs/remotes/phala/codex/serving-v0520-0020-allowed-output-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-0013-orphan-tool-deltas-r1",
+      "sha": "f3418d51a0cd129a44bb8841f9623a6b3647d293",
+      "retained_ref": "refs/remotes/phala/codex/serving-v0520-0020-allowed-output-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-0014-pre-mm-token-budget-r1",
+      "sha": "cc703a7a7b4097b0581dbd13364ef2d9b4f6f2df",
+      "retained_ref": "refs/remotes/phala/codex/serving-v0520-0020-allowed-output-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-0015-image-input-errors-r1",
+      "sha": "6a673233e9f7bac86b130977a967bdb77926239a",
+      "retained_ref": "refs/remotes/phala/codex/serving-v0520-0020-allowed-output-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-0016-watchdog-recovery-r1",
+      "sha": "fd778061bc05537c7797daf1a0ab9e4c66da6c95",
+      "retained_ref": "refs/remotes/phala/codex/serving-v0520-0020-allowed-output-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-0017-qwen3_5-template-r1",
+      "sha": "348b3066f561fcf9748bae2659327107f1002d18",
+      "retained_ref": "refs/remotes/phala/codex/serving-v0520-0020-allowed-output-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-0018-qwen3_coder-parser-r1",
+      "sha": "514fcaf8c5a605a58ebb2f9dc1cc743e4a79b836",
+      "retained_ref": "refs/remotes/phala/codex/serving-v0520-0020-allowed-output-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-0019-schema-reference-r1",
+      "sha": "7884e393ddaee762b42e2c6015cf1ea5cc3c27a6",
+      "retained_ref": "refs/remotes/phala/codex/serving-v0520-0020-allowed-output-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-qwen38-governor-derived-r1",
+      "sha": "cb88b5675f50a26090407f2dc155de8bdd0e42fd",
+      "retained_ref": "refs/tags/archive/20260920/serving-v0520-qwen38-governor-derived-r1"
+    },
+    {
+      "branch": "codex/serving-v0520-upstream-r1",
+      "sha": "94602c9c2b7cbdb8efd5c52802dac6a1c180089e",
+      "retained_ref": "refs/remotes/phala/codex/dsv41-protocol-wire-fidelity-20260920"
+    },
+    {
+      "branch": "codex/v0.5.17-deepseek-qos-20260808",
+      "sha": "550fcdf5e8616845562dd2cdfc9e722ec8e51903",
+      "retained_ref": "refs/tags/archive/20260920/deepseek-v4-v0517-no33288-20260809-r2"
+    },
+    {
+      "branch": "codex/v0.5.17-deepseek-v4-b-repair-20260816",
+      "sha": "7423800c750affa9f6eccfee0c65ab70a21edd15",
+      "retained_ref": "refs/tags/archive/20260920/v0.5.17-deepseek-v4-b-repair-20260816"
+    },
+    {
+      "branch": "codex/v0519-repair-0b21f9af0f2f",
+      "sha": "ae13fff53317c8db42f2bda64b20a2fe280591e2",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-1d8e0a494693",
+      "sha": "d668757274a2fee4f6e0f464b66066bdd7e28bc7",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-nemotron"
+    },
+    {
+      "branch": "codex/v0519-repair-2a6898f3c996",
+      "sha": "774c19539bd532090df7b12994b0c01a9b4fbf7a",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-2b2584575aa5",
+      "sha": "788a8983750cd29aaee5f07ce5f937e7ae1e623f",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen38-gemma4"
+    },
+    {
+      "branch": "codex/v0519-repair-4dbfdf98a4d5",
+      "sha": "09361b0f5e5bc3d274f560f4f830e1205a200241",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-nemotron"
+    },
+    {
+      "branch": "codex/v0519-repair-4dcc87bb9a11",
+      "sha": "42cac46e56d82d587d9170614cae4c22a4cef164",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-5f9f960c28a1",
+      "sha": "3c06073c3d0b3ada4ed413d25d543350386c3f72",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-nemotron"
+    },
+    {
+      "branch": "codex/v0519-repair-6d3d45b55d98",
+      "sha": "e27330c9722dcc837ea2452b5256d7a63f325b82",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-nemotron"
+    },
+    {
+      "branch": "codex/v0519-repair-6d6103699ea4",
+      "sha": "cd31831d54f55659b2c241d72ff098197f93d1a4",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-7aad27962602",
+      "sha": "2ef83173697fb4993f636cffb63439ffef6f99c1",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-7dd1e4933610",
+      "sha": "ea92ab4c5f7be0b8771b14bce9648951ec3a9832",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-7e4e69f5850f",
+      "sha": "538e30d61375ddeacbf6f6eeefe4606bc14e3e02",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-17cb69777837",
+      "sha": "bdec50dcf6f5aaf802f9962ecd0092fdd7eebdc6",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-29f0b04675b4",
+      "sha": "82c5597d4182d86cac839c7869d52e8c8a381c9b",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-47d684c188fd",
+      "sha": "b2d182e4d645bd1103f0734eeee3be5e39862bef",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-58c4ebfd0be5",
+      "sha": "a1c281180bbcfee4e90081bc23aeb05c88e00314",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-61ab8c2adb9c",
+      "sha": "b431a69ddfaf3b2f953b75215f0c6d1095fdb733",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-65a1b3f10fd0",
+      "sha": "5a50cb42c0c1a167241fea7da8ca9d8209e65cf7",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-66c99cdb3906",
+      "sha": "4aca87a34545a2aa6b92f1887893feb069c43e4e",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-068de9fd66d1",
+      "sha": "c25af5ffb848ac4f4754117c039f9c5b0ea60c0e",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-nemotron"
+    },
+    {
+      "branch": "codex/v0519-repair-70bcd26c4621",
+      "sha": "d70dbf79e7fee22a1db15dbc5df25a1d7398a5d7",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-72d09f13ce3e",
+      "sha": "3c716ec8e08e86fe6752a10de346172937c54337",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-79e215cde60b",
+      "sha": "97882c58422b6253ae994aa39f9d34825b038654",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen38-gemma4"
+    },
+    {
+      "branch": "codex/v0519-repair-82da9278e229",
+      "sha": "d0b3e70cbc5ed3cc757d22e79ffa1fff28f58571",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen38-gemma4"
+    },
+    {
+      "branch": "codex/v0519-repair-87d669f137cb",
+      "sha": "d2334dc9c0ab93c6bc2b629ae12d4e26d4855b3f",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-93a9c811a9af",
+      "sha": "010d115a7fa3bd926b6e693ae347fa8b43f2aa9f",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-96cd94344d57",
+      "sha": "b85619fd04c3948469edb47aed99f400f49eae2b",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-223e067187a6",
+      "sha": "4c25322c802951ad5fb6dc85906998f1a01efac2",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-405fa1086fdb",
+      "sha": "287188b4806f33ff7e4702668a6836b5c5b2987d",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-752cbf71d2fc",
+      "sha": "b33a5227201dccdfa45a62275661375ba83a7c40",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-889dac086485",
+      "sha": "235ce2bcc40a5b4fc5e5e89758f8d5c0b3280fc7",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-01433fd33149",
+      "sha": "c977122cefeef784c33f0e11c2b841c8111e76cb",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-2224d5c89971",
+      "sha": "c2d241b80ef0e4e0e3aaf517567287368ac56fe3",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-5404f7600755",
+      "sha": "81881bd7c1a0d867513dbef9b650656fdc1fa9e2",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen38-gemma4"
+    },
+    {
+      "branch": "codex/v0519-repair-12593d20ead3",
+      "sha": "0775c972ac7eb227e9fd852e79bfb78049439403",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-15966fe477b8",
+      "sha": "711978779936d1918d038de8515e33f968cb5193",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-66599f0839c0",
+      "sha": "cdea3b3c96d410e1e21e1013eed39a6388fc4f2e",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-69743bca633b",
+      "sha": "6445186b9110860eca2836fc425d11e0e3ae9b32",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-119767a19ad0",
+      "sha": "6c6cdbc75c7de2704141e6f2ab02cc9417fb02f0",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-3852646c7dfd",
+      "sha": "cd196db84369a0de957bde93c31a44ee67adbc55",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-6928845df367",
+      "sha": "88c70bc7f39f4037ff22bd4bc3e2918ac3058f04",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-7070885b6c51",
+      "sha": "6d7a2dc746935afa3ccbcd5f0e9bb727f52bf84d",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-7984762a1925",
+      "sha": "353a12fabcd98597a83f81885be52cba8c8e82f2",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-27487759d660",
+      "sha": "7a6812c460d5941e3af0f2db3fd8771edf7ed438",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-a17450df7fe0",
+      "sha": "96e883d1e796b0ad0e86af386eb113708760806a",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-ac6e301b2c45",
+      "sha": "354b7c6c3f0acb2d2b0d54fdb09c4f908a7f4325",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-b07c939d0f55",
+      "sha": "002883d4473bd4e0ffcfa557ac7e6c8723a7daf4",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-b69731aa5a70",
+      "sha": "5e3f909d22f2e79ba7c7b85fa747f762109aab99",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-c0b47b4d9a80",
+      "sha": "7846a276b049d34a96a51d4497d168a036ea1f40",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-c4afa9828243",
+      "sha": "be0e34807dfb65dda85877bb7ca9ec17b7a05430",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen38-gemma4"
+    },
+    {
+      "branch": "codex/v0519-repair-c5af5ab92184",
+      "sha": "f6adaf751a72201a0280ae7ba6446791924e98e6",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-c5052c199e05",
+      "sha": "b22934ade600777fe7b5cdf0f8a54ce6d4096651",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-cc713697cb1b",
+      "sha": "28238ec4007a4aab04e61295031fdc4f00d3f47a",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-cfe6dbb89416",
+      "sha": "9cfc79c4b497bc883132f5e2bcd5d012790f3d12",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-nemotron"
+    },
+    {
+      "branch": "codex/v0519-repair-d61efbc4c4f5",
+      "sha": "9b1b0671abe6d94ca05c2fdd341846f91fee23a0",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-d67e821bd5ea",
+      "sha": "39eedc17eb620a3533ff4633141d73a0d5a89016",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen38-gemma4"
+    },
+    {
+      "branch": "codex/v0519-repair-da8da902526c",
+      "sha": "c30384652e5478f49c2a542af10c46989275fb8b",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "codex/v0519-repair-e26b9f4dae32",
+      "sha": "6ecc100728f6b85500800bb683fd2f9743340569",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen38-gemma4"
+    },
+    {
+      "branch": "codex/v0519-repair-ea31b4a3509f",
+      "sha": "55c45e7499621201fbabe73e10ffdea401e0aa5e",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen38-gemma4"
+    },
+    {
+      "branch": "codex/v0519-repair-ec6f1c44c8a7",
+      "sha": "ac0834cff92db9cb4667e3d674bbd26ce28735a5",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-nemotron"
+    },
+    {
+      "branch": "codex/v0519-repair-ed4266b4513f",
+      "sha": "29aca0c55e2c7606260333bea0d667eea9695940",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-ed810727c954",
+      "sha": "c8c1cfccdb7ee6bd251949b639880cc876fbabd0",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-eec6b2e25ee0",
+      "sha": "a54a1d5bb9f4ee2034c281f99bab4391eb70c77c",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-muse"
+    },
+    {
+      "branch": "codex/v0519-repair-f65bb7af2030",
+      "sha": "76d1c6ab2ebcb2d87b19e17c14b97dd2e9681a21",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-nemotron"
+    },
+    {
+      "branch": "codex/v0519-repair-f97b21d20d93",
+      "sha": "ee2f690dd80ab7deb722d1613b2c5cffbf78fea2",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-nemotron"
+    },
+    {
+      "branch": "codex/v0519-repair-f80677f937c5",
+      "sha": "5a9b0690dddaf0100acabc1ed0eadccb0e0d1255",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen38-gemma4"
+    },
+    {
+      "branch": "codex/v0519-repair-fdcb90492c7c",
+      "sha": "772a63931ff9719eb5e9fd123f95984ab3c20de0",
+      "retained_ref": "refs/remotes/phala/codex/five-cvm-v0519-qwen36"
+    },
+    {
+      "branch": "phala/v0.5.16-glm52-structured-output-n2",
+      "sha": "5af4ca2cfcbda98decae1a5c75e239a5e2f3790b",
+      "retained_ref": "refs/tags/archive/20260920/glm52-structured-hardening-20260807-r2"
+    },
+    {
+      "branch": "phala/v0.5.16-glm52-structured-toolcall-20260805-r1",
+      "sha": "075137f107a34e2605968f97a12c67fbd487e151",
+      "retained_ref": "refs/tags/archive/20260920/glm52-structured-hardening-20260807-r2"
+    }
+  ]
+}

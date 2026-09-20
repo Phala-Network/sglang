@@ -1220,6 +1220,9 @@ class UnifiedRadixCache(BasePrefixCache):
             and self.tree_core.enable_hicache
             and self.cache_controller is not None
             and self.cache_controller.write_policy == "write_through"
+            and self._tree_core_backend == "python"
+            and self.buffer_pipeline is None
+            and self.linker is None
             and result.last_device_node is not None
             and not self.tree_core.is_root(result.last_device_node)
         ):

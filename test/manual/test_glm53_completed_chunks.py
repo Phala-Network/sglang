@@ -43,8 +43,14 @@ class CacheTests(unittest.TestCase):
         block = compile(ast.fix_missing_locations(ast.Module(body=[backup], type_ignores=[])), 'backup', 'exec')
         for chunked, enabled, policy, node_id, backed, expected in [(True, True, 'write_through', 1, False, 1), (False, True, 'write_through', 1, False, 0), (True, True, 'write_through_selective', 1, False, 0), (True, True, 'write_through', 0, False, 0), (True, True, 'write_through', 1, True, 0)]:
             actions = []
-            cache = NS(tree_core=NS(enable_hicache=enabled, is_root=lambda x: x == 0, node_by_id=lambda x: NS(backuped=backed), _build_backup_kv_action=lambda x: 'backup'), cache_controller=NS(write_policy=policy), _apply_cache_actions=actions.extend)
+            cache = NS(tree_core=NS(enable_hicache=enabled, is_root=lambda x: x == 0, node_by_id=lambda x: NS(backuped=backed), _build_backup_kv_action=lambda x: 'backup'), cache_controller=NS(write_policy=policy), _apply_cache_actions=actions.extend, _tree_core_backend="python", buffer_pipeline=None, linker=None)
             exec(block, dict(self=cache, chunked=chunked, result=NS(last_device_node=node_id)))
             self.assertEqual(len(actions), expected)
+        for backend, pipeline, linker in [("rust", None, None), ("python", object(), None), ("python", None, object())]:
+            with self.subTest(backend=backend, pipeline=pipeline, linker=linker):
+                actions = []
+                cache = NS(tree_core=NS(enable_hicache=True), cache_controller=NS(write_policy="write_through"), _tree_core_backend=backend, buffer_pipeline=pipeline, linker=linker, _apply_cache_actions=actions.extend)
+                exec(block, dict(self=cache, chunked=True, result=NS(last_device_node=1)))
+                self.assertEqual(actions, [])
 if __name__ == '__main__':
     unittest.main(verbosity=2)

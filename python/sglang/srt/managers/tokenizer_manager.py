@@ -3902,6 +3902,23 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
 
         self.rid_to_state.update(new_states)
 
+    def request_state_summary(self) -> Dict[str, int]:
+        """Read existing local ownership without exposing RIDs or request data.
+
+        Dispatched/undelivered partition total; finished and abort_pending are
+        overlapping diagnostics. No counters or second request registry.
+        """
+        states = tuple(self.rid_to_state.values())
+        dispatched = sum(state.dispatched for state in states)
+        return {
+            "total": len(states),
+            "undelivered": len(states) - dispatched,
+            "dispatched": dispatched,
+            "abort_pending": sum(state.abort_sent for state in states),
+            "finished": sum(state.finished for state in states),
+            "encoder_dispatch_pending": len(self.encoder_dispatch_ready),
+        }
+
     def _release_req_states_on_failure(self, request_states: Dict[str, ReqState]):
         """Release rid_to_state entries created for a failed handler.
 

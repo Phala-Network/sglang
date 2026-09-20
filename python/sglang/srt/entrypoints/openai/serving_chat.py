@@ -1048,25 +1048,30 @@ class OpenAIServingChat(OpenAIServingBase):
                 finish_reason_type,
             )
             if reasoning_text:
-                usage = None
-                if continuous_usage_stats:
-                    usage = UsageProcessor.calculate_token_usage(
-                        prompt_tokens=prompt_tokens.get(index, 0),
-                        reasoning_tokens=reasoning_tokens.get(index, 0),
-                        completion_tokens=completion_tokens.get(index, 0),
-                        cached_tokens=self._continuous_usage_cached_details(content),
-                    ).model_dump()
+                if request.reasoning_exclude:
+                    # Consume hidden reasoning so parsing and usage stay correct,
+                    # but never attach its logprobs to later visible content.
+                    remaining_logprobs = None
+                else:
+                    usage = None
+                    if continuous_usage_stats:
+                        usage = UsageProcessor.calculate_token_usage(
+                            prompt_tokens=prompt_tokens.get(index, 0),
+                            reasoning_tokens=reasoning_tokens.get(index, 0),
+                            completion_tokens=completion_tokens.get(index, 0),
+                            cached_tokens=self._continuous_usage_cached_details(content),
+                        ).model_dump()
 
-                yield build_sse_content(
-                    chunk_id=content["meta_info"]["id"],
-                    created=created,
-                    model=request.model,
-                    index=index,
-                    reasoning_content=reasoning_text,
-                    logprobs=remaining_logprobs,
-                    usage=usage,
-                )
-                remaining_logprobs = None
+                    yield build_sse_content(
+                        chunk_id=content["meta_info"]["id"],
+                        created=created,
+                        model=request.model,
+                        index=index,
+                        reasoning_content=reasoning_text,
+                        logprobs=remaining_logprobs,
+                        usage=usage,
+                    )
+                    remaining_logprobs = None
 
         # Handle tool calls
         if self._tool_call_parsing_active(request) and not self._answer_started(
@@ -3061,7 +3066,8 @@ class OpenAIServingChat(OpenAIServingBase):
                     # Only K2 templates replay empty reasoning; other parsers report None.
                     reasoning_content=(
                         reasoning_text
-                        if reasoning_text or self.reasoning_parser == "k2_horizon"
+                        if (reasoning_text or self.reasoning_parser == "k2_horizon")
+                        and not request.reasoning_exclude
                         else None
                     ),
                 ),

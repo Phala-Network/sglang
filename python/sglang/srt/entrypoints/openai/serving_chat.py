@@ -127,29 +127,6 @@ _CHAT_TEMPLATE_CACHE_MAX_SIZE = 128
 
 
 
-class _CloseOnExitStreamingResponse(StreamingResponse):
-    """Close the SSE iterator when ASGI exits before normal exhaustion.
-
-    Starlette's response task can leave an async iterator open on an ASGI 2.3
-    disconnect or an ASGI 2.4 send error. Shield cleanup so the request
-    generator can release its scheduler-side resources under cancellation.
-    """
-
-    def __init__(self, *args, close_iterators=(), **kwargs):
-        super().__init__(*args, **kwargs)
-        self._close_iterators = tuple(close_iterators)
-
-    async def __call__(self, scope, receive, send) -> None:
-        import anyio
-
-        try:
-            await super().__call__(scope, receive, send)
-        finally:
-            with anyio.CancelScope(shield=True):
-                for iterator in (self.body_iterator, *self._close_iterators):
-                    close = getattr(iterator, "aclose", None)
-                    if close is not None:
-                        await close()
 
 
 def normalize_tool_content(role: str, content):
@@ -1911,27 +1888,8 @@ class OpenAIServingChat(OpenAIServingBase):
         """Handle streaming chat completion request"""
         generator = self._generate_chat_stream(adapted_request, request, raw_request)
 
-        # Kick-start the generator to trigger validation before HTTP 200 is sent.
-        # If validation fails (e.g., context length exceeded), we can still return
-        # a proper HTTP 400 error response instead of streaming it as SSE payload.
-        try:
-            first_chunk = await generator.__anext__()
-        except ValueError as e:
-            return self.create_error_response(str(e))
-
-        async def prepend_first_chunk():
-            try:
-                yield first_chunk
-                async for chunk in generator:
-                    yield chunk
-            finally:
-                await generator.aclose()
-
-        return _CloseOnExitStreamingResponse(
-            prepend_first_chunk(),
-            media_type="text/event-stream",
-            background=self.tokenizer_manager.create_abort_task(adapted_request),
-            close_iterators=(generator,),
+        return await self._streaming_response_before_headers(
+            generator, adapted_request, raw_request
         )
 
     async def _generate_chat_stream(
@@ -1969,7 +1927,7 @@ class OpenAIServingChat(OpenAIServingBase):
 
         stream_started = False
         error_aborted = False
-        generation = self.tokenizer_manager.generate_request(
+        generator = self.tokenizer_manager.generate_request(
             adapted_request, raw_request
         )
         try:
@@ -1985,7 +1943,8 @@ class OpenAIServingChat(OpenAIServingBase):
                 raw_request is not None
                 and raw_request.headers.get("x-sglext-ids-framed") == "1"
             )
-            async for content in generation:
+
+            async for content in generator:
                 index = content.get("index", 0)
 
                 prompt_tokens[index] = self._reported_prompt_tokens(
@@ -2263,7 +2222,7 @@ class OpenAIServingChat(OpenAIServingBase):
             error = self.create_streaming_error_response(str(e))
             yield f"data: {error}\n\n"
         finally:
-            await generation.aclose()
+            await generator.aclose()
 
         yield "data: [DONE]\n\n"
 
@@ -2275,9 +2234,7 @@ class OpenAIServingChat(OpenAIServingBase):
     ) -> ChatCompletionResponse | ErrorResponse | ORJSONResponse:
         """Handle non-streaming chat completion request"""
         try:
-            ret = await self.tokenizer_manager.generate_request(
-                adapted_request, raw_request
-            ).__anext__()
+            ret = await self._first_generated_response(adapted_request, raw_request)
         except ValueError as e:
             return self.create_error_response(str(e))
 

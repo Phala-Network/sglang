@@ -4,14 +4,17 @@ import json
 import logging
 import uuid
 from abc import ABC, abstractmethod
+from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union
 
+import anyio
 import orjson
 from fastapi import HTTPException, Request
 from fastapi.responses import ORJSONResponse, StreamingResponse
 
 from sglang.srt.entrypoints.openai.encoding_dsv32 import DS32EncodingError
 from sglang.srt.entrypoints.openai.protocol import ErrorResponse, OpenAIServingRequest
+from sglang.srt.entrypoints.request_disconnect import await_response_or_disconnect
 from sglang.srt.managers.io_struct import EmbeddingReqInput, GenerateReqInput
 from sglang.srt.observability.req_time_stats import monotonic_time
 from sglang.srt.runtime_context import get_observability
@@ -21,6 +24,38 @@ if TYPE_CHECKING:
     from sglang.srt.managers.tokenizer_manager import TokenizerManager
 
 logger = logging.getLogger(__name__)
+
+
+class GenerationStreamingResponse(StreamingResponse):
+    """Close owned generators even if ASGI send fails while they are at yield."""
+
+    def __init__(self, content, *, generation=None, **kwargs):
+        super().__init__(content, **kwargs)
+        self.generation = generation
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            await self._close_generators()
+
+    async def stream_response(self, send):
+        try:
+            await super().stream_response(send)
+        finally:
+            # Release generation before Starlette runs delayed background tasks.
+            await self._close_generators()
+
+    async def _close_generators(self):
+        # Starlette may cancel the stream's AnyIO scope on disconnect.
+        # Shield awaited cleanup from that scope, then propagate cancellation.
+        with anyio.CancelScope(shield=True):
+            async with AsyncExitStack() as stack:
+                # Close events before generation, even if one close fails or
+                # streaming never starts (for example response.start fails).
+                if self.generation is not None:
+                    stack.push_async_callback(self.generation.aclose)
+                stack.push_async_callback(self.body_iterator.aclose)
 
 
 # Base class for specific endpoint handlers
@@ -225,6 +260,50 @@ class OpenAIServingBase(ABC):
             code=status_code,
         )
         return json.dumps({"error": error.model_dump()})
+
+    async def _first_generated_response(self, adapted_request, raw_request):
+        generator = self.tokenizer_manager.generate_request(
+            adapted_request, raw_request
+        )
+        try:
+            return await await_response_or_disconnect(
+                generator.__anext__(),
+                raw_request,
+                background=getattr(adapted_request, "background", False),
+            )
+        finally:
+            await generator.aclose()
+
+    async def _streaming_response_before_headers(
+        self, generator, adapted_request, raw_request
+    ):
+        try:
+            first_chunk = await await_response_or_disconnect(
+                generator.__anext__(),
+                raw_request,
+                background=getattr(adapted_request, "background", False),
+            )
+        except ValueError as exc:
+            await generator.aclose()
+            return self.create_error_response(str(exc))
+        except BaseException:
+            await generator.aclose()
+            raise
+
+        async def prepend_first_chunk():
+            try:
+                yield first_chunk
+                async for chunk in generator:
+                    yield chunk
+            finally:
+                await generator.aclose()
+
+        return GenerationStreamingResponse(
+            prepend_first_chunk(),
+            generation=generator,
+            media_type="text/event-stream",
+            background=self.tokenizer_manager.create_abort_task(adapted_request),
+        )
 
     def extract_custom_labels(self, raw_request):
         if (

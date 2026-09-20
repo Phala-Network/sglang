@@ -18,6 +18,7 @@ from sglang.srt.mem_cache.memory_pool_host import (
     LogicalHostPool,
 )
 from sglang.srt.mem_cache.pool_host import HostPoolGroup, PoolEntry
+from sglang.srt.mem_cache.pool_host.allocation_budget import dsa_host_allocation_budget
 from sglang.srt.mem_cache.pool_host.common import get_allocator_type
 from sglang.srt.mem_cache.pool_host.dsa import DSAIndexerPoolHost
 from sglang.srt.mem_cache.pool_host.mamba import MambaPoolHost
@@ -1059,14 +1060,22 @@ def build_anchor_sidecar_stack(
     mtp_draft_device_pools = tuple(
         pool for pool in params.mtp_draft_device_pools if pool.index_k_with_scale_buffer
     )
-    kv_host_pool = build_kv_host_pool(
-        kv_pool=kv_pool,
-        page_size=params.page_size,
-        use_mla=use_mla,
-        override_kv_cache_dim=override_kv_cache_dim,
-        mtp_draft_device_pools=mtp_draft_device_pools,
-    )
-    sidecar_host_pool = sidecar_host_pool_factory(kv_host_pool)
+    # One collective entry/exit for this whole stack, never one per pool.
+    # The controller (and its storage threads) is created only after all ranks
+    # have either completed both physical buffers or rolled back together.
+    with dsa_host_allocation_budget(
+        params,
+        storage_backend=storage_backend,
+        host_memory_mode=get_memory().hicache_host_memory_mode,
+    ):
+        kv_host_pool = build_kv_host_pool(
+            kv_pool=kv_pool,
+            page_size=params.page_size,
+            use_mla=use_mla,
+            override_kv_cache_dim=override_kv_cache_dim,
+            mtp_draft_device_pools=mtp_draft_device_pools,
+        )
+        sidecar_host_pool = sidecar_host_pool_factory(kv_host_pool)
     # Expose packed MTP tail layers to the controller's flat transfer builder.
     if mtp_draft_device_pools:
         full_layer_mapping = _with_mtp_layer_mapping(

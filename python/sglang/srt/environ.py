@@ -838,6 +838,8 @@ class Envs:
     # Move the scheduler's executable mappings onto huge pages before its event loop
     # (utils/huge_text.py); for guests whose code would otherwise sit on 4 KiB pages.
     SGLANG_HUGE_PAGE_TEXT = EnvBool(False)
+    # Opt-in host-only ACK pipeline; unsupported cache/topology modes stay sync.
+    SGLANG_ENABLE_HICACHE_ASYNC_ACK_SYNC = EnvBool(False)
     SGLANG_HICACHE_SKIP_HOST_DUPLICATE_RECLAIM = EnvBool(False)
     SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR = EnvStr(None)
     # File-backend LRU eviction (opt-in; sizes accept SI/IEC suffixes, "0" disables).

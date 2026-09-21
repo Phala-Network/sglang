@@ -466,6 +466,7 @@ class Scheduler(
 
         # Parse args
         self.server_args = server_args
+        self.governor = None
         self.nccl_port = port_args.nccl_port
         self.schedule_policy = get_schedule().schedule_policy
         self.enable_priority_scheduling = get_schedule().enable_priority_scheduling
@@ -647,6 +648,7 @@ class Scheduler(
 
         # Init running status
         self.init_running_status()
+        self.init_governor()
 
         # Init chunked prefill
         self.init_chunked_prefill()
@@ -1291,6 +1293,26 @@ class Scheduler(
         self.forward_sleep_time = None
         self._engine_paused = False
 
+    def init_governor(self):
+        if os.environ.get("PIG_GOVERNOR_ENABLE") != "1":
+            return
+        if not self.is_generation:
+            raise ValueError("Governor adapter requires a generation model")
+        from pig_governor.sglang import create
+
+        self.governor = create(
+            self.server_args,
+            runtime_overrides={
+                "context_length": self.model_config.context_len,
+                "disable_radix_cache": self.disable_radix_cache,
+                "max_prefill_tokens": self.max_prefill_tokens,
+                "max_running_requests": self.max_running_requests,
+                "max_total_tokens": self.max_total_num_tokens,
+                "page_size": self.page_size,
+            },
+            is_generation=self.is_generation,
+        )
+
     def init_chunked_prefill(self):
         self.chunked_prefill_size = get_schedule().chunked_prefill_size
         self.prefill_decode_interval = get_schedule().prefill_decode_interval or 0
@@ -1340,7 +1362,11 @@ class Scheduler(
         if sizer.profile_and_fit():
             self.dynamic_chunk_sizer = sizer
 
-    def _should_defer_prefill(self) -> bool:
+    def _should_defer_prefill(self, running_batch=None) -> bool:
+        if self.governor is not None and self.governor.before_prefill(
+            running_batch, self.waiting_queue, self.chunked_req, time.monotonic()
+        ):
+            return True
         if self._prefill_decode_interval_remaining == 0:
             return False
 
@@ -2798,6 +2824,15 @@ class Scheduler(
                 )
 
             if is_beam:
+                if self.governor is not None:
+                    error_msg = (
+                        "Beam search is not supported while Governor admission "
+                        "is enabled."
+                    )
+                    logger.error(error_msg)
+                    prepare_abort(req, error_msg, status_code=HTTPStatus.BAD_REQUEST)
+                    self.output_streamer.stream_output([req], req.return_logprob)
+                    return
                 error_msg = self.beam_coordinator.validate_and_init(req, recv_req)
                 if error_msg:
                     logger.error(error_msg)
@@ -3062,9 +3097,22 @@ class Scheduler(
                 self._add_request_to_queue(req)
                 return
 
-        added_to_grammar_queue = self.grammar_manager.process_req_with_grammar(req)
-        if not added_to_grammar_queue:
-            self._add_request_to_queue(req)
+        if (
+            self.governor is not None
+            and self.disaggregation_mode == DisaggregationMode.NULL
+            and self._abort_on_governor_admission(req)
+        ):
+            return
+
+        reservation = getattr(req, "governor_reservation", None)
+        try:
+            added_to_grammar_queue = self.grammar_manager.process_req_with_grammar(req)
+            if not added_to_grammar_queue:
+                self._add_request_to_queue(req)
+        except Exception:
+            if reservation is not None and not reservation.released:
+                self.governor.release_request(req)
+            raise
 
     def handle_batch_generate_request(
         self,
@@ -3190,20 +3238,48 @@ class Scheduler(
         self._retry_storage_prefetch(req)
         return True
 
+    def _release_governor_reservation(self, req: Req) -> None:
+        reservation = getattr(req, "governor_reservation", None)
+        if (
+            self.governor is not None
+            and reservation is not None
+            and not reservation.released
+        ):
+            self.governor.release_request(req)
+
     def _add_request_to_queue(self, req: Req, is_retracted: bool = False):
         if not self._set_or_validate_priority(req):
-            return
+            self._release_governor_reservation(req)
+            return False
         if is_retracted:
             req.storage_prefetch_retry_attempts = 0
             req.storage_prefetch_last_match_len = None
             req.staged_prefetch_plan = None
         if self.disaggregation_mode == DisaggregationMode.NULL:
-            if self._abort_on_queued_limit(req):
-                return
-            self._prefetch_kvcache(req)
-            self.waiting_queue.append(req)
-            req.time_stats.set_wait_queue_entry_time()
-            req.arrival_processed_tokens = self.processed_tokens_counter
+            try:
+                if self.governor is not None:
+                    native_terminal = (
+                        req.finished()
+                        or getattr(req, "to_finish", None) is not None
+                    )
+                    if (
+                        not native_terminal
+                        and not getattr(req, "is_prefill_only", False)
+                        and getattr(req, "governor_reservation", None) is None
+                    ):
+                        raise RuntimeError(
+                            "Valid request reached native queue without Governor reservation"
+                        )
+                if self._abort_on_queued_limit(req):
+                    self._release_governor_reservation(req)
+                    return False
+                self._prefetch_kvcache(req)
+                req.time_stats.set_wait_queue_entry_time()
+                req.arrival_processed_tokens = self.processed_tokens_counter
+                self.waiting_queue.append(req)
+            except Exception:
+                self._release_governor_reservation(req)
+                raise
         elif self.disaggregation_mode == DisaggregationMode.PREFILL:
             self._prefetch_kvcache(req)
             self.disagg_prefill_bootstrap_queue.add(
@@ -3218,6 +3294,62 @@ class Scheduler(
                 req.time_stats.set_retract_time()
         else:
             raise ValueError(f"Invalid {self.disaggregation_mode=}")
+        return True
+
+    def _abort_on_governor_admission(self, req: Req) -> bool:
+        """Reject before native queue insertion when the TPS forecast is unsafe."""
+        if self.governor is None:
+            return False
+        waiting_count = len(self.waiting_queue) + len(self.grammar_manager)
+        if self.chunked_req is not None:
+            waiting_count += 1
+        decision = self.governor.admit_request(
+            req, time.monotonic(), waiting_count=waiting_count
+        )
+        if decision["allowed"]:
+            return False
+        if decision["reason_name"] == "waiting_limit":
+            message = "The request is rejected by the Governor waiting limit."
+        else:
+            message = "The request is rejected by Governor TPS admission."
+        logger.info(
+            "Governor admission rejected rid=%s reason=%s projected_tps=%.6f "
+            "reference=%.6f projected_concurrency=%d projected_waiting=%d "
+            "waiting=%d max_running=%d max_waiting=%d pressure_class=%d active=%d "
+            "evidence_concurrency=%d evidence_pressure_class=%d evidence_live=%s "
+            "policy_epoch=%s policy_revision=%d runtime_identity_sha256=%s",
+            req.rid,
+            decision["reason_name"],
+            decision["projected_tps"],
+            decision["reference"],
+            decision["projected_concurrency"],
+            decision["projected_waiting"],
+            waiting_count,
+            decision["max_running"],
+            decision["max_waiting"],
+            decision["pressure_class"],
+            decision["active_decode_sequences"],
+            decision.get("evidence_concurrency", 0),
+            decision.get("evidence_pressure_class", 0),
+            decision.get("observed", False),
+            decision.get("policy_epoch", "unknown"),
+            decision.get("policy_revision", 0),
+            decision.get("runtime_identity_sha256", "unknown"),
+        )
+        if req.multimodal_inputs is not None and req.session is None:
+            req.multimodal_inputs.release_features()
+        req.multimodal_inputs = None
+        abort_req = _make_abort_req(
+            req,
+            finished_reason={
+                "type": "abort",
+                "status_code": HTTPStatus.TOO_MANY_REQUESTS,
+                "message": message,
+            },
+        )
+        req.time_stats.trace_ctx.abort(abort_info={"reason": message})
+        self.ipc_channels.send_to_tokenizer.send_output(abort_req, req)
+        return True
 
     def _reject_sampling_mask_request(self, req: Req, error_msg: str) -> None:
         """Return a sampling-mask validation error without running the model."""
@@ -3377,6 +3509,16 @@ class Scheduler(
             multi_item_delimiter_indices=recv_req.multi_item_delimiter_indices,
         )
         req.tokenizer = self.tokenizer
+        if self.governor is not None:
+            error_msg = (
+                "Embedding requests are not supported while Governor admission "
+                "is enabled."
+            )
+            logger.error(error_msg)
+            req.time_stats.trace_ctx.abort(abort_info={"reason": error_msg})
+            prepare_abort(req, error_msg, status_code=HTTPStatus.BAD_REQUEST)
+            self.output_streamer.stream_output([req], req.return_logprob)
+            return
         self._maybe_namespace_elastic_radix_cache(req)
 
         if mm_input_error is not None:
@@ -3654,7 +3796,7 @@ class Scheduler(
 
         if self.dllm_config is not None:
             new_batch = self.get_new_batch_dllm(running_batch)
-        elif self._should_defer_prefill():
+        elif self._should_defer_prefill(running_batch):
             new_batch = None
         else:
             prefill_plan = self.get_new_batch_prefill(running_batch)
@@ -4632,6 +4774,8 @@ class Scheduler(
         elif batch.forward_mode.is_idle():
             self.batch_result_processor.process_batch_result_idle(batch, result)
 
+        if self.governor is not None:
+            self.governor.after_result(batch, time.monotonic())
         self._record_step_counters(batch, result)
 
         self.metrics_reporter.log_batch_result_stats(batch, result)
@@ -5023,6 +5167,11 @@ class Scheduler(
         # Resolved config (pristine server_args + post-publish overrides) so a
         # readback reflects values changed via /set_internal_state, not startup.
         ret = get_context().resolved_server_args_dict()
+        if self.governor is not None:
+            now = time.monotonic()
+            ret["pig_governor"] = self.governor.policy_snapshot(now)
+            ret["pig_governor_admission"] = self.governor.admission_snapshot()
+            ret["pig_governor_profile"] = self.governor.profile_snapshot(now)
         ret["world_size"] = compute_world_size(
             enable_dp_attention=get_parallel().enable_dp_attention,
             dp_size=get_parallel().dp_size,
@@ -5082,6 +5231,14 @@ class Scheduler(
 
     def set_internal_state(self, recv_req: SetInternalStateReq):
         server_args_dict = recv_req.server_args
+        if set(server_args_dict) == {"pig_governor"} and self.governor is not None:
+            from pig_governor.admin import execute
+
+            try:
+                execute(self.governor, "patch", time.monotonic(), server_args_dict["pig_governor"])
+                return SetInternalStateReqOutput(updated=True, control_nonce=recv_req.control_nonce)
+            except ValueError:
+                return SetInternalStateReqOutput(updated=False, control_nonce=recv_req.control_nonce)
         args_allow_update = set(
             [
                 "pp_max_micro_batch_size",
@@ -5156,6 +5313,8 @@ class Scheduler(
                 self.draft_worker.clear_info_records()
             if remaining:
                 get_context().override(source="update_server_args", **remaining)
+                if self.governor is not None:
+                    self.governor.refresh_identity(time.monotonic())
             logger.info(f"Config updated via context override: {remaining}")
 
         return SetInternalStateReqOutput(updated=if_success, control_nonce=recv_req.control_nonce)
@@ -5200,6 +5359,8 @@ class Scheduler(
 
         old_version = get_serving().weight_version
         get_context().override("scheduler.weight_version", weight_version=new_version)
+        if self.governor is not None:
+            self.governor.refresh_identity(time.monotonic())
 
         live_reqs = {
             *self.collect_inflight_reqs(),
@@ -5896,6 +6057,10 @@ def run_scheduler_process(
 def _make_abort_req(
     req: Req, finished_reason: Optional[FinishReasonDict] = None
 ) -> AbortReq:
+    if getattr(req, "governor_progress", None) is not None or getattr(req, "governor_reservation", None) is not None:
+        from pig_governor.sglang import on_abort_emitted
+
+        on_abort_emitted(req)
     return AbortReq(
         rid=req.rid,
         finished_reason=finished_reason,

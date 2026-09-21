@@ -24,7 +24,6 @@ from sglang.srt.mem_cache.storage.mmap.mmap_allocator import requested_hugepage_
 from sglang.srt.runtime_context import get_parallel
 
 logger = logging.getLogger(__name__)
-HICACHE_HOST_MEMORY_RESERVE_BYTES = 128 * 1024**3
 _startup_lock = threading.Lock()
 _active_budget = None
 
@@ -43,6 +42,16 @@ def host_slot_metadata_bytes(logical_slots: int) -> int:
     # clear() allocates three independent ordinary tensors: uint8 state,
     # int64 free slots and bool used flags. Round each separately.
     return 2 * _round_up(logical_slots, 4096) + _round_up(8 * logical_slots, 4096)
+
+
+def host_memory_reserve_bytes() -> int:
+    reserve_gb = envs.SGLANG_HICACHE_HOST_MEMORY_RESERVE_GB.get()
+    if reserve_gb < 0:
+        raise ValueError(
+            "SGLANG_HICACHE_HOST_MEMORY_RESERVE_GB must be non-negative, "
+            f"got {reserve_gb}"
+        )
+    return reserve_gb * 1024**3
 
 
 def _cgroup_headroom(resource: str) -> int | None:
@@ -93,7 +102,7 @@ def _resource_snapshot(hugepage_bytes: int) -> tuple[int, int]:
     cgroup = _cgroup_headroom("memory")
     if cgroup is not None:
         ordinary = min(ordinary, cgroup)
-    ordinary = max(0, ordinary - HICACHE_HOST_MEMORY_RESERVE_BYTES)
+    ordinary = max(0, ordinary - host_memory_reserve_bytes())
     if not hugepage_bytes:
         return ordinary, 0
 

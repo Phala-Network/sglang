@@ -1570,6 +1570,19 @@ class OpenAIServingChat(OpenAIServingBase):
                     # should be treated as client errors (400 BadRequest)
                     raise ValueError(str(template_error)) from template_error
 
+            # GLM-5.3's current chat template is classified as always-thinking
+            # and always ends the generation prompt with ``<think>``.  Unlike
+            # other always-on templates, its OpenAI contract advertises
+            # ``reasoning_effort=none``.  Close only that prefilled block so
+            # constrained decoding starts in the answer phase.
+            if self._should_close_glm_reasoning_prompt(request, rendered_prompt):
+                prompt_ids.extend(
+                    self.tokenizer_manager.tokenizer.encode(
+                        "</think>", add_special_tokens=False
+                    )
+                )
+                decoded_prompt = None
+
             # Append assistant prefix if continue_final_message is enabled
             if assistant_prefix:
                 prompt_ids = self._append_assistant_prefix_to_prompt_ids(
@@ -2788,6 +2801,11 @@ class OpenAIServingChat(OpenAIServingBase):
             return False
 
         if config.special_case == "always":
+            if (
+                self.reasoning_parser == "glm45"
+                and request.reasoning_effort == "none"
+            ):
+                return False
             return True
 
         if config.special_case == "mistral":
@@ -2807,6 +2825,18 @@ class OpenAIServingChat(OpenAIServingBase):
         return (
             request.chat_template_kwargs is not None
             and request.chat_template_kwargs.get(config.toggle_param) is True
+        )
+
+    def _should_close_glm_reasoning_prompt(
+        self, request: ChatCompletionRequest, rendered_prompt: str
+    ) -> bool:
+        config = self.template_manager.reasoning_config
+        return (
+            self.reasoning_parser == "glm45"
+            and config is not None
+            and config.special_case == "always"
+            and request.reasoning_effort == "none"
+            and rendered_prompt.endswith("<|assistant|><think>")
         )
 
     async def _process_tool_call_stream(

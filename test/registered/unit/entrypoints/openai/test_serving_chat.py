@@ -4052,6 +4052,55 @@ class ServingChatTestCase(unittest.TestCase):
         req.reasoning_effort = "medium"
         self.assertTrue(self.chat._get_reasoning_from_request(req))
 
+    def test_glm45_always_reasoning_none_closes_prompt_and_disables_read_side(self):
+        self.chat.reasoning_parser = "glm45"
+        self.template_manager.reasoning_config = ReasoningToggleConfig(
+            special_case="always"
+        )
+        req = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "Hi?"}],
+            reasoning_effort="none",
+        )
+
+        self.assertFalse(self.chat._get_reasoning_from_request(req))
+        self.assertTrue(
+            self.chat._should_close_glm_reasoning_prompt(
+                req, "<|user|>Hi?<|assistant|><think>"
+            )
+        )
+        self.assertFalse(
+            self.chat._should_close_glm_reasoning_prompt(
+                req, "<|user|>Hi?<|assistant|>"
+            )
+        )
+
+    def test_glm45_always_reasoning_enabled_and_non_glm_unchanged(self):
+        self.template_manager.reasoning_config = ReasoningToggleConfig(
+            special_case="always"
+        )
+        req = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "Hi?"}],
+            reasoning_effort="high",
+        )
+        self.chat.reasoning_parser = "glm45"
+        self.assertTrue(self.chat._get_reasoning_from_request(req))
+        self.assertFalse(
+            self.chat._should_close_glm_reasoning_prompt(
+                req, "<|assistant|><think>"
+            )
+        )
+
+        req.reasoning_effort = "none"
+        self.chat.reasoning_parser = "deepseek-r1"
+        self.assertTrue(self.chat._get_reasoning_from_request(req))
+        self.assertFalse(
+            self.chat._should_close_glm_reasoning_prompt(
+                req, "<|assistant|><think>"
+            )
+        )
+
     # --- fallback path tests (config=None, uses reasoning_default) ---
 
     def _setup_fallback(self, parser_name):

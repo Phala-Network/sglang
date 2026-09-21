@@ -399,16 +399,6 @@ class UnifiedRadixCache(BasePrefixCache):
 
         if self.cache_controller is not None:
             self.cache_controller.reset()
-            # The metrics reporter reads the radix cache's host-pool facade.
-            # Keep that facade's allocator state synchronized with the
-            # controller reset, including stacks where the two references are
-            # not object-identical after side-pool assembly.
-            host_pool_group = self.token_to_kv_pool_host
-            if (
-                host_pool_group is not None
-                and host_pool_group is not self.cache_controller.mem_pool_host
-            ):
-                host_pool_group.clear()
             self.cache_controller.mem_pool_host.clear()
             self.enable_storage = self.cache_controller.enable_storage
 

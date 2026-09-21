@@ -642,6 +642,10 @@ class SchedulerMetricsReporter:
         self.spec_total_num_forward_ct = 0
         self.spec_num_block_accept_tokens = 0
         self.spec_num_cap_tokens = 0
+        if self.scheduler.enable_hierarchical_cache:
+            self._log_hicache_stats()
+            if self.metrics_collector is not None:
+                self.metrics_collector.log_stats(self.stats)
 
     def report_prefill_stats(
         self,

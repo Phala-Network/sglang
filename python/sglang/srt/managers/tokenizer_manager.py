@@ -1817,8 +1817,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         state: ReqState,
         is_stream: bool,
     ) -> Optional[dict]:
-        """Returns the output dict to yield (stream abort), None for normal flow;
-        raises ValueError/HTTPException for non-stream aborts."""
+        """Map aborts to a stream chunk or an exception before HTTP headers."""
         finish_reason = out["meta_info"]["finish_reason"]
 
         if (
@@ -1829,9 +1828,9 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 raise ValueError(finish_reason["message"])
             return out
 
-        if finish_reason.get("type") == "abort" and finish_reason.get(
-            "status_code"
-        ) in (
+        status_code = finish_reason.get("status_code")
+        if finish_reason.get("type") == "abort" and status_code in (
+            HTTPStatus.TOO_MANY_REQUESTS,
             HTTPStatus.SERVICE_UNAVAILABLE,
             HTTPStatus.INTERNAL_SERVER_ERROR,
         ):
@@ -1843,9 +1842,12 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             # Mark ongoing LoRA request as finished.
             if self.enable_lora and state.obj.lora_path:
                 await self.lora_registry.release(state.obj.lora_id)
-            if not is_stream:
+            # Admission rejection happens before the scheduler enqueues or emits
+            # any generation output. Raise for streaming requests as well so the
+            # serving layer can return the real HTTP status before SSE headers.
+            if not is_stream or status_code == HTTPStatus.TOO_MANY_REQUESTS:
                 raise fastapi.HTTPException(
-                    status_code=finish_reason["status_code"],
+                    status_code=status_code,
                     detail=finish_reason["message"],
                 )
             return out

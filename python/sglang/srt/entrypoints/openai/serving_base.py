@@ -278,32 +278,42 @@ class OpenAIServingBase(ABC):
         self, generator, adapted_request, raw_request
     ):
         try:
-            first_chunk = await await_response_or_disconnect(
-                generator.__anext__(),
+            content = await self._generator_after_first_item(
+                generator,
                 raw_request,
                 background=getattr(adapted_request, "background", False),
             )
         except ValueError as exc:
-            await generator.aclose()
             return self.create_error_response(str(exc))
-        except BaseException:
-            await generator.aclose()
-            raise
-
-        async def prepend_first_chunk():
-            try:
-                yield first_chunk
-                async for chunk in generator:
-                    yield chunk
-            finally:
-                await generator.aclose()
 
         return GenerationStreamingResponse(
-            prepend_first_chunk(),
+            content,
             generation=generator,
             media_type="text/event-stream",
             background=self.tokenizer_manager.create_abort_task(adapted_request),
         )
+
+    async def _generator_after_first_item(
+        self, generator, raw_request, *, background=False
+    ):
+        """Read one item before response headers, then replay the full stream."""
+        try:
+            first_item = await await_response_or_disconnect(
+                generator.__anext__(), raw_request, background=background
+            )
+        except BaseException:
+            await generator.aclose()
+            raise
+
+        async def prepend_first_item():
+            try:
+                yield first_item
+                async for item in generator:
+                    yield item
+            finally:
+                await generator.aclose()
+
+        return prepend_first_item()
 
     def extract_custom_labels(self, raw_request):
         if (

@@ -628,6 +628,18 @@ class OpenAIServingResponses(OpenAIServingChat):
                 return response
 
             if request.stream:
+                try:
+                    result_generator = await self._generator_after_first_item(
+                        result_generator,
+                        raw_request,
+                        background=request.background,
+                    )
+                except HTTPException as exc:
+                    return self.create_error_response(
+                        exc.detail, status_code=exc.status_code
+                    )
+                except ValueError as exc:
+                    return self.create_error_response(str(exc))
                 if self.use_harmony:
                     events = self.responses_stream_generator(
                         request,

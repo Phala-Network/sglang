@@ -88,7 +88,13 @@ from sglang.srt.observability.metrics_collector import (
     StorageMetrics,
     StorageMetricsCollector,
 )
-from sglang.srt.runtime_context import get_memory, get_model, get_observability
+from sglang.srt.runtime_context import (
+    get_disagg,
+    get_memory,
+    get_model,
+    get_observability,
+    get_parallel,
+)
 from sglang.srt.session.streaming_session import StreamingSession
 from sglang.srt.utils.common import ceil_align
 
@@ -257,6 +263,14 @@ class UnifiedRadixCache(BasePrefixCache):
         self.pp_rank = params.pp_rank
         self.pp_size = params.pp_size
         self.work_list: list[torch.distributed.Work] = []
+        self._ready_counts_group = self._single_ready_counts_group()
+        self._hicache_async_ack_sync_requested = (
+            envs.SGLANG_ENABLE_HICACHE_ASYNC_ACK_SYNC.get()
+        )
+        self._pending_ready_counts: Optional[
+            tuple[torch.distributed.Work, torch.Tensor, tuple[PoolName, ...], int]
+        ] = None
+        self._hicache_async_ack_sync_logged = False
 
         # HiCache D↔H defaults (overridden by init_hicache)
         self.cache_controller: Optional[HybridCacheController] = None
@@ -299,6 +313,19 @@ class UnifiedRadixCache(BasePrefixCache):
             f"Init Unified Radix Cache. Components: {self.tree_components}. "
             f"Tree Core: {type(self.tree_core).__name__}"
         )
+
+    def _single_ready_counts_group(self):
+        """Return the one process group eligible for pipelined ack sync."""
+        groups = [
+            group
+            for group in (self.attn_cp_group, self.attn_tp_group)
+            if group is not None and torch.distributed.get_world_size(group=group) > 1
+        ]
+        if len(groups) == 1:
+            return groups[0]
+        if not groups and self.tp_world_size > 1:
+            return self.tp_group
+        return None
 
     def _all_reduce_attn_groups(self, tensor: torch.Tensor, op):
         reduced = False
@@ -368,9 +395,11 @@ class UnifiedRadixCache(BasePrefixCache):
 
     def init_cache_linker(self, cache_linker: UnifiedCacheLinker) -> None:
         """Attach an external KV store directly to the device pools."""
+        self._drain_pending_ready_counts()
         self.linker = UnifiedCacheLinkerWrapper(self, cache_linker)
 
     def reset(self) -> None:
+        self._drain_pending_ready_counts()
         if self.linker is not None:
             self.linker.reset()
         self._reset_full()
@@ -543,6 +572,7 @@ class UnifiedRadixCache(BasePrefixCache):
         self.sidecar_pool_specs.append(spec)
 
     def release_host_resources(self) -> None:
+        self._drain_pending_ready_counts()
         if self.linker is not None:
             self.linker.close()
         if self.host_pool_group is not None:
@@ -3038,6 +3068,7 @@ class UnifiedRadixCache(BasePrefixCache):
         hicache_write_policy: Optional[str] = None,
     ) -> tuple[bool, str]:
         """Attach (enable) the HiCache storage backend at runtime."""
+        self._drain_pending_ready_counts()
         if self._storage_attachment is None:
             return (
                 False,
@@ -3054,6 +3085,7 @@ class UnifiedRadixCache(BasePrefixCache):
 
     def detach_storage_backend(self) -> tuple[bool, str]:
         """Detach (disable) the HiCache storage backend at runtime."""
+        self._drain_pending_ready_counts()
         if self._storage_attachment is None:
             return False, "HiCache storage backend is not initialized."
         return self._storage_attachment.detach()
@@ -3083,9 +3115,8 @@ class UnifiedRadixCache(BasePrefixCache):
             ready_count += 1
         return ready_count
 
-    def _sync_hicache_ready_counts(
-        self,
-    ) -> tuple[int, int, tuple[int, ...], tuple[PoolName, ...]]:
+    def _ready_counts_tensor(self) -> tuple[torch.Tensor, tuple[PoolName, ...], int]:
+        """Build local ack counts using the current upstream PP/storage layout."""
         cc = self.cache_controller
         extra_release_queues = getattr(cc, "extra_host_mem_release_queues", {})
         extra_pool_names = tuple(extra_release_queues) if self.enable_storage else ()
@@ -3127,8 +3158,14 @@ class UnifiedRadixCache(BasePrefixCache):
             dtype=torch.int64,
             device="cpu",
         )
-        self._all_reduce(ready_counts, torch.distributed.ReduceOp.MIN)
+        return ready_counts, extra_pool_names, digest
 
+    @staticmethod
+    def _parse_ready_counts(
+        ready_counts: torch.Tensor,
+        extra_pool_names: tuple[PoolName, ...],
+        digest: int,
+    ) -> tuple[int, int, tuple[int, ...], tuple[PoolName, ...]]:
         count_values = list(map(int, ready_counts.tolist()))
         assert digest == count_values[-2] and digest == -count_values[-1], (
             "write_back duplicate-reclaim victims diverged across PP/TP ranks"
@@ -3139,6 +3176,67 @@ class UnifiedRadixCache(BasePrefixCache):
             tuple(count_values[2:-2]),
             extra_pool_names,
         )
+
+    def _sync_hicache_ready_counts(
+        self,
+    ) -> tuple[int, int, tuple[int, ...], tuple[PoolName, ...]]:
+        ready_counts, extra_pool_names, digest = self._ready_counts_tensor()
+        self._all_reduce(ready_counts, torch.distributed.ReduceOp.MIN)
+        return self._parse_ready_counts(ready_counts, extra_pool_names, digest)
+
+    def _async_ready_counts_eligible(self) -> bool:
+        """Guard the host-only ACK pipeline for validated write-through modes."""
+        memory_write_policy = get_memory().hicache_write_policy
+        return (
+            self._hicache_async_ack_sync_requested
+            and self.pp_size == 1
+            and get_parallel().dp_size == 1
+            and self._ready_counts_group is not None
+            and self.cache_controller is not None
+            and memory_write_policy
+            in ("write_through", "write_through_selective")
+            and self.cache_controller.write_policy == memory_write_policy
+            and not self.is_write_back
+            and get_disagg().disaggregation_mode == "null"
+            and self.host_memory_mode == "cache"
+            and self.buffer_pipeline is None
+            and not self.enable_storage
+            and self.linker is None
+        )
+
+    def _issue_async_ready_counts(self) -> None:
+        assert self._pending_ready_counts is None
+        ready_counts, extra_pool_names, digest = self._ready_counts_tensor()
+        work = torch.distributed.all_reduce(
+            ready_counts,
+            op=torch.distributed.ReduceOp.MIN,
+            group=self._ready_counts_group,
+            async_op=True,
+        )
+        self._pending_ready_counts = (
+            work,
+            ready_counts,
+            extra_pool_names,
+            digest,
+        )
+
+    def _consume_async_ready_counts(
+        self,
+    ) -> Optional[tuple[int, int, tuple[int, ...], tuple[PoolName, ...]]]:
+        pending = self._pending_ready_counts
+        if pending is None:
+            return None
+        work, ready_counts, extra_pool_names, digest = pending
+        work.wait()
+        self._pending_ready_counts = None
+        return self._parse_ready_counts(ready_counts, extra_pool_names, digest)
+
+    def _drain_pending_ready_counts(self) -> None:
+        if getattr(self, "_pending_ready_counts", None) is None:
+            return
+        ready = self._consume_async_ready_counts()
+        if ready is not None:
+            self._apply_ready_counts(*ready)
 
     def writing_check(
         self, write_back: bool = False, finish_count: Optional[int] = None
@@ -3303,6 +3401,7 @@ class UnifiedRadixCache(BasePrefixCache):
     def check_hicache_events(self) -> None:
         """Called per scheduler step to poll async HiCache events."""
         if self.linker is not None:
+            self._drain_pending_ready_counts()
             finish_counts = torch.tensor(
                 [
                     self.linker.num_completed_loads(),
@@ -3326,29 +3425,23 @@ class UnifiedRadixCache(BasePrefixCache):
         # Reap the previous round's PP-sync sends before issuing new ones.
         self._drain_async_work()
 
-        (
-            write_finish_count,
-            load_finish_count,
-            storage_queue_sizes,
-            extra_pool_names,
-        ) = self._sync_hicache_ready_counts()
-        self.writing_check(finish_count=write_finish_count)
-        self.loading_check(finish_count=load_finish_count)
-
-        if self.enable_storage and storage_queue_sizes:
-            n_storage_hit, n_ack_prefetch, n_backup, n_release = storage_queue_sizes[:4]
-            extra_release_counts = {
-                pool_name: count
-                for pool_name, count in zip(extra_pool_names, storage_queue_sizes[4:])
-            }
-            self._drain_storage_control_queues_impl(
-                n_storage_hit=n_storage_hit,
-                n_ack_prefetch=n_ack_prefetch,
-                n_backup=n_backup,
-                n_release=n_release,
-                extra_release_counts=extra_release_counts,
-                log_metrics=True,
+        async_ready_counts = self._async_ready_counts_eligible()
+        if not self._hicache_async_ack_sync_logged:
+            logger.info(
+                "HiCache async ack sync is %s (requested=%s)",
+                "enabled" if async_ready_counts else "disabled",
+                self._hicache_async_ack_sync_requested,
             )
+            self._hicache_async_ack_sync_logged = True
+
+        if async_ready_counts:
+            ready = self._consume_async_ready_counts()
+            if ready is not None:
+                self._apply_ready_counts(*ready)
+            self._issue_async_ready_counts()
+        else:
+            self._drain_pending_ready_counts()
+            self._apply_ready_counts(*self._sync_hicache_ready_counts())
         if self.buffer_pipeline is not None:
             self.buffer_pipeline.flush_pending_writes()
         if self.enable_storage_metrics and self.storage_metrics_collector is not None:
@@ -3358,6 +3451,37 @@ class UnifiedRadixCache(BasePrefixCache):
             if not hasattr(storage_metrics, "prefetch_stats"):
                 storage_metrics.prefetch_stats = self.prefetch_outcome_stats_snapshot()
             self.storage_metrics_collector.log_storage_metrics(storage_metrics)
+
+    def _apply_ready_counts(
+        self,
+        write_finish_count: int,
+        load_finish_count: int,
+        storage_queue_sizes: tuple[int, ...],
+        extra_pool_names: tuple[PoolName, ...],
+    ) -> None:
+        """Consume the queue entries agreed by every rank."""
+        self.writing_check(finish_count=write_finish_count)
+        self.loading_check(finish_count=load_finish_count)
+
+        if self.enable_storage and storage_queue_sizes:
+            n_storage_hit, n_ack_prefetch, n_backup, n_release = storage_queue_sizes[
+                :4
+            ]
+            extra_release_counts = {
+                pool_name: count
+                for pool_name, count in zip(
+                    extra_pool_names,
+                    storage_queue_sizes[4:],
+                )
+            }
+            self._drain_storage_control_queues_impl(
+                n_storage_hit=n_storage_hit,
+                n_ack_prefetch=n_ack_prefetch,
+                n_backup=n_backup,
+                n_release=n_release,
+                extra_release_counts=extra_release_counts,
+                log_metrics=True,
+            )
 
     def ready_to_load_host_cache(self) -> int:
         """Notify the cache controller to start the KV cache loading."""

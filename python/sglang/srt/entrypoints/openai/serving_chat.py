@@ -2212,10 +2212,7 @@ class OpenAIServingChat(OpenAIServingBase):
             # Handle reasoning content
             reasoning_text = None
             if self.reasoning_parser and request.separate_reasoning:
-                force_reasoning = (
-                    self.template_manager.force_reasoning
-                    or self._get_reasoning_from_request(request)
-                )
+                force_reasoning = self._should_force_reasoning(request)
                 try:
                     parser = ReasoningParser(
                         model_type=self.reasoning_parser,
@@ -2553,10 +2550,7 @@ class OpenAIServingChat(OpenAIServingBase):
     ) -> tuple[Optional[str], str]:
         """Process reasoning content in streaming response"""
         if index not in reasoning_parser_dict:
-            is_force_reasoning = (
-                self.template_manager.force_reasoning
-                or self._get_reasoning_from_request(request)
-            )
+            is_force_reasoning = self._should_force_reasoning(request)
             reasoning_parser_dict[index] = ReasoningParser(
                 self.reasoning_parser,
                 request.stream_reasoning,
@@ -2801,10 +2795,7 @@ class OpenAIServingChat(OpenAIServingBase):
             return False
 
         if config.special_case == "always":
-            if (
-                self.reasoning_parser == "glm45"
-                and request.reasoning_effort == "none"
-            ):
+            if self._is_explicit_glm_reasoning_disabled(request):
                 return False
             return True
 
@@ -2827,8 +2818,22 @@ class OpenAIServingChat(OpenAIServingBase):
             and request.chat_template_kwargs.get(config.toggle_param) is True
         )
 
-    def _should_close_glm_reasoning_prompt(
-        self, request: ChatCompletionRequest, rendered_prompt: str
+    def _should_force_reasoning(self, request: ChatCompletionRequest) -> bool:
+        """Resolve response-side reasoning parsing for this request.
+
+        An always-thinking template normally forces the parser to begin in the
+        reasoning phase because its opening marker is prefilled in the prompt.
+        GLM-5.3 is the exception: ``reasoning_effort=none`` explicitly closes
+        that prefilled block before generation, so forcing the response parser
+        would misclassify the final answer as ``reasoning_content``.
+        """
+        return (
+            self.template_manager.force_reasoning
+            and not self._is_explicit_glm_reasoning_disabled(request)
+        ) or self._get_reasoning_from_request(request)
+
+    def _is_explicit_glm_reasoning_disabled(
+        self, request: ChatCompletionRequest
     ) -> bool:
         config = self.template_manager.reasoning_config
         return (
@@ -2836,6 +2841,13 @@ class OpenAIServingChat(OpenAIServingBase):
             and config is not None
             and config.special_case == "always"
             and request.reasoning_effort == "none"
+        )
+
+    def _should_close_glm_reasoning_prompt(
+        self, request: ChatCompletionRequest, rendered_prompt: str
+    ) -> bool:
+        return (
+            self._is_explicit_glm_reasoning_disabled(request)
             and rendered_prompt.endswith("<|assistant|><think>")
         )
 

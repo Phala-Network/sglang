@@ -4057,6 +4057,7 @@ class ServingChatTestCase(unittest.TestCase):
         self.template_manager.reasoning_config = ReasoningToggleConfig(
             special_case="always"
         )
+        self.template_manager.force_reasoning = True
         req = ChatCompletionRequest(
             model="x",
             messages=[{"role": "user", "content": "Hi?"}],
@@ -4064,6 +4065,7 @@ class ServingChatTestCase(unittest.TestCase):
         )
 
         self.assertFalse(self.chat._get_reasoning_from_request(req))
+        self.assertFalse(self.chat._should_force_reasoning(req))
         self.assertTrue(
             self.chat._should_close_glm_reasoning_prompt(
                 req, "<|user|>Hi?<|assistant|><think>"
@@ -4074,6 +4076,35 @@ class ServingChatTestCase(unittest.TestCase):
                 req, "<|user|>Hi?<|assistant|>"
             )
         )
+
+    def test_glm45_always_reasoning_none_returns_final_answer_as_content(self):
+        self.chat.reasoning_parser = "glm45"
+        self.template_manager.reasoning_config = ReasoningToggleConfig(
+            special_case="always"
+        )
+        self.template_manager.force_reasoning = True
+        req = ChatCompletionRequest(
+            model="z-ai/glm-5.3",
+            messages=[{"role": "user", "content": "What is 700 + 3?"}],
+            reasoning_effort="none",
+            separate_reasoning=True,
+        )
+        ret_item = {
+            "text": "703",
+            "meta_info": {
+                "id": f"chatcmpl-{uuid.uuid4()}",
+                "prompt_tokens": 10,
+                "completion_tokens": 1,
+                "weight_version": "default",
+                "finish_reason": {"type": "stop", "matched": None},
+            },
+            "index": 0,
+        }
+
+        response = self.chat._build_chat_response(req, [ret_item], created=0)
+        message = response.choices[0].message
+        self.assertEqual(message.content, "703")
+        self.assertIsNone(message.reasoning_content)
 
     def test_glm45_always_reasoning_enabled_and_non_glm_unchanged(self):
         self.template_manager.reasoning_config = ReasoningToggleConfig(
@@ -4086,6 +4117,7 @@ class ServingChatTestCase(unittest.TestCase):
         )
         self.chat.reasoning_parser = "glm45"
         self.assertTrue(self.chat._get_reasoning_from_request(req))
+        self.assertTrue(self.chat._should_force_reasoning(req))
         self.assertFalse(
             self.chat._should_close_glm_reasoning_prompt(
                 req, "<|assistant|><think>"
@@ -4095,6 +4127,7 @@ class ServingChatTestCase(unittest.TestCase):
         req.reasoning_effort = "none"
         self.chat.reasoning_parser = "deepseek-r1"
         self.assertTrue(self.chat._get_reasoning_from_request(req))
+        self.assertTrue(self.chat._should_force_reasoning(req))
         self.assertFalse(
             self.chat._should_close_glm_reasoning_prompt(
                 req, "<|assistant|><think>"

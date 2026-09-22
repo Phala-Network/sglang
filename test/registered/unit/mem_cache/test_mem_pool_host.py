@@ -247,6 +247,9 @@ class TestHostMemoryBudget(CustomTestCase):
             unittest.mock.patch.object(
                 base.psutil, "virtual_memory", return_value=fake_mem
             ),
+            unittest.mock.patch.object(
+                base.envs.SGLANG_HUGEPAGE_SIZE, "get", return_value=""
+            ),
         ):
             return base.host_memory_budget_bytes()
 
@@ -275,6 +278,64 @@ class TestHostMemoryBudget(CustomTestCase):
             ),
         ):
             self.assertEqual(base.ranks_per_host(), 8)
+
+    def test_explicit_1g_counts_verified_free_hugetlb_pages(self):
+        fake_mem = unittest.mock.Mock(available=self._AVAILABLE)
+        meminfo = (
+            "HugePages_Free: 2680\n"
+            "HugePages_Rsvd: 0\n"
+            "Hugepagesize: 1048576 kB\n"
+        )
+        with (
+            unittest.mock.patch.object(base, "ranks_per_host", return_value=8),
+            unittest.mock.patch.object(
+                base.psutil, "virtual_memory", return_value=fake_mem
+            ),
+            unittest.mock.patch.object(
+                base.envs.SGLANG_HUGEPAGE_SIZE, "get", return_value="1GB"
+            ),
+            unittest.mock.patch.object(base.Path, "read_text", return_value=meminfo),
+        ):
+            self.assertGreaterEqual(base.host_memory_budget_bytes(), 254_490_000_000)
+
+    def test_explicit_1g_cannot_substitute_ordinary_ram_for_hugepages(self):
+        fake_mem = unittest.mock.Mock(available=10_000 * (1024**3))
+        meminfo = (
+            "HugePages_Free: 8\n"
+            "HugePages_Rsvd: 0\n"
+            "Hugepagesize: 1048576 kB\n"
+        )
+        with (
+            unittest.mock.patch.object(base, "ranks_per_host", return_value=8),
+            unittest.mock.patch.object(
+                base.psutil, "virtual_memory", return_value=fake_mem
+            ),
+            unittest.mock.patch.object(
+                base.envs.SGLANG_HUGEPAGE_SIZE, "get", return_value="1GB"
+            ),
+            unittest.mock.patch.object(base.Path, "read_text", return_value=meminfo),
+        ):
+            self.assertEqual(base.host_memory_budget_bytes(), 1024**3)
+
+    def test_explicit_1g_rejects_malformed_or_wrong_size_accounting(self):
+        fake_mem = unittest.mock.Mock(available=self._AVAILABLE)
+        invalid = (
+            "HugePages_Free: 2680\n"
+            "HugePages_Rsvd: 0\n"
+            "Hugepagesize: 2048 kB\n"
+        )
+        with (
+            unittest.mock.patch.object(base, "ranks_per_host", return_value=8),
+            unittest.mock.patch.object(
+                base.psutil, "virtual_memory", return_value=fake_mem
+            ),
+            unittest.mock.patch.object(
+                base.envs.SGLANG_HUGEPAGE_SIZE, "get", return_value="1GB"
+            ),
+            unittest.mock.patch.object(base.Path, "read_text", return_value=invalid),
+        ):
+            with self.assertRaisesRegex(ValueError, "verified 1 GiB"):
+                base.host_memory_budget_bytes()
 
 
 class TestHostPoolGroup(CustomTestCase):

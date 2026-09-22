@@ -141,6 +141,8 @@ def alloc_mmap(dims: tuple, dtype: torch.dtype) -> torch.Tensor:
 
     if extra_flags:
         if _libc is None:
+            if hugepage_size == "1GB":
+                raise RuntimeError("1 GiB HugeTLB requires libc; plain mmap fallback forbidden")
             logger.error(
                 "Hugepage mmap requested but libc.so.6 could not be loaded; "
                 "falling back to plain mmap. SGLANG_HUGEPAGE_SIZE=%s will be ignored.",
@@ -153,6 +155,8 @@ def alloc_mmap(dims: tuple, dtype: torch.dtype) -> torch.Tensor:
                     array, dtype=dtype, count=math.prod(dims)
                 ).reshape(dims)
             except OSError as e:
+                if hugepage_size == "1GB":
+                    raise RuntimeError("1 GiB HugeTLB mmap failed; plain mmap fallback forbidden") from e
                 logger.error(
                     "Hugepage mmap via libc failed (%s); falling back to plain mmap. "
                     "SGLANG_HUGEPAGE_SIZE=%s will be ignored.",
@@ -176,6 +180,8 @@ def alloc_shm(dims: tuple, dtype: torch.dtype) -> tuple[torch.Tensor, int, mmap.
     and closing it when they are done.
     """
     hugepage_size = (envs.SGLANG_HUGEPAGE_SIZE.get() or "").strip().upper()
+    if hugepage_size == "1GB":
+        raise RuntimeError("1 GiB HugeTLB is unsupported by SHM; plain mmap fallback forbidden")
     n_bytes = math.prod(dims) * torch.empty([], dtype=dtype).element_size()
 
     # Note: hugepages are not directly supported with /dev/shm mmap files

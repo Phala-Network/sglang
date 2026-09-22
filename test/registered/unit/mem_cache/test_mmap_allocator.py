@@ -29,6 +29,30 @@ class TestMmapAllocator(unittest.TestCase):
         # Verify it has mapped memory address
         self.assertGreater(tensor.data_ptr(), 0)
 
+    def test_explicit_1g_mmap_failure_never_falls_back(self):
+        from sglang.srt.environ import envs
+        from sglang.srt.mem_cache.storage.mmap import mmap_allocator
+
+        with envs.SGLANG_HUGEPAGE_SIZE.override("1GB"):
+            with (
+                unittest.mock.patch.object(
+                    mmap_allocator, "_alloc_hugepage", side_effect=OSError("no pages")
+                ),
+                unittest.mock.patch.object(
+                    mmap_allocator, "_mmap_prefaulted"
+                ) as plain_mmap,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "fallback forbidden"):
+                    alloc_mmap((16,), torch.float32)
+                plain_mmap.assert_not_called()
+
+    def test_explicit_1g_shm_never_falls_back(self):
+        from sglang.srt.environ import envs
+
+        with envs.SGLANG_HUGEPAGE_SIZE.override("1GB"):
+            with self.assertRaisesRegex(RuntimeError, "unsupported by SHM"):
+                alloc_shm((16,), torch.float32)
+
     def test_alloc_shm(self):
         dims = (10, 1024)
         dtype = torch.float32

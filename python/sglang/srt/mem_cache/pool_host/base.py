@@ -4,12 +4,14 @@ import abc
 import logging
 import threading
 from functools import wraps
+from pathlib import Path
 from typing import Optional
 
 import psutil
 import torch
 
 from sglang.srt.distributed.parallel_state import get_world_group
+from sglang.srt.environ import envs
 from sglang.srt.mem_cache.memory_pool import KVCache
 from sglang.srt.mem_cache.pool_host.common import (
     _cuda_host_unregister,
@@ -48,6 +50,29 @@ def ranks_per_host() -> int:
     return max(world_group.world_size // get_parallel().nnodes, 1)
 
 
+def _available_1g_hugetlb_bytes() -> int:
+    """Unreserved free bytes in the 1 GiB default pool; fail closed on bad data."""
+    fields = {}
+    required = {"HugePages_Free", "HugePages_Rsvd", "Hugepagesize"}
+    for line in Path("/proc/meminfo").read_text().splitlines():
+        key, separator, value = line.partition(":")
+        if key not in required:
+            continue
+        if not separator or key in fields:
+            raise ValueError("Malformed or duplicate HugeTLB memory accounting")
+        parts = value.split()
+        expected_parts = 2 if key == "Hugepagesize" else 1
+        if (len(parts) != expected_parts or not parts[0].isascii()
+                or not parts[0].isdecimal()
+                or (key == "Hugepagesize" and parts[1] != "kB")):
+            raise ValueError("Malformed HugeTLB memory accounting")
+        fields[key] = int(parts[0])
+    if set(fields) != required or fields["Hugepagesize"] != 1024 * 1024:
+        raise ValueError("Explicit 1GB mode requires verified 1 GiB HugeTLB accounting")
+    available_pages = max(0, fields["HugePages_Free"] - fields["HugePages_Rsvd"])
+    return available_pages * fields["Hugepagesize"] * 1024
+
+
 def host_memory_budget_bytes() -> int:
     """Host RAM this rank may claim for a HiCache pool.
 
@@ -56,6 +81,13 @@ def host_memory_budget_bytes() -> int:
     the host is oversubscribed by the number of ranks it holds.
     """
     free = psutil.virtual_memory().available - HICACHE_HOST_MEMORY_RESERVE_BYTES
+    if (envs.SGLANG_HUGEPAGE_SIZE.get() or "").strip().upper() == "1GB":
+        # Boot-reserved HugeTLB pages are absent from psutil MemAvailable.
+        # Ordinary RAM cannot substitute for an explicitly requested 1 GiB
+        # mapping, so cap the combined preflight budget at actual hugepage
+        # capacity. mmap remains the final authority under concurrent ranks.
+        huge_free = _available_1g_hugetlb_bytes()
+        free = min(free + huge_free, huge_free)
     return free // ranks_per_host()
 
 

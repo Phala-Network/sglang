@@ -2035,7 +2035,8 @@ class MuseGlimmerDetector(BaseReasoningFormatDetector):
     """
 
     grammar_channel_header_end = MESSAGE
-    grammar_channel_reasoning_header = " to=self"
+    # Include the delimiter so a tool named "selfish" is not a reasoning channel.
+    grammar_channel_reasoning_header = " to=self" + MESSAGE
 
     def __init__(
         self,

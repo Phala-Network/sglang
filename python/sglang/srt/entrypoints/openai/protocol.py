@@ -728,6 +728,8 @@ class ChatCompletionMessageGenericParam(BaseModel):
     name: Optional[str] = None
     phase: Optional[Literal["commentary", "final_answer"]] = None
     reasoning_content: Optional[str] = None
+    # Legacy assistant-history alias; serialize only the canonical field.
+    reasoning: Optional[str] = Field(default=None, exclude=True)
     tool_calls: Optional[List[ToolCall]] = Field(default=None, examples=[None])
     tools: Optional[List[Tool]] = Field(default=None, examples=[None])
 
@@ -744,6 +746,14 @@ class ChatCompletionMessageGenericParam(BaseModel):
 
     @model_validator(mode="after")
     def validate_thinking_parts_role(self):
+        if self.reasoning_content is None and self.reasoning is not None:
+            self.reasoning_content = self.reasoning
+        if self.role != "assistant" and (
+            self.reasoning_content is not None or self.reasoning is not None
+        ):
+            raise ValueError(
+                "reasoning and reasoning_content are only valid in assistant messages"
+            )
         if self.role != "assistant" and isinstance(self.content, list):
             for part in self.content:
                 if isinstance(part, ChatCompletionMessageContentThinkingPart):
@@ -1082,6 +1092,8 @@ class ChatCompletionRequest(BaseModel):
     def normalize_reasoning_inputs(cls, values: Dict):
         r = values.get("reasoning")
         thinking = None
+        top_level_enable_thinking = values.pop("enable_thinking", None)
+        thinking_config = values.pop("thinking", None)
 
         include_reasoning = values.get("include_reasoning")
         if include_reasoning is not None and not isinstance(include_reasoning, bool):
@@ -1148,6 +1160,22 @@ class ChatCompletionRequest(BaseModel):
         effort = values.get("reasoning_effort")
         if effort is not None:
             thinking = effort != "none"
+
+        if thinking is None and isinstance(thinking_config, dict):
+            thinking_type = thinking_config.get("type")
+            if isinstance(thinking_type, str):
+                thinking_type = thinking_type.strip().lower()
+                if thinking_type == "disabled":
+                    thinking = False
+                elif thinking_type in {"enabled", "adaptive"}:
+                    thinking = True
+        if thinking is None and top_level_enable_thinking is not None:
+            if isinstance(top_level_enable_thinking, str):
+                thinking = top_level_enable_thinking.strip().lower() in {
+                    "1", "true", "yes", "y", "on"
+                }
+            else:
+                thinking = bool(top_level_enable_thinking)
 
         if thinking is not None:
             ctk = values.get("chat_template_kwargs")

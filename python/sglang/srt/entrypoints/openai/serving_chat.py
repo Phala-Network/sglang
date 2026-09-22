@@ -4,6 +4,7 @@ import copy
 import json
 import logging
 import math
+import re
 import time
 import uuid
 from collections import OrderedDict
@@ -124,6 +125,100 @@ if TYPE_CHECKING:
     from sglang.srt.parser.template_manager import TemplateManager
 
 logger = logging.getLogger(__name__)
+
+_COMPLETE_THINK_CONTENT_RE = re.compile(
+    r"\A\s*<think>(?P<reasoning>.*?)</think>\s*\Z", re.DOTALL
+)
+
+
+def normalize_muse_history(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Preserve control messages and legacy reasoning in Muse's Jinja contract."""
+    control_messages, normalized = [], []
+    for source in messages:
+        message = copy.deepcopy(source)
+        role = message.get("role")
+        if role in ("system", "developer"):
+            message["role"] = "system"
+            control_messages.append(message)
+            continue
+        if role == "assistant":
+            reasoning = message.get("reasoning_content")
+            if reasoning is None:
+                reasoning = message.get("reasoning")
+            if reasoning is not None:
+                message["reasoning_content"] = reasoning
+            elif isinstance(message.get("content"), str):
+                match = _COMPLETE_THINK_CONTENT_RE.fullmatch(message["content"])
+                if match is not None:
+                    message["reasoning_content"] = match.group("reasoning")
+                    message["content"] = ""
+            message.pop("reasoning", None)
+        normalized.append(message)
+    if control_messages and all(
+        isinstance(message.get("content"), str) for message in control_messages
+    ):
+        normalized.insert(0, {
+            "role": "system",
+            "content": "\n\n".join(message["content"] for message in control_messages),
+        })
+    else:
+        normalized[0:0] = control_messages
+    return normalized
+
+
+def normalize_muse_reasoning(request, reasoning_parser):
+    """Map normalized controls to Muse's strength without changing other models."""
+    if reasoning_parser != "muse":
+        return
+    kwargs = dict(request.chat_template_kwargs or {})
+    if "reasoning_strength" not in kwargs:
+        effort = request.reasoning_effort
+        if isinstance(effort, str) and effort != "minimal":
+            kwargs["reasoning_strength"] = effort
+        else:
+            for key in ("enable_thinking", "thinking"):
+                if key not in kwargs:
+                    continue
+                value = kwargs[key]
+                enabled = (
+                    value.strip().lower() in {"1", "true", "yes", "y", "on"}
+                    if isinstance(value, str) else bool(value)
+                )
+                if not enabled:
+                    kwargs["reasoning_strength"] = "none"
+                break
+    request.chat_template_kwargs = kwargs
+
+
+def apply_muse_structured_output_reasoning_default(request, reasoning_parser):
+    """Use direct-final for Muse JSON unless the caller chose reasoning controls."""
+    if reasoning_parser != "muse" or request.response_format is None:
+        return
+    if request.response_format.type not in {"json_object", "json_schema"}:
+        return
+    if request.reasoning_effort is not None or request.include_reasoning is True:
+        return
+    kwargs = dict(request.chat_template_kwargs or {})
+    if any(key in kwargs for key in ("reasoning_strength", "enable_thinking", "thinking")):
+        return
+    kwargs["reasoning_strength"] = "none"
+    request.chat_template_kwargs = kwargs
+
+
+def muse_format_template_kwargs(request, reasoning_parser, tool_call_constraint):
+    """Describe the selected format in the opt-in, pinned Muse baked template."""
+    if reasoning_parser != "muse":
+        return {}
+    if tool_call_constraint is not None and tool_call_constraint[0] == "json_schema":
+        return {"_phala_muse_tool_schema": tool_call_constraint[1]}
+    if request.response_format is not None and request.response_format.type in {
+        "json_object", "json_schema"
+    }:
+        return {"_phala_muse_response_format": request.response_format.model_dump(
+            mode="json", by_alias=True, exclude_none=True
+        )}
+    return {}
+
 
 _QWEN35_REASONING_EFFORT_GUIDANCE = {
     "low": (
@@ -1629,6 +1724,8 @@ class OpenAIServingChat(OpenAIServingBase):
         normalize_hunyuan_reasoning_effort(
             request, self.reasoning_parser, self.template_manager.reasoning_config
         )
+        normalize_muse_reasoning(request, self.reasoning_parser)
+        apply_muse_structured_output_reasoning_default(request, self.reasoning_parser)
 
         # GptOss model needs to keep special tokens for harmony parsing
         if self.is_gpt_oss or self.is_gemma4:
@@ -1714,7 +1811,13 @@ class OpenAIServingChat(OpenAIServingBase):
                 stop=request.stop or [],
             )
         elif self.template_manager.chat_template_name is None:
-            result = self._apply_jinja_template(request, tools, is_multimodal)
+            if self.reasoning_parser == "muse":
+                result = self._apply_jinja_template(
+                    request, tools, is_multimodal,
+                    tool_call_constraint=tool_call_constraint,
+                )
+            else:
+                result = self._apply_jinja_template(request, tools, is_multimodal)
         else:
             result = self._apply_conversation_template(request, is_multimodal)
 
@@ -1763,6 +1866,7 @@ class OpenAIServingChat(OpenAIServingBase):
         request: ChatCompletionRequest,
         tools: Optional[List[Dict]],
         is_multimodal: bool,
+        tool_call_constraint=None,
     ) -> MessageProcessingResult:
         """Apply Jinja chat template"""
         prompt = ""
@@ -1784,6 +1888,8 @@ class OpenAIServingChat(OpenAIServingBase):
             ThinkingMode.THINKING if thinking_requested else ThinkingMode.CHAT
         )
         messages = [msg.model_dump() for msg in request.messages]
+        if self.tool_call_parser == "muse" or self.reasoning_parser == "muse":
+            messages = normalize_muse_history(messages)
         messages = self._fold_qwen35_system_messages(messages)
         messages = self._apply_qwen35_reasoning_effort_guidance(
             messages, request.reasoning_effort
@@ -1966,6 +2072,11 @@ class OpenAIServingChat(OpenAIServingBase):
                 extra_template_kwargs["reasoning_effort"] = template_reasoning_effort
             if request.chat_template_kwargs:
                 extra_template_kwargs.update(request.chat_template_kwargs)
+            extra_template_kwargs.update(
+                muse_format_template_kwargs(
+                    request, self.reasoning_parser, tool_call_constraint
+                )
+            )
 
             rc = self.template_manager.reasoning_config
             if rc is not None and rc.effort_kwarg is not None:
@@ -3232,6 +3343,9 @@ class OpenAIServingChat(OpenAIServingBase):
         """
         if not self.reasoning_parser:
             return False
+
+        if self.reasoning_parser == "muse":
+            return (request.chat_template_kwargs or {}).get("reasoning_strength") != "none"
 
         if self.reasoning_parser == "minimax-m3":
             # M3 template prefills <mm:think> for thinking_mode=enabled, so it never

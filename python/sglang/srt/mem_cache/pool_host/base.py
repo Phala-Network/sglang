@@ -74,20 +74,19 @@ def _available_1g_hugetlb_bytes() -> int:
 
 
 def host_memory_budget_bytes() -> int:
-    """Host RAM this rank may claim for a HiCache pool.
+    """Advisory availability check for an already-sized HiCache pool.
 
     psutil reports the whole machine, so co-located ranks each see the same free
     memory; without the split every rank sizes its pool against all of it and
     the host is oversubscribed by the number of ranks it holds.
     """
-    free = psutil.virtual_memory().available - HICACHE_HOST_MEMORY_RESERVE_BYTES
     if (envs.SGLANG_HUGEPAGE_SIZE.get() or "").strip().upper() == "1GB":
-        # Boot-reserved HugeTLB pages are absent from psutil MemAvailable.
-        # Ordinary RAM cannot substitute for an explicitly requested 1 GiB
-        # mapping, so cap the combined preflight budget at actual hugepage
-        # capacity. mmap remains the final authority under concurrent ranks.
-        huge_free = _available_1g_hugetlb_bytes()
-        free = min(free + huge_free, huge_free)
+        # Earlier ranks/pools may already have reserved their pages. Splitting
+        # the remaining pool by every rank again rejects valid staggered
+        # allocations. This check grants no reservation: HugeTLB mmap enforces
+        # global capacity atomically and must never fall back to ordinary RAM.
+        return _available_1g_hugetlb_bytes()
+    free = psutil.virtual_memory().available - HICACHE_HOST_MEMORY_RESERVE_BYTES
     return free // ranks_per_host()
 
 

@@ -315,7 +315,7 @@ class TestHostMemoryBudget(CustomTestCase):
             ),
             unittest.mock.patch.object(base.Path, "read_text", return_value=meminfo),
         ):
-            self.assertEqual(base.host_memory_budget_bytes(), 1024**3)
+            self.assertEqual(base.host_memory_budget_bytes(), 8 * 1024**3)
 
     def test_explicit_1g_rejects_malformed_or_wrong_size_accounting(self):
         fake_mem = unittest.mock.Mock(available=self._AVAILABLE)

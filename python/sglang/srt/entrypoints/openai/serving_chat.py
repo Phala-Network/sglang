@@ -2881,11 +2881,13 @@ class OpenAIServingChat(OpenAIServingBase):
         # as constraint (mirrors the streaming path). For auto: always try.
         if self.tool_call_parser:
             parser = FunctionCallParser(
-                tools, self.tool_call_parser, tokenizer=self.tokenizer_manager.tokenizer
+                tools, self.tool_call_parser, tokenizer=self.tokenizer_manager.tokenizer,
+                constrained_output=is_required,
             )
             detector_owns_format = (
                 parser.detector.supports_structural_tag()
                 or parser.detector.parses_required_natively()
+                or parser.detector.parses_constrained_output_natively()
             )
             should_try_parser = not is_required or detector_owns_format
             if should_try_parser and parser.has_tool_call(text):
@@ -3338,10 +3340,12 @@ class OpenAIServingChat(OpenAIServingBase):
                         tools=effective_tools,
                         tool_call_parser=self.tool_call_parser,
                         tokenizer=self.tokenizer_manager.tokenizer,
+                        constrained_output=True,
                     )
                     use_native_parser = (
                         probe.detector.supports_structural_tag()
                         or probe.detector.parses_required_natively()
+                        or probe.detector.parses_constrained_output_natively()
                     )
                 if use_native_parser:
                     parser_dict[index] = probe

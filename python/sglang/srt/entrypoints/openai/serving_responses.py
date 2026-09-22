@@ -1102,6 +1102,7 @@ class OpenAIServingResponses(OpenAIServingChat):
                 chat_tools,
                 self.tool_call_parser,
                 tokenizer=self.tokenizer_manager.tokenizer,
+                constrained_output=is_required,
             )
             detector_owns_format = self._tool_parser_owns_format(parser)
             should_try_native = not is_required or detector_owns_format
@@ -1190,6 +1191,7 @@ class OpenAIServingResponses(OpenAIServingChat):
         return (
             parser.detector.supports_structural_tag()
             or parser.detector.parses_required_natively()
+            or parser.detector.parses_constrained_output_natively()
         )
 
     @staticmethod
@@ -2034,6 +2036,7 @@ class OpenAIServingResponses(OpenAIServingChat):
                     chat_tools,
                     self.tool_call_parser,
                     tokenizer=self.tokenizer_manager.tokenizer,
+                    constrained_output=is_required,
                 )
                 detector_owns_format = self._tool_parser_owns_format(probe)
             if is_required and not detector_owns_format:
@@ -2043,6 +2046,7 @@ class OpenAIServingResponses(OpenAIServingChat):
                     chat_tools,
                     self.tool_call_parser,
                     tokenizer=self.tokenizer_manager.tokenizer,
+                    constrained_output=is_required,
                 )
         reasoning_parser_obj: Optional[ReasoningParser] = None
         if self.reasoning_parser:

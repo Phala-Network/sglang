@@ -130,7 +130,11 @@ class TestMuseGlimmerDetector(CustomTestCase):
             "muse", tool_call_parser_active=True
         ).parse_non_stream(raw)
         parser = FunctionCallParser(self.tools, "muse")
-        self.assertTrue(parser.detector.parses_required_natively())
+        self.assertFalse(parser.detector.parses_required_natively())
+        self.assertTrue(parser.detector.parses_constrained_output_natively())
+        constraint = parser.get_structure_constraint("required")
+        self.assertEqual(constraint[0], "json_schema")
+        self.assertEqual(constraint[1]["minItems"], 1)
         self.assertTrue(parser.has_tool_call(remainder))
         content, calls = parser.parse_non_stream(remainder)
         self.assertEqual(reasoning, "Need weather.")

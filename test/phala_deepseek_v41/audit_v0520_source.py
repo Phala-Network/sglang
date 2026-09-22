@@ -2,8 +2,8 @@
 
 import ast
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 BASE = "8a51d28ba2ad953593ed033612d19205e1388cb9"

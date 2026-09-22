@@ -87,7 +87,12 @@ class ChatMigrationTests(unittest.TestCase):
             n
             for n in owner.body
             if isinstance(n, ast.FunctionDef)
-            and n.name in ("_allowed_tool_names", "_request_tools_for_prompt")
+            and n.name
+            in (
+                "_allowed_tool_names",
+                "_effective_tool_choice",
+                "_request_tools_for_prompt",
+            )
         ]
         cls.namespace.update(
             ChatCompletionRequest=object,
@@ -151,9 +156,9 @@ class ChatMigrationTests(unittest.TestCase):
 
     def test_budget_validation_is_model_local_and_rejects_invalid_types(self):
         parse = self.namespace["parse_dsv41_reasoning_effort"]
-        for value in (None, True, False, 0, 101, -1, 1.0, {}, [], "medium", "invalid"):
+        for value in (None, True, False, 0, 101, -1, 1.0, {}, [], "invalid"):
             self.assertIsNone(parse(value), value)
-        for value in (1, 50, 100, "low", "high", "xhigh", "max"):
+        for value in (1, 50, 100, "low", "medium", "high", "xhigh", "max"):
             self.assertEqual(parse(value), value)
         self.assertEqual(parse(0.5), 50)
         self.assertEqual(parse(0.0), 1)
@@ -162,7 +167,8 @@ class ChatMigrationTests(unittest.TestCase):
         default = self.namespace["default_dsv41_reasoning_effort_from_env"]
         self.assertEqual(default(""), "high")
         self.assertEqual(default(" 75 "), 75)
-        for value in ("0", "101", "nan", "medium"):
+        self.assertEqual(default("medium"), "medium")
+        for value in ("0", "101", "nan", "invalid"):
             with self.assertRaises(ValueError):
                 default(value)
 

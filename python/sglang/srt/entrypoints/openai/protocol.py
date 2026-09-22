@@ -948,11 +948,14 @@ class ChatCompletionRequest(BaseModel):
     return_input_ids_in_sglext: bool = False
     return_output_ids_in_sglext: bool = False
     return_sampling_mask: bool = False
-    reasoning_effort: ReasoningEffortType = Field(
+    reasoning_effort: Union[
+        ReasoningEffortType, Annotated[int, Field(strict=True, ge=1, le=100)]
+    ] = Field(
         default=None,
         description="Constrains effort on reasoning for reasoning models. "
         "Accepts string levels ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max') or a "
-        "float in [0.0, 0.99] for fine-grained control. "
+        "float in [0.0, 0.99] for fine-grained control, or an integer in [1, 100] "
+        "only when the server uses the DeepSeek-V4.1 encoder. "
         "'none' disables reasoning entirely, 'low' is the least effort, 'high' is the most effort. "
         "Reducing reasoning effort can result in faster responses and fewer tokens used on reasoning "
         "in a response. 'none' defaults thinking and enable_thinking to false in "

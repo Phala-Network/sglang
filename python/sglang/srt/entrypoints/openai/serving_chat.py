@@ -11,8 +11,9 @@ from collections import OrderedDict
 from enum import Enum
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union
+from urllib.parse import unquote_to_bytes, urlsplit
 
-from sglang.srt.runtime_context import get_model, get_serving
+from sglang.srt.runtime_context import get_mm, get_model, get_serving
 
 
 class ThinkingMode(str, Enum):
@@ -118,6 +119,7 @@ from sglang.srt.sampling.sampling_params import (
     set_request_reasoning_end_token_ids,
 )
 from sglang.srt.utils import ImageData
+from sglang.srt.utils.common import _assert_media_url_allowed
 from sglang.srt.utils.weight_versions import build_endpoint_weight_version_metadata
 
 if TYPE_CHECKING:
@@ -337,7 +339,7 @@ _QWEN35_REASONING_EFFORT_FULL_BUDGET = 8192
 _QWEN35_DEFAULT_REASONING_BUDGET = 8192
 _QWEN35_REASONING_ANSWER_RESERVE_CAP = 256
 
-_MEDIA_CONTENT_PART_TYPES = frozenset({"image_url", "video_url", "audio_url"})
+_MEDIA_CONTENT_PART_TYPES = frozenset({"image_url", "video_url", "audio_url", "input_audio"})
 _CHAT_TEMPLATE_CACHE_MAX_SIZE = 128
 
 
@@ -708,6 +710,8 @@ class OpenAIServingChat(OpenAIServingBase):
         exclude_unset: bool = False,
         exclude_none: bool = False,
     ) -> List[Dict[str, Any]]:
+        if self._effective_tool_choice(request) == "none":
+            return []
         tools = list(request.tools or [])
         if isinstance(request.tool_choice, ToolChoice):
             tools = [
@@ -731,6 +735,10 @@ class OpenAIServingChat(OpenAIServingBase):
         messages: List[Dict[str, Any]],
         request: ChatCompletionRequest,
     ) -> None:
+        if self._effective_tool_choice(request) == "none":
+            for message in messages:
+                message.pop("tools", None)
+            return
         allowed_names = self._allowed_tool_names(request)
         if allowed_names is None:
             return
@@ -1188,8 +1196,8 @@ class OpenAIServingChat(OpenAIServingBase):
         if value is not None and value != "none":
             logger.warning(
                 "DeepSeek-V4.1 does not support reasoning_effort=%r; using the "
-                "default %r (low/high/xhigh/max, a float in [0, 0.99], or an "
-                "integer budget in [1, 100] via chat_template_kwargs are accepted).",
+                "default %r (low/medium/high/xhigh/max, a float in [0, 0.99], "
+                "or an integer budget in [1, 100] are accepted).",
                 value,
                 self._dsv41_default_reasoning_effort,
             )
@@ -1472,6 +1480,13 @@ class OpenAIServingChat(OpenAIServingBase):
         if request.return_sampling_mask and not request.return_meta_info:
             return "return_sampling_mask requires return_meta_info=true."
 
+        if (
+            type(request.reasoning_effort) is int
+            and request.reasoning_effort >= 1
+            and self.chat_encoding_spec != "dsv41"
+        ):
+            return "Integer reasoning_effort budgets require the DeepSeek-V4.1 encoder."
+
         media_error = self._validate_media_content(request)
         if media_error:
             return media_error
@@ -1571,26 +1586,68 @@ class OpenAIServingChat(OpenAIServingBase):
         return None
 
     def _validate_media_content(self, request: ChatCompletionRequest) -> Optional[str]:
-        if self.tokenizer_manager.model_config.is_multimodal:
+        config = self.tokenizer_manager.model_config
+        parts = [
+            part
+            for message in request.messages
+            if isinstance(message.content, list)
+            for part in message.content
+            if part.type in _MEDIA_CONTENT_PART_TYPES
+        ]
+        if not parts:
             return None
-
-        media_type = next(
-            (
-                part.type
-                for message in request.messages
-                if isinstance(message.content, list)
-                for part in message.content
-                if part.type in _MEDIA_CONTENT_PART_TYPES
+        if not config.is_multimodal:
+            return (
+                "Model only supports text input; "
+                f"received unsupported content type '{parts[0].type}'."
+            )
+        mm_tokens = getattr(
+            getattr(self.tokenizer_manager, "mm_processor", None), "mm_tokens", None
+        )
+        supported = {
+            "image_url": bool(config.is_image_understandable_model),
+            "audio_url": bool(config.is_audio_understandable_model),
+            "input_audio": bool(config.is_audio_understandable_model),
+            "video_url": bool(
+                mm_tokens is not None
+                and (
+                    bool(getattr(mm_tokens, "video_token", None))
+                    or getattr(mm_tokens, "video_token_id", None) is not None
+                )
             ),
-            None,
-        )
-        if media_type is None:
-            return None
-
-        return (
-            "Model only supports text input; "
-            f"received unsupported content type '{media_type}'."
-        )
+        }
+        limit_mb = get_mm().media_url_max_file_size_mb
+        max_bytes = limit_mb * 1024 * 1024
+        for part in parts:
+            if not supported[part.type]:
+                return f"{part.type} input is not supported by this model."
+            if part.type == "input_audio":
+                url = f"data:audio/{part.input_audio.format};base64,{part.input_audio.data}"
+            else:
+                url = getattr(part, part.type).url
+            try:
+                parsed = urlsplit(url)
+                if parsed.scheme in ("http", "https"):
+                    _assert_media_url_allowed(url)
+                elif parsed.scheme == "data":
+                    header, separator, payload = url.partition(",")
+                    if not separator:
+                        return f"Invalid {part.type} data URI: missing comma."
+                    if header.lower().endswith(";base64"):
+                        if len(payload) % 4 or not re.fullmatch(
+                            r"[A-Za-z0-9+/]*={0,2}", payload
+                        ):
+                            return f"Invalid {part.type} base64 data URI."
+                        size = len(payload) // 4 * 3 - payload[-2:].count("=")
+                    else:
+                        size = len(unquote_to_bytes(payload))
+                    if max_bytes and size > max_bytes:
+                        return f"{part.type} exceeds the {max_bytes} byte media size limit."
+                else:
+                    return f"Invalid {part.type}.url: expected a data: URI or http(s):// URL."
+            except ValueError:
+                return f"Invalid {part.type} media URL."
+        return None
 
     def _engine_prompt(
         self, processed_messages: MessageProcessingResult, is_multimodal: bool
@@ -1607,6 +1664,22 @@ class OpenAIServingChat(OpenAIServingBase):
         if isinstance(processed_messages.prompt_ids, str):
             return "text", processed_messages.prompt_ids
         return "input_ids", processed_messages.prompt_ids
+
+    async def _convert_to_internal_request_async(
+        self,
+        request: ChatCompletionRequest,
+        raw_request: Request = None,
+    ) -> tuple[GenerateReqInput, ChatCompletionRequest]:
+        # Native DS encoding runs before TokenizerManager's usual async path.
+        if self.chat_encoding_spec == "dsv41" and request.input_ids is None:
+            batcher = getattr(
+                self.tokenizer_manager, "async_dynamic_batch_tokenizer", None
+            )
+            if batcher is not None:
+                return await batcher.run_sync(
+                    self._convert_to_internal_request, request, raw_request
+                )
+        return self._convert_to_internal_request(request, raw_request)
 
     def _convert_to_internal_request(
         self,

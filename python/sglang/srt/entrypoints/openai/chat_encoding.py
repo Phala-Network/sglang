@@ -157,8 +157,8 @@ def resolve_chat_encoding_spec(
 def parse_dsv41_reasoning_effort(value: Any) -> Union[str, int, None]:
     """Map an API ``reasoning_effort`` onto what the V4.1 encoder accepts.
 
-    An int budget only reaches here through ``chat_template_kwargs``; None
-    means unsupported, and the caller applies its default.
+    Int budgets come from DS-only top-level requests or ``chat_template_kwargs``.
+    None means unsupported, and the caller applies its default.
     """
     if isinstance(value, bool):
         return None

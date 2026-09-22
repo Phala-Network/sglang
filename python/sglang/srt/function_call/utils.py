@@ -750,7 +750,7 @@ def get_json_schema_constraint(
     """
 
     if isinstance(tool_choice, ToolChoice):
-        # For specific function choice, return the user's parameters schema directly
+        # Preserve local reference roots when wrapping the selected parameters.
         fn_name = tool_choice.function.name
         for tool in tools:
             if tool.function.name == fn_name:
@@ -759,6 +759,10 @@ def get_json_schema_constraint(
                     "minItems": 1,
                     "items": _get_tool_schema(tool),
                 }
+                for key in ("$defs", "definitions"):
+                    definitions = (tool.function.parameters or {}).get(key)
+                    if definitions is not None:
+                        schema[key] = definitions
                 if not parallel_tool_calls:
                     schema["maxItems"] = 1
                 return schema

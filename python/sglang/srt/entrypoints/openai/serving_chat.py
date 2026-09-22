@@ -1481,6 +1481,17 @@ class OpenAIServingChat(OpenAIServingBase):
         ):
             return "Integer reasoning_effort budgets require the DeepSeek-V4.1 encoder."
 
+        reasoning_config = self.template_manager.reasoning_config
+        if (
+            reasoning_config is not None
+            and reasoning_config.special_case == "always"
+            and request.reasoning_effort == "none"
+        ):
+            return (
+                "This model's chat template requires reasoning; "
+                "reasoning_effort cannot disable reasoning for this model."
+            )
+
         media_error = self._validate_media_content(request)
         if media_error:
             return media_error

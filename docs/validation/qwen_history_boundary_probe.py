@@ -1,4 +1,4 @@
-"""Reproduce unported historical Qwen parser contracts; exits 1 while gaps exist.
+"""Regression for historical Qwen parser contracts; exits 1 on any regression.
 
 This executes real parser methods with a minimal output envelope and the actual
 base initializer. It does not import or qualify the complete serving runtime.
@@ -49,6 +49,7 @@ namespace = {
     "json": json, "re": re, "logger": logging.getLogger(__name__),
     "ToolCallItem": ToolCallItem, "StreamingParseResult": StreamingParseResult,
     "get_schema_properties": lambda parameters: parameters.get("properties", {}),
+    "envs": SimpleNamespace(SGLANG_FORWARD_UNKNOWN_TOOLS=SimpleNamespace(get=lambda: False)),
 }
 exec(compile(ast.fix_missing_locations(ast.Module(body=body, type_ignores=[])),
              str(source), "exec"), namespace)

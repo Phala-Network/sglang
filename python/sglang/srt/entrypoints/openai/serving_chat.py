@@ -43,6 +43,9 @@ from sglang.srt.constrained.xgrammar_schema import (
     has_xgrammar_unsupported_json_features,
 )
 from sglang.srt.entrypoints.openai import chat_encoding, encoding_dsv4, encoding_dsv32
+from sglang.srt.entrypoints.openai.nemotron_literal_tokens import (
+    encode_nemotron_message_literals,
+)
 from sglang.srt.entrypoints.openai.protocol import (
     AllowedToolsChoice,
     ChatCompletionMessageContentTextPart,
@@ -1951,6 +1954,26 @@ class OpenAIServingChat(OpenAIServingBase):
                     # should be treated as client errors (400 BadRequest)
                     raise ValueError(str(template_error)) from template_error
 
+            if (
+                self.reasoning_parser == "nemotron_3"
+                and not request.continue_final_message
+                and not is_multimodal
+            ):
+                prompt_ids = encode_nemotron_message_literals(
+                    self.tokenizer_manager.tokenizer,
+                    openai_compatible_messages,
+                    rendered_prompt,
+                    prompt_ids,
+                    lambda literal_messages, literal_data: self.tokenizer_manager.tokenizer.apply_chat_template(
+                        literal_messages,
+                        tokenize=False,
+                        add_generation_prompt=True,
+                        return_dict=False,
+                        **literal_data,
+                    ),
+                    template_data={"tools": tools, **extra_template_kwargs},
+                )
+
             # Append assistant prefix if continue_final_message is enabled
             if assistant_prefix:
                 prompt_ids = self._append_assistant_prefix_to_prompt_ids(
@@ -2584,7 +2607,14 @@ class OpenAIServingChat(OpenAIServingBase):
                         tokenizer=self.tokenizer_manager.tokenizer,
                         tool_call_parser_active=self._tool_call_parsing_active(request),
                     )
-                    reasoning_text, text = parser.parse_non_stream(text)
+                    reasoning_text, text = parser.parse_non_stream(
+                        text,
+                        **(
+                            {"output_ids": ret_item.get("output_ids")}
+                            if self.reasoning_parser == "nemotron_3"
+                            else {}
+                        ),
+                    )
                 except Exception as e:
                     logger.error(f"Reasoning parsing error: {e}")
                     return self.create_error_response(
@@ -2938,7 +2968,18 @@ class OpenAIServingChat(OpenAIServingBase):
                 tool_call_parser_active=self._tool_call_parsing_active(request),
             )
         reasoning_parser = reasoning_parser_dict[index]
-        reasoning_text, normal_text = reasoning_parser.parse_stream_chunk(delta)
+        token_context = {}
+        if (
+            self.reasoning_parser == "nemotron_3"
+            and content.get("output_ids") is not None
+        ):
+            token_context = {
+                "output_ids": content["output_ids"],
+                "incremental_output": self.tokenizer_manager.server_args.incremental_streaming_output,
+            }
+        reasoning_text, normal_text = reasoning_parser.parse_stream_chunk(
+            delta, **token_context
+        )
         if finish_reason_type is not None and finish_reason_type != "abort":
             end_reasoning_text, end_normal_text = reasoning_parser.parse_stream_end()
             if end_reasoning_text:

@@ -6,6 +6,7 @@ Mid-conversation system messages trigger the assistant generation header.
 
 import copy
 import json
+import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 # ============================================================
@@ -66,9 +67,11 @@ REASONING_EFFORT_TEMPLATE = (
 )
 
 REASONING_EFFORT_MAPPINGS: Dict[str, int] = {
-    "low": 25,
-    "high": 50,
-    "xhigh": 75,
+    "minimal": 25,
+    "low": 50,
+    "medium": 62,
+    "high": 75,
+    "xhigh": 90,
     "max": 100,
 }
 DEFAULT_REASONING_EFFORT = "high"
@@ -675,6 +678,31 @@ def _encode_messages_text(
     return prompt
 
 
+def _prepare_messages(messages):
+    """Normalize developer roles without removing a standalone generation point."""
+    if not isinstance(messages, list) or not messages:
+        return messages
+    out = messages
+    for index, message in enumerate(messages):
+        if (
+            isinstance(message, dict)
+            and message.get("role") == "developer"
+            and len(messages) > 1
+        ):
+            if out is messages:
+                out = list(messages)
+            out[index] = dict(message, role="system")
+    if (
+        os.environ.get("DSV41_SYSTEM_ONLY_USER_TURN", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+        and len(out) == 1
+        and isinstance(out[0], dict)
+        and out[0].get("role") == "system"
+    ):
+        out = list(out) + [{"role": "user", "content": ""}]
+    return out
+
+
 def encode_messages(
     messages: List[Dict[str, Any]],
     thinking_mode: str,
@@ -689,6 +717,7 @@ def encode_messages(
     Returns the prompt string, or ``(prompt, {"images": [...]})`` when
     ``return_multi_modal_data`` is set; the image records are in prompt order.
     """
+    messages = _prepare_messages(messages)
     context = context or []
     processed_context, _ = process_image_messages(context) if context else ([], [])
     processed_messages, images = process_image_messages(messages)

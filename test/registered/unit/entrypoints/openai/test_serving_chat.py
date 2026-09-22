@@ -1265,6 +1265,36 @@ class ServingChatTestCase(unittest.TestCase):
             "return_sampling_mask requires return_meta_info=true.",
         )
 
+    def test_validate_request_always_reasoning_rejects_disable_effort(self):
+        self.template_manager.reasoning_config = ReasoningToggleConfig(
+            special_case="always"
+        )
+        req = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "Return JSON."}],
+            reasoning_effort="none",
+        )
+        self.assertIn("requires reasoning", self.chat._validate_request(req))
+        for effort in (None, "low", "medium", "high"):
+            with self.subTest(effort=effort):
+                req = ChatCompletionRequest(
+                    model="x",
+                    messages=[{"role": "user", "content": "Hi"}],
+                    reasoning_effort=effort,
+                )
+                self.assertIsNone(self.chat._validate_request(req))
+
+    def test_validate_request_toggle_reasoning_allows_none_effort(self):
+        self.template_manager.reasoning_config = ReasoningToggleConfig(
+            toggle_param="enable_thinking", default_enabled=True
+        )
+        req = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "Hi"}],
+            reasoning_effort="none",
+        )
+        self.assertIsNone(self.chat._validate_request(req))
+
     def test_convert_to_internal_request_rejects_stream_return_meta_info(self):
         req = ChatCompletionRequest(
             model="x",

@@ -1279,6 +1279,17 @@ class OpenAIServingChat(OpenAIServingBase):
         if request.return_sampling_mask and not request.return_meta_info:
             return "return_sampling_mask requires return_meta_info=true."
 
+        reasoning_config = self.template_manager.reasoning_config
+        if (
+            reasoning_config is not None
+            and reasoning_config.special_case == "always"
+            and request.reasoning_effort == "none"
+        ):
+            return (
+                "This model's chat template requires reasoning; "
+                "reasoning_effort cannot disable reasoning for this model."
+            )
+
         media_error = self._validate_media_content(request)
         if media_error:
             return media_error

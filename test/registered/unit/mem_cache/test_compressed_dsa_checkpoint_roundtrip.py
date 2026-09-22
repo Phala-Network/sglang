@@ -457,18 +457,19 @@ class TestCompressedDsaCheckpointRoundtrip(unittest.TestCase):
                 )
                 if finished:
                     cache.cache_finished_req(other, kv_len_to_handle=64)
-                # The newly saved state is for 64 tokens. It cannot be
-                # attached to the SWA-limited 32-token key or leaked.
+                # The unified baseline leaves insertion length to Mamba for
+                # hybrid caches (bd45cd50ca). Retain the exact 64-token state,
+                # never attach it to the SWA-only 32-token branch.
                 match = cache.match_prefix(
                     MatchPrefixParams(key=RadixKey(other.origin_input_ids))
                 )
                 self._assert_cached_state_matches_prefix(
                     cache, req_pool, other.origin_input_ids, len(match.device_indices)
                 )
-                self.assertEqual(len(match.device_indices), 0)
+                self.assertEqual(len(match.device_indices), 64)
                 self.assertEqual(
                     req_pool.mamba_allocator.available_size(),
-                    available if finished else before,
+                    (available if finished else before) - 1,
                 )
                 self._assert_cached_state_matches_prefix(
                     cache, req_pool, first.origin_input_ids, 64

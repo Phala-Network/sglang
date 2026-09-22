@@ -1244,6 +1244,13 @@ def build_anchor_sidecar_stack(
     mtp_draft_device_pools = tuple(
         pool for pool in params.mtp_draft_device_pools if pool.index_k_with_scale_buffer
     )
+    if mtp_draft_device_pools:
+        full_layer_mapping = _with_mtp_layer_mapping(
+            full_layer_mapping,
+            transfer_layer_start=transfer_layer_num,
+            target_device_layer_num=kv_pool.layer_num,
+            draft_layer_num=len(mtp_draft_device_pools),
+        )
     # One collective entry/exit for this whole stack, never one per pool.
     # The controller (and its storage threads) is created only after all ranks
     # have either completed both physical buffers or rolled back together.
@@ -1259,15 +1266,24 @@ def build_anchor_sidecar_stack(
             override_kv_cache_dim=override_kv_cache_dim,
             mtp_draft_device_pools=mtp_draft_device_pools,
         )
-        sidecar_host_pool = sidecar_host_pool_factory(kv_host_pool)
-    # Expose packed MTP tail layers to the controller's flat transfer builder.
-    if mtp_draft_device_pools:
-        full_layer_mapping = _with_mtp_layer_mapping(
-            full_layer_mapping,
-            transfer_layer_start=transfer_layer_num,
-            target_device_layer_num=kv_pool.layer_num,
-            draft_layer_num=len(mtp_draft_device_pools),
-        )
+        if sidecar_entry_factory is not None:
+            sidecar_entry = sidecar_entry_factory(
+                kv_pool=kv_pool,
+                kv_host_pool=kv_host_pool,
+                layer_mapping=full_layer_mapping,
+                transfer_layer_num=transfer_layer_num + len(mtp_draft_device_pools),
+                draft_pools=mtp_draft_device_pools,
+                pool_name=sidecar_pool_name,
+            )
+        else:
+            sidecar_entry = build_pool_entry(
+                name=sidecar_pool_name,
+                host_pool=sidecar_host_pool_factory(kv_host_pool),
+                device_pool=kv_pool,
+                layer_mapping=full_layer_mapping,
+                transfer_layer_num=transfer_layer_num + len(mtp_draft_device_pools),
+                packed_draft_device_pools=mtp_draft_device_pools,
+            )
     entries = [
         build_pool_entry(
             name=PoolName.KV,
@@ -1279,24 +1295,6 @@ def build_anchor_sidecar_stack(
             packed_draft_device_pools=mtp_draft_device_pools,
         ),
     ]
-    if sidecar_entry_factory is not None:
-        sidecar_entry = sidecar_entry_factory(
-            kv_pool=kv_pool,
-            kv_host_pool=kv_host_pool,
-            layer_mapping=full_layer_mapping,
-            transfer_layer_num=transfer_layer_num + len(mtp_draft_device_pools),
-            draft_pools=mtp_draft_device_pools,
-            pool_name=sidecar_pool_name,
-        )
-    else:
-        sidecar_entry = build_pool_entry(
-            name=sidecar_pool_name,
-            host_pool=sidecar_host_pool_factory(kv_host_pool),
-            device_pool=kv_pool,
-            layer_mapping=full_layer_mapping,
-            transfer_layer_num=transfer_layer_num + len(mtp_draft_device_pools),
-            packed_draft_device_pools=mtp_draft_device_pools,
-        )
     if sidecar_entry is not None:
         entries.append(sidecar_entry)
     host_pool_group = HostPoolGroup(entries)

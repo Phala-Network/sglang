@@ -25,6 +25,7 @@ from sglang.srt.mem_cache.memory_pool import (
     HybridLinearKVPool,
 )
 from sglang.srt.mem_cache.pool_host import HostPoolGroup
+from sglang.srt.mem_cache.pool_host.dsa import DSAIndexerPoolHost
 from sglang.srt.mem_cache.radix_cache import RadixKey
 from sglang.srt.mem_cache.unified_cache.components import ComponentType
 from sglang.srt.mem_cache.unified_radix_cache import (
@@ -216,6 +217,10 @@ class TestHybridIndexSidecar(unittest.TestCase):
                     patch(self.prefix + "build_kv_host_pool") as build_kv,
                     patch(self.prefix + "HybridCacheController"),
                     patch(
+                        self.prefix + "DSAIndexerPoolHost",
+                        wraps=DSAIndexerPoolHost,
+                    ) as index_pool_factory,
+                    patch(
                         "sglang.srt.mem_cache.memory_pool_host.ALLOC_MEMORY_FUNCS",
                         defaultdict(lambda: allocate),
                     ),
@@ -241,6 +246,9 @@ class TestHybridIndexSidecar(unittest.TestCase):
                         server_args=None,
                         load_cache_event=None,
                     )
+                    # Compressed indexes use DeepSeekV4PagedHostPool; the legacy
+                    # factory would allocate an unowned, registered duplicate.
+                    index_pool_factory.assert_not_called()
                 group = result.host_pool_group
                 if not any(live) and not with_draft:
                     self.assertEqual(result.sidecars, [])

@@ -339,7 +339,9 @@ _QWEN35_REASONING_EFFORT_FULL_BUDGET = 8192
 _QWEN35_DEFAULT_REASONING_BUDGET = 8192
 _QWEN35_REASONING_ANSWER_RESERVE_CAP = 256
 
-_MEDIA_CONTENT_PART_TYPES = frozenset({"image_url", "video_url", "audio_url", "input_audio"})
+_MEDIA_CONTENT_PART_TYPES = frozenset(
+    {"image_url", "video_url", "audio_url", "input_audio"}
+)
 _CHAT_TEMPLATE_CACHE_MAX_SIZE = 128
 
 

@@ -3,6 +3,10 @@ from typing import List, Optional
 
 import torch
 
+from phala_kvcache_incremental import ensure_loaded
+
+ensure_loaded()
+
 
 def is_hip() -> bool:
     return torch.version.hip is not None
@@ -13,7 +17,7 @@ _is_hip = is_hip()
 
 def get_device_accessible_ptr(tensor: torch.Tensor, device_index: int) -> int:
     """Return the address a kernel on ``device_index`` must use for ``tensor``."""
-    return torch.ops.sgl_kernel.get_device_accessible_ptr.default(tensor, device_index)
+    return torch.ops.phala_kvcache_incremental.get_device_accessible_ptr.default(tensor, device_index)
 
 
 def _default_mla_block_quota() -> int:
@@ -44,7 +48,7 @@ def transfer_kv_per_layer(
     block_quota: int = 2,
     num_warps_per_block: int = 16 if _is_hip else 32,
 ):
-    torch.ops.sgl_kernel.transfer_kv_per_layer.default(
+    torch.ops.phala_kvcache_incremental.transfer_kv_per_layer.default(
         src_k,
         dst_k,
         src_v,
@@ -70,7 +74,7 @@ def transfer_kv_per_layer_pf_lf(
     block_quota: int = 2,
     num_warps_per_block: int = 16 if _is_hip else 32,
 ):
-    torch.ops.sgl_kernel.transfer_kv_per_layer_pf_lf.default(
+    torch.ops.phala_kvcache_incremental.transfer_kv_per_layer_pf_lf.default(
         src_k,
         dst_k,
         src_v,
@@ -100,7 +104,7 @@ def transfer_kv_per_layer_ph_lf(
     block_quota: int = 2,
     num_warps_per_block: int = 16 if _is_hip else 32,
 ):
-    torch.ops.sgl_kernel.transfer_kv_per_layer_ph_lf.default(
+    torch.ops.phala_kvcache_incremental.transfer_kv_per_layer_ph_lf.default(
         src_k,
         dst_k,
         src_v,
@@ -129,7 +133,7 @@ def transfer_kv_all_layer(
     block_quota: int = 2,
     num_warps_per_block: int = 16 if _is_hip else 32,
 ):
-    torch.ops.sgl_kernel.transfer_kv_all_layer.default(
+    torch.ops.phala_kvcache_incremental.transfer_kv_all_layer.default(
         src_k_layers,
         dst_k_layers,
         src_v_layers,
@@ -156,7 +160,7 @@ def transfer_kv_all_layer_lf_pf(
     block_quota: int = 2,
     num_warps_per_block: int = 16 if _is_hip else 32,
 ):
-    torch.ops.sgl_kernel.transfer_kv_all_layer_lf_pf.default(
+    torch.ops.phala_kvcache_incremental.transfer_kv_all_layer_lf_pf.default(
         src_k_layers,
         dst_k,
         src_v_layers,
@@ -186,7 +190,7 @@ def transfer_kv_all_layer_lf_ph(
     block_quota: int = 2,
     num_warps_per_block: int = 16 if _is_hip else 32,
 ):
-    torch.ops.sgl_kernel.transfer_kv_all_layer_lf_ph.default(
+    torch.ops.phala_kvcache_incremental.transfer_kv_all_layer_lf_ph.default(
         src_k_layers,
         dst_k,
         src_v_layers,
@@ -210,7 +214,7 @@ def transfer_kv_direct(
     dst_indices: torch.Tensor,
     page_size: int,
 ):
-    torch.ops.sgl_kernel.transfer_kv_direct.default(
+    torch.ops.phala_kvcache_incremental.transfer_kv_direct.default(
         src_layers, dst_layers, src_indices, dst_indices, page_size
     )
 
@@ -223,7 +227,7 @@ def transfer_embedding_ranges_direct(
     lengths: List[int],
 ) -> None:
     """Copy embedding ranges between host and CUDA tensors."""
-    torch.ops.sgl_kernel.transfer_embedding_ranges_direct.default(
+    torch.ops.phala_kvcache_incremental.transfer_embedding_ranges_direct.default(
         src, dst, src_starts, dst_starts, lengths
     )
 
@@ -236,7 +240,7 @@ def transfer_kv_per_layer_direct_pf_lf(
     layer_id: int,
     page_size: int,
 ):
-    torch.ops.sgl_kernel.transfer_kv_per_layer_direct_pf_lf.default(
+    torch.ops.phala_kvcache_incremental.transfer_kv_per_layer_direct_pf_lf.default(
         src_ptrs, dst_ptrs, src_indices, dst_indices, layer_id, page_size
     )
 
@@ -248,7 +252,7 @@ def transfer_kv_all_layer_direct_lf_pf(
     dst_indices: torch.Tensor,
     page_size: int,
 ):
-    torch.ops.sgl_kernel.transfer_kv_all_layer_direct_lf_pf.default(
+    torch.ops.phala_kvcache_incremental.transfer_kv_all_layer_direct_lf_pf.default(
         src_ptrs, dst_ptrs, src_indices, dst_indices, page_size
     )
 
@@ -264,7 +268,7 @@ def transfer_kv_per_layer_mla(
 ):
     if block_quota is None:
         block_quota = _default_mla_block_quota()
-    torch.ops.sgl_kernel.transfer_kv_per_layer_mla.default(
+    torch.ops.phala_kvcache_incremental.transfer_kv_per_layer_mla.default(
         src,
         dst,
         src_indices,
@@ -288,7 +292,7 @@ def transfer_kv_per_layer_mla_pf_lf(
 ):
     if block_quota is None:
         block_quota = _default_mla_block_quota()
-    torch.ops.sgl_kernel.transfer_kv_per_layer_mla_pf_lf.default(
+    torch.ops.phala_kvcache_incremental.transfer_kv_per_layer_mla_pf_lf.default(
         src,
         dst,
         src_indices,
@@ -311,7 +315,7 @@ def transfer_kv_all_layer_mla(
     block_quota: int = 2,
     num_warps_per_block: int = 16 if _is_hip else 32,
 ):
-    torch.ops.sgl_kernel.transfer_kv_all_layer_mla.default(
+    torch.ops.phala_kvcache_incremental.transfer_kv_all_layer_mla.default(
         src_layers,
         dst_layers,
         src_indices,
@@ -334,7 +338,7 @@ def transfer_kv_all_layer_mla_lf_pf(
     block_quota: int = 2,
     num_warps_per_block: int = 16 if _is_hip else 32,
 ):
-    torch.ops.sgl_kernel.transfer_kv_all_layer_mla_lf_pf.default(
+    torch.ops.phala_kvcache_incremental.transfer_kv_all_layer_mla_lf_pf.default(
         src_layers,
         dst,
         src_indices,

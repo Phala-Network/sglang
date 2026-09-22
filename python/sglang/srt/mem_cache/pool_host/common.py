@@ -261,22 +261,13 @@ def _resolve_device_accessible_ptr_fn():
     except ImportError:
         get_device_accessible_ptr = None
     else:
-        if not hasattr(torch.ops.sgl_kernel, "get_device_accessible_ptr"):
+        if not hasattr(torch.ops.phala_kvcache_incremental, "get_device_accessible_ptr"):
             get_device_accessible_ptr = None
 
     if get_device_accessible_ptr is None:
-        # CUDA's UVA makes host and device addresses equal; on HIP they differ.
-        if _is_hip:
-            raise ImportError(
-                "sgl_kernel.kvcacheio.get_device_accessible_ptr is missing from the "
-                "installed sglang-kernel. It is required on ROCm, where registered "
-                "host memory carries a distinct device address. Rebuild sglang-kernel "
-                "from python/sglang/kernels/aot (setup_rocm.py)."
-            )
-        logger.warning(
-            "sgl_kernel.kvcacheio.get_device_accessible_ptr is missing from the "
-            "installed sglang-kernel; using raw host addresses for kernel pointer "
-            "tables. Build sglang-kernel from python/sglang/kernels/aot to enable it."
+        raise ImportError(
+            "phala_kvcache_incremental.get_device_accessible_ptr is required for "
+            "registered CUDA/HIP host-memory pointer tables; raw UVA fallback is disabled"
         )
     return get_device_accessible_ptr
 

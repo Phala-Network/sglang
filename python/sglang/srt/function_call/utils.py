@@ -541,9 +541,7 @@ def coerce_argument_to_schema(raw_value: str, schema: dict) -> Tuple[Any, bool]:
     """Return a schema-valid candidate without inventing values from the schema."""
     try:
         Draft202012Validator.check_schema(schema)
-        validator = Draft202012Validator(
-            schema, registry=_NO_NETWORK_SCHEMA_REGISTRY
-        )
+        validator = Draft202012Validator(schema, registry=_NO_NETWORK_SCHEMA_REGISTRY)
         valid_candidates = [
             candidate
             for candidate in _schema_value_candidates(raw_value, schema)

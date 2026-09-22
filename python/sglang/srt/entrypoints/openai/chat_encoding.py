@@ -135,9 +135,7 @@ def resolve_chat_encoding_spec(
     architectures = hf_config.architectures
     arch = architectures[0] if architectures else ""
 
-    if is_deepseek_v41_arch(
-        arch=arch, model_type=getattr(hf_config, "model_type", "")
-    ):
+    if is_deepseek_v41_arch(arch=arch, model_type=getattr(hf_config, "model_type", "")):
         return "dsv41"
     if "DeepseekV4" in arch:
         return "dsv4"

@@ -3,20 +3,29 @@
 import ast
 import gc
 import os
+import unittest
+import weakref
 from pathlib import Path
 from types import SimpleNamespace
-import unittest
 from unittest.mock import Mock
-import weakref
 
-
-source = Path(os.environ.get("FLASHINFER_ALLREDUCE_SOURCE",
-    "/opt/sglang/lib/python3.12/site-packages/flashinfer/comm/allreduce.py"))
+source = Path(
+    os.environ.get(
+        "FLASHINFER_ALLREDUCE_SOURCE",
+        "/opt/sglang/lib/python3.12/site-packages/flashinfer/comm/allreduce.py",
+    )
+)
 tree = ast.parse(source.read_text())
-workspace_class = next(node for node in tree.body if isinstance(node, ast.ClassDef)
-                       and node.name == "TRTLLMAllReduceFusionWorkspace")
-destroy_node = next(node for node in workspace_class.body if isinstance(node, ast.FunctionDef)
-                    and node.name == "destroy")
+workspace_class = next(
+    node
+    for node in tree.body
+    if isinstance(node, ast.ClassDef) and node.name == "TRTLLMAllReduceFusionWorkspace"
+)
+destroy_node = next(
+    node
+    for node in workspace_class.body
+    if isinstance(node, ast.FunctionDef) and node.name == "destroy"
+)
 
 
 class Allocation:
@@ -26,9 +35,16 @@ class Allocation:
 class WorkspaceCleanupContract(unittest.TestCase):
     def setUp(self):
         self.registry = {}
-        self.release = Mock(side_effect=lambda handles: self.registry.pop(id(handles), None))
+        self.release = Mock(
+            side_effect=lambda handles: self.registry.pop(id(handles), None)
+        )
         scope = {"trtllm_destroy_ipc_workspace_for_all_reduce_fusion": self.release}
-        exec(compile(ast.Module(body=[destroy_node], type_ignores=[]), str(source), "exec"), scope)
+        exec(
+            compile(
+                ast.Module(body=[destroy_node], type_ignores=[]), str(source), "exec"
+            ),
+            scope,
+        )
         self.destroy = scope["destroy"]
 
     def workspace(self, cc):
@@ -36,9 +52,13 @@ class WorkspaceCleanupContract(unittest.TestCase):
         mem_handles = [] if cc else [allocation]
         if cc:
             self.registry[id(handles)] = [allocation]
-        workspace = SimpleNamespace(ipc_handles=handles, workspace_tensor=tensor,
-            mem_handles=mem_handles, metadata={},
-            _internal_workspace=(handles, tensor, mem_handles, {}))
+        workspace = SimpleNamespace(
+            ipc_handles=handles,
+            workspace_tensor=tensor,
+            mem_handles=mem_handles,
+            metadata={},
+            _internal_workspace=(handles, tensor, mem_handles, {}),
+        )
         return workspace, weakref.ref(allocation), weakref.ref(tensor), id(handles)
 
     def test_cc_allocator_registry_released(self):

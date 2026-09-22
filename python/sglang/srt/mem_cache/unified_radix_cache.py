@@ -3459,9 +3459,7 @@ class UnifiedRadixCache(BasePrefixCache):
         self.loading_check(finish_count=load_finish_count)
 
         if self.enable_storage and storage_queue_sizes:
-            n_storage_hit, n_ack_prefetch, n_backup, n_release = storage_queue_sizes[
-                :4
-            ]
+            n_storage_hit, n_ack_prefetch, n_backup, n_release = storage_queue_sizes[:4]
             extra_release_counts = {
                 pool_name: count
                 for pool_name, count in zip(

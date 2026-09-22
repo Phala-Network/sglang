@@ -123,7 +123,7 @@ class TestMuseGlimmerDetector(CustomTestCase):
         JSON body retains Muse's channel header and must still become a call."""
         raw = (
             " to=self<|message|>Need weather.<|eom|>"
-            '<|start|>assistant to=get_weather<|message|>'
+            "<|start|>assistant to=get_weather<|message|>"
             '[{"name":"get_weather","parameters":{"city":"Paris"}}]'
         )
         reasoning, remainder = ReasoningParser(
@@ -152,7 +152,7 @@ class TestMuseGlimmerDetector(CustomTestCase):
     def test_required_json_array_quoted_in_answer_is_not_a_call(self):
         """The broader header detector must not activate a quoted tool frame."""
         quoted = (
-            '<|start|>assistant to=get_weather<|message|>'
+            "<|start|>assistant to=get_weather<|message|>"
             '[{"name":"get_weather","parameters":{"city":"X"}}]'
         )
         raw = (

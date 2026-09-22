@@ -3508,7 +3508,11 @@ class Scheduler(
         release_kv_cache(req, self.tree_cache, is_insert=False)
         # Non-overlap has resolved the launched chunk before this safe boundary.
         # Overlap retains MM inputs until its outstanding result is processed.
-        if not self.enable_overlap and req.multimodal_inputs is not None and req.session is None:
+        if (
+            not self.enable_overlap
+            and req.multimodal_inputs is not None
+            and req.session is None
+        ):
             req.multimodal_inputs.release_features()
             req.multimodal_inputs = None
 
@@ -5091,7 +5095,10 @@ class Scheduler(
         # consumes it.
         ret.pop("custom_sigquit_handler", None)
 
-        return GetInternalStateReqOutput(internal_state=msgspec_to_builtins(ret), control_nonce=recv_req.control_nonce)
+        return GetInternalStateReqOutput(
+            internal_state=msgspec_to_builtins(ret),
+            control_nonce=recv_req.control_nonce,
+        )
 
     def set_internal_state(self, recv_req: SetInternalStateReq):
         server_args_dict = recv_req.server_args
@@ -5099,10 +5106,19 @@ class Scheduler(
             from pig_governor.admin import execute
 
             try:
-                execute(self.governor.core, "patch", time.monotonic(), server_args_dict["pig_governor"])
-                return SetInternalStateReqOutput(updated=True, control_nonce=recv_req.control_nonce)
+                execute(
+                    self.governor.core,
+                    "patch",
+                    time.monotonic(),
+                    server_args_dict["pig_governor"],
+                )
+                return SetInternalStateReqOutput(
+                    updated=True, control_nonce=recv_req.control_nonce
+                )
             except ValueError:
-                return SetInternalStateReqOutput(updated=False, control_nonce=recv_req.control_nonce)
+                return SetInternalStateReqOutput(
+                    updated=False, control_nonce=recv_req.control_nonce
+                )
         args_allow_update = set(
             [
                 "pp_max_micro_batch_size",
@@ -5179,7 +5195,9 @@ class Scheduler(
                 get_context().override(source="update_server_args", **remaining)
             logger.info(f"Config updated via context override: {remaining}")
 
-        return SetInternalStateReqOutput(updated=if_success, control_nonce=recv_req.control_nonce)
+        return SetInternalStateReqOutput(
+            updated=if_success, control_nonce=recv_req.control_nonce
+        )
 
     def save_remote_model(self, **kwargs):
         self.weight_updater.save_remote_model(kwargs)

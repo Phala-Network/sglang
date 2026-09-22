@@ -466,9 +466,13 @@ class HiCacheFile(HiCacheStorage):
             if total_max_size <= 0:
                 raise ValueError("mamba_max_size requires a positive max_size")
             if not 0 < mamba_max_size < total_max_size:
-                raise ValueError("mamba_max_size must be positive and smaller than max_size")
+                raise ValueError(
+                    "mamba_max_size must be positive and smaller than max_size"
+                )
             if tp_size <= 0 or mamba_max_size // tp_size == 0:
-                raise ValueError("mamba_max_size must allocate at least one byte per TP rank")
+                raise ValueError(
+                    "mamba_max_size must allocate at least one byte per TP rank"
+                )
             shared_extra_config["max_size"] = total_max_size - mamba_max_size
             mamba_extra_config["max_size"] = mamba_max_size // tp_size
             logger.info(
@@ -586,9 +590,7 @@ class HiCacheFile(HiCacheStorage):
     def _get_suffixed_key(self, key: str) -> str:
         return key + self.config_suffix
 
-    def _get_component_key(
-        self, key: str, component_name: Optional[str] = None
-    ) -> str:
+    def _get_component_key(self, key: str, component_name: Optional[str] = None) -> str:
         if component_name is None or component_name in ("__default__", PoolName.KV):
             return self._get_suffixed_key(key)
         suffix = (

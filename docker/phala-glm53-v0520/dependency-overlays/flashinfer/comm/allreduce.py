@@ -52,26 +52,15 @@ Example usage:
         >>> workspace.destroy()
 """
 
-from typing import Union, Literal, Optional, Tuple, List, cast, Any
-from .workspace_base import AllReduceFusionWorkspace
+from typing import Any, List, Literal, Optional, Tuple, Union, cast
 
 import torch
-from torch.distributed import ProcessGroup
-
 from flashinfer.api_logging import flashinfer_api
 from flashinfer.trace.templates.comm import allreduce_fusion_trace
 from flashinfer.utils import is_confidential_compute
-
-from .trtllm_ar import trtllm_allreduce_fusion
-from .trtllm_ar import trtllm_create_ipc_workspace_for_all_reduce_fusion
-from .trtllm_ar import trtllm_destroy_ipc_workspace_for_all_reduce_fusion
-from .trtllm_ar import _initialize_allreduce_fusion_protocol
-from .trtllm_ar import check_trtllm_allreduce_fusion_workspace_metadata
-from .trtllm_ar import trtllm_moe_allreduce_fusion
-from .trtllm_ar import trtllm_moe_finalize_allreduce_fusion
+from torch.distributed import ProcessGroup
 
 from .mapping import Mapping
-
 from .mnnvl import (
     CommBackend,
     SymmDeviceMemory,
@@ -81,14 +70,26 @@ from .mnnvl import (
 
 # Note: AllReduceFusionPattern and QuantizationSFLayout are pseudo-types (classes with int constants)
 # Import them for runtime use but type hint as int for mypy compatibility
-from .trtllm_ar import AllReduceFusionPattern
-from .trtllm_ar import QuantizationSFLayout
-from .trtllm_mnnvl_ar import MNNVLAllReduceFusionWorkspace
-from .trtllm_mnnvl_ar import MNNVLAllreduceFusionStrategy
-from .trtllm_mnnvl_ar import MNNVLQuantType
-from .trtllm_mnnvl_ar import trtllm_mnnvl_allreduce
-from .trtllm_mnnvl_ar import trtllm_mnnvl_fused_allreduce_add_rmsnorm
-from .trtllm_mnnvl_ar import trtllm_mnnvl_fused_allreduce_add_rmsnorm_quant
+from .trtllm_ar import (
+    AllReduceFusionPattern,
+    QuantizationSFLayout,
+    _initialize_allreduce_fusion_protocol,
+    check_trtllm_allreduce_fusion_workspace_metadata,
+    trtllm_allreduce_fusion,
+    trtllm_create_ipc_workspace_for_all_reduce_fusion,
+    trtllm_destroy_ipc_workspace_for_all_reduce_fusion,
+    trtllm_moe_allreduce_fusion,
+    trtllm_moe_finalize_allreduce_fusion,
+)
+from .trtllm_mnnvl_ar import (
+    MNNVLAllreduceFusionStrategy,
+    MNNVLAllReduceFusionWorkspace,
+    MNNVLQuantType,
+    trtllm_mnnvl_allreduce,
+    trtllm_mnnvl_fused_allreduce_add_rmsnorm,
+    trtllm_mnnvl_fused_allreduce_add_rmsnorm_quant,
+)
+from .workspace_base import AllReduceFusionWorkspace
 
 # ============================================================================
 # WORKSPACE IMPLEMENTATIONS

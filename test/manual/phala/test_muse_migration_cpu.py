@@ -12,13 +12,13 @@ import inspect
 import json
 import logging
 import os
-from pathlib import Path
 import re
-from types import SimpleNamespace
 import unittest
 from dataclasses import dataclass, field
-from unittest.mock import MagicMock, patch
 from enum import Enum
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from jsonschema import Draft202012Validator
 
@@ -506,6 +506,8 @@ class MuseHistoryTests(unittest.TestCase):
         self.assertEqual(normalized[0]["reasoning_content"], "")
 
     def test_protocol_alias_real_pydantic_validation_and_serialization(self):
+        from typing import List, Literal, Optional, Tuple, Union, get_args
+
         from pydantic import (
             BaseModel,
             Field,
@@ -513,7 +515,6 @@ class MuseHistoryTests(unittest.TestCase):
             field_validator,
             model_validator,
         )
-        from typing import Optional, Union, List, Literal, Tuple, get_args
 
         ns = dict(
             BaseModel=BaseModel,

@@ -1,9 +1,16 @@
 """Opt-in checkpoint sampling defaults selected by the resolved thinking mode."""
 
-_SAMPLING_FIELDS = frozenset({
-    "temperature", "top_p", "top_k", "min_p", "presence_penalty",
-    "frequency_penalty", "repetition_penalty",
-})
+_SAMPLING_FIELDS = frozenset(
+    {
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "presence_penalty",
+        "frequency_penalty",
+        "repetition_penalty",
+    }
+)
 
 
 def apply_mode_sampling_defaults(request, params, model_config, reasoning):
@@ -16,7 +23,9 @@ def apply_mode_sampling_defaults(request, params, model_config, reasoning):
     profile = profiles.get(mode, {})
     unknown = set(profile) - _SAMPLING_FIELDS
     if unknown:
-        raise ValueError(f"Unsupported mode-specific sampling defaults: {sorted(unknown)}")
+        raise ValueError(
+            f"Unsupported mode-specific sampling defaults: {sorted(unknown)}"
+        )
     result = dict(params)
     explicit = request.model_fields_set
     for name, value in profile.items():

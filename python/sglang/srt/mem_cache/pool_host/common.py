@@ -11,7 +11,9 @@ from functools import lru_cache
 import torch
 
 from sglang.srt.environ import envs
-from sglang.srt.mem_cache.pool_host.allocation_budget import active_host_allocation_budget
+from sglang.srt.mem_cache.pool_host.allocation_budget import (
+    active_host_allocation_budget,
+)
 from sglang.srt.mem_cache.storage.mmap import alloc_mmap
 from sglang.srt.mem_cache.storage.mmap.mmap_allocator import requested_hugepage_bytes
 from sglang.srt.runtime_context import get_memory

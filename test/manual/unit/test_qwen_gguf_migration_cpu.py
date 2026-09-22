@@ -7,24 +7,23 @@ acceptance. Historical donors: 81881bd7c1, 39eedc17eb and 788a898375.
 """
 
 import ast
-from contextlib import nullcontext
 import glob
 import importlib.util
 import logging
 import os
-from pathlib import Path
 import re
 import sys
 import tempfile
-from types import SimpleNamespace
 import unittest
+from contextlib import nullcontext
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import gguf
 import numpy as np
 import torch
 import torch.nn.functional as F
-
 
 ROOT = Path(__file__).resolve().parents[3]
 SRT = ROOT / "python/sglang/srt"

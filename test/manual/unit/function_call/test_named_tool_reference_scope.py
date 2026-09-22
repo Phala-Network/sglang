@@ -6,10 +6,9 @@ stack or native dependencies. This does not qualify native grammar compilation.
 
 import ast
 import copy
+import unittest
 from pathlib import Path
 from types import SimpleNamespace
-import unittest
-
 
 ROOT = Path(__file__).resolve().parents[4]
 SOURCE = ROOT / "python/sglang/srt/function_call/utils.py"
@@ -27,13 +26,19 @@ def load_schema_builder():
         "get_json_schema_constraint",
     }
     functions = [
-        node for node in tree.body
+        node
+        for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name in names
     ]
     if {node.name for node in functions} != names:
         raise AssertionError("The real schema builder functions were not found")
     module = ast.Module(
-        body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), *functions],
+        body=[
+            ast.ImportFrom(
+                module="__future__", names=[ast.alias(name="annotations")], level=0
+            ),
+            *functions,
+        ],
         type_ignores=[],
     )
     namespace = {"ToolChoice": ToolChoice}
@@ -63,7 +68,9 @@ class NamedToolReferenceScopeTests(unittest.TestCase):
                     "required": ["city"],
                 }
                 schema = BUILD([tool("weather", parameters)], named("weather"), False)
-                reference = schema["items"]["properties"]["parameters"]["properties"]["city"]["$ref"]
+                reference = schema["items"]["properties"]["parameters"]["properties"][
+                    "city"
+                ]["$ref"]
                 resolved = schema
                 for part in reference.removeprefix("#/").split("/"):
                     resolved = resolved[part]
@@ -73,7 +80,9 @@ class NamedToolReferenceScopeTests(unittest.TestCase):
     def test_named_only_retains_selected_tool_definitions(self):
         selected = {"$defs": {"value": {"type": "integer"}}}
         other = {"$defs": {"value": {"type": "string"}}}
-        schema = BUILD([tool("selected", selected), tool("other", other)], named("selected"))
+        schema = BUILD(
+            [tool("selected", selected), tool("other", other)], named("selected")
+        )
         self.assertEqual(schema["$defs"], selected["$defs"])
         self.assertNotIn("maxItems", schema)
 

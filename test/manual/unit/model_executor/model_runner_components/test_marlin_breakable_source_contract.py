@@ -162,9 +162,7 @@ class MarlinBreakableSourceContract(unittest.TestCase):
                     count = actual[2].data[0]
                     self.assertEqual(count, len(expected_ids))
                     self.assertEqual(actual[0].data[:count], expected_ids)
-                    self.assertEqual(
-                        actual[1].data[: count // block], expected_experts
-                    )
+                    self.assertEqual(actual[1].data[: count // block], expected_experts)
 
     def test_dispatch_defaults_and_stable_tiny_path(self):
         for cuda, entries, experts, ignore, deterministic, expected in [
@@ -187,9 +185,7 @@ class MarlinBreakableSourceContract(unittest.TestCase):
                     Pointer([0] * entries), 8, experts, ignore, **kwargs
                 )
                 self.assertEqual(stable.called, expected == "stable")
-                self.assertEqual(
-                    ns["moe_align_small_numel"].called, expected == "tiny"
-                )
+                self.assertEqual(ns["moe_align_small_numel"].called, expected == "tiny")
                 self.assertEqual(
                     ns["sgl_moe_align_block_size"].called, expected == "generic"
                 )
@@ -197,17 +193,23 @@ class MarlinBreakableSourceContract(unittest.TestCase):
     def test_marlin_requests_stable_alignment_and_fp32_both_gemms(self):
         calls = [node for node in ast.walk(tree(FUSED)) if isinstance(node, ast.Call)]
         align = [
-            node for node in calls
-            if isinstance(node.func, ast.Name) and node.func.id == "moe_align_block_size"
+            node
+            for node in calls
+            if isinstance(node.func, ast.Name)
+            and node.func.id == "moe_align_block_size"
         ]
         self.assertEqual(len(align), 1)
         self.assertTrue(
-            any(k.arg == "deterministic" and ast.literal_eval(k.value)
-                for k in align[0].keywords)
+            any(
+                k.arg == "deterministic" and ast.literal_eval(k.value)
+                for k in align[0].keywords
+            )
         )
         gemms = [
-            node for node in calls
-            if isinstance(node.func, ast.Name) and node.func.id == "moe_wna16_marlin_gemm"
+            node
+            for node in calls
+            if isinstance(node.func, ast.Name)
+            and node.func.id == "moe_wna16_marlin_gemm"
         ]
         self.assertEqual(len(gemms), 2)
         for gemm in gemms:
@@ -216,8 +218,11 @@ class MarlinBreakableSourceContract(unittest.TestCase):
             self.assertEqual(kwargs["use_atomic_add"].id, "use_atomic_add")
 
     def test_fp4_atomic_gate_preserves_other_marlin_defaults(self):
-        expr = compile(ast.Expression(assignment_expression(FUSED, "use_atomic_add")),
-                       str(FUSED), "eval")
+        expr = compile(
+            ast.Expression(assignment_expression(FUSED, "use_atomic_add")),
+            str(FUSED),
+            "eval",
+        )
         for dtype in ("half", "bfloat16"):
             for sm in (8, 9, 12):
                 for mxfp4, nvfp4 in ((False, False), (True, False), (False, True)):
@@ -225,7 +230,9 @@ class MarlinBreakableSourceContract(unittest.TestCase):
                         "hidden_states": SimpleNamespace(dtype=dtype, device="cuda"),
                         "torch": SimpleNamespace(
                             half="half",
-                            cuda=SimpleNamespace(get_device_capability=lambda _: (sm, 0)),
+                            cuda=SimpleNamespace(
+                                get_device_capability=lambda _: (sm, 0)
+                            ),
                         ),
                         "is_mxfp4_marlin": mxfp4,
                         "is_nvfp4_marlin": nvfp4,
@@ -236,20 +243,26 @@ class MarlinBreakableSourceContract(unittest.TestCase):
                     )
 
     def test_dense_fp32_disables_atomic_without_changing_opt_out(self):
-        expr = compile(ast.Expression(assignment_expression(DENSE, "use_atomic_add")),
-                       str(DENSE), "eval")
+        expr = compile(
+            ast.Expression(assignment_expression(DENSE, "use_atomic_add")),
+            str(DENSE),
+            "eval",
+        )
         for fp32 in (False, True):
             for heuristic in (False, True):
                 chooser = Mock(return_value=heuristic)
                 self.assertEqual(
-                    eval(expr, {
-                        "use_fp32_reduce": fp32,
-                        "should_use_atomic_add_reduce": chooser,
-                        "reshaped_x": SimpleNamespace(size=lambda _: 6),
-                        "padded_size_n": 1856,
-                        "padded_size_k": 2688,
-                        "input": SimpleNamespace(device="cuda", dtype="bfloat16"),
-                    }),
+                    eval(
+                        expr,
+                        {
+                            "use_fp32_reduce": fp32,
+                            "should_use_atomic_add_reduce": chooser,
+                            "reshaped_x": SimpleNamespace(size=lambda _: 6),
+                            "padded_size_n": 1856,
+                            "padded_size_k": 2688,
+                            "input": SimpleNamespace(device="cuda", dtype="bfloat16"),
+                        },
+                    ),
                     not fp32 and heuristic,
                 )
                 self.assertEqual(chooser.called, not fp32)
@@ -257,27 +270,36 @@ class MarlinBreakableSourceContract(unittest.TestCase):
     def test_only_breakable_bypasses_gqa_gate_and_capture_uses_gate(self):
         ns = {}
         load_functions(SRT / "model_executor/cuda_graph_config.py", ["Backend"], ns)
-        load_functions(GRAPH, [
-            "has_standard_gqa_for_all_local_layers",
-            "should_disable_prefill_graph_for_nonstandard_gqa",
-        ], ns)
+        load_functions(
+            GRAPH,
+            [
+                "has_standard_gqa_for_all_local_layers",
+                "should_disable_prefill_graph_for_nonstandard_gqa",
+            ],
+            ns,
+        )
         for backend in ns["Backend"].ALL:
             for start, end in ((0, 46), (23, 46), (23, 23)):
                 for count in (0, end - start, end - start + 1):
                     self.assertEqual(
                         ns["should_disable_prefill_graph_for_nonstandard_gqa"](
-                            prefill_backend=backend, attention_layer_count=count,
-                            start_layer=start, end_layer=end,
+                            prefill_backend=backend,
+                            attention_layer_count=count,
+                            start_layer=start,
+                            end_layer=end,
                         ),
                         backend != ns["Backend"].BREAKABLE and count < end - start,
                     )
         capture = next(
-            n for n in tree(GRAPH).body
+            n
+            for n in tree(GRAPH).body
             if isinstance(n, ast.FunctionDef) and n.name == "capture_prefill_graph"
         )
         guards = [
-            n for n in ast.walk(capture)
-            if isinstance(n, ast.If) and isinstance(n.test, ast.Call)
+            n
+            for n in ast.walk(capture)
+            if isinstance(n, ast.If)
+            and isinstance(n.test, ast.Call)
             and isinstance(n.test.func, ast.Name)
             and n.test.func.id == "should_disable_prefill_graph_for_nonstandard_gqa"
         ]

@@ -174,7 +174,9 @@ class ContinuationRegression(unittest.TestCase):
                         a.token_to_kv_pool_allocator.page_size = 512
                         a.add_chunked_req(r)
                         if a.can_run_list:
-                            pages = (r.extend_range.end + 511) // 512 - (prefix + 511) // 512
+                            pages = (r.extend_range.end + 511) // 512 - (
+                                prefix + 511
+                            ) // 512
                             self.assertLessEqual(pages * 512, free - mixed)
                             self.assertGreaterEqual(a.cur_rem_tokens, 0)
 

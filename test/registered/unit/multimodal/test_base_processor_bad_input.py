@@ -120,9 +120,7 @@ class TestServerFaultStaysServerError(CustomTestCase):
     def test_pil_system_oserror(self):
         image = MagicMock(mode="RGB")
         image.load.side_effect = OSError(errno.EMFILE, "too many open files")
-        with patch(
-            "sglang.srt.utils.common.Image.open", return_value=image
-        ):
+        with patch("sglang.srt.utils.common.Image.open", return_value=image):
             with self.assertRaisesRegex(RuntimeError, "too many open files"):
                 _StubProcessor._load_single_item(b"not-a-jpeg", Modality.IMAGE)
 

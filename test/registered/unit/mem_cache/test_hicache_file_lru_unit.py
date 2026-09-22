@@ -145,8 +145,12 @@ class TestMLAMambaOwnershipCausal(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             build = _BackendBuilder(directory)
             common = dict(
-                max_size="500", mamba_max_size="200", is_mla=True,
-                tp_size=2, model="kimi-k3", subdir="shared",
+                max_size="500",
+                mamba_max_size="200",
+                is_mla=True,
+                tp_size=2,
+                model="kimi-k3",
+                subdir="shared",
                 enable_metadata_cache=False,
             )
             rank0 = build(tp_rank=0, **common)
@@ -616,12 +620,8 @@ class TestMLAMambaRankShards(HiCacheFileLRUTestBase):
     def test_rank_owned_clear_preserves_other_rank_mamba_state(self):
         rank0, rank1 = self._make_tp2(max_size="500", mamba_max_size="200")
         self.assertTrue(rank0.set("shared-kv", _t(8, 1)))
-        self.assertTrue(
-            rank0.set("rank0", _t(40, 10), component_name=PoolName.MAMBA)
-        )
-        self.assertTrue(
-            rank1.set("rank1", _t(40, 20), component_name=PoolName.MAMBA)
-        )
+        self.assertTrue(rank0.set("rank0", _t(40, 10), component_name=PoolName.MAMBA))
+        self.assertTrue(rank1.set("rank1", _t(40, 20), component_name=PoolName.MAMBA))
         rank1_stem = rank1._get_component_key("rank1", PoolName.MAMBA)
         rank1_path = os.path.join(rank1.file_path, f"{rank1_stem}.bin")
         rank1_lru_before = dict(rank1._mamba_evictor._lru)
@@ -641,9 +641,7 @@ class TestMLAMambaRankShards(HiCacheFileLRUTestBase):
         self.assertEqual(dict(rank1._mamba_evictor._lru), rank1_lru_before)
         self.assertTrue(rank1.exists("rank1", component_name=PoolName.MAMBA))
         # An existing key remains a no-op and a new key uses the same live LRU.
-        self.assertTrue(
-            rank1.set("rank1", _t(40, 99), component_name=PoolName.MAMBA)
-        )
+        self.assertTrue(rank1.set("rank1", _t(40, 99), component_name=PoolName.MAMBA))
         self.assertTrue(
             rank1.set("rank1-new", _t(40, 30), component_name=PoolName.MAMBA)
         )
@@ -656,9 +654,7 @@ class TestMLAMambaRankShards(HiCacheFileLRUTestBase):
             max_size="500", mamba_max_size="200", enable_metadata_cache=True
         )
         self.assertTrue(rank0.set("shared-kv", _t(8, 1)))
-        self.assertTrue(
-            rank1.set("rank1", _t(40, 20), component_name=PoolName.MAMBA)
-        )
+        self.assertTrue(rank1.set("rank1", _t(40, 20), component_name=PoolName.MAMBA))
         # The HTTP control request is broadcast to all TP schedulers. Model that
         # group reset by calling each rank-local backend once.
         self.assertTrue(rank0.clear())
@@ -672,14 +668,10 @@ class TestMLAMambaRankShards(HiCacheFileLRUTestBase):
         self.assertFalse(rank1.metadata_cache.cache)
 
     def test_capped_mamba_requires_explicit_aggregate_allocation(self):
-        rank0 = self.make_backend(
-            max_size="500", is_mla=True, tp_rank=0, tp_size=2
-        )
+        rank0 = self.make_backend(max_size="500", is_mla=True, tp_rank=0, tp_size=2)
         with self.assertRaisesRegex(ValueError, "requires extra_config.mamba_max_size"):
             rank0.register_mem_host_pool_v2(_FakeHostPool([_t(8)]), PoolName.MAMBA)
-        self.assertFalse(
-            rank0.set("k", _t(8, 1), component_name=PoolName.MAMBA)
-        )
+        self.assertFalse(rank0.set("k", _t(8, 1), component_name=PoolName.MAMBA))
 
     def test_invalid_or_unisolated_budget_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "smaller than max_size"):
@@ -709,9 +701,7 @@ class TestMLAMambaRankShards(HiCacheFileLRUTestBase):
     def test_failed_atomic_replace_refunds_mamba_reservation(self):
         rank0, _ = self._make_tp2()
         with mock.patch("os.replace", side_effect=OSError("injected failure")):
-            self.assertFalse(
-                rank0.set("k", _t(80, 1), component_name=PoolName.MAMBA)
-            )
+            self.assertFalse(rank0.set("k", _t(80, 1), component_name=PoolName.MAMBA))
         self.assertEqual(rank0._mamba_evictor._total_bytes, 0)
         self.assertFalse(rank0._mamba_evictor._pending_writes)
         self.assertFalse(rank0.exists("k", component_name=PoolName.MAMBA))

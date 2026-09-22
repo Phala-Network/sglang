@@ -1065,9 +1065,10 @@ class SchedulerReqTimeStats(ReqTimeStatsBase):
     def get_queueing_time(self) -> float:
         # Old serialized/directly populated records may not have the first-wait
         # field. Fall back to their current wait timestamp; never clamp values.
-        first_wait_queue_entry_time = getattr(
-            self, "first_wait_queue_entry_time", 0.0
-        ) or self.wait_queue_entry_time
+        first_wait_queue_entry_time = (
+            getattr(self, "first_wait_queue_entry_time", 0.0)
+            or self.wait_queue_entry_time
+        )
         return self.forward_entry_time - first_wait_queue_entry_time
 
     def convert_to_duration(self) -> str:

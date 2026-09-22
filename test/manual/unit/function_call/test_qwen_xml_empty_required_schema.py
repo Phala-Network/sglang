@@ -19,7 +19,10 @@ def tool(schema):
     schema = copy.deepcopy(schema)
     normalize_json_schema_types(schema)
     return Tool.model_validate(
-        {"type": "function", "function": {"name": "probe", "strict": True, "parameters": schema}}
+        {
+            "type": "function",
+            "function": {"name": "probe", "strict": True, "parameters": schema},
+        }
     )
 
 
@@ -47,7 +50,12 @@ def parameter(name="city", value="Paris"):
 EMPTY_SCHEMAS = [
     {"type": "object", "additionalProperties": False},
     {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
-    {"type": "object", "properties": None, "required": None, "additionalProperties": False},
+    {
+        "type": "object",
+        "properties": None,
+        "required": None,
+        "additionalProperties": False,
+    },
     {"type": "object", "properties": {}, "required": []},
     {"type": "object", "additionalProperties": True, "maxProperties": 0},
 ]
@@ -77,19 +85,31 @@ def test_undeclared_required_property_is_not_discarded(properties, additional):
     assert not _is_grammar_accept_string(compiled, call(parameter("country", "France")))
 
 
-@pytest.mark.parametrize("schema", [
-    {"type": "object", "required": ["city"], "additionalProperties": False},
-    {"type": "object", "properties": {}, "required": ["city"], "additionalProperties": False},
-    {"type": "object", "required": ["city"], "unevaluatedProperties": False},
-    {"type": "object", "required": ["city"], "maxProperties": 0},
-])
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"type": "object", "required": ["city"], "additionalProperties": False},
+        {
+            "type": "object",
+            "properties": {},
+            "required": ["city"],
+            "additionalProperties": False,
+        },
+        {"type": "object", "required": ["city"], "unevaluatedProperties": False},
+        {"type": "object", "required": ["city"], "maxProperties": 0},
+    ],
+)
 def test_unsatisfiable_required_property_rejected_before_generation(schema):
     with pytest.raises((RuntimeError, ValueError)):
         grammar(schema)
 
 
 def test_typed_additional_required_property_remains_typed():
-    schema = {"type": "object", "required": ["count"], "additionalProperties": {"type": "integer"}}
+    schema = {
+        "type": "object",
+        "required": ["count"],
+        "additionalProperties": {"type": "integer"},
+    }
     compiled = grammar(schema)
     assert _is_grammar_accept_string(compiled, call(parameter("count", "7")))
     assert not _is_grammar_accept_string(compiled, call(parameter("count", "wrong")))
@@ -104,22 +124,38 @@ def test_typed_additional_parameter_parser(streaming, keyword):
     tools = [tool(schema)]
     text = call(parameter("count", "7"))
     if streaming:
-        chunks = [detector.parse_streaming_increment(text[i:i + 3], tools) for i in range(0, len(text), 3)]
-        arguments = "".join(item.parameters or "" for chunk in chunks for item in chunk.calls)
+        chunks = [
+            detector.parse_streaming_increment(text[i : i + 3], tools)
+            for i in range(0, len(text), 3)
+        ]
+        arguments = "".join(
+            item.parameters or "" for chunk in chunks for item in chunk.calls
+        )
     else:
         arguments = detector.detect_and_parse(text, tools).calls[0].parameters
     assert json.loads(arguments) == {"count": 7}
 
 
 def test_declared_and_undeclared_required_fields_both_enforced():
-    schema = {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city", "country"]}
+    schema = {
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": ["city", "country"],
+    }
     compiled = grammar(schema)
-    assert _is_grammar_accept_string(compiled, call(parameter() + parameter("country", "France")))
+    assert _is_grammar_accept_string(
+        compiled, call(parameter() + parameter("country", "France"))
+    )
     assert not _is_grammar_accept_string(compiled, call(parameter()))
 
 
 def test_optional_nonempty_tool_keeps_its_parameter_branch():
-    schema = {"type": "object", "properties": {"city": {"type": "string"}}, "required": [], "additionalProperties": False}
+    schema = {
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": [],
+        "additionalProperties": False,
+    }
     compiled = grammar(schema)
     assert _is_grammar_accept_string(compiled, call())
     assert _is_grammar_accept_string(compiled, call(parameter()))
@@ -129,12 +165,19 @@ def test_optional_nonempty_tool_keeps_its_parameter_branch():
 def test_required_parallel_empty_calls_keep_template_separator():
     compiled = grammar(EMPTY_SCHEMAS[0], "required", parallel=True)
     assert _is_grammar_accept_string(compiled, call() + "\n" + call())
-    assert not _is_grammar_accept_string(grammar(EMPTY_SCHEMAS[0], "required"), call() + "\n" + call())
+    assert not _is_grammar_accept_string(
+        grammar(EMPTY_SCHEMAS[0], "required"), call() + "\n" + call()
+    )
 
 
 def test_nested_empty_object_keeps_json_braces_and_ref():
-    schema = {"type": "object", "properties": {"config": {"$ref": "#/$defs/Empty"}}, "required": ["config"],
-              "additionalProperties": False, "$defs": {"Empty": EMPTY_SCHEMAS[0]}}
+    schema = {
+        "type": "object",
+        "properties": {"config": {"$ref": "#/$defs/Empty"}},
+        "required": ["config"],
+        "additionalProperties": False,
+        "$defs": {"Empty": EMPTY_SCHEMAS[0]},
+    }
     compiled = grammar(schema)
     assert _is_grammar_accept_string(compiled, call(parameter("config", "{}")))
     assert _is_grammar_accept_string(compiled, call(parameter("config", "{ \n\t}")))
@@ -142,7 +185,9 @@ def test_nested_empty_object_keeps_json_braces_and_ref():
 
 
 def test_plain_json_empty_object_is_unchanged():
-    compiled = xgr.Grammar.from_structural_tag(StructuralTag(format=JSONSchemaFormat(json_schema=EMPTY_SCHEMAS[0])))
+    compiled = xgr.Grammar.from_structural_tag(
+        StructuralTag(format=JSONSchemaFormat(json_schema=EMPTY_SCHEMAS[0]))
+    )
     assert _is_grammar_accept_string(compiled, "{}")
     assert _is_grammar_accept_string(compiled, "{ \n\t}")
     assert not _is_grammar_accept_string(compiled, "")
@@ -154,20 +199,29 @@ def test_open_object_not_collapsed_to_no_arguments():
     assert _is_grammar_accept_string(compiled, call(parameter()))
 
 
-@pytest.mark.parametrize("extra", [
-    {"patternProperties": {"^city$": {"type": "string"}}},
-    {"propertyNames": {"enum": ["city"]}},
-])
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"patternProperties": {"^city$": {"type": "string"}}},
+        {"propertyNames": {"enum": ["city"]}},
+    ],
+)
 def test_undeclared_required_complex_key_constraints_fail_closed(extra):
     with pytest.raises((RuntimeError, ValueError), match="Undeclared required"):
         grammar({"type": "object", "required": ["city"], **extra})
 
 
 def test_typed_additional_ref_preserved_in_parser():
-    schema = {"type": "object", "required": ["count"], "additionalProperties": {"$ref": "#/$defs/Count"},
-              "$defs": {"Count": {"type": "integer", "minimum": 1}}}
+    schema = {
+        "type": "object",
+        "required": ["count"],
+        "additionalProperties": {"$ref": "#/$defs/Count"},
+        "$defs": {"Count": {"type": "integer", "minimum": 1}},
+    }
     compiled = grammar(schema)
     assert _is_grammar_accept_string(compiled, call(parameter("count", "7")))
     assert not _is_grammar_accept_string(compiled, call(parameter("count", "0")))
-    parsed = Qwen3CoderDetector().detect_and_parse(call(parameter("count", "7")), [tool(schema)])
+    parsed = Qwen3CoderDetector().detect_and_parse(
+        call(parameter("count", "7")), [tool(schema)]
+    )
     assert json.loads(parsed.calls[0].parameters) == {"count": 7}

@@ -11,9 +11,7 @@ def test_reasoning_tokens_use_openai_completion_details_shape():
     assert usage.reasoning_tokens == 17
     assert usage.completion_tokens_details is not None
     assert usage.completion_tokens_details.reasoning_tokens == 17
-    assert usage.model_dump()["completion_tokens_details"] == {
-        "reasoning_tokens": 17
-    }
+    assert usage.model_dump()["completion_tokens_details"] == {"reasoning_tokens": 17}
 
 
 def test_zero_reasoning_tokens_keep_completion_details_absent():

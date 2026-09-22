@@ -260,15 +260,18 @@ class PrefillMetadataHandoffTest(unittest.TestCase):
                 batch.enable_overlap = mode == "batch_overlap"
                 target.enable_overlap = mode == "worker_overlap"
                 self.plan_stream.return_value = mode == "plan_stream"
-                with patch(
-                    "sglang.srt.speculative.eagle_worker_v2.get_schedule",
-                    return_value=SimpleNamespace(
-                        disable_overlap_schedule=mode != "global_overlap"
+                with (
+                    patch(
+                        "sglang.srt.speculative.eagle_worker_v2.get_schedule",
+                        return_value=SimpleNamespace(
+                            disable_overlap_schedule=mode != "global_overlap"
+                        ),
                     ),
-                ), patch(
-                    "sglang.srt.managers.tp_worker.get_schedule",
-                    return_value=SimpleNamespace(
-                        disable_overlap_schedule=mode != "global_overlap"
+                    patch(
+                        "sglang.srt.managers.tp_worker.get_schedule",
+                        return_value=SimpleNamespace(
+                            disable_overlap_schedule=mode != "global_overlap"
+                        ),
                     ),
                 ):
                     result, copies = self.run_chain(batch, outer)

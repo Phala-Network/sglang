@@ -63,8 +63,8 @@ from sglang.srt.configs.model_config import ModelConfig
 from sglang.srt.constants import HEALTH_CHECK_RID_PREFIX
 from sglang.srt.disaggregation.encoder.receiver import create_mm_receiver
 from sglang.srt.disaggregation.utils import DisaggregationMode
-from sglang.srt.environ import envs
 from sglang.srt.entrypoints.request_disconnect import response_disconnect_watched
+from sglang.srt.environ import envs
 from sglang.srt.lora.lora_registry import LoRARef, LoRARegistry
 from sglang.srt.managers.async_dynamic_batch_tokenizer import AsyncDynamicbatchTokenizer
 from sglang.srt.managers.disagg_service import start_disagg_service
@@ -915,9 +915,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     await self._send_one_request(tokenized_obj)
                     responses = self._wait_one_response(obj, request)
                 else:
-                    responses = self._handle_batch_request(
-                        obj, request, request_rids
-                    )
+                    responses = self._handle_batch_request(obj, request, request_rids)
                 async with aclosing(responses):
                     async for response in responses:
                         yield response
@@ -2343,7 +2341,9 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     or batch_size < 1
                     or not isinstance(rids, list)
                     or len(rids) < batch_size
-                    or any(not isinstance(rid, str) or not rid for rid in rids[:batch_size])
+                    or any(
+                        not isinstance(rid, str) or not rid for rid in rids[:batch_size]
+                    )
                 ):
                     return
                 # Parallel-sampling expansion has separate child ownership.

@@ -1,14 +1,13 @@
 """Source-method CPU checks for the v0.5.20 DeepSeek V4.1 chat migration."""
+
 import ast
 import copy
 import importlib.util
-import json
 import logging
-from pathlib import Path
-from types import SimpleNamespace
 import typing
 import unittest
-
+from pathlib import Path
+from types import SimpleNamespace
 
 SRT = Path(__file__).resolve().parents[3] / "python/sglang/srt"
 
@@ -28,7 +27,9 @@ class NamedChoice:
 class AllowedChoice:
     def __init__(self, names):
         self.allowed_tools = SimpleNamespace(
-            mode="auto", tools=[SimpleNamespace(function=SimpleNamespace(name=n)) for n in names])
+            mode="auto",
+            tools=[SimpleNamespace(function=SimpleNamespace(name=n)) for n in names],
+        )
 
 
 class Tool:
@@ -36,8 +37,11 @@ class Tool:
         self.function = SimpleNamespace(name=name)
 
     def model_dump(self, exclude_unset=False, exclude_none=False, **kwargs):
-        function = {"parameters": {"type": "object"}, "description": "description",
-                    "name": self.function.name}
+        function = {
+            "parameters": {"type": "object"},
+            "description": "description",
+            "name": self.function.name,
+        }
         if not exclude_unset:
             function["strict"] = False
         if not exclude_none:
@@ -48,40 +52,102 @@ class Tool:
 class ChatMigrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.encoder = load_module("encoding_dsv41", SRT / "entrypoints/openai/encoding_dsv41.py")
-        cls.namespace = dict(vars(typing), encoding_dsv41=cls.encoder,
-                             encoding_dsv4=SimpleNamespace(), logging=logging,
-                             Path=Path, ast=ast)
-        parsed = ast.parse((SRT / "entrypoints/openai/chat_encoding.py").read_text(encoding="utf-8"))
-        nodes = [n for n in parsed.body if not isinstance(n, (ast.Import, ast.ImportFrom))]
-        exec(compile(ast.Module(nodes, type_ignores=[]), "<actual-chat-encoding>", "exec"),
-             cls.namespace)
-        parsed = ast.parse((SRT / "entrypoints/openai/serving_chat.py").read_text(encoding="utf-8"))
-        owner = next(n for n in parsed.body if isinstance(n, ast.ClassDef) and n.name == "OpenAIServingChat")
-        methods = [n for n in owner.body if isinstance(n, ast.FunctionDef)
-                   and n.name in ("_allowed_tool_names", "_request_tools_for_prompt")]
-        cls.namespace.update(ChatCompletionRequest=object, ToolChoice=NamedChoice,
-                             AllowedToolsChoice=AllowedChoice)
-        wrapper = ast.ClassDef(name="Serving", bases=[], keywords=[], body=methods, decorator_list=[])
-        exec(compile(ast.fix_missing_locations(ast.Module([wrapper], type_ignores=[])),
-                     "<actual-serving-methods>", "exec"), cls.namespace)
+        cls.encoder = load_module(
+            "encoding_dsv41", SRT / "entrypoints/openai/encoding_dsv41.py"
+        )
+        cls.namespace = dict(
+            vars(typing),
+            encoding_dsv41=cls.encoder,
+            encoding_dsv4=SimpleNamespace(),
+            logging=logging,
+            Path=Path,
+            ast=ast,
+        )
+        parsed = ast.parse(
+            (SRT / "entrypoints/openai/chat_encoding.py").read_text(encoding="utf-8")
+        )
+        nodes = [
+            n for n in parsed.body if not isinstance(n, (ast.Import, ast.ImportFrom))
+        ]
+        exec(
+            compile(
+                ast.Module(nodes, type_ignores=[]), "<actual-chat-encoding>", "exec"
+            ),
+            cls.namespace,
+        )
+        parsed = ast.parse(
+            (SRT / "entrypoints/openai/serving_chat.py").read_text(encoding="utf-8")
+        )
+        owner = next(
+            n
+            for n in parsed.body
+            if isinstance(n, ast.ClassDef) and n.name == "OpenAIServingChat"
+        )
+        methods = [
+            n
+            for n in owner.body
+            if isinstance(n, ast.FunctionDef)
+            and n.name in ("_allowed_tool_names", "_request_tools_for_prompt")
+        ]
+        cls.namespace.update(
+            ChatCompletionRequest=object,
+            ToolChoice=NamedChoice,
+            AllowedToolsChoice=AllowedChoice,
+        )
+        wrapper = ast.ClassDef(
+            name="Serving", bases=[], keywords=[], body=methods, decorator_list=[]
+        )
+        exec(
+            compile(
+                ast.fix_missing_locations(ast.Module([wrapper], type_ignores=[])),
+                "<actual-serving-methods>",
+                "exec",
+            ),
+            cls.namespace,
+        )
 
     def test_model_type_precedes_ambiguous_v4_architecture(self):
         resolve = self.namespace["resolve_chat_encoding_spec"]
-        self.assertEqual(resolve(hf_config=SimpleNamespace(
-            architectures=["DeepseekV4ForCausalLM"], model_type="deepseek_v41"),
-            tokenizer=None), "dsv41")
-        self.assertEqual(resolve(hf_config=SimpleNamespace(
-            architectures=["DeepseekV4ForCausalLM"], model_type="deepseek_v4"),
-            tokenizer=None), "dsv4")
-        for name in ("Qwen3ForCausalLM", "Gemma4ForConditionalGeneration", "NemotronHForCausalLM"):
-            self.assertIsNone(resolve(hf_config=SimpleNamespace(architectures=[name]), tokenizer=None))
+        self.assertEqual(
+            resolve(
+                hf_config=SimpleNamespace(
+                    architectures=["DeepseekV4ForCausalLM"], model_type="deepseek_v41"
+                ),
+                tokenizer=None,
+            ),
+            "dsv41",
+        )
+        self.assertEqual(
+            resolve(
+                hf_config=SimpleNamespace(
+                    architectures=["DeepseekV4ForCausalLM"], model_type="deepseek_v4"
+                ),
+                tokenizer=None,
+            ),
+            "dsv4",
+        )
+        for name in (
+            "Qwen3ForCausalLM",
+            "Gemma4ForConditionalGeneration",
+            "NemotronHForCausalLM",
+        ):
+            self.assertIsNone(
+                resolve(hf_config=SimpleNamespace(architectures=[name]), tokenizer=None)
+            )
 
     def test_explicit_parser_routing_is_retained(self):
-        for name, spec in (("deepseekv41", "dsv41"), ("deepseekv4", "dsv4"),
-                           ("deepseekv32", "dsv32"), ("kimi_k3", "kimi_k3")):
-            self.assertEqual(self.namespace["resolve_chat_encoding_spec"](
-                hf_config=None, tokenizer=None, tool_call_parser=name), spec)
+        for name, spec in (
+            ("deepseekv41", "dsv41"),
+            ("deepseekv4", "dsv4"),
+            ("deepseekv32", "dsv32"),
+            ("kimi_k3", "kimi_k3"),
+        ):
+            self.assertEqual(
+                self.namespace["resolve_chat_encoding_spec"](
+                    hf_config=None, tokenizer=None, tool_call_parser=name
+                ),
+                spec,
+            )
 
     def test_budget_validation_is_model_local_and_rejects_invalid_types(self):
         parse = self.namespace["parse_dsv41_reasoning_effort"]
@@ -102,14 +168,21 @@ class ChatMigrationTests(unittest.TestCase):
 
     def test_allowed_and_named_tools_remain_filtered_before_ds_serialization(self):
         serving = self.namespace["Serving"]()
-        for choice, expected in ((AllowedChoice(["b"]), ["b"]), (NamedChoice("a"), ["a"]),
-                                 ("auto", ["a", "b"])):
+        for choice, expected in (
+            (AllowedChoice(["b"]), ["b"]),
+            (NamedChoice("a"), ["a"]),
+            ("auto", ["a", "b"]),
+        ):
             request = SimpleNamespace(tools=[Tool("a"), Tool("b")], tool_choice=choice)
-            tools = serving._request_tools_for_prompt(request, exclude_unset=True, exclude_none=True)
+            tools = serving._request_tools_for_prompt(
+                request, exclude_unset=True, exclude_none=True
+            )
             result = [self.namespace["dsv41_tool_payload"](tool) for tool in tools]
             self.assertEqual([t["function"]["name"] for t in result], expected)
             for tool in result:
-                self.assertEqual(list(tool["function"]), ["name", "description", "parameters"])
+                self.assertEqual(
+                    list(tool["function"]), ["name", "description", "parameters"]
+                )
                 self.assertNotIn("strict", tool["function"])
                 self.assertNotIn("optional", tool["function"])
 
@@ -134,27 +207,52 @@ class ChatMigrationTests(unittest.TestCase):
         self.assertEqual(messages, original)
 
     def test_encoder_retains_image_order_and_placeholder(self):
-        messages = [{"role": "user", "content": [
-            {"type": "text", "text": "inspect"},
-            {"type": "image_url", "image_url": {"url": "https://example.invalid/a.png"}},
-            {"type": "image_url", "image_url": {"url": "https://example.invalid/b.png"}},
-        ]}]
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "inspect"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.invalid/a.png"},
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.invalid/b.png"},
+                    },
+                ],
+            }
+        ]
         text, media = self.encoder.encode_messages(
-            messages, thinking_mode="chat", return_multi_modal_data=True)
+            messages, thinking_mode="chat", return_multi_modal_data=True
+        )
         self.assertEqual(text.count(self.encoder.IMAGE_PLACEHOLDER), 2)
-        self.assertEqual([image["url"] for image in media["images"]],
-                         ["https://example.invalid/a.png", "https://example.invalid/b.png"])
+        self.assertEqual(
+            [image["url"] for image in media["images"]],
+            ["https://example.invalid/a.png", "https://example.invalid/b.png"],
+        )
 
     def test_encoder_spaced_dsml_and_reasoning_history(self):
         messages = [
             {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "", "reasoning_content": "plan",
-             "tool_calls": [{"type": "function", "id": "x",
-                             "function": {"name": "lookup", "arguments": '{"city":"Paris"}'}}]},
+            {
+                "role": "assistant",
+                "content": "",
+                "reasoning_content": "plan",
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "id": "x",
+                        "function": {"name": "lookup", "arguments": '{"city":"Paris"}'},
+                    }
+                ],
+            },
             {"role": "tool", "content": "done", "tool_call_id": "x"},
             {"role": "user", "content": "continue"},
         ]
-        text = self.encoder.encode_messages(messages, thinking_mode="thinking", drop_thinking=False)
+        text = self.encoder.encode_messages(
+            messages, thinking_mode="thinking", drop_thinking=False
+        )
         self.assertIn("<\uff5cDSML\uff5c calls>", text)
         self.assertIn('<\uff5cDSML\uff5c invoke name="lookup">', text)
         self.assertIn("plan", text)

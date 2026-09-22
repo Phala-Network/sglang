@@ -852,21 +852,23 @@ async def server_info():
     )
 
     return msgspec_to_builtins(
-        redact_auth_config({
-            **server_args.resolved_dict(),
-            "launch_command": server_args.launch_command,
-            **_global_state.scheduler_info,
-            "startup_time": _global_state.tokenizer_manager.startup_time,
-            "internal_states": internal_states,
-            "tokenizer_request_states": (
-                request_state_summary() if callable(request_state_summary) else None
-            ),
-            "version": __version__,
-            # Structured KV-event publisher descriptor for KV-aware routers.
-            # `None` when publishing is disabled or misconfigured; see
-            # `runtime_context.describe_kv_events_publisher` for the contract.
-            "kv_events": describe_kv_events_publisher(server_args),
-        })
+        redact_auth_config(
+            {
+                **server_args.resolved_dict(),
+                "launch_command": server_args.launch_command,
+                **_global_state.scheduler_info,
+                "startup_time": _global_state.tokenizer_manager.startup_time,
+                "internal_states": internal_states,
+                "tokenizer_request_states": (
+                    request_state_summary() if callable(request_state_summary) else None
+                ),
+                "version": __version__,
+                # Structured KV-event publisher descriptor for KV-aware routers.
+                # `None` when publishing is disabled or misconfigured; see
+                # `runtime_context.describe_kv_events_publisher` for the contract.
+                "kv_events": describe_kv_events_publisher(server_args),
+            }
+        )
     )
 
 

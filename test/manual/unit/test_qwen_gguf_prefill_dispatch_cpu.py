@@ -5,17 +5,15 @@ operand routing only; ggml kernel calls are spies, never GPU executions.
 """
 
 import ast
+import unittest
 from pathlib import Path
 from types import SimpleNamespace
-import unittest
 from unittest.mock import Mock
 
 import gguf
 import torch
 from gguf import GGMLQuantizationType as WeightType
-
 from test_qwen_gguf_migration_cpu import execute, source_nodes
-
 
 SOURCE = (
     Path(__file__).resolve().parents[3]

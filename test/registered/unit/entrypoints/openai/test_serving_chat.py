@@ -904,9 +904,7 @@ class ServingChatTestCase(unittest.TestCase):
             self.chat._qwen35_reasoning_effort_token_range(None, 16384),
             (384, 8192),
         )
-        self.assertIsNone(
-            self.chat._qwen35_reasoning_effort_token_range("none", 1024)
-        )
+        self.assertIsNone(self.chat._qwen35_reasoning_effort_token_range("none", 1024))
 
         self.tm.model_config.hf_config.model_type = "llama"
         self.assertIsNone(self.chat._qwen35_reasoning_effort_token_range("low", 1024))

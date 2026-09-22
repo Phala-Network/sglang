@@ -301,7 +301,9 @@ class Qwen3CoderDetector(BaseFormatDetector):
                 ):
                     if self.tool_call_start_token.startswith(self._buffer[-size:]):
                         keep = size
-                normal_text_chunks.append(self._buffer[:-keep] if keep else self._buffer)
+                normal_text_chunks.append(
+                    self._buffer[:-keep] if keep else self._buffer
+                )
                 self._buffer = self._buffer[-keep:] if keep else ""
                 break
             if start:

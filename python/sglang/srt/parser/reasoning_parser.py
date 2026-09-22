@@ -224,7 +224,6 @@ class BaseReasoningFormatDetector:
         # Handle end of reasoning block
         end_idx = self._reasoning_end_index(current_text) if self._in_reasoning else -1
         if self._in_reasoning and end_idx >= 0:
-
             reasoning_text = current_text[:end_idx]
 
             self._buffer = ""
@@ -2344,7 +2343,9 @@ class ReasoningParser:
         }
 
     def _set_output_token_context(self, text, output_ids, incremental=False):
-        if output_ids is not None and hasattr(self.detector, "set_output_token_context"):
+        if output_ids is not None and hasattr(
+            self.detector, "set_output_token_context"
+        ):
             self.detector.set_output_token_context(
                 text, output_ids, incremental, self._token_decode_kwargs
             )

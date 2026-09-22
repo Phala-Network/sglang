@@ -420,11 +420,20 @@ class WeightUpdater:
             )
             converted_metadata.append(converted_meta)
 
-        # Create bucket and reconstruct tensors
-        bucket = FlattenedTensorBucket(
-            flattened_tensor=flattened_tensor, metadata=converted_metadata
-        )
-        reconstructed_tensors = bucket.reconstruct_tensors()
+        # Reconstruction validates the actual dtype-view/shape contract. Finish
+        # every entry before allowing the loader to modify any model parameter.
+        try:
+            bucket = FlattenedTensorBucket(
+                flattened_tensor=flattened_tensor, metadata=converted_metadata
+            )
+            reconstructed_tensors = bucket.reconstruct_tensors()
+        except Exception as exc:
+            message = (
+                "Invalid update_weights_from_tensor payload: failed to reconstruct "
+                f"flattened bucket: {type(exc).__name__}: {exc}"
+            )
+            logger.error(message)
+            return False, message
 
         # Load the reconstructed tensors using the standard method
         self.get_model().load_weights(reconstructed_tensors)

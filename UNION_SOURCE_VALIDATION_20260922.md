@@ -109,13 +109,19 @@ common residual: malformed online weight-update validation. Only its worker
 deserialization and updater validation/unwrap handling are now adapted.
 The existing DS derived-cache rejection and weight-cache guards retain their
 ordering; tensor/default/direct/custom/flattened paths remain available.
-Fifteen focused real-torch CPU/source-method tests pass, covering malformed
+Sixteen focused real-torch CPU/source-method tests pass, covering malformed
 collections, names, local serialization/TP rank, load formats, metadata
 bounds, successful loader dispatch, and both existing cache guards.
 An ablation removing the payload validator loses controlled pre-device
 rejection; restoring the shared helper preserves it without another wrapper.
 CPU pickle fixtures do not qualify CUDA IPC, distributed updates, full runtime
 imports or production acceptance. No unrelated donor hunks were imported.
+The historical bounds validator alone does not establish dtype-view/reshape
+compatibility. Reconstruction now finishes all entries inside a controlled
+error boundary before any model loader call. A valid first entry followed by
+shape mismatch, incompatible dtype view or boolean shape is rejected without
+model mutation. This reuses the real consumer instead of adding duplicate
+shape/byte arithmetic or restricting otherwise compatible tensor layouts.
 
 Historical Nemotron donor `5f9f960c28a16bfaef3f20800c30eeee125753aa`
 (extracted `3c06073c3d0b3ada4ed413d25d543350386c3f72`) also had one common

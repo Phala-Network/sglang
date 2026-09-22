@@ -183,6 +183,17 @@ class TestMalformedWeightUpdate(unittest.TestCase):
             self.model.load_weights.call_args.args[0][0][1], torch.ones(1)
         )
 
+    def test_flattened_consumer_shape_dtype_failures_before_model_mutation(self):
+        # Bounds alone do not prove that dtype view + reshape can consume bytes.
+        for change in [dict(shape=[2]), dict(dtype=torch.float64), dict(shape=[True])]:
+            with self.subTest(change=change):
+                payload = self.bucket(**change)
+                # A valid first entry must not be loaded before a bad later one.
+                payload["metadata"].insert(0, self.bucket()["metadata"][0])
+                self.assert_rejects(
+                    payload, "flattened_bucket", "failed to reconstruct"
+                )
+
     def test_flattened_bad_envelopes(self):
         for payload in [
             7,

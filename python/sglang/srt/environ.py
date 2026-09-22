@@ -1403,6 +1403,8 @@ class Envs:
     SGLANG_PATCH_TOKENIZER = EnvBool(True)
     SGLANG_REQUEST_STATE_WAIT_TIMEOUT = EnvInt(4)
     SGLANG_DEFAULT_THINKING = EnvBool(False)
+    # Bound model-written Muse channel headers before grammar resumes; -1 disables.
+    SGLANG_MAX_CHANNEL_HEADER_TOKENS = EnvInt(16)
 
     # ===================================================================
     # Encoder pipeline and disaggregation

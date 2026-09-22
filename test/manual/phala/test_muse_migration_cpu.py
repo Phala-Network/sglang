@@ -13,6 +13,7 @@ import re
 from types import SimpleNamespace
 import unittest
 from dataclasses import dataclass, field
+from unittest.mock import MagicMock
 
 from jsonschema import Draft202012Validator
 
@@ -157,6 +158,123 @@ class MuseConstraintTests(unittest.TestCase):
             text = (SRT / path).read_text(encoding="utf-8")
             self.assertIn("constrained_output=is_required", text)
             self.assertIn("parses_constrained_output_natively()", text)
+
+
+def load_reasoner():
+    ns = dict(logging=logging, logger=logging.getLogger(__name__))
+    execute(source_nodes("utils/token_sequence_matcher.py"), ns)
+    base = source_nodes("constrained/base_grammar_backend.py", {"BaseGrammarObject"})[0]
+    base.body = [n for n in base.body if isinstance(n, ast.FunctionDef) and n.name == "__init__"]
+    execute([base], ns)
+    execute(source_nodes("constrained/reasoner_grammar_backend.py", {"ReasonerGrammarObject"}), ns)
+    return ns["ReasonerGrammarObject"]
+
+
+class MuseGrammarTests(unittest.TestCase):
+    def make(self, channel=True, reasoning=True, **kwargs):
+        grammar = MagicMock()
+        obj = load_reasoner()(grammar, [7, 8], channel_header_end_ids=[12, 13] if channel else None,
+                              channel_reasoning_header_ids=[10, 11] if channel else None, **kwargs)
+        obj.maybe_init_reasoning(reasoning)
+        return obj, grammar
+
+    def feed(self, obj, tokens):
+        for token in tokens:
+            obj.accept_token(token)
+
+    def test_channel_header_not_masked_or_accepted_until_complete(self):
+        obj, grammar = self.make()
+        self.feed(obj, [99, 7, 8])
+        for token in [50, 51, 12, 13]:
+            obj.fill_vocab_mask(None, 0)
+            obj.accept_token(token)
+        grammar.fill_vocab_mask.assert_not_called()
+        grammar.accept_token.assert_not_called()
+        obj.fill_vocab_mask(None, 0)
+        obj.accept_token(100)
+        grammar.fill_vocab_mask.assert_called_once_with(None, 0)
+        grammar.accept_token.assert_called_once_with(100)
+
+    def test_repeated_self_channel_does_not_activate_grammar(self):
+        obj, grammar = self.make()
+        self.feed(obj, [99, 7, 8, 10, 11, 12, 13])
+        self.assertTrue(obj._is_thinking())
+        self.feed(obj, [98, 7, 8, 50, 12, 13, 100])
+        grammar.accept_token.assert_called_once_with(100)
+
+    def test_rollback_each_boundary_restores_exact_state_and_counts(self):
+        tokens = [99, 7, 8, 10, 11, 12, 13, 98, 7, 8, 50, 12, 13, 100, 101]
+        for keep in range(len(tokens) + 1):
+            obj, grammar = self.make()
+            reference, _ = self.make()
+            self.feed(reference, tokens[:keep])
+            self.feed(obj, tokens)
+            obj.rollback(len(tokens) - keep)
+            self.assertEqual(obj._snapshot_state(), reference._snapshot_state())
+            steps = len(tokens) - max(keep, len(tokens) - 2)
+            if steps:
+                grammar.rollback.assert_called_once_with(steps)
+            else:
+                grammar.rollback.assert_not_called()
+
+    def test_copy_does_not_share_histories(self):
+        obj, grammar = self.make(min_think_tokens=3)
+        self.feed(obj, [99, 7, 8, 50, 12])
+        clone = obj.copy()
+        self.assertEqual(clone._snapshot_state(), obj._snapshot_state())
+        self.assertEqual(clone.min_think_tokens, 3)
+        clone.accept_token(13)
+        self.assertTrue(clone._is_generation())
+        self.assertTrue(obj._waiting_for_channel_header)
+        clone.rollback(1)
+        self.assertEqual(clone._snapshot_state(), obj._snapshot_state())
+        self.assertIsNot(clone._state_history, obj._state_history)
+        grammar.copy.assert_called_once()
+
+    def test_bounded_header_timeout_and_unlimited_setting(self):
+        obj, grammar = self.make(max_channel_header_tokens=2)
+        self.feed(obj, [7, 8, 50, 51, 100])
+        grammar.accept_token.assert_called_once_with(100)
+        unlimited, grammar = self.make(max_channel_header_tokens=-1)
+        self.feed(unlimited, [7, 8] + [50] * 32)
+        self.assertTrue(unlimited._waiting_for_channel_header)
+        grammar.accept_token.assert_not_called()
+
+    def test_non_muse_direct_transition_and_rollback_unchanged(self):
+        obj, grammar = self.make(channel=False)
+        self.feed(obj, [99, 7, 8, 100, 101])
+        self.assertEqual([c.args[0] for c in grammar.accept_token.call_args_list], [100, 101])
+        obj.rollback(3)
+        grammar.rollback.assert_called_once_with(2)
+        self.assertTrue(obj._is_thinking())
+        self.assertEqual(obj._matched_think_end_tokens, 1)
+        self.assertEqual(obj.tokens_in_think, 1)
+
+    def test_direct_final_masks_first_token(self):
+        obj, grammar = self.make(reasoning=False)
+        obj.fill_vocab_mask(None, 0)
+        obj.accept_token(100)
+        grammar.fill_vocab_mask.assert_called_once_with(None, 0)
+        grammar.accept_token.assert_called_once_with(100)
+
+    def test_request_specific_terminator_stays_predecode_only(self):
+        obj, _ = self.make(channel=False)
+        obj.set_request_think_end_ids([20, 21])
+        self.feed(obj, [20, 21])
+        self.assertTrue(obj._is_generation())
+        with self.assertRaises(RuntimeError):
+            obj.set_request_think_end_ids([22])
+
+    def test_thinking_budget_filter_preserved_for_non_muse(self):
+        filters = MagicMock()
+        obj, _ = self.make(channel=False, min_think_tokens=2, max_think_tokens=3,
+                           enable_token_filter=True, token_filter_fn=filters)
+        obj.fill_vocab_mask(None, 0)
+        self.assertIs(filters.call_args.args[3], False)
+        self.feed(obj, [98, 99, 100])
+        obj.fill_vocab_mask(None, 0)
+        self.assertEqual(filters.call_args.args[1], [7])
+        self.assertIs(filters.call_args.args[3], True)
 
 
 if __name__ == "__main__":

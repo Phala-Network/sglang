@@ -2034,6 +2034,9 @@ class MuseGlimmerDetector(BaseReasoningFormatDetector):
     terminator and the partial body is still attributed to whichever channel was open.
     """
 
+    grammar_channel_header_end = MESSAGE
+    grammar_channel_reasoning_header = " to=self"
+
     def __init__(
         self,
         stream_reasoning: bool = True,

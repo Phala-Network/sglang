@@ -65,6 +65,15 @@ def main():
     ).hexdigest()
     if license_hash != manifest["license_sha256"]:
         raise ValueError("external license hash mismatch")
+    for path, dependency in manifest["submodules"].items():
+        repository = git(
+            args.source, "config", "-f", ".gitmodules", "--get", f"submodule.{path}.url"
+        )
+        if repository != dependency["repository"]:
+            raise ValueError(f"native submodule repository differs: {path}")
+        entry = git(args.source, "ls-files", "--stage", "--", path).split()
+        if entry[:2] != ["160000", dependency["commit"]]:
+            raise ValueError(f"native submodule gitlink differs: {path}")
     print(f"Verified native source tree {tree}")
     if args.verify_only:
         return

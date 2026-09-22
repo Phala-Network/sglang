@@ -45,6 +45,9 @@ jobs:
           python test/manual/phala/test_muse_migration_cpu.py
           python test/manual/phala/test_xgrammar_adapter_cpu.py
           python test/manual/phala/test_nemotron_token_context_cpu.py
+          python test/manual/phala/test_nemotron_termination_cpu.py
+          python test/phala_deepseek_v41/test_cpu_contracts_v0520.py
+          python test/phala_deepseek_v41/test_mxfp4_weight_load_contract.py
           python test/manual/phala/test_dsv41_chat_migration_cpu.py
           python test/manual/unit/function_call/test_qwen_complete_call_cpu.py
           python test/manual/unit/entrypoints/openai/test_qwen_historical_source_semantics.py

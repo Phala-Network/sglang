@@ -217,6 +217,60 @@ def apply_muse_structured_output_reasoning_default(request, reasoning_parser):
     request.chat_template_kwargs = kwargs
 
 
+def apply_nemotron_structured_output_reasoning_budget(
+    request, reasoning_parser, *, structured_tools=None
+):
+    """Reserve final-answer space without changing explicit thinking controls."""
+    if reasoning_parser != "nemotron_3":
+        return
+    structured_format = (
+        request.response_format is not None
+        and request.response_format.type in {"json_object", "json_schema"}
+    )
+    if structured_tools is None:
+        structured_tools = bool(request.tools) and request.tool_choice != "none"
+    if not (structured_format or structured_tools):
+        return
+    if request.input_ids is not None or request.continue_final_message:
+        return
+    kwargs = request.chat_template_kwargs or {}
+    if request.reasoning_effort == "none" or any(
+        kwargs.get(key) is False for key in ("enable_thinking", "thinking")
+    ):
+        return
+    if (request.custom_params or {}).get("thinking_budget") is not None:
+        return
+    total_budget = (
+        request.max_completion_tokens
+        if request.max_completion_tokens is not None
+        else request.max_tokens
+    )
+    if total_budget is None or total_budget <= 0:
+        return
+    final_reserve = max(128, min(4096, total_budget // 2))
+    request.custom_params = dict(
+        request.custom_params or {},
+        thinking_budget=max(0, total_budget - final_reserve),
+    )
+
+
+def nemotron_response_format_template_kwargs(request, reasoning_parser):
+    """Give the template the same JSON contract that the grammar enforces."""
+    if (
+        reasoning_parser != "nemotron_3"
+        or request.response_format is None
+        or request.response_format.type not in {"json_object", "json_schema"}
+        or request.input_ids is not None
+        or request.continue_final_message
+    ):
+        return {}
+    return {
+        "response_format": request.response_format.model_dump(
+            exclude_unset=True, by_alias=True
+        )
+    }
+
+
 def muse_format_template_kwargs(request, reasoning_parser, tool_call_constraint):
     """Describe the selected format in the opt-in, pinned Muse baked template."""
     if reasoning_parser != "muse":
@@ -1752,6 +1806,11 @@ class OpenAIServingChat(OpenAIServingBase):
 
         effective_tools = self._effective_tools(request)
         effective_tool_choice = self._effective_tool_choice(request)
+        apply_nemotron_structured_output_reasoning_budget(
+            request,
+            self.reasoning_parser,
+            structured_tools=bool(effective_tools) and effective_tool_choice != "none",
+        )
         glm_constraint = self.tool_call_parser == "glm47" and not any(
             tool.function.strict for tool in effective_tools
         )
@@ -2084,6 +2143,9 @@ class OpenAIServingChat(OpenAIServingBase):
                 extra_template_kwargs["reasoning_effort"] = template_reasoning_effort
             if request.chat_template_kwargs:
                 extra_template_kwargs.update(request.chat_template_kwargs)
+            extra_template_kwargs.update(
+                nemotron_response_format_template_kwargs(request, self.reasoning_parser)
+            )
             extra_template_kwargs.update(
                 muse_format_template_kwargs(
                     request, self.reasoning_parser, tool_call_constraint
@@ -2803,6 +2865,9 @@ class OpenAIServingChat(OpenAIServingBase):
                     )
                     reasoning_text, text = parser.parse_non_stream(
                         text,
+                        finish_reason_type=finish_reason.get("type")
+                        if finish_reason
+                        else None,
                         **(
                             {"output_ids": ret_item.get("output_ids")}
                             if self.reasoning_parser == "nemotron_3"
@@ -3179,7 +3244,9 @@ class OpenAIServingChat(OpenAIServingBase):
             delta, **token_context
         )
         if finish_reason_type is not None and finish_reason_type != "abort":
-            end_reasoning_text, end_normal_text = reasoning_parser.parse_stream_end()
+            end_reasoning_text, end_normal_text = reasoning_parser.parse_stream_end(
+                finish_reason_type=finish_reason_type
+            )
             if end_reasoning_text:
                 reasoning_text = (reasoning_text or "") + end_reasoning_text
             if end_normal_text:

@@ -345,12 +345,16 @@ class LiteralInputGuardTests(unittest.TestCase):
                     "parser": parser,
                     "self": SimpleNamespace(reasoning_parser=model),
                     "text": "answer",
+                    "finish_reason": {"type": "length"},
                     "ret_item": {"output_ids": [12, 13]},
                 },
             )
             self.assertEqual(
                 parser.parse_non_stream.call_args.kwargs,
-                {"output_ids": [12, 13]} if model == "nemotron_3" else {},
+                {
+                    "finish_reason_type": "length",
+                    **({"output_ids": [12, 13]} if model == "nemotron_3" else {}),
+                },
             )
 
 

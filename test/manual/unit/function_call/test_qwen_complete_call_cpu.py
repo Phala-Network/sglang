@@ -6,6 +6,7 @@ do not qualify native grammar compilation, SSE framing, IDs or finish_reason.
 """
 
 import ast
+import copy
 import json
 import logging
 import math
@@ -164,6 +165,38 @@ class QwenCompleteCallTests(unittest.TestCase):
                 parsed = self.stream(partial, 1)
                 self.assertEqual(parsed.calls, [])
                 self.assertEqual(parsed.normal_text, "")
+
+    def test_const_intersects_union_in_shared_complete_call_executor(self):
+        cases = [
+            ({"oneOf": [{"type": "string"}, {"type": "integer"}], "const": 7}, "7", 7),
+            ({"type": ["string", "integer"], "const": 8}, "8", 8),
+            ({"enum": ["alpha", 2, False], "const": False}, "false", False),
+            ({"enum": ["true", True, 1], "const": True}, "true", True),
+            ({"type": ["string", "object"], "const": {"x": 1}}, '{"x":1}', {"x": 1}),
+            ({"type": ["string", "array"], "const": [2]}, "[2]", [2]),
+            ({"type": ["string", "integer"], "const": "007"}, "007", "007"),
+            ({"type": ["integer", "null"], "const": None}, "null", None),
+        ]
+        for schema, raw, expected in cases:
+            parameters = {"type": "object", "properties": {"value": schema}}
+            before = copy.deepcopy(parameters)
+            tools = [tool(parameters=parameters)]
+            text = call(body=parameter("value", raw))
+            for result in (
+                self.subject().detect_and_parse(text, tools),
+                self.stream(text, 1, tools),
+            ):
+                value = signature(result)[0][2]["value"]
+                self.assertEqual(value, expected)
+                self.assertIs(type(value), type(expected))
+            self.assertEqual(parameters, before)
+        # Conversion never replaces the generated value with the constant.
+        tools = [tool(parameters={"properties": {"value": {"const": 7}}})]
+        text = call(body=parameter("value", "8"))
+        self.assertEqual(
+            signature(self.subject().detect_and_parse(text, tools))[0][2], {"value": 8}
+        )
+        self.assertEqual(signature(self.stream(text, 1, tools))[0][2], {"value": 8})
 
     def test_every_two_chunk_split_is_atomic_and_complete(self):
         text = call()

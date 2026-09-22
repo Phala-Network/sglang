@@ -442,6 +442,8 @@ def load_chat():
         "normalize_muse_history",
         "normalize_muse_reasoning",
         "apply_muse_structured_output_reasoning_default",
+        "apply_nemotron_structured_output_reasoning_budget",
+        "nemotron_response_format_template_kwargs",
         "muse_format_template_kwargs",
         "normalize_tool_content",
         "normalize_assistant_tool_call_arguments",

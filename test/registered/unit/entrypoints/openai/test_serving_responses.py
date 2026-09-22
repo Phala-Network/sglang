@@ -992,9 +992,8 @@ class OutputItemsTestCase(CustomTestCase):
             [],
         )
 
-    def test_required_tool_choice_skips_json_fallback_for_native_parser(self):
-        """muse reports parses_required_natively, so required output must not
-        be pushed through the orjson JSON-array fallback (mirrors chat)."""
+    def test_required_tool_choice_parses_muse_constrained_json(self):
+        """Muse enforces a schema while its detector owns native JSON framing."""
         serving = self.serving
         serving.tool_call_parser = "muse"
         request = ResponsesRequest(
@@ -1016,19 +1015,16 @@ class OutputItemsTestCase(CustomTestCase):
             request, raw, tokenizer=Mock(), require_reasoning=False
         )
 
-        self.assertEqual(
-            [
-                item
-                for item in output_items
-                if isinstance(item, ResponseFunctionToolCall)
-            ],
-            [],
-        )
+        calls = [
+            item for item in output_items if isinstance(item, ResponseFunctionToolCall)
+        ]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].name, "get_weather")
+        self.assertEqual(json.loads(calls[0].arguments), {"city": "Beijing"})
         message_items = [
             item for item in output_items if isinstance(item, ResponseOutputMessage)
         ]
-        self.assertEqual(len(message_items), 1)
-        self.assertEqual(message_items[0].content[0].text, raw)
+        self.assertEqual(message_items, [])
 
     def test_no_tool_call_extraction_when_tool_choice_none(self):
         serving = self.serving

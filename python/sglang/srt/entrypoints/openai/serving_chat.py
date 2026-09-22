@@ -157,10 +157,15 @@ def normalize_muse_history(messages: List[Dict[str, Any]]) -> List[Dict[str, Any
     if control_messages and all(
         isinstance(message.get("content"), str) for message in control_messages
     ):
-        normalized.insert(0, {
-            "role": "system",
-            "content": "\n\n".join(message["content"] for message in control_messages),
-        })
+        normalized.insert(
+            0,
+            {
+                "role": "system",
+                "content": "\n\n".join(
+                    message["content"] for message in control_messages
+                ),
+            },
+        )
     else:
         normalized[0:0] = control_messages
     return normalized
@@ -182,7 +187,8 @@ def normalize_muse_reasoning(request, reasoning_parser):
                 value = kwargs[key]
                 enabled = (
                     value.strip().lower() in {"1", "true", "yes", "y", "on"}
-                    if isinstance(value, str) else bool(value)
+                    if isinstance(value, str)
+                    else bool(value)
                 )
                 if not enabled:
                     kwargs["reasoning_strength"] = "none"
@@ -196,10 +202,16 @@ def apply_muse_structured_output_reasoning_default(request, reasoning_parser):
         return
     if request.response_format.type not in {"json_object", "json_schema"}:
         return
-    if request.reasoning_effort is not None or request.include_reasoning is True:
+    if (
+        request.reasoning_effort is not None
+        or request.include_reasoning is True
+        or getattr(request, "reasoning_max_tokens", None) is not None
+    ):
         return
     kwargs = dict(request.chat_template_kwargs or {})
-    if any(key in kwargs for key in ("reasoning_strength", "enable_thinking", "thinking")):
+    if any(
+        key in kwargs for key in ("reasoning_strength", "enable_thinking", "thinking")
+    ):
         return
     kwargs["reasoning_strength"] = "none"
     request.chat_template_kwargs = kwargs
@@ -212,11 +224,14 @@ def muse_format_template_kwargs(request, reasoning_parser, tool_call_constraint)
     if tool_call_constraint is not None and tool_call_constraint[0] == "json_schema":
         return {"_phala_muse_tool_schema": tool_call_constraint[1]}
     if request.response_format is not None and request.response_format.type in {
-        "json_object", "json_schema"
+        "json_object",
+        "json_schema",
     }:
-        return {"_phala_muse_response_format": request.response_format.model_dump(
-            mode="json", by_alias=True, exclude_none=True
-        )}
+        return {
+            "_phala_muse_response_format": request.response_format.model_dump(
+                mode="json", by_alias=True, exclude_none=True
+            )
+        }
     return {}
 
 
@@ -770,8 +785,7 @@ class OpenAIServingChat(OpenAIServingBase):
         """Return bounded reasoning effort tiers for the Qwen3.5 template."""
         if (
             not self._uses_qwen35_chat_template()
-            or get_serving().enable_strict_thinking
-            is not True
+            or get_serving().enable_strict_thinking is not True
         ):
             return None
 
@@ -826,10 +840,7 @@ class OpenAIServingChat(OpenAIServingBase):
             else min(
                 max(
                     xhigh_min,
-                    int(
-                        _QWEN35_REASONING_EFFORT_TOKEN_RANGES["xhigh"][1]
-                        * scale
-                    ),
+                    int(_QWEN35_REASONING_EFFORT_TOKEN_RANGES["xhigh"][1] * scale),
                 ),
                 available_tokens,
             )
@@ -842,10 +853,7 @@ class OpenAIServingChat(OpenAIServingBase):
                     available_tokens,
                     max(
                         medium_min,
-                        int(
-                            _QWEN35_REASONING_EFFORT_TOKEN_RANGES["medium"][1]
-                            * scale
-                        ),
+                        int(_QWEN35_REASONING_EFFORT_TOKEN_RANGES["medium"][1] * scale),
                     ),
                 ),
             ),
@@ -1301,7 +1309,9 @@ class OpenAIServingChat(OpenAIServingBase):
                             prompt_tokens=prompt_tokens.get(index, 0),
                             reasoning_tokens=reasoning_tokens.get(index, 0),
                             completion_tokens=completion_tokens.get(index, 0),
-                            cached_tokens=self._continuous_usage_cached_details(content),
+                            cached_tokens=self._continuous_usage_cached_details(
+                                content
+                            ),
                         ).model_dump()
 
                     yield build_sse_content(
@@ -1813,7 +1823,9 @@ class OpenAIServingChat(OpenAIServingBase):
         elif self.template_manager.chat_template_name is None:
             if self.reasoning_parser == "muse":
                 result = self._apply_jinja_template(
-                    request, tools, is_multimodal,
+                    request,
+                    tools,
+                    is_multimodal,
                     tool_call_constraint=tool_call_constraint,
                 )
             else:
@@ -2144,12 +2156,14 @@ class OpenAIServingChat(OpenAIServingBase):
                     openai_compatible_messages,
                     rendered_prompt,
                     prompt_ids,
-                    lambda literal_messages, literal_data: self.tokenizer_manager.tokenizer.apply_chat_template(
-                        literal_messages,
-                        tokenize=False,
-                        add_generation_prompt=True,
-                        return_dict=False,
-                        **literal_data,
+                    lambda literal_messages, literal_data: (
+                        self.tokenizer_manager.tokenizer.apply_chat_template(
+                            literal_messages,
+                            tokenize=False,
+                            add_generation_prompt=True,
+                            return_dict=False,
+                            **literal_data,
+                        )
                     ),
                     template_data={"tools": tools, **extra_template_kwargs},
                 )
@@ -2992,7 +3006,9 @@ class OpenAIServingChat(OpenAIServingBase):
         # as constraint (mirrors the streaming path). For auto: always try.
         if self.tool_call_parser:
             parser = FunctionCallParser(
-                tools, self.tool_call_parser, tokenizer=self.tokenizer_manager.tokenizer,
+                tools,
+                self.tool_call_parser,
+                tokenizer=self.tokenizer_manager.tokenizer,
                 constrained_output=is_required,
             )
             detector_owns_format = (
@@ -3345,7 +3361,9 @@ class OpenAIServingChat(OpenAIServingBase):
             return False
 
         if self.reasoning_parser == "muse":
-            return (request.chat_template_kwargs or {}).get("reasoning_strength") != "none"
+            return (request.chat_template_kwargs or {}).get(
+                "reasoning_strength"
+            ) != "none"
 
         if self.reasoning_parser == "minimax-m3":
             # M3 template prefills <mm:think> for thinking_mode=enabled, so it never

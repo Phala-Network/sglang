@@ -114,7 +114,10 @@ class FunctionCallParser:
     }
 
     def __init__(
-        self, tools: List[Tool], tool_call_parser: str, tokenizer=None,
+        self,
+        tools: List[Tool],
+        tool_call_parser: str,
+        tokenizer=None,
         constrained_output: bool = False,
     ):
         detector_class = self.ToolCallParserEnum.get(tool_call_parser)

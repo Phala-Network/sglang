@@ -57,8 +57,7 @@ def _has_tool_channel_header(text: str) -> bool:
     marker detection alone misses that valid form.
     """
     return any(
-        _is_tool_channel(match.group(1))
-        for match in _CHANNEL_HEADER_RE.finditer(text)
+        _is_tool_channel(match.group(1)) for match in _CHANNEL_HEADER_RE.finditer(text)
     )
 
 
@@ -255,9 +254,7 @@ class MuseGlimmerDetector(BaseFormatDetector):
                 if m is None:
                     if not final:
                         return pos
-                    self._emit_json_calls(
-                        chunk[pos:], registered, calls, normal_parts
-                    )
+                    self._emit_json_calls(chunk[pos:], registered, calls, normal_parts)
                     return len(chunk)
                 self._open_invoke = m.group("name")
                 pos = m.end()

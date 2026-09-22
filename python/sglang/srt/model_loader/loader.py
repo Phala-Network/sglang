@@ -3309,6 +3309,8 @@ class GGUFModelLoader(BaseModelLoader):
             quant_config is None or quant_config.get_name() != "gguf"
         ):
             raise ValueError("Qwen GGUF loading requires GGUF quantization")
+        if model_config.hf_config.model_type in ("qwen3_5", "qwen3_5_text"):
+            quant_config._qwen_bf16_q8_prefill = True
         with set_default_torch_dtype(model_config.dtype):
             with target_device:
                 model = _initialize_model(model_config, self.load_config, quant_config)

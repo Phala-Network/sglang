@@ -90,6 +90,8 @@ class GGUFConfig(QuantizationConfig):
         if _is_hip:
             warnings.warn(f"Only CUDA and MUSA support GGUF quantization currently.")
         self.modules_to_not_convert = modules_to_not_convert or []
+        # Set only by the supported Qwen GGUF loader, not by other model paths.
+        self._qwen_bf16_q8_prefill = False
 
     def __repr__(self) -> str:
         return "GGUFConfig()"
@@ -189,8 +191,23 @@ def dequantize_gguf_weight(
     return ggml_dequantize(qweight, qweight_type, *shape, dtype)
 
 
+def _use_bf16_gguf_prefill(x: torch.Tensor, qweight_type: int) -> bool:
+    # Historical Qwen path c4afa982824346428c8b6b90b7d241cec487da9d.
+    # Preserve decode/small-batch kernels and all other dtype/device/quant paths.
+    return (
+        x.device.type == "cuda"
+        and x.dtype == torch.bfloat16
+        and qweight_type == WeightType.Q8_0
+        and x.shape[0] >= 128
+    )
+
+
 def fused_mul_mat_gguf(
-    x: torch.Tensor, qweight: torch.Tensor, qweight_type: int
+    x: torch.Tensor,
+    qweight: torch.Tensor,
+    qweight_type: int,
+    *,
+    qwen_bf16_q8_prefill: bool = False,
 ) -> torch.Tensor:
     if qweight_type in IMATRIX_QUANT_TYPES:
         mmvq_safe = 8 if qweight.shape[0] > 5120 else 16
@@ -203,6 +220,8 @@ def fused_mul_mat_gguf(
     # there is no need to call any kernel for fp16/bf16
     if qweight_type in UNQUANTIZED_TYPES:
         return x @ qweight.T
+    if qwen_bf16_q8_prefill and _use_bf16_gguf_prefill(x, qweight_type):
+        return x @ dequantize_gguf_weight(qweight, qweight_type, x.dtype).T
     # enable MMVQ in contiguous batching with batch_size=1
     if x.shape[0] <= mmvq_safe and qweight_type in MMVQ_QUANT_TYPES:
         y = ggml_mul_mat_vec_a8(qweight, x, qweight_type, qweight.shape[0])
@@ -459,6 +478,9 @@ class GGUFLinearMethod(LinearMethodBase):
         bias: torch.Tensor | None = None,
     ) -> torch.Tensor:
         shard_id = layer.qweight.shard_id
+        qwen_bf16_q8_prefill = getattr(
+            self.quant_config, "_qwen_bf16_q8_prefill", False
+        )
 
         if shard_id:
             # dequantize shard weights respectively
@@ -470,14 +492,19 @@ class GGUFLinearMethod(LinearMethodBase):
                 qweight_type = layer.qweight_type.shard_weight_type[idx]
                 result.append(
                     fused_mul_mat_gguf(
-                        x, qweight[start:end, :offset].contiguous(), qweight_type
+                        x,
+                        qweight[start:end, :offset].contiguous(),
+                        qweight_type,
+                        qwen_bf16_q8_prefill=qwen_bf16_q8_prefill,
                     )
                 )
             out = torch.cat(result, axis=1)
         else:
             qweight = layer.qweight
             qweight_type = layer.qweight_type.weight_type
-            out = fused_mul_mat_gguf(x, qweight, qweight_type)
+            out = fused_mul_mat_gguf(
+                x, qweight, qweight_type, qwen_bf16_q8_prefill=qwen_bf16_q8_prefill
+            )
         if bias is not None:
             out.add_(bias)
         return out

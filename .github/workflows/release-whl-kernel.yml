@@ -1,11 +1,6 @@
 name: Release SGLang Kernels
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - python/sglang/kernels/aot/python/sgl_kernel/version.py
   workflow_dispatch:
     inputs:
       target:

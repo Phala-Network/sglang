@@ -355,6 +355,16 @@ def create_grammar_backend(
     think_end_ids: Optional[List[int]] = None,
 ) -> Optional[BaseGrammarBackend]:
     name = get_exec().kernel.grammar_backend
+    from sglang.srt.constrained.xgrammar_schema import (
+        validate_xgrammar_whitespace_limit,
+    )
+
+    whitespace_limit = get_serving().constrained_json_max_whitespace_cnt
+    validate_xgrammar_whitespace_limit(
+        whitespace_limit,
+        any_whitespace=not get_serving().constrained_json_disable_any_whitespace,
+        backend=name,
+    )
 
     # Custom grammar backend has the highest priority
     if name in GRAMMAR_BACKEND_REGISTRY:
@@ -385,8 +395,14 @@ def create_grammar_backend(
                 vocab_size=vocab_size,
                 model_eos_token_ids=eos_list,
                 any_whitespace=not get_serving().constrained_json_disable_any_whitespace,
+                max_whitespace_cnt=whitespace_limit,
             )
         except TokenizerNotSupportedError as e:
+            if whitespace_limit is not None:
+                raise ValueError(
+                    "Explicit constrained JSON whitespace limit cannot fall back "
+                    "to an unsupported tokenizer or grammar_backend='none'"
+                ) from e
             if get_serving().enable_strict_thinking:
                 raise ValueError(
                     f"--enable-strict-thinking requires a grammar backend with "

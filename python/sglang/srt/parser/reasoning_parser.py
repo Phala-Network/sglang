@@ -75,11 +75,14 @@ class BaseReasoningFormatDetector:
         thinks_internally: bool = False,
         reasoning_default: str = "always",
         force_nonempty_content: bool = False,
+        defer_tool_start_until_end: bool = False,
     ):
         self.think_start_token = think_start_token
         self.think_end_token = think_end_token
         self.think_excluded_tokens = think_excluded_tokens
         self.tool_start_token = tool_start_token
+        self.defer_tool_start_until_end = defer_tool_start_until_end
+        self.allow_tool_start_fallback = True
         self.force_reasoning = force_reasoning
         self._in_reasoning = force_reasoning
         self.stream_reasoning = stream_reasoning
@@ -109,7 +112,11 @@ class BaseReasoningFormatDetector:
     def _maybe_apply_force_nonempty_content(
         self, ret: StreamingParseResult
     ) -> StreamingParseResult:
-        if self._force_nonempty_content and not ret.normal_text:
+        if (
+            self._force_nonempty_content
+            and not ret.normal_text
+            and self.allow_tool_start_fallback
+        ):
             ret.normal_text, ret.reasoning_text = ret.reasoning_text, ret.normal_text
         return ret
 
@@ -122,25 +129,36 @@ class BaseReasoningFormatDetector:
             self._detect_and_parse_impl(text)
         )
 
+    def _has_reasoning_start(self, text: str) -> bool:
+        return self.think_start_token in text
+
+    def _reasoning_end_index(self, text: str) -> int:
+        return text.find(self.think_end_token)
+
+    def _has_stream_reasoning_start(self, text: str) -> bool:
+        return self.think_start_token + self.think_start_self_label in text
+
+    def _strip_reasoning_prefix(self, text: str) -> str:
+        prefix = self.think_start_token + self.think_start_self_label
+        while text.startswith(prefix):
+            text = text[len(prefix) :]
+        return text
+
     def _detect_and_parse_impl(self, text: str) -> StreamingParseResult:
-        in_reasoning = self._in_reasoning or self.think_start_token in text
+        in_reasoning = self._in_reasoning or self._has_reasoning_start(text)
 
         if not in_reasoning:
             return StreamingParseResult(normal_text=text)
 
         # The text is considered to be in a reasoning block.
-        think_start_text = self.think_start_token + self.think_start_self_label
-        processed_text = text
-        while processed_text.startswith(think_start_text):
-            processed_text = processed_text[len(think_start_text) :]
+        processed_text = self._strip_reasoning_prefix(text)
 
-        if (
-            self.think_end_token not in processed_text
-            and self.think_end_token not in self.previous_content
-        ):
+        end_idx = self._reasoning_end_index(processed_text)
+        if end_idx < 0 and self.think_end_token not in self.previous_content:
             # Check for tool_start_token interruption
             if (
                 in_reasoning
+                and self.allow_tool_start_fallback
                 and self.tool_start_token is not None
                 and self.tool_start_token in processed_text
             ):
@@ -156,10 +174,9 @@ class BaseReasoningFormatDetector:
             return StreamingParseResult(reasoning_text=processed_text)
 
         # Extract reasoning content
-        if self.think_end_token in processed_text:
-            splits = processed_text.split(self.think_end_token, maxsplit=1)
-            reasoning_text = splits[0]
-            normal_text = splits[1]
+        if end_idx >= 0:
+            reasoning_text = processed_text[:end_idx]
+            normal_text = processed_text[end_idx + len(self.think_end_token) :]
 
             return StreamingParseResult(
                 normal_text=normal_text, reasoning_text=reasoning_text
@@ -203,7 +220,9 @@ class BaseReasoningFormatDetector:
             return StreamingParseResult()
 
         # Strip `<think>` token if present
-        if not self.stripped_think_start and think_start_text in current_text:
+        if not self.stripped_think_start and self._has_stream_reasoning_start(
+            current_text
+        ):
             current_text = current_text.replace(think_start_text, "", 1)
             # Write back, or stream_reasoning=False carries the token into finish().
             self._buffer = current_text
@@ -211,9 +230,8 @@ class BaseReasoningFormatDetector:
             self._in_reasoning = True
 
         # Handle end of reasoning block
-        if self._in_reasoning and self.think_end_token in current_text:
-            end_idx = current_text.find(self.think_end_token)
-
+        end_idx = self._reasoning_end_index(current_text) if self._in_reasoning else -1
+        if self._in_reasoning and end_idx >= 0:
             reasoning_text = current_text[:end_idx]
 
             self._buffer = ""
@@ -230,6 +248,13 @@ class BaseReasoningFormatDetector:
             # think_end_token that has not arrived yet; see the chunk_dependent test.
             if self.tool_start_token and self.tool_start_token in current_text:
                 tool_idx = current_text.find(self.tool_start_token)
+                if self.defer_tool_start_until_end:
+                    if self.stream_reasoning:
+                        self._buffer = current_text[tool_idx:]
+                        return StreamingParseResult(
+                            reasoning_text=current_text[:tool_idx]
+                        )
+                    return StreamingParseResult()
                 reasoning_text = current_text[:tool_idx]
                 # Preserve tool_start_token in normal text
                 normal_text = current_text[tool_idx:]
@@ -297,7 +322,20 @@ class BaseReasoningFormatDetector:
         buffer = self._strip_leading_think_start(self._buffer)
         self._buffer = ""
 
-        if self._force_nonempty_content:
+        if (
+            self.defer_tool_start_until_end
+            and self.allow_tool_start_fallback
+            and self.tool_start_token
+            and self.tool_start_token in buffer
+        ):
+            tool_idx = buffer.find(self.tool_start_token)
+            self._in_reasoning = False
+            self._accumulated_reasoning = ""
+            return StreamingParseResult(
+                reasoning_text=buffer[:tool_idx], normal_text=buffer[tool_idx:]
+            )
+
+        if self._force_nonempty_content and self.allow_tool_start_fallback:
             normal_text = self._accumulated_reasoning + buffer
             self._accumulated_reasoning = ""
             if normal_text:
@@ -1029,6 +1067,7 @@ class Nemotron3Detector(BaseReasoningFormatDetector):
         continue_final_message: bool = False,
         previous_content: str = "",
         force_nonempty_content: bool = False,
+        tokenizer=None,
     ):
         super().__init__(
             "<think>",
@@ -1040,7 +1079,53 @@ class Nemotron3Detector(BaseReasoningFormatDetector):
             previous_content=previous_content,
             reasoning_default="enable_thinking",
             force_nonempty_content=force_nonempty_content,
+            defer_tool_start_until_end=True,
         )
+        self._tokenizer = tokenizer
+        self._token_boundary = None
+
+    def set_output_token_context(self, text, output_ids, incremental, decode_kwargs):
+        if self._tokenizer is None or self.continue_final_message:
+            return
+        if self._token_boundary is None:
+            from sglang.srt.parser.nemotron_token_boundary import NemotronTokenBoundary
+
+            self._token_boundary = NemotronTokenBoundary(self._tokenizer, decode_kwargs)
+            # Tool-looking text inside thoughts is data until a real closer.
+            # Without token context, preserve the existing compatibility path.
+            self.tool_start_token = None
+        self._token_boundary.update(text, output_ids, incremental)
+
+    def _has_reasoning_start(self, text: str) -> bool:
+        if self._token_boundary is not None:
+            return (
+                self._token_boundary.first_id == self._token_boundary.start_id
+                and text.startswith(self.think_start_token)
+            )
+        return super()._has_reasoning_start(text)
+
+    def _reasoning_end_index(self, text: str) -> int:
+        if self._token_boundary is not None:
+            return self._token_boundary.end_index(text)
+        return super()._reasoning_end_index(text)
+
+    def _has_stream_reasoning_start(self, text: str) -> bool:
+        if self._token_boundary is not None:
+            return self._has_reasoning_start(text)
+        return super()._has_stream_reasoning_start(text)
+
+    def _strip_reasoning_prefix(self, text: str) -> str:
+        if self._token_boundary is not None:
+            prefix = self.think_start_token * self._token_boundary.leading_start_count
+            if not text.startswith(prefix):
+                raise ValueError("Nemotron opening control tokens differ from text")
+            return text[len(prefix) :]
+        return super()._strip_reasoning_prefix(text)
+
+    def _strip_leading_think_start(self, text: str) -> str:
+        if self._token_boundary is not None:
+            return text
+        return super()._strip_leading_think_start(text)
 
 
 class GraniteThinkingDetector(BaseReasoningFormatDetector):
@@ -1977,6 +2062,10 @@ class MuseGlimmerDetector(BaseReasoningFormatDetector):
     terminator and the partial body is still attributed to whichever channel was open.
     """
 
+    grammar_channel_header_end = MESSAGE
+    # Include the delimiter so a tool named "selfish" is not a reasoning channel.
+    grammar_channel_reasoning_header = " to=self" + MESSAGE
+
     def __init__(
         self,
         stream_reasoning: bool = True,
@@ -2166,6 +2255,7 @@ class ReasoningParser:
         "deepseek-r1": DeepSeekR1Detector,
         "deepseek-v3": _DeepSeekV3Detector,
         "deepseek-v4": DeepSeekV4Detector,
+        "deepseek-v41": DeepSeekV4Detector,
         "dots": Qwen3Detector,
         "glm45": Glm45Detector,
         "ling3": Ling3Detector,
@@ -2274,9 +2364,40 @@ class ReasoningParser:
                 kwargs["tool_call_parser_active"] = True
 
         self.detector = detector_class(**kwargs)
+        self._token_decode_kwargs = {
+            "skip_special_tokens": getattr(request, "skip_special_tokens", True),
+            "spaces_between_special_tokens": getattr(
+                request, "spaces_between_special_tokens", True
+            ),
+        }
 
-    def parse_non_stream(self, full_text: str) -> Tuple[Optional[str], Optional[str]]:
+    def _set_output_token_context(self, text, output_ids, incremental=False):
+        if output_ids is not None and hasattr(
+            self.detector, "set_output_token_context"
+        ):
+            self.detector.set_output_token_context(
+                text, output_ids, incremental, self._token_decode_kwargs
+            )
+
+    def _set_finish_reason(self, finish_reason_type: Optional[str]) -> None:
+        if getattr(self.detector, "defer_tool_start_until_end", False):
+            # An unfinished thought is not executable content. Token context
+            # additionally disables the missing-closer compatibility fallback.
+            self.detector.allow_tool_start_fallback = (
+                finish_reason_type not in {"length", "abort"}
+                and getattr(self.detector, "_token_boundary", None) is None
+            )
+
+    def parse_non_stream(
+        self,
+        full_text: str,
+        finish_reason_type: Optional[str] = None,
+        *,
+        output_ids=None,
+    ) -> Tuple[Optional[str], Optional[str]]:
         """Non-streaming call: one-time parsing"""
+        self._set_output_token_context(full_text, output_ids)
+        self._set_finish_reason(finish_reason_type)
         ret = self.detector.detect_and_parse(full_text)
         return ret.reasoning_text, ret.normal_text
 
@@ -2294,14 +2415,18 @@ class ReasoningParser:
         return blocks
 
     def parse_stream_chunk(
-        self, chunk_text: str
+        self, chunk_text: str, *, output_ids=None, incremental_output=False
     ) -> Tuple[Optional[str], Optional[str]]:
         """Streaming call: incremental parsing"""
+        self._set_output_token_context(chunk_text, output_ids, incremental_output)
         ret = self.detector.parse_streaming_increment(chunk_text)
         return ret.reasoning_text, ret.normal_text
 
-    def parse_stream_end(self) -> Tuple[Optional[str], Optional[str]]:
+    def parse_stream_end(
+        self, finish_reason_type: Optional[str] = None
+    ) -> Tuple[Optional[str], Optional[str]]:
         """Streaming call: flush any detector-specific buffered state once
         the stream ends."""
+        self._set_finish_reason(finish_reason_type)
         ret = self.detector.finish()
         return ret.reasoning_text, ret.normal_text

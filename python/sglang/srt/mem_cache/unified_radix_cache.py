@@ -1212,22 +1212,7 @@ class UnifiedRadixCache(BasePrefixCache):
                 )
             return
 
-        # Preserve completed chunks before the final non-chunked insert.
-        # Do not count a request's own chunks as hits or bypass the selective
-        # policy. The existing backup path owns component transfers and locks.
-        if (
-            chunked
-            and self.tree_core.enable_hicache
-            and self.cache_controller is not None
-            and self.cache_controller.write_policy == "write_through"
-            and result.last_device_node is not None
-            and not self.tree_core.is_root(result.last_device_node)
-        ):
-            node = self.tree_core.node_by_id(result.last_device_node)
-            if not node.backuped:
-                self._apply_cache_actions(
-                    [self.tree_core._build_backup_kv_action(node)]
-                )
+        self._backup_completed_write_through_chunk(result, chunked=chunked)
 
         # Match prefix. SWA insertion retains one extra window before the
         # page-aligned boundary, so the normal match remains safe to repoint.
@@ -1286,6 +1271,27 @@ class UnifiedRadixCache(BasePrefixCache):
             )
 
     # ---- Internal Helpers ----
+
+    def _backup_completed_write_through_chunk(
+        self, result: InsertResult, *, chunked: bool
+    ) -> None:
+        """Back up completed chunks without counting the request as a cache hit."""
+        if (
+            not chunked
+            or not self.tree_core.enable_hicache
+            or self.cache_controller is None
+            or self.cache_controller.write_policy != "write_through"
+            or self._tree_core_backend != "python"
+            or self.buffer_pipeline is not None
+            or self.linker is not None
+            or result.last_device_node is None
+            or self.tree_core.is_root(result.last_device_node)
+            or self.tree_core.is_backuped(result.last_device_node)
+        ):
+            return
+
+        node = self.tree_core.node_by_id(result.last_device_node)
+        self._apply_cache_actions([self.tree_core._build_backup_kv_action(node)])
 
     def _apply_cache_actions(
         self, actions: list[CacheAction | ComponentAction]
@@ -3456,9 +3462,7 @@ class UnifiedRadixCache(BasePrefixCache):
         self.loading_check(finish_count=load_finish_count)
 
         if self.enable_storage and storage_queue_sizes:
-            n_storage_hit, n_ack_prefetch, n_backup, n_release = storage_queue_sizes[
-                :4
-            ]
+            n_storage_hit, n_ack_prefetch, n_backup, n_release = storage_queue_sizes[:4]
             extra_release_counts = {
                 pool_name: count
                 for pool_name, count in zip(

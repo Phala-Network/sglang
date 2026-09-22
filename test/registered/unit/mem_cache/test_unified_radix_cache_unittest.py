@@ -37,6 +37,7 @@ from sglang.srt.mem_cache.base_prefix_cache import (
     EvictParams,
     InitLoadBackParams,
     InsertParams,
+    InsertResult,
     MatchPrefixParams,
     MatchResult,
     zero_match_result,
@@ -8828,6 +8829,130 @@ class _InsertWalkSuite(CustomTestCase):
     _skip_unsupported_hicache_test = (
         UnifiedRadixCacheSuite._skip_unsupported_hicache_test
     )
+
+
+class TestChunkedWriteThroughBackupDecision(CustomTestCase):
+    @staticmethod
+    def _cache(*, policy="write_through", backend="python"):
+        cache = UnifiedRadixCache.__new__(UnifiedRadixCache)
+        cache.cache_controller = mock.MagicMock(write_policy=policy)
+        cache._tree_core_backend = backend
+        cache.buffer_pipeline = None
+        cache.linker = None
+        cache.tree_core = mock.MagicMock()
+        cache.tree_core.enable_hicache = True
+        cache._apply_cache_actions = mock.MagicMock()
+        cache.tree_core.is_root.return_value = False
+        cache.tree_core.is_backuped.return_value = False
+        node = object()
+        action = BackupKV(node_ids=[7])
+        cache.tree_core.node_by_id.return_value = node
+        cache.tree_core._build_backup_kv_action.return_value = action
+        return cache, node, action
+
+    def test_only_plain_write_through_chunk_builds_existing_backup_action(self):
+        result = InsertResult(prefix_len=0, last_device_node=7)
+        cache, node, action = self._cache()
+
+        cache._backup_completed_write_through_chunk(result, chunked=True)
+
+        cache.tree_core.node_by_id.assert_called_once_with(7)
+        cache.tree_core._build_backup_kv_action.assert_called_once_with(node)
+        cache._apply_cache_actions.assert_called_once_with([action])
+
+    def test_policy_and_backend_guards_leave_existing_semantics_unchanged(self):
+        result = InsertResult(prefix_len=0, last_device_node=7)
+        for policy, backend in [
+            ("write_through_selective", "python"),
+            ("write_back", "python"),
+            ("write_through", "rust"),
+            ("write_through", "custom"),
+        ]:
+            with self.subTest(policy=policy, backend=backend):
+                cache, _, _ = self._cache(policy=policy, backend=backend)
+                cache._backup_completed_write_through_chunk(result, chunked=True)
+                cache._apply_cache_actions.assert_not_called()
+                cache.tree_core.node_by_id.assert_not_called()
+
+    def test_root_and_zero_page_result_never_build_backup(self):
+        result = InsertResult(prefix_len=0, last_device_node=0)
+        cache, _, _ = self._cache()
+        cache.tree_core.is_root.return_value = True
+
+        cache._backup_completed_write_through_chunk(result, chunked=True)
+
+        cache._apply_cache_actions.assert_not_called()
+        cache.tree_core.node_by_id.assert_not_called()
+
+    def test_nonchunked_buffer_linker_and_already_backed_are_unchanged(self):
+        result = InsertResult(prefix_len=0, last_device_node=7)
+        cases = ["nonchunked", "hicache_disabled", "buffer", "linker", "backed"]
+        for case in cases:
+            with self.subTest(case=case):
+                cache, _, _ = self._cache()
+                chunked = True
+                if case == "nonchunked":
+                    chunked = False
+                elif case == "hicache_disabled":
+                    cache.tree_core.enable_hicache = False
+                elif case == "buffer":
+                    cache.buffer_pipeline = object()
+                elif case == "linker":
+                    cache.linker = object()
+                elif case == "backed":
+                    cache.tree_core.is_backuped.return_value = True
+                cache._backup_completed_write_through_chunk(result, chunked=chunked)
+                cache._apply_cache_actions.assert_not_called()
+
+
+@unittest.skipUnless(torch.cuda.is_available(), "cache fixtures need CUDA")
+class TestChunkedWriteThroughBackupIntegration(_InsertWalkSuite):
+    cfg = CacheConfig(page_size=4, components=(ComponentType.FULL,))
+
+    def _unfinished_req(self, cache, req_to_token_pool, allocator, tokens):
+        req = self._make_req(req_to_token_pool)
+        req.origin_input_ids = array("q", tokens)
+        req.output_ids = array("q")
+        req.full_untruncated_fill_ids = array("q", tokens)
+        req.set_extend_range(0, len(tokens))
+        kv_indices = self._alloc(allocator, len(tokens))
+        self.assertIsNotNone(kv_indices)
+        req_to_token_pool.write(
+            (req.kv.req_pool_idx, slice(0, len(tokens))), kv_indices
+        )
+        req.kv.kv_committed_len = len(tokens)
+        req.last_node = cache.root_node_handle()
+        req.kv.cache_protected_len = 0
+        req.swa_uuid_for_lock = None
+        req.extra_key = None
+        return req
+
+    def test_completed_chunk_is_backed_up_through_existing_ack_path(self):
+        cache, allocator, req_to_token_pool = build_fixture(self.cfg)
+        self._init_hicache(cache, write_policy="write_through")
+        req = self._unfinished_req(
+            cache, req_to_token_pool, allocator, self._make_seq(1, 2)
+        )
+
+        cache.cache_unfinished_req(req, chunked=True)
+        cache.writing_check(write_back=True)
+
+        self.assertFalse(cache.tree_core.is_root(req.last_node))
+        self.assertTrue(cache.tree_core.is_backuped(req.last_node))
+        cache.dec_lock_ref(req.last_node)
+        cache.sanity_check()
+
+    def test_subpage_chunk_stays_at_root_without_backup(self):
+        cache, allocator, req_to_token_pool = build_fixture(self.cfg)
+        self._init_hicache(cache, write_policy="write_through")
+        req = self._unfinished_req(cache, req_to_token_pool, allocator, [1, 2, 3])
+
+        cache.cache_unfinished_req(req, chunked=True)
+
+        self.assertTrue(cache.tree_core.is_root(req.last_node))
+        self.assertEqual(cache.ongoing_write_through, {})
+        cache.dec_lock_ref(req.last_node)
+        cache.sanity_check()
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "cache fixtures need CUDA")

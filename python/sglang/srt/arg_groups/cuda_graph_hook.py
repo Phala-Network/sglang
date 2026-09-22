@@ -78,6 +78,8 @@ def parse_cuda_graph_config(server_args: Any):
         _set(Phase.DECODE, "max_bs", cfg.cuda_graph_max_bs_decode)
     if cfg.cuda_graph_max_bs_prefill is not None:
         _set(Phase.PREFILL, "max_bs", cfg.cuda_graph_max_bs_prefill)
+    if cfg.cuda_graph_max_seq_len_prefill is not None:
+        _set(Phase.PREFILL, "max_seq_len", cfg.cuda_graph_max_seq_len_prefill)
     if cfg.cuda_graph_bs_decode is not None:
         _set(Phase.DECODE, "bs", cfg.cuda_graph_bs_decode)
     if cfg.cuda_graph_bs_prefill is not None:
@@ -94,6 +96,14 @@ def parse_cuda_graph_config(server_args: Any):
             continue
         for key, value in phase_config.items():
             _set(phase, key, value)
+
+    max_seq_len = config.prefill.max_seq_len
+    if max_seq_len is not None and (
+        isinstance(max_seq_len, bool)
+        or not isinstance(max_seq_len, int)
+        or max_seq_len <= 0
+    ):
+        raise ValueError("cuda_graph_max_seq_len_prefill must be a positive integer")
 
     declare_resolution(
         server_args,

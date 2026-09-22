@@ -216,7 +216,16 @@ def handle_load_balance_method(server_args: Any):
 
 
 def handle_grammar_backend(server_args: Any):
+    from sglang.srt.constrained.xgrammar_schema import (
+        validate_xgrammar_whitespace_limit,
+    )
+
     cfg = resolving_view(server_args)
+    validate_xgrammar_whitespace_limit(
+        cfg.constrained_json_max_whitespace_cnt,
+        any_whitespace=not cfg.constrained_json_disable_any_whitespace,
+        backend=cfg.grammar_backend or "xgrammar",
+    )
     if cfg.grammar_backend is None:
         declare_resolution(
             server_args, "_handle_grammar_backend", grammar_backend="xgrammar"

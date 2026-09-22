@@ -147,6 +147,14 @@ class GrammarManager:
             req.grammar.min_think_tokens = min_thinking_budget
         if thinking_budget is not None:
             req.grammar.max_think_tokens = thinking_budget
+            if thinking_budget >= 0:
+                if req.grammar.token_filter_fn is None:
+                    req.set_finish_with_abort(
+                        "Per-request thinking_budget requires a grammar backend "
+                        "with token-filter support"
+                    )
+                    return
+                req.grammar.enable_token_filter = True
 
     def _strict_thinking_grammar_disabled(self, req: Req) -> bool:
         custom_params = req.sampling_params.custom_params

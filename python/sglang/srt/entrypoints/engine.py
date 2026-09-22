@@ -54,6 +54,7 @@ from sglang.srt.arg_groups.overrides import (
     resolved_view,
     resolving_view,
 )
+from sglang.srt.arg_groups.token_auth import redact_auth_config
 from sglang.srt.elastic_ep.expert_backup_manager import run_expert_backup_manager
 from sglang.srt.entrypoints.engine_info_bootstrap_server import (
     EngineInfoBootstrapServer,
@@ -117,7 +118,6 @@ from sglang.srt.runtime_context import (
     snapshot_context,
 )
 from sglang.srt.server_args import PortArgs, ServerArgs
-from sglang.srt.arg_groups.token_auth import redact_auth_config
 from sglang.srt.utils import (
     MultiprocessingSerializer,
     SerializedTensorPayload,
@@ -271,7 +271,9 @@ class Engine(EngineScoreMixin, EngineBase):
             msgspec.Struct.__setattr__(
                 server_args,
                 "_launch_command",
-                "Engine(" + ", ".join(f"{k}={v!r}" for k, v in redact_auth_config(kwargs).items()) + ")",
+                "Engine("
+                + ", ".join(f"{k}={v!r}" for k, v in redact_auth_config(kwargs).items())
+                + ")",
             )
         self.server_args = server_args
         logger.info(f"server_args={server_args.diagnostic_dict()}")
@@ -1379,14 +1381,16 @@ class Engine(EngineScoreMixin, EngineBase):
             self.tokenizer_manager.get_internal_state()
         )
         return msgspec_to_builtins(
-            redact_auth_config({
-                **self.tokenizer_manager.server_args.resolved_dict(),
-                "launch_command": self.tokenizer_manager.server_args.launch_command,
-                **self._scheduler_init_result.scheduler_infos[0],
-                "startup_time": self.tokenizer_manager.startup_time,
-                "internal_states": internal_states,
-                "version": __version__,
-            })
+            redact_auth_config(
+                {
+                    **self.tokenizer_manager.server_args.resolved_dict(),
+                    "launch_command": self.tokenizer_manager.server_args.launch_command,
+                    **self._scheduler_init_result.scheduler_infos[0],
+                    "startup_time": self.tokenizer_manager.startup_time,
+                    "internal_states": internal_states,
+                    "version": __version__,
+                }
+            )
         )
 
     def get_model_info(self):

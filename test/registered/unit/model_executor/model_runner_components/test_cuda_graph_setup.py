@@ -3,12 +3,14 @@ from types import SimpleNamespace
 
 import pytest
 
+from sglang.srt.model_executor.cuda_graph_config import Backend
 from sglang.srt.model_executor.model_runner_components import cuda_graph_setup
 from sglang.srt.model_executor.model_runner_components.cuda_graph_setup import (
     _align_pipeline_layers,
     capture_decode_graph,
     has_standard_gqa_for_all_local_layers,
     index_attention_layers_by_global_id,
+    should_disable_prefill_graph_for_nonstandard_gqa,
 )
 from sglang.test.ci.ci_register import register_cpu_ci
 
@@ -28,6 +30,27 @@ def test_standard_gqa_gate_uses_pipeline_local_layer_range():
 def test_standard_gqa_gate_is_unchanged_without_pipeline_parallelism():
     assert has_standard_gqa_for_all_local_layers(
         attention_layer_count=92, start_layer=0, end_layer=92
+    )
+
+
+@pytest.mark.parametrize(
+    "backend", [Backend.FULL, Backend.TC_PIECEWISE, Backend.BREAKABLE]
+)
+@pytest.mark.parametrize("start_layer,end_layer", [(0, 46), (23, 46)])
+def test_only_breakable_prefill_graph_accepts_hybrid_layers(
+    backend, start_layer, end_layer
+):
+    assert should_disable_prefill_graph_for_nonstandard_gqa(
+        prefill_backend=backend,
+        attention_layer_count=(end_layer - start_layer) // 2,
+        start_layer=start_layer,
+        end_layer=end_layer,
+    ) == (backend != Backend.BREAKABLE)
+    assert not should_disable_prefill_graph_for_nonstandard_gqa(
+        prefill_backend=backend,
+        attention_layer_count=end_layer - start_layer,
+        start_layer=start_layer,
+        end_layer=end_layer,
     )
 
 

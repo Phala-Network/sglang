@@ -10,19 +10,6 @@ name: PR Test (Rust extensions)
 # not actually cover the changed crate. Widen the paths together with the job.
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - "rust/sglang-mm/**"
-      - "rust/Cargo.toml"
-      - ".github/workflows/pr-test-rust-exts.yml"
-  pull_request:
-    branches: [ main ]
-    types: [opened, synchronize, reopened, labeled]
-    paths:
-      - "rust/sglang-mm/**"
-      - "rust/Cargo.toml"
-      - ".github/workflows/pr-test-rust-exts.yml"
   workflow_dispatch:
 
 concurrency:

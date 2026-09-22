@@ -60,7 +60,7 @@ def _cgroup_headroom(resource: str) -> int | None:
         if mount_root == "/":
             relative = unified.lstrip("/")
         elif unified == mount_root or unified.startswith(mount_root + "/"):
-            relative = unified[len(mount_root):].lstrip("/")
+            relative = unified[len(mount_root) :].lstrip("/")
         else:
             continue
         leaf = mountpoint / relative
@@ -103,15 +103,31 @@ def _resource_snapshot(hugepage_bytes: int) -> tuple[int, int]:
     free = int((directory / "free_hugepages").read_text())
     reserved = int((directory / "resv_hugepages").read_text())
     status = Path("/proc/self/status").read_text().splitlines()
-    allowed = _parse_nodes(next(line.split(":", 1)[1] for line in status
-                                if line.startswith("Mems_allowed_list:")))
+    allowed = _parse_nodes(
+        next(
+            line.split(":", 1)[1]
+            for line in status
+            if line.startswith("Mems_allowed_list:")
+        )
+    )
     online = _parse_nodes(Path("/sys/devices/system/node/online").read_text())
     if allowed != online:
         # Linux exposes global reservations, not per-node reservations. Deduct
         # all of them from allowed-node free pages: conservative, never additive.
-        free = min(free, sum(int((Path(f"/sys/devices/system/node/node{node}") /
-                                 "hugepages" / name / "free_hugepages").read_text())
-                             for node in allowed))
+        free = min(
+            free,
+            sum(
+                int(
+                    (
+                        Path(f"/sys/devices/system/node/node{node}")
+                        / "hugepages"
+                        / name
+                        / "free_hugepages"
+                    ).read_text()
+                )
+                for node in allowed
+            ),
+        )
     huge = max(0, free - reserved) * hugepage_bytes
     size_label = "2MB" if hugepage_bytes == 2 * 1024**2 else "1GB"
     for resource in (f"hugetlb.{size_label}", f"hugetlb.{size_label}.rsvd"):
@@ -145,7 +161,9 @@ class HostAllocationBudget:
         page_size = host_mapping_page_size(allocator)
         huge = page_size in (2 * 1024**2, 1024**3)
         if (page_size if huge else 0) != self.hugepage_bytes:
-            raise RuntimeError("Host page mode changed during the allocation transaction")
+            raise RuntimeError(
+                "Host page mode changed during the allocation transaction"
+            )
         return huge, page_size
 
     def _claim(self, nbytes: int, huge: bool) -> None:
@@ -211,7 +229,9 @@ class HostAllocationBudget:
 
 
 @contextmanager
-def dsa_host_allocation_budget(params, *, storage_backend=None, host_memory_mode="cache"):
+def dsa_host_allocation_budget(
+    params, *, storage_backend=None, host_memory_mode="cache"
+):
     """One coordinated entry/exit for the complete DSA main/index pair."""
     global _active_budget
     if not envs.SGLANG_HICACHE_DSA_STARTUP_BUDGET.get():
@@ -230,9 +250,13 @@ def dsa_host_allocation_budget(params, *, storage_backend=None, host_memory_mode
             "DSA startup budget supports single-host PP1 without DCP; "
             "heterogeneous/multi-host initialization requires a full allocation plan"
         )
-    initialized = torch.distributed.is_available() and torch.distributed.is_initialized()
+    initialized = (
+        torch.distributed.is_available() and torch.distributed.is_initialized()
+    )
     if not initialized and parallel.tp_size != 1:
-        raise RuntimeError("Distributed host budget requested before rank initialization")
+        raise RuntimeError(
+            "Distributed host budget requested before rank initialization"
+        )
     world = get_world_group() if initialized else None
     count = world.world_size if world is not None else 1
     acquired = _startup_lock.acquire(blocking=False)
@@ -249,43 +273,74 @@ def dsa_host_allocation_budget(params, *, storage_backend=None, host_memory_mode
             ordinary, huge = _resource_snapshot(hugepage_bytes)
         except Exception as exc:
             snapshot_error = f"{type(exc).__name__}: {exc}"
-        packets = _gather(world, dict(host=socket.gethostname(), pid=os.getpid(),
-                                     ordinary=ordinary, huge=huge, page=hugepage_bytes,
-                                     error=snapshot_error))
+        packets = _gather(
+            world,
+            dict(
+                host=socket.gethostname(),
+                pid=os.getpid(),
+                ordinary=ordinary,
+                huge=huge,
+                page=hugepage_bytes,
+                error=snapshot_error,
+            ),
+        )
         errors = [p["error"] for p in packets if p["error"]]
         if errors:
             raise RuntimeError("Host budget snapshot failed: " + "; ".join(errors))
-        if len({p["host"] for p in packets}) != 1 or len({p["pid"] for p in packets}) != count:
-            raise RuntimeError("Host budget requires every distinct physical worker on one host")
+        if (
+            len({p["host"] for p in packets}) != 1
+            or len({p["pid"] for p in packets}) != count
+        ):
+            raise RuntimeError(
+                "Host budget requires every distinct physical worker on one host"
+            )
         if len({p["page"] for p in packets}) != 1:
             raise RuntimeError("Workers disagree on host page mode")
         ordinary = min(p["ordinary"] for p in packets) // count
         huge = min(p["huge"] for p in packets)
-        huge = (huge // hugepage_bytes // count) * hugepage_bytes if hugepage_bytes else 0
+        huge = (
+            (huge // hugepage_bytes // count) * hugepage_bytes if hugepage_bytes else 0
+        )
         budget = HostAllocationBudget(ordinary, huge, hugepage_bytes)
         _active_budget = budget
         failure = None
         try:
             yield budget
             if len(budget.buffers) != 2:
-                raise RuntimeError("DSA startup transaction must allocate exactly KV and index buffers")
+                raise RuntimeError(
+                    "DSA startup transaction must allocate exactly KV and index buffers"
+                )
         except BaseException as exc:
             failure = exc
         finally:
             _active_budget = None
         try:
-            statuses = _gather(world, {"error": None if failure is None else
-                                      f"{type(failure).__name__}: {failure}"})
+            statuses = _gather(
+                world,
+                {
+                    "error": None
+                    if failure is None
+                    else f"{type(failure).__name__}: {failure}"
+                },
+            )
         except BaseException:
             budget.rollback()
             raise
         errors = [status["error"] for status in statuses if status["error"]]
         if errors:
             budget.rollback()
-            raise RuntimeError("DSA host allocation failed: " + "; ".join(errors)) from failure
+            raise RuntimeError(
+                "DSA host allocation failed: " + "; ".join(errors)
+            ) from failure
         budget.commit()
-        logger.info("DSA startup host budget committed: workers=%d, ordinary/rank=%d, "
-                    "hugetlb/rank=%d, hugepage=%d", count, ordinary, huge, hugepage_bytes)
+        logger.info(
+            "DSA startup host budget committed: workers=%d, ordinary/rank=%d, "
+            "hugetlb/rank=%d, hugepage=%d",
+            count,
+            ordinary,
+            huge,
+            hugepage_bytes,
+        )
     finally:
         if acquired:
             _active_budget = None

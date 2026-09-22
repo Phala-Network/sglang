@@ -3168,9 +3168,23 @@ class GGUFModelLoader(BaseModelLoader):
                 f"load format {load_config.load_format}"
             )
 
-    def _prepare_weights(self, model_name_or_path: str):
+    def _prepare_weights(self, model_name_or_path: str, allow_mmproj: bool = False):
         if os.path.isfile(model_name_or_path):
             return model_name_or_path
+        elif os.path.isdir(model_name_or_path):
+            candidates = glob.glob(os.path.join(model_name_or_path, "*.gguf"))
+            if allow_mmproj:
+                candidates = [
+                    path
+                    for path in candidates
+                    if not os.path.basename(path).startswith("mmproj-")
+                ]
+            if len(candidates) == 1:
+                return candidates[0]
+            raise ValueError(
+                f"Expected exactly one GGUF model file in {model_name_or_path}, "
+                f"found {len(candidates)}"
+            )
         else:
             raise ValueError(f"{model_name_or_path} is not a file.")
 
@@ -3228,12 +3242,37 @@ class GGUFModelLoader(BaseModelLoader):
         return gguf_to_hf_name_map
 
     def _get_weights_iterator(
-        self, model_name_or_path: str, gguf_to_hf_name_map: Dict[str, str]
+        self,
+        model_name_or_path: str,
+        gguf_to_hf_name_map: Dict[str, str],
+        model_config: Optional[ModelConfig] = None,
     ) -> Generator[Tuple[str, torch.Tensor], None, None]:
-        return gguf_quant_weights_iterator(model_name_or_path, gguf_to_hf_name_map)
+        from sglang.srt.model_loader.gguf_name_maps import (
+            apply_gguf_weight_transform,
+            get_gguf_weight_transform,
+        )
+
+        weights = gguf_quant_weights_iterator(model_name_or_path, gguf_to_hf_name_map)
+        transform = (
+            get_gguf_weight_transform(model_config.hf_config)
+            if model_config is not None
+            else None
+        )
+        if transform is None:
+            return weights
+        import gguf
+
+        architecture = gguf.GGUFReader(model_name_or_path).get_field(
+            "general.architecture"
+        )
+        if architecture is None or architecture.contents() != "qwen35":
+            raise ValueError("Qwen3.5 GGUF requires general.architecture=qwen35")
+        return apply_gguf_weight_transform(weights, transform)
 
     def download_model(self, model_config: ModelConfig) -> None:
-        self._prepare_weights(model_config.model_path)
+        self._prepare_weights(
+            model_config.model_path, model_config.hf_config.model_type == "qwen3_5"
+        )
 
     def load_model(
         self,
@@ -3242,7 +3281,21 @@ class GGUFModelLoader(BaseModelLoader):
         device_config: DeviceConfig,
     ) -> nn.Module:
 
-        local_model_path = self._prepare_weights(model_config.model_path)
+        has_vision = model_config.hf_config.model_type == "qwen3_5" and not getattr(
+            model_config.hf_config, "language_model_only", False
+        )
+        local_model_path = self._prepare_weights(model_config.model_path, has_vision)
+        mmproj_path = None
+        if has_vision:
+            candidates = glob.glob(
+                os.path.join(os.path.dirname(local_model_path), "mmproj-*.gguf")
+            )
+            if len(candidates) != 1:
+                raise ValueError(
+                    "Qwen multimodal GGUF requires exactly one mmproj file, "
+                    f"found {len(candidates)}"
+                )
+            mmproj_path = candidates[0]
         gguf_weights_map = self._get_gguf_weights_map(model_config)
         # we can only know if tie word embeddings after mapping weights
         if "lm_head.weight" in get_gguf_extra_tensor_names(
@@ -3252,12 +3305,39 @@ class GGUFModelLoader(BaseModelLoader):
 
         target_device = torch.device(device_config.device)
         quant_config = _get_quantization_config(model_config, self.load_config)
+        if model_config.hf_config.model_type in ("qwen3_5", "qwen3_5_text") and (
+            quant_config is None or quant_config.get_name() != "gguf"
+        ):
+            raise ValueError("Qwen GGUF loading requires GGUF quantization")
+        if model_config.hf_config.model_type in ("qwen3_5", "qwen3_5_text"):
+            quant_config._qwen_bf16_q8_prefill = True
         with set_default_torch_dtype(model_config.dtype):
             with target_device:
                 model = _initialize_model(model_config, self.load_config, quant_config)
-            model.load_weights(
-                self._get_weights_iterator(local_model_path, gguf_weights_map)
+            weights = self._get_weights_iterator(
+                local_model_path, gguf_weights_map, model_config
             )
+            if mmproj_path is not None:
+                from itertools import chain
+
+                from sglang.srt.model_loader.gguf_vision import (
+                    qwen35_vision_weights_iterator,
+                )
+
+                weights = chain(
+                    weights,
+                    qwen35_vision_weights_iterator(mmproj_path, model_config.hf_config),
+                )
+            loaded_params = model.load_weights(weights)
+            if model_config.hf_config.model_type in ("qwen3_5", "qwen3_5_text"):
+                from sglang.srt.model_loader.gguf_name_maps import (
+                    get_missing_gguf_parameters,
+                )
+
+                missing = get_missing_gguf_parameters(model, loaded_params or ())
+                if missing:
+                    raise RuntimeError(f"Incomplete Qwen3.5 GGUF weights: {missing}")
+                logger.info("Qwen3.5 GGUF load audit: missing=[]")
 
             for _, module in model.named_modules():
                 quant_method = getattr(module, "quant_method", None)

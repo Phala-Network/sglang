@@ -205,12 +205,20 @@ class PromptTokensDetails(BaseModel):
         return data
 
 
+class CompletionTokensDetails(BaseModel):
+    """Details about completion tokens, following the OpenAI usage schema."""
+
+    reasoning_tokens: Optional[int] = None
+
+
 class UsageInfo(BaseModel):
     prompt_tokens: int = 0
     total_tokens: int = 0
     completion_tokens: Optional[int] = 0
     # Used to return cached tokens info when --enable-cache-report is set
     prompt_tokens_details: Optional[PromptTokensDetails] = None
+    completion_tokens_details: Optional[CompletionTokensDetails] = None
+    # Deprecated: kept for backward compatibility.
     reasoning_tokens: Optional[int] = 0
 
 
@@ -720,6 +728,8 @@ class ChatCompletionMessageGenericParam(BaseModel):
     name: Optional[str] = None
     phase: Optional[Literal["commentary", "final_answer"]] = None
     reasoning_content: Optional[str] = None
+    # Legacy assistant-history alias; serialize only the canonical field.
+    reasoning: Optional[str] = Field(default=None, exclude=True)
     tool_calls: Optional[List[ToolCall]] = Field(default=None, examples=[None])
     tools: Optional[List[Tool]] = Field(default=None, examples=[None])
 
@@ -736,6 +746,14 @@ class ChatCompletionMessageGenericParam(BaseModel):
 
     @model_validator(mode="after")
     def validate_thinking_parts_role(self):
+        if self.reasoning_content is None and self.reasoning is not None:
+            self.reasoning_content = self.reasoning
+        if self.role != "assistant" and (
+            self.reasoning_content is not None or self.reasoning is not None
+        ):
+            raise ValueError(
+                "reasoning and reasoning_content are only valid in assistant messages"
+            )
         if self.role != "assistant" and isinstance(self.content, list):
             for part in self.content:
                 if isinstance(part, ChatCompletionMessageContentThinkingPart):
@@ -917,9 +935,7 @@ class ChatCompletionRequest(BaseModel):
     tools: Optional[List[Tool]] = Field(default=None, examples=[None])
     tool_choice: Union[
         ToolChoice, AllowedToolsChoice, Literal["auto", "required", "none"]
-    ] = Field(
-        default="auto", examples=["none"]
-    )  # noqa
+    ] = Field(default="auto", examples=["none"])  # noqa
     parallel_tool_calls: bool = True
     return_hidden_states: Union[bool, Literal["last"]] = False
     return_routed_experts: bool = False
@@ -932,11 +948,14 @@ class ChatCompletionRequest(BaseModel):
     return_input_ids_in_sglext: bool = False
     return_output_ids_in_sglext: bool = False
     return_sampling_mask: bool = False
-    reasoning_effort: ReasoningEffortType = Field(
+    reasoning_effort: Union[
+        ReasoningEffortType, Annotated[int, Field(strict=True, ge=1, le=100)]
+    ] = Field(
         default=None,
         description="Constrains effort on reasoning for reasoning models. "
         "Accepts string levels ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max') or a "
-        "float in [0.0, 0.99] for fine-grained control. "
+        "float in [0.0, 0.99] for fine-grained control, or an integer in [1, 100] "
+        "only when the server uses the DeepSeek-V4.1 encoder. "
         "'none' disables reasoning entirely, 'low' is the least effort, 'high' is the most effort. "
         "Reducing reasoning effort can result in faster responses and fewer tokens used on reasoning "
         "in a response. 'none' defaults thinking and enable_thinking to false in "
@@ -967,7 +986,7 @@ class ChatCompletionRequest(BaseModel):
         description="DeepSeek-V4 quick instruction task. When set, the last "
         "user/developer message is treated as a single-shot classification prompt "
         "and the corresponding task special token (e.g. `<｜domain｜>`) is appended "
-        "before generation. Only honored by the dsv4 chat encoder; ignored otherwise.",
+        "before generation. Only honored by the dsv4/dsv41 chat encoders; ignored otherwise.",
     )
 
     # Extra parameters for SRT backend only and will be ignored by OpenAI models.
@@ -1074,6 +1093,8 @@ class ChatCompletionRequest(BaseModel):
     def normalize_reasoning_inputs(cls, values: Dict):
         r = values.get("reasoning")
         thinking = None
+        top_level_enable_thinking = values.pop("enable_thinking", None)
+        thinking_config = values.pop("thinking", None)
 
         include_reasoning = values.get("include_reasoning")
         if include_reasoning is not None and not isinstance(include_reasoning, bool):
@@ -1127,9 +1148,7 @@ class ChatCompletionRequest(BaseModel):
                 enabled = r.get("enable")
             if enabled is not None:
                 if isinstance(enabled, str):
-                    enabled = enabled.strip().lower() in {
-                        "1", "true", "yes", "y", "on"
-                    }
+                    enabled = enabled.strip().lower() in {"1", "true", "yes", "y", "on"}
                 thinking = bool(enabled)
 
         # Excluding output alone must not disable internal reasoning. Explicit
@@ -1140,6 +1159,26 @@ class ChatCompletionRequest(BaseModel):
         effort = values.get("reasoning_effort")
         if effort is not None:
             thinking = effort != "none"
+
+        if thinking is None and isinstance(thinking_config, dict):
+            thinking_type = thinking_config.get("type")
+            if isinstance(thinking_type, str):
+                thinking_type = thinking_type.strip().lower()
+                if thinking_type == "disabled":
+                    thinking = False
+                elif thinking_type in {"enabled", "adaptive"}:
+                    thinking = True
+        if thinking is None and top_level_enable_thinking is not None:
+            if isinstance(top_level_enable_thinking, str):
+                thinking = top_level_enable_thinking.strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "y",
+                    "on",
+                }
+            else:
+                thinking = bool(top_level_enable_thinking)
 
         if thinking is not None:
             ctk = values.get("chat_template_kwargs")

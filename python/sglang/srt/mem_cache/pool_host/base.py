@@ -242,7 +242,13 @@ class HostKVCache(abc.ABC):
             if hasattr(self, name):
                 setattr(self, name, None)
         # Layer views otherwise retain the mmap owner after its anchor is cleared.
-        for name in ("data_refs", "index_k_data_refs", "mem_state", "free_slots", "slot_used"):
+        for name in (
+            "data_refs",
+            "index_k_data_refs",
+            "mem_state",
+            "free_slots",
+            "slot_used",
+        ):
             if hasattr(self, name):
                 setattr(self, name, None)
         self.release_slots = []

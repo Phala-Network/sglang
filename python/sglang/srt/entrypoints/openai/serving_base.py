@@ -124,9 +124,10 @@ class OpenAIServingBase(ABC):
                 request_logger.log_openai_received_request(request, request=raw_request)
 
             # Convert to internal format
-            adapted_request, processed_request = self._convert_to_internal_request(
-                request, raw_request
-            )
+            (
+                adapted_request,
+                processed_request,
+            ) = await self._convert_to_internal_request_async(request, raw_request)
 
             if isinstance(adapted_request, (GenerateReqInput, EmbeddingReqInput)):
                 # Only set timing fields if adapted_request supports them
@@ -181,6 +182,14 @@ class OpenAIServingBase(ABC):
             return rid
 
         return f"{self._request_id_prefix()}{uuid.uuid4().hex}"
+
+    async def _convert_to_internal_request_async(
+        self,
+        request: OpenAIServingRequest,
+        raw_request: Request = None,
+    ) -> tuple[GenerateReqInput, OpenAIServingRequest]:
+        """Keep conversion synchronous unless an endpoint opts into its worker."""
+        return self._convert_to_internal_request(request, raw_request)
 
     @abstractmethod
     def _convert_to_internal_request(
@@ -289,6 +298,28 @@ class OpenAIServingBase(ABC):
         except BaseException:
             await generator.aclose()
             raise
+
+        # An async grammar failure may already be encoded as SSE, rather than
+        # raised. Promote only an initial error before committing HTTP headers;
+        # errors after output begins must retain normal streaming semantics.
+        if isinstance(first_chunk, str) and first_chunk.startswith("data:"):
+            try:
+                first_event = json.loads(first_chunk[5:].strip())
+            except (TypeError, ValueError):
+                first_event = None
+            if isinstance(first_event, dict) and isinstance(
+                first_event.get("error"), dict
+            ):
+                error = first_event["error"]
+                status = error.get("code", 400)
+                if isinstance(status, int) and 400 <= status <= 599:
+                    await generator.aclose()
+                    return self.create_error_response(
+                        message=error.get("message", "Request failed before output"),
+                        err_type=error.get("type", "BadRequestError"),
+                        status_code=status,
+                        param=error.get("param"),
+                    )
 
         async def prepend_first_chunk():
             try:

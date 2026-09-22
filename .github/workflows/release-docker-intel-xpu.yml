@@ -1,8 +1,5 @@
 name: Release Docker Images (Intel XPU)
 on:
-  push:
-    tags:
-      - 'v[0-9]+.*'
   workflow_dispatch:
     inputs:
       version:

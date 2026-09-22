@@ -9,17 +9,21 @@ shadow root, matching test_chunked_prefill_physical_budget.py.
 import ast
 import logging
 import os
-from pathlib import Path
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 SOURCE = (
     Path(sys.argv.pop(1))
     if len(sys.argv) > 1 and not sys.argv[1].startswith("-")
-    else Path(os.environ.get("HICACHE_ACK_TEST_SOURCE_ROOT", Path(__file__).resolve().parents[2]))
+    else Path(
+        os.environ.get(
+            "HICACHE_ACK_TEST_SOURCE_ROOT", Path(__file__).resolve().parents[2]
+        )
+    )
 )
 RUN_GLOO = "--gloo" in sys.argv or os.environ.get("HICACHE_ACK_TEST_GLOO") == "1"
 # Spawn imports this file afresh after the CLI arguments have been consumed.
@@ -33,6 +37,7 @@ if RUN_GLOO:
     import torch.distributed as dist
     import torch.multiprocessing as mp
 else:
+
     class Tensor:
         def __init__(self, values):
             self.values = list(values)
@@ -50,12 +55,15 @@ else:
             self.values[index] = value
 
     dist = SimpleNamespace(
-        all_reduce=MagicMock(), get_world_size=MagicMock(),
+        all_reduce=MagicMock(),
+        get_world_size=MagicMock(),
         ReduceOp=SimpleNamespace(MIN="MIN"),
     )
     torch = SimpleNamespace(
         tensor=lambda values, **kwargs: Tensor(values),
-        int64="int64", int="int", distributed=dist,
+        int64="int64",
+        int="int",
+        distributed=dist,
     )
 
 logger = logging.getLogger(__name__)
@@ -64,22 +72,56 @@ get_disagg = lambda: SimpleNamespace(disaggregation_mode="null")
 get_parallel = lambda: SimpleNamespace(dp_size=1)
 UnifiedCacheLinkerWrapper = lambda cache, linker: linker
 METHODS = {
-    "_single_ready_counts_group", "_ready_counts_tensor", "_parse_ready_counts",
-    "_sync_hicache_ready_counts", "_async_ready_counts_eligible",
-    "_issue_async_ready_counts", "_consume_async_ready_counts",
-    "_drain_pending_ready_counts", "_count_ready_acks", "_apply_ready_counts",
-    "check_hicache_events", "reset", "release_host_resources",
-    "init_cache_linker", "attach_storage_backend", "detach_storage_backend",
-    "enable_storage", "is_write_back",
+    "_single_ready_counts_group",
+    "_ready_counts_tensor",
+    "_parse_ready_counts",
+    "_sync_hicache_ready_counts",
+    "_async_ready_counts_eligible",
+    "_issue_async_ready_counts",
+    "_consume_async_ready_counts",
+    "_drain_pending_ready_counts",
+    "_count_ready_acks",
+    "_apply_ready_counts",
+    "check_hicache_events",
+    "reset",
+    "release_host_resources",
+    "init_cache_linker",
+    "attach_storage_backend",
+    "detach_storage_backend",
+    "enable_storage",
+    "is_write_back",
 }
 source_path = SOURCE / "python/sglang/srt/mem_cache/unified_radix_cache.py"
 tree = ast.parse(source_path.read_text(encoding="utf-8"))
-cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "UnifiedRadixCache")
+cls = next(
+    n
+    for n in tree.body
+    if isinstance(n, ast.ClassDef) and n.name == "UnifiedRadixCache"
+)
 cls.bases = []
 cls.body = [n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name in METHODS]
-exec(compile(ast.fix_missing_locations(ast.Module(body=[
-    ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), cls
-], type_ignores=[])), str(source_path), "exec"), globals())
+cache_namespace = globals()
+exec(
+    compile(
+        ast.fix_missing_locations(
+            ast.Module(
+                body=[
+                    ast.ImportFrom(
+                        module="__future__",
+                        names=[ast.alias(name="annotations")],
+                        level=0,
+                    ),
+                    cls,
+                ],
+                type_ignores=[],
+            )
+        ),
+        str(source_path),
+        "exec",
+    ),
+    cache_namespace,
+)
+UnifiedRadixCache = cache_namespace["UnifiedRadixCache"]
 
 
 def _gloo_min_worker(rank, world_size, init_method):
@@ -97,9 +139,7 @@ def _gloo_min_worker(rank, world_size, init_method):
         )
         cache.cache_controller = SimpleNamespace(
             ack_write_queue=[
-                SimpleNamespace(
-                    finish_event=SimpleNamespace(query=lambda: True)
-                )
+                SimpleNamespace(finish_event=SimpleNamespace(query=lambda: True))
                 for _ in range(2 if rank == 0 else 1)
             ],
             ack_load_queue=[],
@@ -347,14 +387,25 @@ class TestHiCacheAsyncAckSync(unittest.TestCase):
         cache.cache_controller.write_policy = "write_back"
         self.assertFalse(eligible())
         cache.cache_controller.write_policy = "write_through"
-        with patch(__name__ + ".get_memory", return_value=SimpleNamespace(hicache_write_policy="write_back")):
+        with patch(
+            __name__ + ".get_memory",
+            return_value=SimpleNamespace(hicache_write_policy="write_back"),
+        ):
             self.assertFalse(eligible())
 
     def test_single_process_group_selection(self):
         cache = self._cache()
-        cache.attn_cp_group, cache.attn_tp_group, cache.tp_group = object(), object(), object()
+        cache.attn_cp_group, cache.attn_tp_group, cache.tp_group = (
+            object(),
+            object(),
+            object(),
+        )
         cache.tp_world_size = 8
-        with patch.object(dist, "get_world_size", side_effect=lambda group: 1 if group is cache.attn_cp_group else 8):
+        with patch.object(
+            dist,
+            "get_world_size",
+            side_effect=lambda group: 1 if group is cache.attn_cp_group else 8,
+        ):
             self.assertIs(cache._single_ready_counts_group(), cache.attn_tp_group)
         with patch.object(dist, "get_world_size", return_value=2):
             self.assertIsNone(cache._single_ready_counts_group())
@@ -367,7 +418,12 @@ class TestHiCacheAsyncAckSync(unittest.TestCase):
         cache = self._cache(write_ready=(True,))
         cache.tree_core.enable_storage = True
         cc = cache.cache_controller
-        for name, count in [("prefetch_hit_queue", 3), ("ack_prefetch_queue", 4), ("ack_backup_queue", 5), ("host_mem_release_queue", 6)]:
+        for name, count in [
+            ("prefetch_hit_queue", 3),
+            ("ack_prefetch_queue", 4),
+            ("ack_backup_queue", 5),
+            ("host_mem_release_queue", 6),
+        ]:
             setattr(cc, name, SimpleNamespace(qsize=lambda count=count: count))
         cc.extra_host_mem_release_queues = {"mamba": SimpleNamespace(qsize=lambda: 7)}
         tensor, names, digest = cache._ready_counts_tensor()
@@ -383,8 +439,12 @@ class TestHiCacheAsyncAckSync(unittest.TestCase):
         cache.check_hicache_events()
         cache._all_reduce.assert_called_once()
         cache._drain_storage_control_queues_impl.assert_called_once_with(
-            n_storage_hit=3, n_ack_prefetch=4, n_backup=5, n_release=6,
-            extra_release_counts={"mamba": 7}, log_metrics=True,
+            n_storage_hit=3,
+            n_ack_prefetch=4,
+            n_backup=5,
+            n_release=6,
+            extra_release_counts={"mamba": 7},
+            log_metrics=True,
         )
         cache.buffer_pipeline.flush_pending_writes.assert_called_once()
         self.assertIsNone(cache._pending_ready_counts)
@@ -405,12 +465,17 @@ class TestHiCacheAsyncAckSync(unittest.TestCase):
                 cache = self._cache(write_ready=(True,))
                 work = _FakeWork()
                 cache._pending_ready_counts = (work, torch.tensor([1, 0, 0, 0]), (), 0)
+
                 def observe(**kwargs):
                     self.assertTrue(work.waited)
                     self.assertEqual(cache.write_counts, [1])
                     self.assertIsNone(cache._pending_ready_counts)
                     return True, "ok"
-                cache._storage_attachment = SimpleNamespace(attach=MagicMock(side_effect=observe), detach=MagicMock(side_effect=observe))
+
+                cache._storage_attachment = SimpleNamespace(
+                    attach=MagicMock(side_effect=observe),
+                    detach=MagicMock(side_effect=observe),
+                )
                 if operation == "attach":
                     self.assertEqual(cache.attach_storage_backend("file"), (True, "ok"))
                 elif operation == "detach":

@@ -2,9 +2,6 @@ name: Release Docker Images Nightly gfx1151 (AMD)
 
 on:
   workflow_dispatch:
-  schedule:
-    # Stagger this build from the CDNA ROCm nightlies at 12:00 UTC.
-    - cron: "0 14 * * *"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

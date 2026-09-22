@@ -38,7 +38,8 @@ from sglang.srt.constrained.base_grammar_backend import (
 )
 from sglang.srt.constrained.utils import is_legacy_structural_tag
 from sglang.srt.constrained.xgrammar_schema import (
-    has_xgrammar_unsupported_json_features,
+    validate_xgrammar_schema,
+    validate_xgrammar_whitespace_limit,
 )
 from sglang.srt.utils import is_hip
 from sglang.srt.utils.common import is_pin_memory_available
@@ -214,8 +215,12 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
         vocab_size: int,
         model_eos_token_ids: Optional[List[int]] = None,
         any_whitespace: bool = True,
+        max_whitespace_cnt: Optional[int] = None,
     ):
         super().__init__()
+        validate_xgrammar_whitespace_limit(
+            max_whitespace_cnt, any_whitespace=any_whitespace
+        )
 
         if hasattr(tokenizer, "init_xgrammar"):
             # For special tokenizer
@@ -243,6 +248,7 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
         self.vocab_size = vocab_size
         self.override_stop_tokens = override_stop_tokens
         self.any_whitespace = any_whitespace
+        self.max_whitespace_cnt = max_whitespace_cnt
 
     @property
     def is_support_token_filter(self):
@@ -293,7 +299,7 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
 
     @staticmethod
     def _sanitize_structural_format(structural_format):
-        """Recursively replace missing json_schema fields with an empty schema."""
+        """Normalize/validate only schema-bearing positions, never schema data."""
         if not isinstance(structural_format, dict):
             return
 
@@ -301,8 +307,13 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
         if fmt_type in {"json_schema", "qwen_xml_parameter"}:
             if structural_format.get("json_schema") is None:
                 structural_format["json_schema"] = {}
+            validate_xgrammar_schema(structural_format["json_schema"])
+            if fmt_type == "json_schema":
+                validate_xgrammar_whitespace_limit(
+                    structural_format.get("max_whitespace_cnt")
+                )
 
-        if fmt_type == "tag":
+        if fmt_type in {"tag", "optional", "plus", "star", "repeat"}:
             XGrammarGrammarBackend._sanitize_structural_format(
                 structural_format.get("content")
             )
@@ -312,12 +323,16 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
         elif fmt_type in {"triggered_tags", "tags_with_separator"}:
             for tag in structural_format.get("tags", []):
                 XGrammarGrammarBackend._sanitize_structural_format(tag)
+        elif fmt_type in {"dispatch", "token_dispatch"}:
+            for _, content in structural_format.get("rules", []):
+                XGrammarGrammarBackend._sanitize_structural_format(content)
 
     @staticmethod
     def _sanitize_structural_tag_structures(structural_tag: Dict) -> None:
         for structure in structural_tag.get("structures", []):
             if structure.get("schema") is None:
                 structure["schema"] = {}
+            validate_xgrammar_schema(structure["schema"])
 
     def _from_context(
         self, ctx: CompiledGrammar, key_string: str, grammar_stats: GrammarStats
@@ -338,20 +353,16 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
 
     def dispatch_json(self, key_string: str) -> BaseGrammarObject:
         try:
-            if key_string == "$$ANY$$":
+            if key_string == "$$ANY$$" and self.max_whitespace_cnt is None:
                 # Note: This builtin JSON grammar includes *all* valid JSON (including, for example, arrays at the root)
                 ctx = self.grammar_compiler.compile_builtin_json_grammar()
             else:
-                schema = json.loads(key_string)
-                if isinstance(schema, dict) and has_xgrammar_unsupported_json_features(
-                    schema
-                ):
-                    raise RuntimeError(
-                        "JSON schema uses features unsupported by xgrammar; "
-                        "the constraint would otherwise be silently ignored"
-                    )
+                schema = {} if key_string == "$$ANY$$" else json.loads(key_string)
+                validate_xgrammar_schema(schema)
                 ctx = self.grammar_compiler.compile_json_schema(
-                    schema=key_string, any_whitespace=self.any_whitespace
+                    schema=schema,
+                    any_whitespace=self.any_whitespace,
+                    max_whitespace_cnt=self.max_whitespace_cnt,
                 )
 
         except (RuntimeError, json.decoder.JSONDecodeError, UnicodeDecodeError) as e:
@@ -401,7 +412,7 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
                     structural_tag["format"] = format_dict
                     key_string = json.dumps(structural_tag)
                 ctx = self.grammar_compiler.compile_structural_tag(key_string)
-        except (RuntimeError, json.decoder.JSONDecodeError) as e:
+        except (RuntimeError, ValueError, TypeError) as e:
             logger.error(f"Hit invalid structural_tag: {key_string=}, {e=}")
             return InvalidGrammarObject(str(e))
         return self._from_context(

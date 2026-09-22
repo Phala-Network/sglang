@@ -19,11 +19,14 @@ class TestPyspyTimeout(CustomTestCase):
         process = MagicMock(pid=123)
         timeout = subprocess.TimeoutExpired("py-spy", 10)
 
-        with patch.object(dump_utils.psutil, "Process", return_value=process), patch.object(
-            dump_utils.subprocess,
-            "run",
-            side_effect=timeout,
-        ) as run:
+        with (
+            patch.object(dump_utils.psutil, "Process", return_value=process),
+            patch.object(
+                dump_utils.subprocess,
+                "run",
+                side_effect=timeout,
+            ) as run,
+        ):
             dump_utils.pyspy_dump_schedulers()
 
         self.assertEqual(run.call_count, 2)
@@ -35,18 +38,21 @@ class TestPyspyTimeout(CustomTestCase):
 
 class TestKillProcessTreeReap(CustomTestCase):
     def test_default_waits_for_reap(self):
-        default = inspect.signature(common.kill_process_tree).parameters[
-            "wait_timeout"
-        ].default
+        default = (
+            inspect.signature(common.kill_process_tree)
+            .parameters["wait_timeout"]
+            .default
+        )
         self.assertEqual(default, 60)
 
         parent = MagicMock()
         child = MagicMock(pid=456)
         parent.children.return_value = [child]
 
-        with patch.object(common.psutil, "Process", return_value=parent), patch.object(
-            common, "_wait_for_reap_or_raise"
-        ) as wait:
+        with (
+            patch.object(common.psutil, "Process", return_value=parent),
+            patch.object(common, "_wait_for_reap_or_raise") as wait,
+        ):
             common.kill_process_tree(123, include_parent=False)
 
         child.kill.assert_called_once_with()

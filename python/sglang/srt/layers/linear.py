@@ -600,6 +600,10 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
         is_gguf_weight = getattr(param, "is_gguf_weight", False)
         is_gguf_weight_type = getattr(param, "is_gguf_weight_type", False)
         if is_gguf_weight_type:
+            # Packed Qwen shards broadcast one-element type metadata to scalar
+            # slots; copy_ cannot broadcast shape [1] into shape [].
+            if loaded_weight.numel() == 1:
+                loaded_weight = loaded_weight.reshape(())
             param.data[loaded_shard_id].copy_(loaded_weight)
             param.shard_weight_type[loaded_shard_id] = loaded_weight.item()
             return

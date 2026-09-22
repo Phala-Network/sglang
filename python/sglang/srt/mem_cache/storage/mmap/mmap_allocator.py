@@ -117,7 +117,9 @@ def requested_hugepage_bytes() -> int:
         return 2 * 1024 * 1024
     if value == "1GB":
         return 1024 * 1024 * 1024
-    raise ValueError(f"Invalid SGLANG_HUGEPAGE_SIZE={value!r}; expected 2MB, 1GB, or empty")
+    raise ValueError(
+        f"Invalid SGLANG_HUGEPAGE_SIZE={value!r}; expected 2MB, 1GB, or empty"
+    )
 
 
 def alloc_mmap(dims: tuple, dtype: torch.dtype) -> torch.Tensor:

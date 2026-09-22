@@ -220,8 +220,20 @@ class BaseTpWorker(ABC):
         )
 
     def update_weights_from_tensor(self, recv_req: UpdateWeightsFromTensorReqInput):
+        try:
+            named_tensors = self._deserialize_own_rank(
+                recv_req.serialized_named_tensors
+            )
+        except Exception as exc:
+            message = (
+                "Invalid update_weights_from_tensor serialized payload: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            logger.error(message)
+            return False, message
+
         success, message = self.model_runner.weight_updater.update_weights_from_tensor(
-            named_tensors=self._deserialize_own_rank(recv_req.serialized_named_tensors),
+            named_tensors=named_tensors,
             load_format=recv_req.load_format,
         )
         return success, message
@@ -606,6 +618,14 @@ class TpModelWorker(BaseTpWorker):
         if batch is not None:
             # update the consumer index of hicache to the running batch
             self.set_hicache_consumer(batch.hicache_consumer_index)
+
+            if get_exec().features.enable_encoder_swa_bounded_replay:
+                from sglang.srt.model_executor.encoder_swa_replay import (
+                    run_encoder_swa_replay,
+                )
+
+                # Replay reads restored main/indexer KV before the normal extend.
+                run_encoder_swa_replay(self, batch)
 
             forward_batch = ForwardBatch.init_new(
                 batch,

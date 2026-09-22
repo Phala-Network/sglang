@@ -19,6 +19,7 @@ from sglang.srt.function_call.deepseekv3_detector import DeepSeekV3Detector
 from sglang.srt.function_call.deepseekv4_detector import DeepSeekV4Detector
 from sglang.srt.function_call.deepseekv31_detector import DeepSeekV31Detector
 from sglang.srt.function_call.deepseekv32_detector import DeepSeekV32Detector
+from sglang.srt.function_call.deepseekv41_detector import DeepSeekV41Detector
 from sglang.srt.function_call.dots_detector import DotsToolDetector
 from sglang.srt.function_call.gemma4_detector import Gemma4Detector
 from sglang.srt.function_call.gigachat3_detector import GigaChat3Detector
@@ -76,6 +77,7 @@ class FunctionCallParser:
         "deepseekv31": DeepSeekV31Detector,
         "deepseekv32": DeepSeekV32Detector,
         "deepseekv4": DeepSeekV4Detector,
+        "deepseekv41": DeepSeekV41Detector,
         "dots": DotsToolDetector,
         "glm": Glm4MoeDetector,
         "glm45": Glm4MoeDetector,
@@ -111,7 +113,13 @@ class FunctionCallParser:
         "inkling": InklingDetector,
     }
 
-    def __init__(self, tools: List[Tool], tool_call_parser: str, tokenizer=None):
+    def __init__(
+        self,
+        tools: List[Tool],
+        tool_call_parser: str,
+        tokenizer=None,
+        constrained_output: bool = False,
+    ):
         detector_class = self.ToolCallParserEnum.get(tool_call_parser)
         if detector_class:
             kwargs = {}
@@ -119,6 +127,8 @@ class FunctionCallParser:
                 sig = inspect.signature(detector_class)
                 if "tokenizer" in sig.parameters:
                     kwargs["tokenizer"] = tokenizer
+            if "constrained_output" in inspect.signature(detector_class).parameters:
+                kwargs["constrained_output"] = constrained_output
             detector = detector_class(**kwargs)
         else:
             raise ValueError(f"Unsupported tool_call_parser: {tool_call_parser}")
@@ -349,9 +359,11 @@ class FunctionCallParser:
                     tag = self.get_legacy_structural_tag(at_least_one=is_required)
                     return ("structural_tag", tag)
 
-            if (
-                tool_choice == "required" or isinstance(tool_choice, ToolChoice)
-            ) and not self.detector.parses_required_natively():
+            # Owning unconstrained required output does not waive named choice.
+            if isinstance(tool_choice, ToolChoice) or (
+                tool_choice == "required"
+                and not self.detector.parses_required_natively()
+            ):
                 json_schema = get_json_schema_constraint(
                     self.tools, tool_choice, parallel_tool_calls=parallel_tool_calls
                 )

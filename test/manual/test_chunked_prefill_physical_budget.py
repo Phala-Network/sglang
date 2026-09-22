@@ -162,6 +162,32 @@ class ContinuationRegression(unittest.TestCase):
         a.add_chunked_req(r)
         self.assert_capacity(a, r, 11200)
 
+    def test_hybrid_ssm_dcp8_uses_virtual_allocator_pages(self):
+        # Scheduler page64 versus allocator virtual512/physical64. Allocation
+        # oracle counts actual new virtual pages, independently of admission.
+        for free in (512, 1024, 1536, 4096):
+            for mixed in (0, 1, 65, 511):
+                for prefix in (0, 64, 448, 512, 576):
+                    with self.subTest(free=free, mixed=mixed, prefix=prefix):
+                        a, r = make_case(free=free, mixed=mixed, prefix=prefix)
+                        a.is_hybrid_ssm_cache = True
+                        a.token_to_kv_pool_allocator.page_size = 512
+                        a.add_chunked_req(r)
+                        if a.can_run_list:
+                            pages = (r.extend_range.end + 511) // 512 - (
+                                prefix + 511
+                            ) // 512
+                            self.assertLessEqual(pages * 512, free - mixed)
+                            self.assertGreaterEqual(a.cur_rem_tokens, 0)
+
+    def test_dcp8_final_tail_reserves_allocator_page_not_compute_page(self):
+        a, r = make_case(free=1536, reservation=0, remaining=65, prefix=512)
+        a.is_hybrid_ssm_cache = True
+        a.token_to_kv_pool_allocator.page_size = 512
+        self.assertIsNone(a.add_chunked_req(r))
+        self.assertEqual(r.extend_range.length, 65)
+        self.assertEqual(a.cur_rem_token_offset, 1024)
+
     def test_no_space_or_less_than_two_pages_parks(self):
         for free in (0, 1, 63, 64, 65, 127):
             with self.subTest(free=free):

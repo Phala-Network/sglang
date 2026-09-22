@@ -461,6 +461,7 @@ class TestResubmitAfterCompletion(CustomTestCase):
 class TestRequestStateSummary(CustomTestCase):
     def test_server_info_exposes_local_counts_or_explicit_unavailable(self):
         from types import SimpleNamespace
+
         from sglang.srt.entrypoints import http_server
 
         tm = _make_tokenizer_manager(self)
@@ -470,15 +471,19 @@ class TestRequestStateSummary(CustomTestCase):
         tm.startup_time = 0.0
         tm.rid_to_state["private-request-id"] = _make_req_state("private-request-id")
         state = SimpleNamespace(tokenizer_manager=tm, scheduler_info={})
-        with patch.object(http_server, "_global_state", state), patch.object(
-            http_server, "describe_kv_events_publisher", return_value=None
+        with (
+            patch.object(http_server, "_global_state", state),
+            patch.object(
+                http_server, "describe_kv_events_publisher", return_value=None
+            ),
         ):
             result = asyncio.run(http_server.server_info())
             self.assertEqual(result["tokenizer_request_states"]["total"], 1)
             self.assertNotIn("private-request-id", str(result))
             state.tokenizer_manager = SimpleNamespace(
                 get_internal_state=AsyncMock(return_value=[]),
-                server_args=tm.server_args, startup_time=0.0,
+                server_args=tm.server_args,
+                startup_time=0.0,
             )
             result = asyncio.run(http_server.server_info())
             self.assertIsNone(result["tokenizer_request_states"])
@@ -493,20 +498,36 @@ class TestRequestStateSummary(CustomTestCase):
         ready = asyncio.Event()
         tm.encoder_dispatch_ready[waiting.obj.rid] = ready
         before = tm.request_state_summary()
-        self.assertEqual(before, {
-            "total": 2, "undelivered": 1, "dispatched": 1,
-            "abort_pending": 0, "finished": 0, "encoder_dispatch_pending": 1,
-        })
+        self.assertEqual(
+            before,
+            {
+                "total": 2,
+                "undelivered": 1,
+                "dispatched": 1,
+                "abort_pending": 0,
+                "finished": 0,
+                "encoder_dispatch_pending": 1,
+            },
+        )
         self.assertIs(tm.rid_to_state[running.obj.rid], running)
         self.assertFalse(ready.is_set())
         tm._release_req_states_on_failure([waiting.obj.rid, running.obj.rid])
         self.assertTrue(ready.is_set())
-        self.assertEqual(tm.request_state_summary(), {
-            "total": 1, "undelivered": 0, "dispatched": 1,
-            "abort_pending": 1, "finished": 0, "encoder_dispatch_pending": 0,
-        })
+        self.assertEqual(
+            tm.request_state_summary(),
+            {
+                "total": 1,
+                "undelivered": 0,
+                "dispatched": 1,
+                "abort_pending": 1,
+                "finished": 0,
+                "encoder_dispatch_pending": 0,
+            },
+        )
         tm._handle_abort_req(_make_abort_req(running.obj.rid))
-        self.assertTrue(all(value == 0 for value in tm.request_state_summary().values()))
+        self.assertTrue(
+            all(value == 0 for value in tm.request_state_summary().values())
+        )
         self.assertEqual(before["total"], 2, "snapshot must not be a live mutable view")
 
 
@@ -854,6 +875,72 @@ class TestDisconnectAfterDispatchAbortsRequest(CustomTestCase):
         aborts = [m for m in sent if isinstance(m, AbortReq) and m.rid == rid]
         self.assertTrue(aborts, "disconnect must send an AbortReq to the scheduler")
         self.assertIn(rid, tm.rid_to_state)
+
+
+class TestBackgroundAbortRequestOwnership(CustomTestCase):
+    """Ported from Kimi5256c311; common RID-reuse regression, not model-specific."""
+
+    @staticmethod
+    def _run(background):
+        async def drive():
+            with patch("asyncio.sleep", new=AsyncMock()):
+                await background()
+
+        asyncio.run(drive())
+
+    @staticmethod
+    def _normalized_obj(text, *, rid, sampling_params=None):
+        obj = GenerateReqInput(
+            text=text,
+            rid=rid,
+            sampling_params={} if sampling_params is None else sampling_params,
+        )
+        obj.normalize_batch_and_arguments()
+        obj.received_time = 0.0
+        return obj
+
+    def test_pre_normalization_background_abort_is_a_noop(self):
+        tm = _make_tokenizer_manager(self)
+        tm.abort_request = Mock()
+        obj = GenerateReqInput(text="hello", sampling_params={})
+        self._run(tm.create_abort_task(obj))
+        tm.abort_request.assert_not_called()
+
+    def test_background_abort_does_not_abort_reused_rid(self):
+        tm = _make_tokenizer_manager(self)
+        tm.abort_request = Mock()
+        old_obj = self._normalized_obj("hello", rid="reused")
+        tm._init_req_state(old_obj)
+        background = tm.create_abort_task(old_obj)
+        del tm.rid_to_state["reused"]
+        new_obj = self._normalized_obj("hello", rid="reused")
+        tm._init_req_state(new_obj)
+        self._run(background)
+        tm.abort_request.assert_not_called()
+
+    def test_background_abort_still_aborts_original_owner(self):
+        tm = _make_tokenizer_manager(self)
+        tm.abort_request = Mock()
+        obj = self._normalized_obj("hello", rid="owned")
+        background = tm.create_abort_task(obj)
+        tm._init_req_state(obj)
+        self._run(background)
+        tm.abort_request.assert_called_once_with("owned")
+
+    def test_parallel_batch_abort_uses_original_parent_count(self):
+        tm = _make_tokenizer_manager(self)
+        tm.abort_request = Mock()
+        obj = self._normalized_obj(
+            ["first", "second"], rid="parallel", sampling_params={"n": 2}
+        )
+        self.assertEqual(obj.batch_size, 2)
+        self.assertEqual(len(obj.rid), 4)
+        tm._init_req_state(obj)
+        self._run(tm.create_abort_task(obj))
+        self.assertEqual(
+            [call.args[0] for call in tm.abort_request.call_args_list],
+            obj.rid[: obj.batch_size],
+        )
 
 
 if __name__ == "__main__":

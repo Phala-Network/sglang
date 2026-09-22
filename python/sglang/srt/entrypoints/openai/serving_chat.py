@@ -4,14 +4,16 @@ import copy
 import json
 import logging
 import math
+import re
 import time
 import uuid
 from collections import OrderedDict
 from enum import Enum
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union
+from urllib.parse import unquote_to_bytes, urlsplit
 
-from sglang.srt.runtime_context import get_model, get_serving
+from sglang.srt.runtime_context import get_mm, get_model, get_serving
 
 
 class ThinkingMode(str, Enum):
@@ -42,7 +44,15 @@ from jsonschema import Draft202012Validator, SchemaError
 from sglang.srt.constrained.xgrammar_schema import (
     has_xgrammar_unsupported_json_features,
 )
-from sglang.srt.entrypoints.openai import chat_encoding, encoding_dsv4, encoding_dsv32
+from sglang.srt.entrypoints.openai import (
+    chat_encoding,
+    encoding_dsv4,
+    encoding_dsv32,
+    encoding_dsv41,
+)
+from sglang.srt.entrypoints.openai.nemotron_literal_tokens import (
+    encode_nemotron_message_literals,
+)
 from sglang.srt.entrypoints.openai.protocol import (
     AllowedToolsChoice,
     ChatCompletionMessageContentTextPart,
@@ -108,6 +118,8 @@ from sglang.srt.parser.reasoning_parser import ReasoningParser
 from sglang.srt.sampling.sampling_params import (
     set_request_reasoning_end_token_ids,
 )
+from sglang.srt.utils import ImageData
+from sglang.srt.utils.common import _assert_media_url_allowed
 from sglang.srt.utils.weight_versions import build_endpoint_weight_version_metadata
 
 if TYPE_CHECKING:
@@ -115,6 +127,169 @@ if TYPE_CHECKING:
     from sglang.srt.parser.template_manager import TemplateManager
 
 logger = logging.getLogger(__name__)
+
+_COMPLETE_THINK_CONTENT_RE = re.compile(
+    r"\A\s*<think>(?P<reasoning>.*?)</think>\s*\Z", re.DOTALL
+)
+
+
+def normalize_muse_history(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Preserve control messages and legacy reasoning in Muse's Jinja contract."""
+    control_messages, normalized = [], []
+    for source in messages:
+        message = copy.deepcopy(source)
+        role = message.get("role")
+        if role in ("system", "developer"):
+            message["role"] = "system"
+            control_messages.append(message)
+            continue
+        if role == "assistant":
+            reasoning = message.get("reasoning_content")
+            if reasoning is None:
+                reasoning = message.get("reasoning")
+            if reasoning is not None:
+                message["reasoning_content"] = reasoning
+            elif isinstance(message.get("content"), str):
+                match = _COMPLETE_THINK_CONTENT_RE.fullmatch(message["content"])
+                if match is not None:
+                    message["reasoning_content"] = match.group("reasoning")
+                    message["content"] = ""
+            message.pop("reasoning", None)
+        normalized.append(message)
+    if control_messages and all(
+        isinstance(message.get("content"), str) for message in control_messages
+    ):
+        normalized.insert(
+            0,
+            {
+                "role": "system",
+                "content": "\n\n".join(
+                    message["content"] for message in control_messages
+                ),
+            },
+        )
+    else:
+        normalized[0:0] = control_messages
+    return normalized
+
+
+def normalize_muse_reasoning(request, reasoning_parser):
+    """Map normalized controls to Muse's strength without changing other models."""
+    if reasoning_parser != "muse":
+        return
+    kwargs = dict(request.chat_template_kwargs or {})
+    if "reasoning_strength" not in kwargs:
+        effort = request.reasoning_effort
+        if isinstance(effort, str) and effort != "minimal":
+            kwargs["reasoning_strength"] = effort
+        else:
+            for key in ("enable_thinking", "thinking"):
+                if key not in kwargs:
+                    continue
+                value = kwargs[key]
+                enabled = (
+                    value.strip().lower() in {"1", "true", "yes", "y", "on"}
+                    if isinstance(value, str)
+                    else bool(value)
+                )
+                if not enabled:
+                    kwargs["reasoning_strength"] = "none"
+                break
+    request.chat_template_kwargs = kwargs
+
+
+def apply_muse_structured_output_reasoning_default(request, reasoning_parser):
+    """Use direct-final for Muse JSON unless the caller chose reasoning controls."""
+    if reasoning_parser != "muse" or request.response_format is None:
+        return
+    if request.response_format.type not in {"json_object", "json_schema"}:
+        return
+    if (
+        request.reasoning_effort is not None
+        or request.include_reasoning is True
+        or getattr(request, "reasoning_max_tokens", None) is not None
+    ):
+        return
+    kwargs = dict(request.chat_template_kwargs or {})
+    if any(
+        key in kwargs for key in ("reasoning_strength", "enable_thinking", "thinking")
+    ):
+        return
+    kwargs["reasoning_strength"] = "none"
+    request.chat_template_kwargs = kwargs
+
+
+def apply_nemotron_structured_output_reasoning_budget(
+    request, reasoning_parser, *, structured_tools=None
+):
+    """Reserve final-answer space without changing explicit thinking controls."""
+    if reasoning_parser != "nemotron_3":
+        return
+    structured_format = (
+        request.response_format is not None
+        and request.response_format.type in {"json_object", "json_schema"}
+    )
+    if structured_tools is None:
+        structured_tools = bool(request.tools) and request.tool_choice != "none"
+    if not (structured_format or structured_tools):
+        return
+    if request.input_ids is not None or request.continue_final_message:
+        return
+    kwargs = request.chat_template_kwargs or {}
+    if request.reasoning_effort == "none" or any(
+        kwargs.get(key) is False for key in ("enable_thinking", "thinking")
+    ):
+        return
+    if (request.custom_params or {}).get("thinking_budget") is not None:
+        return
+    total_budget = (
+        request.max_completion_tokens
+        if request.max_completion_tokens is not None
+        else request.max_tokens
+    )
+    if total_budget is None or total_budget <= 0:
+        return
+    final_reserve = max(128, min(4096, total_budget // 2))
+    request.custom_params = dict(
+        request.custom_params or {},
+        thinking_budget=max(0, total_budget - final_reserve),
+    )
+
+
+def nemotron_response_format_template_kwargs(request, reasoning_parser):
+    """Give the template the same JSON contract that the grammar enforces."""
+    if (
+        reasoning_parser != "nemotron_3"
+        or request.response_format is None
+        or request.response_format.type not in {"json_object", "json_schema"}
+        or request.input_ids is not None
+        or request.continue_final_message
+    ):
+        return {}
+    return {
+        "response_format": request.response_format.model_dump(
+            exclude_unset=True, by_alias=True
+        )
+    }
+
+
+def muse_format_template_kwargs(request, reasoning_parser, tool_call_constraint):
+    """Describe the selected format in the opt-in, pinned Muse baked template."""
+    if reasoning_parser != "muse":
+        return {}
+    if tool_call_constraint is not None and tool_call_constraint[0] == "json_schema":
+        return {"_phala_muse_tool_schema": tool_call_constraint[1]}
+    if request.response_format is not None and request.response_format.type in {
+        "json_object",
+        "json_schema",
+    }:
+        return {
+            "_phala_muse_response_format": request.response_format.model_dump(
+                mode="json", by_alias=True, exclude_none=True
+            )
+        }
+    return {}
+
 
 _QWEN35_REASONING_EFFORT_GUIDANCE = {
     "low": (
@@ -164,7 +339,9 @@ _QWEN35_REASONING_EFFORT_FULL_BUDGET = 8192
 _QWEN35_DEFAULT_REASONING_BUDGET = 8192
 _QWEN35_REASONING_ANSWER_RESERVE_CAP = 256
 
-_MEDIA_CONTENT_PART_TYPES = frozenset({"image_url", "video_url", "audio_url"})
+_MEDIA_CONTENT_PART_TYPES = frozenset(
+    {"image_url", "video_url", "audio_url", "input_audio"}
+)
 _CHAT_TEMPLATE_CACHE_MAX_SIZE = 128
 
 
@@ -398,6 +575,13 @@ class OpenAIServingChat(OpenAIServingBase):
             if self.chat_encoding_spec == "inkling"
             else None
         )
+        self._dsv41_default_reasoning_effort: Optional[Union[str, int]] = (
+            chat_encoding.default_dsv41_reasoning_effort_from_env(
+                envs.SGLANG_DSV41_REASONING_EFFORT.get()
+            )
+            if self.chat_encoding_spec == "dsv41"
+            else None
+        )
 
         # Per-request response parser for custom decoding (set by _encode_messages)
         self._response_parser: Optional[ResponseParserProtocol] = None
@@ -526,7 +710,10 @@ class OpenAIServingChat(OpenAIServingBase):
         request: ChatCompletionRequest,
         *,
         exclude_unset: bool = False,
+        exclude_none: bool = False,
     ) -> List[Dict[str, Any]]:
+        if self._effective_tool_choice(request) == "none":
+            return []
         tools = list(request.tools or [])
         if isinstance(request.tool_choice, ToolChoice):
             tools = [
@@ -539,7 +726,9 @@ class OpenAIServingChat(OpenAIServingBase):
             if allowed_names is not None:
                 tools = [tool for tool in tools if tool.function.name in allowed_names]
         return [
-            tool.model_dump(exclude_unset=exclude_unset, by_alias=True)
+            tool.model_dump(
+                exclude_unset=exclude_unset, exclude_none=exclude_none, by_alias=True
+            )
             for tool in tools
         ]
 
@@ -548,6 +737,10 @@ class OpenAIServingChat(OpenAIServingBase):
         messages: List[Dict[str, Any]],
         request: ChatCompletionRequest,
     ) -> None:
+        if self._effective_tool_choice(request) == "none":
+            for message in messages:
+                message.pop("tools", None)
+            return
         allowed_names = self._allowed_tool_names(request)
         if allowed_names is None:
             return
@@ -656,8 +849,7 @@ class OpenAIServingChat(OpenAIServingBase):
         """Return bounded reasoning effort tiers for the Qwen3.5 template."""
         if (
             not self._uses_qwen35_chat_template()
-            or get_serving().enable_strict_thinking
-            is not True
+            or get_serving().enable_strict_thinking is not True
         ):
             return None
 
@@ -712,10 +904,7 @@ class OpenAIServingChat(OpenAIServingBase):
             else min(
                 max(
                     xhigh_min,
-                    int(
-                        _QWEN35_REASONING_EFFORT_TOKEN_RANGES["xhigh"][1]
-                        * scale
-                    ),
+                    int(_QWEN35_REASONING_EFFORT_TOKEN_RANGES["xhigh"][1] * scale),
                 ),
                 available_tokens,
             )
@@ -728,10 +917,7 @@ class OpenAIServingChat(OpenAIServingBase):
                     available_tokens,
                     max(
                         medium_min,
-                        int(
-                            _QWEN35_REASONING_EFFORT_TOKEN_RANGES["medium"][1]
-                            * scale
-                        ),
+                        int(_QWEN35_REASONING_EFFORT_TOKEN_RANGES["medium"][1] * scale),
                     ),
                 ),
             ),
@@ -1004,6 +1190,21 @@ class OpenAIServingChat(OpenAIServingBase):
             raise ValueError("Inkling reasoning_effort must be in [0.0, 0.99]")
         return parsed
 
+    def _resolve_dsv41_reasoning_effort(self, value: Any) -> Union[str, int]:
+        """Request effort for the V4.1 encoder; unsupported values warn and fall back."""
+        effort = chat_encoding.parse_dsv41_reasoning_effort(value)
+        if effort is not None:
+            return effort
+        if value is not None and value != "none":
+            logger.warning(
+                "DeepSeek-V4.1 does not support reasoning_effort=%r; using the "
+                "default %r (low/medium/high/xhigh/max, a float in [0, 0.99], "
+                "or an integer budget in [1, 100] are accepted).",
+                value,
+                self._dsv41_default_reasoning_effort,
+            )
+        return self._dsv41_default_reasoning_effort
+
     @staticmethod
     def _get_inkling_default_reasoning_effort() -> float:
         """Read the default Inkling reasoning effort from the environment."""
@@ -1172,7 +1373,9 @@ class OpenAIServingChat(OpenAIServingBase):
                             prompt_tokens=prompt_tokens.get(index, 0),
                             reasoning_tokens=reasoning_tokens.get(index, 0),
                             completion_tokens=completion_tokens.get(index, 0),
-                            cached_tokens=self._continuous_usage_cached_details(content),
+                            cached_tokens=self._continuous_usage_cached_details(
+                                content
+                            ),
                         ).model_dump()
 
                     yield build_sse_content(
@@ -1279,6 +1482,13 @@ class OpenAIServingChat(OpenAIServingBase):
         if request.return_sampling_mask and not request.return_meta_info:
             return "return_sampling_mask requires return_meta_info=true."
 
+        if (
+            type(request.reasoning_effort) is int
+            and request.reasoning_effort >= 1
+            and self.chat_encoding_spec != "dsv41"
+        ):
+            return "Integer reasoning_effort budgets require the DeepSeek-V4.1 encoder."
+
         media_error = self._validate_media_content(request)
         if media_error:
             return media_error
@@ -1378,26 +1588,68 @@ class OpenAIServingChat(OpenAIServingBase):
         return None
 
     def _validate_media_content(self, request: ChatCompletionRequest) -> Optional[str]:
-        if self.tokenizer_manager.model_config.is_multimodal:
+        config = self.tokenizer_manager.model_config
+        parts = [
+            part
+            for message in request.messages
+            if isinstance(message.content, list)
+            for part in message.content
+            if part.type in _MEDIA_CONTENT_PART_TYPES
+        ]
+        if not parts:
             return None
-
-        media_type = next(
-            (
-                part.type
-                for message in request.messages
-                if isinstance(message.content, list)
-                for part in message.content
-                if part.type in _MEDIA_CONTENT_PART_TYPES
+        if not config.is_multimodal:
+            return (
+                "Model only supports text input; "
+                f"received unsupported content type '{parts[0].type}'."
+            )
+        mm_tokens = getattr(
+            getattr(self.tokenizer_manager, "mm_processor", None), "mm_tokens", None
+        )
+        supported = {
+            "image_url": bool(config.is_image_understandable_model),
+            "audio_url": bool(config.is_audio_understandable_model),
+            "input_audio": bool(config.is_audio_understandable_model),
+            "video_url": bool(
+                mm_tokens is not None
+                and (
+                    bool(getattr(mm_tokens, "video_token", None))
+                    or getattr(mm_tokens, "video_token_id", None) is not None
+                )
             ),
-            None,
-        )
-        if media_type is None:
-            return None
-
-        return (
-            "Model only supports text input; "
-            f"received unsupported content type '{media_type}'."
-        )
+        }
+        limit_mb = get_mm().media_url_max_file_size_mb
+        max_bytes = limit_mb * 1024 * 1024
+        for part in parts:
+            if not supported[part.type]:
+                return f"{part.type} input is not supported by this model."
+            if part.type == "input_audio":
+                url = f"data:audio/{part.input_audio.format};base64,{part.input_audio.data}"
+            else:
+                url = getattr(part, part.type).url
+            try:
+                parsed = urlsplit(url)
+                if parsed.scheme in ("http", "https"):
+                    _assert_media_url_allowed(url)
+                elif parsed.scheme == "data":
+                    header, separator, payload = url.partition(",")
+                    if not separator:
+                        return f"Invalid {part.type} data URI: missing comma."
+                    if header.lower().endswith(";base64"):
+                        if len(payload) % 4 or not re.fullmatch(
+                            r"[A-Za-z0-9+/]*={0,2}", payload
+                        ):
+                            return f"Invalid {part.type} base64 data URI."
+                        size = len(payload) // 4 * 3 - payload[-2:].count("=")
+                    else:
+                        size = len(unquote_to_bytes(payload))
+                    if max_bytes and size > max_bytes:
+                        return f"{part.type} exceeds the {max_bytes} byte media size limit."
+                else:
+                    return f"Invalid {part.type}.url: expected a data: URI or http(s):// URL."
+            except ValueError:
+                return f"Invalid {part.type} media URL."
+        return None
 
     def _engine_prompt(
         self, processed_messages: MessageProcessingResult, is_multimodal: bool
@@ -1414,6 +1666,22 @@ class OpenAIServingChat(OpenAIServingBase):
         if isinstance(processed_messages.prompt_ids, str):
             return "text", processed_messages.prompt_ids
         return "input_ids", processed_messages.prompt_ids
+
+    async def _convert_to_internal_request_async(
+        self,
+        request: ChatCompletionRequest,
+        raw_request: Request = None,
+    ) -> tuple[GenerateReqInput, ChatCompletionRequest]:
+        # Native DS encoding runs before TokenizerManager's usual async path.
+        if self.chat_encoding_spec == "dsv41" and request.input_ids is None:
+            batcher = getattr(
+                self.tokenizer_manager, "async_dynamic_batch_tokenizer", None
+            )
+            if batcher is not None:
+                return await batcher.run_sync(
+                    self._convert_to_internal_request, request, raw_request
+                )
+        return self._convert_to_internal_request(request, raw_request)
 
     def _convert_to_internal_request(
         self,
@@ -1476,6 +1744,16 @@ class OpenAIServingChat(OpenAIServingBase):
             model_generation_config=self.default_sampling_params,
             tool_call_constraint=processed_messages.tool_call_constraint,
             renderer_handles_response_format=self.chat_encoding_spec == "kimi_k3",
+        )
+        from sglang.srt.entrypoints.openai.mode_sampling_defaults import (
+            apply_mode_sampling_defaults,
+        )
+
+        sampling_params = apply_mode_sampling_defaults(
+            request,
+            sampling_params,
+            self.tokenizer_manager.model_config,
+            processed_messages.require_reasoning,
         )
         set_request_reasoning_end_token_ids(
             sampling_params, processed_messages.reasoning_end_token_ids
@@ -1585,6 +1863,8 @@ class OpenAIServingChat(OpenAIServingBase):
         normalize_hunyuan_reasoning_effort(
             request, self.reasoning_parser, self.template_manager.reasoning_config
         )
+        normalize_muse_reasoning(request, self.reasoning_parser)
+        apply_muse_structured_output_reasoning_default(request, self.reasoning_parser)
 
         # GptOss model needs to keep special tokens for harmony parsing
         if self.is_gpt_oss or self.is_gemma4:
@@ -1601,6 +1881,11 @@ class OpenAIServingChat(OpenAIServingBase):
 
         effective_tools = self._effective_tools(request)
         effective_tool_choice = self._effective_tool_choice(request)
+        apply_nemotron_structured_output_reasoning_budget(
+            request,
+            self.reasoning_parser,
+            structured_tools=bool(effective_tools) and effective_tool_choice != "none",
+        )
         glm_constraint = self.tool_call_parser == "glm47" and not any(
             tool.function.strict for tool in effective_tools
         )
@@ -1670,7 +1955,15 @@ class OpenAIServingChat(OpenAIServingBase):
                 stop=request.stop or [],
             )
         elif self.template_manager.chat_template_name is None:
-            result = self._apply_jinja_template(request, tools, is_multimodal)
+            if self.reasoning_parser == "muse":
+                result = self._apply_jinja_template(
+                    request,
+                    tools,
+                    is_multimodal,
+                    tool_call_constraint=tool_call_constraint,
+                )
+            else:
+                result = self._apply_jinja_template(request, tools, is_multimodal)
         else:
             result = self._apply_conversation_template(request, is_multimodal)
 
@@ -1719,6 +2012,7 @@ class OpenAIServingChat(OpenAIServingBase):
         request: ChatCompletionRequest,
         tools: Optional[List[Dict]],
         is_multimodal: bool,
+        tool_call_constraint=None,
     ) -> MessageProcessingResult:
         """Apply Jinja chat template"""
         prompt = ""
@@ -1740,6 +2034,8 @@ class OpenAIServingChat(OpenAIServingBase):
             ThinkingMode.THINKING if thinking_requested else ThinkingMode.CHAT
         )
         messages = [msg.model_dump() for msg in request.messages]
+        if self.tool_call_parser == "muse" or self.reasoning_parser == "muse":
+            messages = normalize_muse_history(messages)
         messages = self._fold_qwen35_system_messages(messages)
         messages = self._apply_qwen35_reasoning_effort_guidance(
             messages, request.reasoning_effort
@@ -1773,43 +2069,54 @@ class OpenAIServingChat(OpenAIServingBase):
                         modalities,
                     )
         elif self.chat_encoding_spec is not None:
-            # dsv4/dsv32 encoding path
+            # dsv4/dsv41/dsv32 encoding path
             messages = copy.deepcopy(messages)
-
-            # dsv4/dsv32 are text-only and consume string content; flatten
-            # OpenAI parts-list content here so the encoder sees a plain string.
-            for i, msg in enumerate(messages):
-                if isinstance(msg.get("content"), list):
-                    messages[i] = process_content_for_template_format(
-                        msg, "string", [], [], [], []
-                    )
-
+            is_dsv41 = self.chat_encoding_spec == "dsv41"
             for msg in messages:
                 if msg.get("content") is None:
                     msg["content"] = ""
-                processed_msg = process_content_for_template_format(
-                    msg,
-                    template_content_format,
-                    image_data,
-                    video_data,
-                    audio_data,
-                    modalities,
-                    use_dpsk_v32_encoding=self.chat_encoding_spec == "dsv32",
-                )
-                msg.update(processed_msg)
+
+            # The V4.1 encoder consumes OpenAI parts lists itself; dsv4/dsv32
+            # are text-only, so their parts-list content is flattened first.
+            if not is_dsv41:
+                for i, msg in enumerate(messages):
+                    if isinstance(msg.get("content"), list):
+                        messages[i] = process_content_for_template_format(
+                            msg, "string", [], [], [], []
+                        )
+
+                for msg in messages:
+                    processed_msg = process_content_for_template_format(
+                        msg,
+                        template_content_format,
+                        image_data,
+                        video_data,
+                        audio_data,
+                        modalities,
+                        use_dpsk_v32_encoding=self.chat_encoding_spec == "dsv32",
+                    )
+                    msg.update(processed_msg)
 
             # Handle continue_final_message: separate final assistant message
             messages, assistant_prefix = self._handle_last_assistant_message(
                 messages, request
             )
 
-            if messages[0]["role"] != "system":
-                # insert an empty system prompt to help render tool system prompt
+            # An empty system message hosts the request tools; dsv41 renders a
+            # system token for it, so it only gets one when tools need the host.
+            if messages[0]["role"] != "system" and (request.tools or not is_dsv41):
                 messages.insert(0, {"role": "system", "content": ""})
             if request.tools:
-                messages[0]["tools"] = self._request_tools_for_prompt(request)
+                prompt_tools = self._request_tools_for_prompt(
+                    request, exclude_unset=is_dsv41, exclude_none=is_dsv41
+                )
+                messages[0]["tools"] = (
+                    [chat_encoding.dsv41_tool_payload(tool) for tool in prompt_tools]
+                    if is_dsv41
+                    else prompt_tools
+                )
 
-            # Default encoding (dsv4/dsv32)
+            # Default encoding (dsv4/dsv41/dsv32)
             if self.chat_encoding_spec == "dsv4":
                 effort_source = request.reasoning_effort
                 if effort_source is None:
@@ -1834,6 +2141,33 @@ class OpenAIServingChat(OpenAIServingBase):
                     reasoning_effort=v4_reasoning_effort,
                     reasoning_effort_profile=reasoning_effort_profile,
                 )
+                prompt_ids = self.tokenizer_manager.tokenizer.encode(real_input)
+            elif is_dsv41:
+                if request.task is not None:
+                    encoding_dsv41.attach_task_to_last_user_message(
+                        messages, request.task
+                    )
+                real_input, media = encoding_dsv41.encode_messages(
+                    messages,
+                    thinking_mode=thinking_mode,
+                    reasoning_effort=self._resolve_dsv41_reasoning_effort(
+                        request.reasoning_effort
+                    ),
+                    return_multi_modal_data=True,
+                )
+                if media["images"]:
+                    if not is_multimodal:
+                        raise ValueError("image input is not supported for this model")
+                    image_data.extend(
+                        ImageData(url=image["url"]) for image in media["images"]
+                    )
+                    tokenizer = self.tokenizer_manager.tokenizer
+                    real_input = real_input.replace(
+                        encoding_dsv41.IMAGE_PLACEHOLDER,
+                        tokenizer.convert_ids_to_tokens(
+                            self.tokenizer_manager.image_token_id
+                        ),
+                    )
                 prompt_ids = self.tokenizer_manager.tokenizer.encode(real_input)
             else:
                 real_input = encoding_dsv32.encode_messages(
@@ -1884,6 +2218,14 @@ class OpenAIServingChat(OpenAIServingBase):
                 extra_template_kwargs["reasoning_effort"] = template_reasoning_effort
             if request.chat_template_kwargs:
                 extra_template_kwargs.update(request.chat_template_kwargs)
+            extra_template_kwargs.update(
+                nemotron_response_format_template_kwargs(request, self.reasoning_parser)
+            )
+            extra_template_kwargs.update(
+                muse_format_template_kwargs(
+                    request, self.reasoning_parser, tool_call_constraint
+                )
+            )
 
             rc = self.template_manager.reasoning_config
             if rc is not None and rc.effort_kwarg is not None:
@@ -1940,6 +2282,28 @@ class OpenAIServingChat(OpenAIServingBase):
                     # and TypeError (e.g., tojson filter on Jinja2 Undefined variables)
                     # should be treated as client errors (400 BadRequest)
                     raise ValueError(str(template_error)) from template_error
+
+            if (
+                self.reasoning_parser == "nemotron_3"
+                and not request.continue_final_message
+                and not is_multimodal
+            ):
+                prompt_ids = encode_nemotron_message_literals(
+                    self.tokenizer_manager.tokenizer,
+                    openai_compatible_messages,
+                    rendered_prompt,
+                    prompt_ids,
+                    lambda literal_messages, literal_data: (
+                        self.tokenizer_manager.tokenizer.apply_chat_template(
+                            literal_messages,
+                            tokenize=False,
+                            add_generation_prompt=True,
+                            return_dict=False,
+                            **literal_data,
+                        )
+                    ),
+                    template_data={"tools": tools, **extra_template_kwargs},
+                )
 
             # Append assistant prefix if continue_final_message is enabled
             if assistant_prefix:
@@ -2574,7 +2938,17 @@ class OpenAIServingChat(OpenAIServingBase):
                         tokenizer=self.tokenizer_manager.tokenizer,
                         tool_call_parser_active=self._tool_call_parsing_active(request),
                     )
-                    reasoning_text, text = parser.parse_non_stream(text)
+                    reasoning_text, text = parser.parse_non_stream(
+                        text,
+                        finish_reason_type=finish_reason.get("type")
+                        if finish_reason
+                        else None,
+                        **(
+                            {"output_ids": ret_item.get("output_ids")}
+                            if self.reasoning_parser == "nemotron_3"
+                            else {}
+                        ),
+                    )
                 except Exception as e:
                     logger.error(f"Reasoning parsing error: {e}")
                     return self.create_error_response(
@@ -2772,11 +3146,15 @@ class OpenAIServingChat(OpenAIServingBase):
         # as constraint (mirrors the streaming path). For auto: always try.
         if self.tool_call_parser:
             parser = FunctionCallParser(
-                tools, self.tool_call_parser, tokenizer=self.tokenizer_manager.tokenizer
+                tools,
+                self.tool_call_parser,
+                tokenizer=self.tokenizer_manager.tokenizer,
+                constrained_output=is_required,
             )
             detector_owns_format = (
                 parser.detector.supports_structural_tag()
                 or parser.detector.parses_required_natively()
+                or parser.detector.parses_constrained_output_natively()
             )
             should_try_parser = not is_required or detector_owns_format
             if should_try_parser and parser.has_tool_call(text):
@@ -2928,9 +3306,22 @@ class OpenAIServingChat(OpenAIServingBase):
                 tool_call_parser_active=self._tool_call_parsing_active(request),
             )
         reasoning_parser = reasoning_parser_dict[index]
-        reasoning_text, normal_text = reasoning_parser.parse_stream_chunk(delta)
+        token_context = {}
+        if (
+            self.reasoning_parser == "nemotron_3"
+            and content.get("output_ids") is not None
+        ):
+            token_context = {
+                "output_ids": content["output_ids"],
+                "incremental_output": self.tokenizer_manager.server_args.incremental_streaming_output,
+            }
+        reasoning_text, normal_text = reasoning_parser.parse_stream_chunk(
+            delta, **token_context
+        )
         if finish_reason_type is not None and finish_reason_type != "abort":
-            end_reasoning_text, end_normal_text = reasoning_parser.parse_stream_end()
+            end_reasoning_text, end_normal_text = reasoning_parser.parse_stream_end(
+                finish_reason_type=finish_reason_type
+            )
             if end_reasoning_text:
                 reasoning_text = (reasoning_text or "") + end_reasoning_text
             if end_normal_text:
@@ -3111,6 +3502,11 @@ class OpenAIServingChat(OpenAIServingBase):
         if not self.reasoning_parser:
             return False
 
+        if self.reasoning_parser == "muse":
+            return (request.chat_template_kwargs or {}).get(
+                "reasoning_strength"
+            ) != "none"
+
         if self.reasoning_parser == "minimax-m3":
             # M3 template prefills <mm:think> for thinking_mode=enabled, so it never
             # appears in output and reasoning must be forced. Mirrors reasoning_parser.py.
@@ -3218,10 +3614,12 @@ class OpenAIServingChat(OpenAIServingBase):
                         tools=effective_tools,
                         tool_call_parser=self.tool_call_parser,
                         tokenizer=self.tokenizer_manager.tokenizer,
+                        constrained_output=True,
                     )
                     use_native_parser = (
                         probe.detector.supports_structural_tag()
                         or probe.detector.parses_required_natively()
+                        or probe.detector.parses_constrained_output_natively()
                     )
                 if use_native_parser:
                     parser_dict[index] = probe

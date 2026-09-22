@@ -47,11 +47,27 @@ class ReasonerGrammarObject(BaseGrammarObject):
         allocate_vocab_mask_fn=None,
         move_vocab_mask_fn=None,
         apply_vocab_mask_fn=None,
+        channel_header_end_ids: Optional[Sequence[int]] = None,
+        channel_reasoning_header_ids: Optional[Sequence[int]] = None,
+        max_channel_header_tokens: int = 16,
     ):
         super().__init__()
         self.grammar = grammar
         self.think_end_ids = tuple(think_end_ids)
         self._think_end_matcher = TokenSequenceMatcher(self.think_end_ids)
+        self.channel_header_end_ids = tuple(channel_header_end_ids or ())
+        self.channel_reasoning_header_ids = tuple(channel_reasoning_header_ids or ())
+        self._channel_header_end_matcher = (
+            TokenSequenceMatcher(self.channel_header_end_ids)
+            if self.channel_header_end_ids
+            else None
+        )
+        self._channel_reasoning_header_matcher = (
+            TokenSequenceMatcher(self.channel_reasoning_header_ids)
+            if self.channel_reasoning_header_ids
+            else None
+        )
+        self.max_channel_header_tokens = max_channel_header_tokens
         self.think_excluded_token_ids = think_excluded_token_ids
         self.min_think_tokens = min_think_tokens
         self.max_think_tokens = max_think_tokens
@@ -64,11 +80,23 @@ class ReasonerGrammarObject(BaseGrammarObject):
         self.tokens_in_think = -1
         self.tokens_after_end = -1
         self._matched_think_end_tokens = 0
+        self._waiting_for_channel_header = False
+        self._channel_header_tokens = 0
+        self._matched_channel_header_end_tokens = 0
+        self._matched_channel_reasoning_header_tokens = 0
+        self._saw_channel_reasoning_header = False
         self._thinking_match_history: List[int] = []
+        self._state_history = []
 
     def maybe_init_reasoning(self, reasoning: bool):
         self._matched_think_end_tokens = 0
+        self._waiting_for_channel_header = False
+        self._channel_header_tokens = 0
+        self._matched_channel_header_end_tokens = 0
+        self._matched_channel_reasoning_header_tokens = 0
+        self._saw_channel_reasoning_header = False
         self._thinking_match_history.clear()
+        self._state_history.clear()
         if reasoning:
             self.tokens_in_think = 0
             self.tokens_after_end = -1
@@ -85,6 +113,7 @@ class ReasonerGrammarObject(BaseGrammarObject):
             raise ValueError("request reasoning terminator must contain token IDs")
         if (
             self.current_token is not None
+            or self._state_history
             or self._thinking_match_history
             or (self.tokens_in_think, self.tokens_after_end) not in ((0, -1), (-1, 0))
         ):
@@ -97,10 +126,54 @@ class ReasonerGrammarObject(BaseGrammarObject):
         self._matched_think_end_tokens = 0
 
     def _is_thinking(self):
-        return self.tokens_in_think >= 0 and self.tokens_after_end == -1
+        return (
+            self.tokens_in_think >= 0
+            and self.tokens_after_end == -1
+            and not self._waiting_for_channel_header
+        )
 
     def _is_generation(self):
         return self.tokens_after_end >= 0
+
+    def _snapshot_state(self):
+        return (
+            self.tokens_in_think,
+            self.tokens_after_end,
+            self._matched_think_end_tokens,
+            self._waiting_for_channel_header,
+            self._channel_header_tokens,
+            self._matched_channel_header_end_tokens,
+            self._matched_channel_reasoning_header_tokens,
+            self._saw_channel_reasoning_header,
+        )
+
+    def _restore_state(self, state):
+        (
+            self.tokens_in_think,
+            self.tokens_after_end,
+            self._matched_think_end_tokens,
+            self._waiting_for_channel_header,
+            self._channel_header_tokens,
+            self._matched_channel_header_end_tokens,
+            self._matched_channel_reasoning_header_tokens,
+            self._saw_channel_reasoning_header,
+        ) = state
+
+    def _start_channel_header(self):
+        self._waiting_for_channel_header = True
+        self._channel_header_tokens = 0
+        self._matched_channel_header_end_tokens = 0
+        self._matched_channel_reasoning_header_tokens = 0
+        self._saw_channel_reasoning_header = False
+
+    def _finish_channel_header(self):
+        self._waiting_for_channel_header = False
+        if self._saw_channel_reasoning_header:
+            self.tokens_in_think = 0
+            self.tokens_after_end = -1
+            self._matched_think_end_tokens = 0
+        else:
+            self.tokens_after_end = 0
 
     @property
     def vocab_mask_is_unconstrained(self):
@@ -110,34 +183,79 @@ class ReasonerGrammarObject(BaseGrammarObject):
         return self.grammar is None and self._is_generation()
 
     def transfer_state(self, token: int) -> None:
+        # Only channel-aware models need full transition snapshots. Keep the
+        # existing compact reasoning-match history for every other model.
+        if self._channel_header_end_matcher is not None and not self._is_generation():
+            self._state_history.append(self._snapshot_state())
         if self._is_thinking():
             previous_match = self._matched_think_end_tokens
-            self._thinking_match_history.append(previous_match)
+            if self._channel_header_end_matcher is None:
+                self._thinking_match_history.append(previous_match)
             matched = self._think_end_matcher.advance(previous_match, token)
             if matched == len(self._think_end_matcher):
                 self._matched_think_end_tokens = 0
-                self.tokens_after_end = 0
+                if self._channel_header_end_matcher is None:
+                    self.tokens_after_end = 0
+                else:
+                    self._start_channel_header()
             else:
                 self.tokens_in_think += previous_match + 1 - matched
                 self._matched_think_end_tokens = matched
+        elif self._waiting_for_channel_header:
+            self._channel_header_tokens += 1
+            matched = self._channel_header_end_matcher.advance(
+                self._matched_channel_header_end_tokens, token
+            )
+            self._matched_channel_header_end_tokens = matched
+            if (
+                self._channel_reasoning_header_matcher is not None
+                and not self._saw_channel_reasoning_header
+            ):
+                reasoning_matched = self._channel_reasoning_header_matcher.advance(
+                    self._matched_channel_reasoning_header_tokens, token
+                )
+                self._matched_channel_reasoning_header_tokens = reasoning_matched
+                self._saw_channel_reasoning_header = reasoning_matched == len(
+                    self._channel_reasoning_header_matcher
+                )
+            if matched == len(self._channel_header_end_matcher):
+                self._finish_channel_header()
+            elif (
+                self.max_channel_header_tokens >= 0
+                and self._channel_header_tokens >= self.max_channel_header_tokens
+            ):
+                logger.warning(
+                    "Channel header did not close within %d tokens; resuming grammar",
+                    self.max_channel_header_tokens,
+                )
+                self._saw_channel_reasoning_header = False
+                self._finish_channel_header()
         elif self._is_generation():
             self.tokens_after_end += 1
 
     def rollback_state(self):
-        if self._is_thinking():
-            if self._thinking_match_history:
-                previous_match = self._thinking_match_history.pop()
-                self.tokens_in_think -= (
-                    previous_match + 1 - self._matched_think_end_tokens
-                )
-                self._matched_think_end_tokens = previous_match
-        elif self._is_generation():
-            if self.tokens_after_end == 0:
+        if self._channel_header_end_matcher is None:
+            if self._is_thinking():
                 if self._thinking_match_history:
-                    self.tokens_after_end = -1
-                    self._matched_think_end_tokens = self._thinking_match_history.pop()
-            elif self.tokens_after_end > 0:
-                self.tokens_after_end -= 1
+                    previous_match = self._thinking_match_history.pop()
+                    self.tokens_in_think -= (
+                        previous_match + 1 - self._matched_think_end_tokens
+                    )
+                    self._matched_think_end_tokens = previous_match
+            elif self._is_generation():
+                if self.tokens_after_end == 0:
+                    if self._thinking_match_history:
+                        self.tokens_after_end = -1
+                        self._matched_think_end_tokens = (
+                            self._thinking_match_history.pop()
+                        )
+                elif self.tokens_after_end > 0:
+                    self.tokens_after_end -= 1
+            return
+        if self._is_generation() and self.tokens_after_end > 0:
+            self.tokens_after_end -= 1
+        elif self._state_history:
+            self._restore_state(self._state_history.pop())
 
     def accept_token(self, token: int):
         # Track the last accepted token on the wrapper itself (mirroring
@@ -147,9 +265,12 @@ class ReasonerGrammarObject(BaseGrammarObject):
         # a ReasonerGrammarObject's current_token stays None forever (the inner
         # grammar's is updated, not the wrapper's), so the guard never fires and
         # the token is accepted twice -> "Tokens not accepted" -> FINISH_ABORT.
-        self.current_token = token
-        if self._is_generation() and self.grammar is not None:
+        accepted_by_grammar = self._is_generation() and self.grammar is not None
+        if accepted_by_grammar:
             self.grammar.accept_token(token)
+        # Rejected inner tokens abort their request upstream; do not advance
+        # wrapper histories/state/current_token before acceptance succeeds.
+        self.current_token = token
         self.transfer_state(token)
 
     def is_terminated(self):
@@ -159,6 +280,8 @@ class ReasonerGrammarObject(BaseGrammarObject):
 
     def rollback(self, k):
         if self.grammar is not None:
+            # Once final generation starts, forward decoding cannot re-enter
+            # a channel header. Count final tokens instead of snapshotting them.
             steps_after = min(k, max(0, self.tokens_after_end))
             if steps_after > 0:
                 self.grammar.rollback(steps_after)
@@ -248,11 +371,16 @@ class ReasonerGrammarObject(BaseGrammarObject):
             allocate_vocab_mask_fn=self.allocate_vocab_mask_fn,
             move_vocab_mask_fn=self.move_vocab_mask_fn,
             apply_vocab_mask_fn=self.apply_vocab_mask_fn,
+            channel_header_end_ids=self.channel_header_end_ids,
+            channel_reasoning_header_ids=self.channel_reasoning_header_ids,
+            max_channel_header_tokens=self.max_channel_header_tokens,
         )
         new_obj.tokens_in_think = self.tokens_in_think
         new_obj.tokens_after_end = self.tokens_after_end
         new_obj._matched_think_end_tokens = self._matched_think_end_tokens
+        new_obj._restore_state(self._snapshot_state())
         new_obj._thinking_match_history = list(self._thinking_match_history)
+        new_obj._state_history = list(self._state_history)
         new_obj._finished = self._finished
         new_obj.current_token = self.current_token
         return new_obj
@@ -306,6 +434,19 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
                 f"could not be encoded by the tokenizer."
             )
         self.think_end_ids = think_end_ids
+        self.channel_header_end_ids = self._encode_optional_marker(
+            tokenizer,
+            getattr(reasoning_parser.detector, "grammar_channel_header_end", None),
+            "grammar_channel_header_end",
+        )
+        self.channel_reasoning_header_ids = self._encode_optional_marker(
+            tokenizer,
+            getattr(
+                reasoning_parser.detector, "grammar_channel_reasoning_header", None
+            ),
+            "grammar_channel_reasoning_header",
+        )
+        self.max_channel_header_tokens = envs.SGLANG_MAX_CHANNEL_HEADER_TOKENS.get()
         self._enable_strict_thinking = enable_strict_thinking
         self.think_excluded_token_ids = self._get_think_excluded_token_ids(
             reasoning_parser, tokenizer
@@ -324,8 +465,19 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
                 "filtering (e.g., xgrammar) or disable strict reasoning mode."
             )
         self._token_filter_fn = (
-            self.grammar_backend.set_token_filter if self.enable_token_filter else None
+            self.grammar_backend.set_token_filter
+            if self.grammar_backend.is_support_token_filter
+            else None
         )
+
+    @staticmethod
+    def _encode_optional_marker(tokenizer, marker, marker_name):
+        if marker is None:
+            return None
+        ids = tokenizer.encode(marker, add_special_tokens=False)
+        if not ids:
+            raise ValueError(f"{marker_name} '{marker}' could not be encoded.")
+        return ids
 
     def _get_think_excluded_token_ids(
         self,
@@ -361,6 +513,9 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
             allocate_vocab_mask_fn=self.grammar_backend.allocate_vocab_mask,
             move_vocab_mask_fn=self.grammar_backend.move_vocab_mask,
             apply_vocab_mask_fn=self.grammar_backend.apply_vocab_mask,
+            channel_header_end_ids=self.channel_header_end_ids,
+            channel_reasoning_header_ids=self.channel_reasoning_header_ids,
+            max_channel_header_tokens=self.max_channel_header_tokens,
         )
         obj.maybe_init_reasoning(reasoning)
         return obj

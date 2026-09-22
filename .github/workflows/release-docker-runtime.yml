@@ -5,9 +5,6 @@ name: Release Docker Runtime Images
 #   - lmsysorg/sglang:v{version}-cu130-runtime, lmsysorg/sglang:latest-cu130-runtime
 #
 on:
-  push:
-    tags:
-      - "v[0-9]+.*"
   workflow_dispatch:
     inputs:
       version:

@@ -3,12 +3,6 @@ name: CI Lark Notify
 # Lark cards for CUDA CI health; see scripts/ci_monitor/README.md.
 
 on:
-  workflow_run:
-    workflows: ["Nightly Test (Nvidia)", "Weekly Test (Nvidia)", "PR Test Base"]
-    types: [completed]
-    branches: [main]
-  schedule:
-    - cron: '*/15 * * * *'   # runner-health
   workflow_dispatch:
     inputs:
       task:

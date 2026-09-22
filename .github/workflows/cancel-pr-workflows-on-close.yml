@@ -7,9 +7,7 @@ name: Cancel PR Workflows on Close
 # pr-test-extra.yml) were never cancelled and kept occupying runners.
 
 on:
-  pull_request_target:
-    types:
-      - closed
+  workflow_dispatch:
 
 permissions:
   actions: write

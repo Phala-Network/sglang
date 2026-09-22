@@ -36,6 +36,9 @@ _PARAM_RE = re.compile(
     r"</atem:parameter>",
     re.DOTALL,
 )
+_CHANNEL_HEADER_RE = re.compile(
+    rf"(?:^|{re.escape(START)}assistant)\s*to=([^\s<]+){re.escape(MESSAGE)}"
+)
 
 # Recipients whose bodies are prose, never tool calls.
 _NON_TOOL_RECIPIENTS = frozenset({"self", "user"})
@@ -44,6 +47,18 @@ _NON_TOOL_RECIPIENTS = frozenset({"self", "user"})
 def _is_tool_channel(recipient: Optional[str]) -> bool:
     """True when this channel routes to a tool."""
     return recipient is not None and recipient not in _NON_TOOL_RECIPIENTS
+
+
+def _has_tool_channel_header(text: str) -> bool:
+    """Whether ``text`` contains a Muse channel routed to a registered tool.
+
+    Required/named tool choice may constrain the body to a JSON array while the
+    model still emits its native ``to=<tool><|message|>`` channel header.  ATEM
+    marker detection alone misses that valid form.
+    """
+    return any(
+        _is_tool_channel(match.group(1)) for match in _CHANNEL_HEADER_RE.finditer(text)
+    )
 
 
 def _decode_value(raw: str):
@@ -72,8 +87,9 @@ def _normalize_name(emitted: str, registered: Set[str]) -> str:
 class MuseGlimmerDetector(BaseFormatDetector):
     """Format detector for Muse Glimmer's ATEM tool-call blocks."""
 
-    def __init__(self):
+    def __init__(self, constrained_output: bool = False):
         super().__init__()
+        self._constrained_output = constrained_output
         # Streaming channel state.
         self._recipient: Optional[str] = None
         self._in_body = False
@@ -82,7 +98,11 @@ class MuseGlimmerDetector(BaseFormatDetector):
         self._open_invoke: Optional[str] = None
 
     def has_tool_call(self, text: str) -> bool:
-        return has_atem_markers(text)
+        return (
+            has_atem_markers(text)
+            or _has_tool_channel_header(text)
+            or (self._constrained_output and ("[" in text or "{" in text))
+        )
 
     def _registered_names(self, tools: Optional[List[Tool]]) -> Set[str]:
         return {t.function.name for t in tools or [] if t.function and t.function.name}
@@ -219,6 +239,11 @@ class MuseGlimmerDetector(BaseFormatDetector):
         final: bool,
     ) -> int:
         if not _is_tool_channel(self._recipient):
+            if self._constrained_output and self._recipient != "self":
+                if not final:
+                    return 0
+                self._emit_json_calls(chunk, registered, calls, normal_parts)
+                return len(chunk)
             normal_parts.append(chunk)
             return len(chunk)
 
@@ -227,7 +252,10 @@ class MuseGlimmerDetector(BaseFormatDetector):
             if self._open_invoke is None:
                 m = _INVOKE_OPEN_RE.search(chunk, pos)
                 if m is None:
-                    return pos if not final else len(chunk)
+                    if not final:
+                        return pos
+                    self._emit_json_calls(chunk[pos:], registered, calls, normal_parts)
+                    return len(chunk)
                 self._open_invoke = m.group("name")
                 pos = m.end()
                 continue
@@ -248,13 +276,67 @@ class MuseGlimmerDetector(BaseFormatDetector):
 
         return len(chunk)
 
+    def _emit_json_calls(
+        self,
+        chunk: str,
+        registered: Set[str],
+        calls: List[ToolCallItem],
+        normal_parts: List[str],
+    ) -> None:
+        """Parse the JSON-array body produced by required/named constraints.
+
+        This is the non-ATEM recovery path proposed in upstream PR #34577.  It
+        is scoped to a channel already identified as a tool recipient; quoted
+        JSON or ATEM markup inside ``to=self`` and ``to=user`` stays content.
+        """
+        residue = chunk
+        for marker in (FUNCTION_CALLS_OPEN, FUNCTION_CALLS_CLOSE, INVOKE_CLOSE):
+            residue = residue.replace(marker, "")
+        if not residue.strip():
+            return
+
+        start = min(
+            (i for i in (residue.find("["), residue.find("{")) if i != -1),
+            default=-1,
+        )
+        payload = None
+        if start != -1:
+            try:
+                payload = json.loads(residue[start:].strip())
+            except (json.JSONDecodeError, ValueError):
+                payload = None
+        if payload is None:
+            normal_parts.append(chunk)
+            return
+        if isinstance(payload, dict):
+            payload = [payload]
+
+        emitted = False
+        for entry in payload if isinstance(payload, list) else []:
+            if not isinstance(entry, dict) or "name" not in entry:
+                continue
+            args = entry.get("parameters", entry.get("arguments")) or {}
+            if isinstance(args, str):
+                args = _decode_value(args)
+            if not isinstance(args, dict):
+                continue
+            item = self._emit_call(entry["name"], args, registered)
+            if item is not None:
+                calls.append(item)
+                emitted = True
+        if not emitted:
+            normal_parts.append(chunk)
+
+    def parses_constrained_output_natively(self) -> bool:
+        """Parse the constrained JSON body with or without native channel framing."""
+        return True
+
     def supports_structural_tag(self) -> bool:
         return False
 
     def parses_required_natively(self) -> bool:
-        """The model only ever emits ATEM tool calls, so the JSON-array grammar
-        the default required/named path forces cannot parse its output."""
-        return True
+        """Require a schema: unconstrained Muse can decline a required call."""
+        return False
 
     def structure_info(self) -> _GetInfoFunc:
         return lambda name: StructureInfo(

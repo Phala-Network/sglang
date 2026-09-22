@@ -509,9 +509,21 @@ class Qwen3_5GatedDeltaNet(nn.Module):
 
     def _bind_packed_weight_loaders(self, module):
         """Bind packed-checkpoint-aware loaders to all relevant params of a merged module."""
-        for attr_name in ("weight", "weight_scale_inv", "weight_scale", "input_scale"):
+        for attr_name in (
+            "weight",
+            "weight_scale_inv",
+            "weight_scale",
+            "input_scale",
+            "qweight",
+            "qweight_type",
+        ):
             param = getattr(module, attr_name, None)
             if param is None:
+                continue
+            if attr_name in ("qweight", "qweight_type") and not (
+                getattr(param, "is_gguf_weight", False)
+                or getattr(param, "is_gguf_weight_type", False)
+            ):
                 continue
             original_loader = getattr(param, "weight_loader", None)
             if original_loader is None:
@@ -1633,7 +1645,15 @@ class Qwen3_5ForCausalLM(nn.Module):
         alt_stream = get_stream("alt") if _is_cuda or _hip_use_alt_stream else None
 
         # Embedding layer
-        self.embed_tokens = self._build_embed_tokens(config)
+        if (
+            config.model_type in ("qwen3_5", "qwen3_5_text")
+            and quant_config is not None
+            and quant_config.get_name() == "gguf"
+        ):
+            self.embed_tokens = self._build_embed_tokens(config, quant_config, prefix)
+        else:
+            # Keep subclass hooks and non-GGUF embedding construction unchanged.
+            self.embed_tokens = self._build_embed_tokens(config)
 
         # Decoder layers
         def get_layer(idx: int, prefix: str):
@@ -1710,7 +1730,9 @@ class Qwen3_5ForCausalLM(nn.Module):
 
         self.layers_to_capture = []
 
-    def _build_embed_tokens(self, config: Qwen3_5TextConfig) -> nn.Module:
+    def _build_embed_tokens(
+        self, config: Qwen3_5TextConfig, quant_config=None, prefix: str = ""
+    ) -> nn.Module:
         """Embedding sharding hook for models reusing this backbone."""
         if not self.pp_group.is_first_rank:
             return PPMissingLayer()
@@ -1719,6 +1741,14 @@ class Qwen3_5ForCausalLM(nn.Module):
             config.hidden_size,
             org_num_embeddings=config.vocab_size,
             enable_tp=not is_dp_attention_enabled(),
+            **(
+                {
+                    "quant_config": quant_config,
+                    "prefix": add_prefix("embed_tokens", prefix),
+                }
+                if quant_config is not None
+                else {}
+            ),
         )
 
     def get_input_embeddings(self):

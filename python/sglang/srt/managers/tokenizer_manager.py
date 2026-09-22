@@ -63,8 +63,8 @@ from sglang.srt.configs.model_config import ModelConfig
 from sglang.srt.constants import HEALTH_CHECK_RID_PREFIX
 from sglang.srt.disaggregation.encoder.receiver import create_mm_receiver
 from sglang.srt.disaggregation.utils import DisaggregationMode
-from sglang.srt.environ import envs
 from sglang.srt.entrypoints.request_disconnect import response_disconnect_watched
+from sglang.srt.environ import envs
 from sglang.srt.lora.lora_registry import LoRARef, LoRARegistry
 from sglang.srt.managers.async_dynamic_batch_tokenizer import AsyncDynamicbatchTokenizer
 from sglang.srt.managers.disagg_service import start_disagg_service
@@ -248,6 +248,8 @@ class ReqState:
 
     dispatched: bool = False
     abort_sent: bool = False
+    # Delayed disconnects belong to the creating API request, not a reused RID.
+    request_owner: Optional[Union[GenerateReqInput, EmbeddingReqInput]] = None
 
     # For streaming output
     last_output_offset: int = 0
@@ -913,9 +915,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     await self._send_one_request(tokenized_obj)
                     responses = self._wait_one_response(obj, request)
                 else:
-                    responses = self._handle_batch_request(
-                        obj, request, request_rids
-                    )
+                    responses = self._handle_batch_request(obj, request, request_rids)
                 async with aclosing(responses):
                     async for response in responses:
                         yield response
@@ -1276,6 +1276,29 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         self, obj: Union[GenerateReqInput, EmbeddingReqInput], input_ids: List[int]
     ) -> None:
         """Validate input and requested output tokens against the context length."""
+        # FIXME: unify the length validation logic with the one in the scheduler.
+        if get_exec().features.enable_encoder_swa_bounded_replay:
+            if any(
+                value is not None
+                for value in (
+                    obj.image_data,
+                    obj.video_data,
+                    obj.audio_data,
+                    obj.input_embeds,
+                    obj.positional_embed_overrides,
+                )
+            ):
+                raise ValueError(
+                    "encoder SWA replay currently supports token-only text requests"
+                )
+            if (
+                isinstance(obj, GenerateReqInput)
+                and obj.return_logprob
+                and obj.logprob_start_len not in (None, -1, len(input_ids))
+            ):
+                raise ValueError(
+                    "encoder SWA replay cannot return cached prompt logprobs"
+                )
         _max_req_len = self.context_len
         input_token_num = len(input_ids) if input_ids is not None else 0
         input_token_num += self.num_reserved_tokens
@@ -2325,9 +2348,32 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         # Abort the request if the client is disconnected.
         async def abort_request():
             await asyncio.sleep(2)
-            rids = [obj.rid] if obj.is_single else obj.rid
+            # The entrypoint can register this task before normalization.
+            if not hasattr(obj, "is_single"):
+                return
+            if obj.is_single:
+                rid = getattr(obj, "rid", None)
+                if not isinstance(rid, str) or not rid:
+                    return
+                rids = [rid]
+            else:
+                batch_size = getattr(obj, "batch_size", None)
+                rids = getattr(obj, "rid", None)
+                if (
+                    not isinstance(batch_size, int)
+                    or batch_size < 1
+                    or not isinstance(rids, list)
+                    or len(rids) < batch_size
+                    or any(
+                        not isinstance(rid, str) or not rid for rid in rids[:batch_size]
+                    )
+                ):
+                    return
+                # Parallel-sampling expansion has separate child ownership.
+                rids = rids[:batch_size]
             for rid in rids:
-                if rid in self.rid_to_state:
+                state = self.rid_to_state.get(rid)
+                if state is not None and state.request_owner is obj:
                     self.abort_request(rid)
 
         background_tasks = BackgroundTasks()
@@ -3671,6 +3717,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 raise ValueError(f"Duplicate request ID detected: {rid}")
             time_stats = APIServerReqTimeStats(disagg_mode=self.disaggregation_mode)
             state = ReqState([], False, asyncio.Event(), sub_obj, time_stats)
+            state.request_owner = obj
             self.rid_to_state[rid] = state
             if self.enable_trace:
                 time_stats.init_trace_ctx(rid, bootstrap_room, external_trace_header)

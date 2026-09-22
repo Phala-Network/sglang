@@ -11,11 +11,6 @@ name: PR States
 #     is the only event here that GITHUB_TOKEN can cascade-create.
 
 on:
-  pull_request_target:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
-  workflow_run:
-    workflows: ["PR Test Base", "PR Test Extra", "PR Test (AMD)"]
-    types: [requested, completed]
   workflow_dispatch:
     inputs:
       pr_number:

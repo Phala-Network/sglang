@@ -54,7 +54,7 @@ from sglang.test.ci.ci_register import register_cpu_ci
 register_cpu_ci(est_time=13, suite="base-a-test-cpu")
 
 # Every spec resolve_chat_encoding_spec can return; pinned by the guard below.
-_ALL_CHAT_ENCODING_SPECS = ("dsv4", "dsv32", "inkling", "kimi_k3")
+_ALL_CHAT_ENCODING_SPECS = ("dsv41", "dsv4", "dsv32", "inkling", "kimi_k3")
 
 
 def _spec_result(index):
@@ -904,9 +904,7 @@ class ServingChatTestCase(unittest.TestCase):
             self.chat._qwen35_reasoning_effort_token_range(None, 16384),
             (384, 8192),
         )
-        self.assertIsNone(
-            self.chat._qwen35_reasoning_effort_token_range("none", 1024)
-        )
+        self.assertIsNone(self.chat._qwen35_reasoning_effort_token_range("none", 1024))
 
         self.tm.model_config.hf_config.model_type = "llama"
         self.assertIsNone(self.chat._qwen35_reasoning_effort_token_range("low", 1024))

@@ -24,7 +24,6 @@ on:
         default: ''
         type: string
 
-
 concurrency:
   group: diffusion-ci-gt-gen-${{ github.ref }}-${{ inputs.output_name || inputs.case_ids || 'default' }}
   cancel-in-progress: true

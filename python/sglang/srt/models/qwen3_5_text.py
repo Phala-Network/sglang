@@ -199,17 +199,21 @@ class Qwen3_5ForCausalLM(nn.Module):
             for name, loaded_weight in weights:
                 if name.startswith(_MODEL_PREFIX):
                     yield name[len(_MODEL_PREFIX) :], loaded_weight
-                elif name == "lm_head.weight":
+                elif name == "lm_head.weight" or (
+                    self.quant_config is not None
+                    and self.quant_config.get_name() == "gguf"
+                    and name in ("lm_head.qweight", "lm_head.qweight_type")
+                ):
                     if self.config.tie_word_embeddings:
                         continue
-                    if "lm_head.weight" not in params_dict:
+                    if name not in params_dict:
                         continue
-                    param = params_dict["lm_head.weight"]
+                    param = params_dict[name]
                     weight_loader = getattr(
                         param, "weight_loader", default_weight_loader
                     )
                     weight_loader(param, loaded_weight)
-                    loaded_params.add("lm_head.weight")
+                    loaded_params.add(name)
 
         body_loaded = self.model.load_weights(body_weights())
         loaded_params.update(f"{_MODEL_PREFIX}{n}" for n in body_loaded)

@@ -13,7 +13,6 @@ maybe_stub_sgl_kernel()
 from sglang.srt.managers.io_struct import GenerateReqInput  # noqa: E402
 from sglang.srt.managers.tokenizer_manager import TokenizerManager  # noqa: E402
 
-
 register_cpu_ci(est_time=3, suite="base-a-test-cpu")
 
 
@@ -46,8 +45,7 @@ class TestParallelSamplingOwnerLifecycle(CustomTestCase):
                     ):
                         if rid_kind == "list":
                             supplied_rid = [
-                                f"client-rid-{index}"
-                                for index in range(prompt_count)
+                                f"client-rid-{index}" for index in range(prompt_count)
                             ]
                         obj = GenerateReqInput(
                             text=text,

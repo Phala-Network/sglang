@@ -724,7 +724,11 @@ def block_fp8_scale_to_mxfp8_e8m0(
         )
     bits = scale.view(torch.int32)
     # A positive normal power of two has a zero mantissa; its exponent field is the e8m0 code.
-    if not bool(torch.all((bits & 0x7FFFFF) == 0)) or not bool(torch.all(scale > 0)):
+    if (
+        not bool(torch.all((bits & 0x7FFFFF) == 0))
+        or not bool(torch.all(scale > 0))
+        or not bool(torch.all(torch.isfinite(scale)))
+    ):
         raise ValueError(
             "block scales are not positive powers of two; cannot encode as e8m0"
         )

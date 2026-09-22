@@ -87,7 +87,6 @@ class ReasonerGrammarObject(BaseGrammarObject):
         self._saw_channel_reasoning_header = False
         self._thinking_match_history: List[int] = []
         self._state_history = []
-        self._grammar_accept_history: List[bool] = []
 
     def maybe_init_reasoning(self, reasoning: bool):
         self._matched_think_end_tokens = 0
@@ -98,7 +97,6 @@ class ReasonerGrammarObject(BaseGrammarObject):
         self._saw_channel_reasoning_header = False
         self._thinking_match_history.clear()
         self._state_history.clear()
-        self._grammar_accept_history.clear()
         if reasoning:
             self.tokens_in_think = 0
             self.tokens_after_end = -1
@@ -187,7 +185,7 @@ class ReasonerGrammarObject(BaseGrammarObject):
     def transfer_state(self, token: int) -> None:
         # Only channel-aware models need full transition snapshots. Keep the
         # existing compact reasoning-match history for every other model.
-        if self._channel_header_end_matcher is not None:
+        if self._channel_header_end_matcher is not None and not self._is_generation():
             self._state_history.append(self._snapshot_state())
         if self._is_thinking():
             previous_match = self._matched_think_end_tokens
@@ -254,7 +252,9 @@ class ReasonerGrammarObject(BaseGrammarObject):
                 elif self.tokens_after_end > 0:
                     self.tokens_after_end -= 1
             return
-        if self._state_history:
+        if self._is_generation() and self.tokens_after_end > 0:
+            self.tokens_after_end -= 1
+        elif self._state_history:
             self._restore_state(self._state_history.pop())
 
     def accept_token(self, token: int):
@@ -265,12 +265,12 @@ class ReasonerGrammarObject(BaseGrammarObject):
         # a ReasonerGrammarObject's current_token stays None forever (the inner
         # grammar's is updated, not the wrapper's), so the guard never fires and
         # the token is accepted twice -> "Tokens not accepted" -> FINISH_ABORT.
-        self.current_token = token
         accepted_by_grammar = self._is_generation() and self.grammar is not None
-        if self._channel_header_end_matcher is not None:
-            self._grammar_accept_history.append(accepted_by_grammar)
         if accepted_by_grammar:
             self.grammar.accept_token(token)
+        # Rejected inner tokens abort their request upstream; do not advance
+        # wrapper histories/state/current_token before acceptance succeeds.
+        self.current_token = token
         self.transfer_state(token)
 
     def is_terminated(self):
@@ -280,16 +280,12 @@ class ReasonerGrammarObject(BaseGrammarObject):
 
     def rollback(self, k):
         if self.grammar is not None:
-            steps_after = (
-                (sum(self._grammar_accept_history[-k:]) if k > 0 else 0)
-                if self._channel_header_end_matcher is not None
-                else min(k, max(0, self.tokens_after_end))
-            )
+            # Once final generation starts, forward decoding cannot re-enter
+            # a channel header. Count final tokens instead of snapshotting them.
+            steps_after = min(k, max(0, self.tokens_after_end))
             if steps_after > 0:
                 self.grammar.rollback(steps_after)
         for _ in range(k):
-            if self._grammar_accept_history:
-                self._grammar_accept_history.pop()
             self.rollback_state()
 
     def _can_think_more(self):
@@ -385,7 +381,6 @@ class ReasonerGrammarObject(BaseGrammarObject):
         new_obj._restore_state(self._snapshot_state())
         new_obj._thinking_match_history = list(self._thinking_match_history)
         new_obj._state_history = list(self._state_history)
-        new_obj._grammar_accept_history = list(self._grammar_accept_history)
         new_obj._finished = self._finished
         new_obj.current_token = self.current_token
         return new_obj

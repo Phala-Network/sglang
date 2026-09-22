@@ -287,6 +287,12 @@ class Serving(msgspec.Struct):
         bool,
         "(xgrammar and llguidance backends only) Enforce compact representation in JSON constrained output.",
     ] = False
+    constrained_json_max_whitespace_cnt: A[
+        Optional[int],
+        "(xgrammar only) Maximum consecutive syntactic whitespace characters in "
+        "direct JSON schema/JSON object output. Must be positive; incompatible "
+        "with compact JSON. Structural-tag formats retain their own limits.",
+    ] = None
 
     # -------------------------------------------------------------------------
     # Dynamic batch tokenizer

@@ -80,6 +80,7 @@ class TestHasXGrammarUnsupportedJsonFeatures(unittest.TestCase):
         backend = XGrammarGrammarBackend.__new__(XGrammarGrammarBackend)
         backend.grammar_compiler = MagicMock()
         backend.any_whitespace = True
+        backend.max_whitespace_cnt = None
         schema = {
             "type": "object",
             "dependentSchemas": {"mode": {"required": ["value"]}},

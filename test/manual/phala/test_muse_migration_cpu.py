@@ -337,6 +337,41 @@ class MuseGrammarTests(unittest.TestCase):
         self.assertIsNot(clone._state_history, obj._state_history)
         grammar.copy.assert_called_once()
 
+    def test_rejected_inner_token_does_not_advance_wrapper(self):
+        obj, grammar = self.make()
+        self.feed(obj, [99, 7, 8, 50, 12, 13])
+        before = (obj._snapshot_state(), list(obj._state_history), obj.current_token)
+        grammar.accept_token.side_effect = ValueError("native rejection")
+        with self.assertRaisesRegex(ValueError, "native rejection"):
+            obj.accept_token(100)
+        self.assertEqual(
+            (obj._snapshot_state(), obj._state_history, obj.current_token), before
+        )
+        grammar.accept_token.side_effect = None
+        obj.accept_token(101)
+        obj.rollback(1)
+        self.assertEqual(obj._snapshot_state(), before[0])
+        grammar.rollback.assert_called_once_with(1)
+
+    def test_long_final_output_keeps_only_header_snapshots(self):
+        obj, _ = self.make()
+        self.feed(obj, [99, 7, 8, 50, 12, 13])
+        prefix = len(obj._state_history)
+        # No inner grammar double: this measures the actual wrapper bookkeeping.
+        obj.grammar = None
+        for _ in range(100_000):
+            obj.accept_token(100)
+        self.assertEqual(obj.tokens_after_end, 100_000)
+        self.assertEqual(len(obj._state_history), prefix)
+        for _ in range(100):
+            clone = obj.copy()
+            self.assertEqual(len(clone._state_history), prefix)
+            clone.rollback(200)
+            self.assertEqual(clone.tokens_after_end, 99_800)
+        obj.rollback(100_001)
+        self.assertTrue(obj._waiting_for_channel_header)
+        self.assertEqual(len(obj._state_history), prefix - 1)
+
     def test_bounded_header_timeout_and_unlimited_setting(self):
         obj, grammar = self.make(max_channel_header_tokens=2)
         self.feed(obj, [7, 8, 50, 51, 100])

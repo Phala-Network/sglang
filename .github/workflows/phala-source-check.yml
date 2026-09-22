@@ -43,6 +43,7 @@ jobs:
         run: |
           set -euo pipefail
           python test/manual/phala/test_muse_migration_cpu.py
+          python test/manual/phala/test_xgrammar_adapter_cpu.py
           python test/manual/phala/test_nemotron_token_context_cpu.py
           python test/manual/phala/test_dsv41_chat_migration_cpu.py
           python test/manual/unit/function_call/test_qwen_complete_call_cpu.py

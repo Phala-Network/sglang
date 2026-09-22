@@ -105,6 +105,16 @@ class TerminationTests(unittest.TestCase):
         parser.detector._force_nonempty_content = True
         self.assertEqual(parser.parse_non_stream("thought", "length"), ("", "thought"))
 
+    def test_termination_guard_ablation_exposes_truncated_tool_example(self):
+        text = "Example <tool_call>quoted</tool_call>"
+        parser = self.parser()
+        parser._set_finish_reason = lambda _: None
+        self.assertEqual(
+            parser.parse_non_stream(text, "length"),
+            ("Example ", "<tool_call>quoted</tool_call>"),
+        )
+        self.assertEqual(self.parser().parse_non_stream(text, "length"), (text, ""))
+
 
 class TokenTerminationTests(unittest.TestCase):
     setUpClass = token_context.TokenContextTests.__dict__["setUpClass"]

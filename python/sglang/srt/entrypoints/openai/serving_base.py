@@ -299,6 +299,28 @@ class OpenAIServingBase(ABC):
             await generator.aclose()
             raise
 
+        # An async grammar failure may already be encoded as SSE, rather than
+        # raised. Promote only an initial error before committing HTTP headers;
+        # errors after output begins must retain normal streaming semantics.
+        if isinstance(first_chunk, str) and first_chunk.startswith("data:"):
+            try:
+                first_event = json.loads(first_chunk[5:].strip())
+            except (TypeError, ValueError):
+                first_event = None
+            if isinstance(first_event, dict) and isinstance(
+                first_event.get("error"), dict
+            ):
+                error = first_event["error"]
+                status = error.get("code", 400)
+                if isinstance(status, int) and 400 <= status <= 599:
+                    await generator.aclose()
+                    return self.create_error_response(
+                        message=error.get("message", "Request failed before output"),
+                        err_type=error.get("type", "BadRequestError"),
+                        status_code=status,
+                        param=error.get("param"),
+                    )
+
         async def prepend_first_chunk():
             try:
                 yield first_chunk

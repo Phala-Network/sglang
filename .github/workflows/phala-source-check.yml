@@ -26,6 +26,7 @@ jobs:
         run: >-
           python -m pip install pre-commit==4.5.1
           jsonschema==4.26.0 pydantic==2.13.5 Jinja2==3.1.6 openai==3.17.0
+          fastapi==0.135.1 starlette==1.6.0 orjson==3.11.7
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pre-commit
@@ -50,6 +51,7 @@ jobs:
           python test/phala_deepseek_v41/test_mxfp4_weight_load_contract.py
           python test/manual/phala/test_dsv41_chat_migration_cpu.py
           python test/manual/phala/test_dsv41_shared_protocol_cpu.py
+          python test/manual/phala/test_initial_stream_error_cpu.py
           python test/manual/unit/function_call/test_qwen_complete_call_cpu.py
           python test/manual/unit/entrypoints/openai/test_qwen_historical_source_semantics.py
           python test/manual/unit/model_executor/model_runner_components/test_marlin_breakable_source_contract.py

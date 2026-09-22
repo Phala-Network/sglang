@@ -88,5 +88,43 @@ this is CPU bookkeeping evidence, not measured serving throughput.
 Source integration does not prove loaded weights, native extension compilation,
 device transfers, Mooncake ACK/reload, model generation, new image acceptance
 or any Governor combination. Muse template packaging/license remains a
-separate gate. See the historical semantic reconciliation before claiming
-unreviewed Nemotron fusion/Mamba behaviors are complete.
+separate gate.
+
+## Historical residual closeout
+
+Nemotron fusion `65a1b3f10fd0`, Mamba flat SSM indexing `752cbf71d2fc`,
+saved admission debit `72d09f13ce3e`, and deferred initialization
+`12593d20ead3` are covered by exact official-baseline ancestors. Seven
+function ASTs remain identical to historical extracted sources; the GEMM
+dispatcher is identical after two explicit splitK identifier renames.
+Four existing Mamba index tests, saved-reserve admission with a failing
+late-recompute negative control, page-alignment/exact-fill controls and
+speculative-decode metadata clearing passed as source-method CPU checks.
+The patch repository's `docs/NEMOTRON_HISTORY_AUDIT_20260922.md` records
+identities and call chains. No duplicate engine patch was needed.
+
+The multi-path Muse donor `2224d5c899711426210957da0f3ba341f6b6c110`
+(extracted source `c2d241b80ef0e4e0e3aaf517567287368ac56fe3`) had one real
+common residual: malformed online weight-update validation. Only its worker
+deserialization and updater validation/unwrap handling are now adapted.
+The existing DS derived-cache rejection and weight-cache guards retain their
+ordering; tensor/default/direct/custom/flattened paths remain available.
+Fifteen focused real-torch CPU/source-method tests pass, covering malformed
+collections, names, local serialization/TP rank, load formats, metadata
+bounds, successful loader dispatch, and both existing cache guards.
+An ablation removing the payload validator loses controlled pre-device
+rejection; restoring the shared helper preserves it without another wrapper.
+CPU pickle fixtures do not qualify CUDA IPC, distributed updates, full runtime
+imports or production acceptance. No unrelated donor hunks were imported.
+
+Historical Nemotron donor `5f9f960c28a16bfaef3f20800c30eeee125753aa`
+(extracted `3c06073c3d0b3ada4ed413d25d543350386c3f72`) also had one common
+residual: an encoded first SSE error was still sent with HTTP 200. The shared
+pre-header response method now promotes only an initial 4xx/5xx error and
+closes its generator before returning; later errors remain in the stream.
+Seven source-method tests with real FastAPI/Starlette/ORJSON responses pass:
+five status codes, missing-code default, invalid/nonerror passthrough,
+midstream error ASGI bodies, ValueError, header-send failure cleanup and an
+ablation that restores the erroneous initial HTTP 200. This suite joins the
+existing shared source CI; no per-model workflow is added. Full server
+generation/ingress acceptance remains separate.

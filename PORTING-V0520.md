@@ -1,5 +1,11 @@
 # DeepSeek-V4.1 compatibility candidate on SGLang v0.5.20
 
+> Historical donor record, not the acceptance record of the September 22 unified
+> source migration. The union migration and remaining shared-serving work are
+> recorded in `DS-REMAINING-UNION-20260922.md`. In particular the historical
+> monkey-patch protocol package/selftest and old no-local-torch statements below
+> do not describe the union. Historical image/GPU observations do not qualify it.
+
 This is an actual v0.5.20 source branch, rooted at `94602c9c2b7cbdb8efd5c52802dac6a1c180089e`, with selected upstream model commits and reviewed adaptations. It is not the r7 tree relabeled by adding a release ancestor. Source preparation date: 2026-09-19. No remote build, GPU job, serving load, routing or publication was performed by this source-preparation task.
 
 ## Frozen inputs

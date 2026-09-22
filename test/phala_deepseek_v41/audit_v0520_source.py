@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
-BASE = "94602c9c2b7cbdb8efd5c52802dac6a1c180089e"
+BASE = "8a51d28ba2ad953593ed033612d19205e1388cb9"
 changed = subprocess.check_output(
     ["git", "diff", "--name-only", BASE, "--", "*.py"], cwd=ROOT, text=True
 ).splitlines()
@@ -98,10 +98,8 @@ for relative in changed:
                 missing.append((relative, node.lineno, "env", node.attr))
 
 protected = [
-    "python/sglang/srt/mem_cache/unified_cache/components/swa.py",
-    "python/sglang/srt/model_executor/runner_utils/pool.py",
-    "python/sglang/srt/runtime_context.py",
-    "python/sglang/srt/managers/scheduler.py",
+    "python/sglang/srt/entrypoints/openai/serving_chat.py",
+    "python/sglang/srt/constrained/xgrammar_backend.py",
 ]
 unexpected = subprocess.check_output(
     ["git", "diff", "--name-only", BASE, "--", *protected], cwd=ROOT, text=True

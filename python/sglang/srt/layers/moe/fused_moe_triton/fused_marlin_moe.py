@@ -260,7 +260,7 @@ def fused_marlin_moe(
         )
     else:
         sorted_token_ids, expert_ids, num_tokens_post_padded = moe_align_block_size(
-            topk_ids, block_size_m, global_num_experts
+            topk_ids, block_size_m, global_num_experts, deterministic=True
         )
 
     if workspace is None:
@@ -300,7 +300,10 @@ def fused_marlin_moe(
     use_atomic_add = (
         hidden_states.dtype == torch.half
         or torch.cuda.get_device_capability(hidden_states.device)[0] >= 9
-    ) and (not is_mxfp4_marlin)
+    ) and not (is_mxfp4_marlin or is_nvfp4_marlin)
+    # FP4 reductions need the FP32 scratch path selected below. Cross-CTA
+    # atomic addition rounds partial sums in the activation dtype and varies
+    # with CTA scheduling, even when route packing is deterministic.
 
     intermediate_cache1 = moe_wna16_marlin_gemm(
         hidden_states,

@@ -62,7 +62,10 @@ def build_plan(
     with (
         patch(
             prefix + "get_memory",
-            return_value=SimpleNamespace(enable_hierarchical_cache=enabled),
+            return_value=SimpleNamespace(
+                enable_hierarchical_cache=enabled,
+                enable_unified_cache_external_linker=False,
+            ),
         ),
         patch(
             prefix + "get_disagg",

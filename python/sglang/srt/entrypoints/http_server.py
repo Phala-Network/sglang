@@ -731,6 +731,32 @@ async def health_generate(request: Request) -> Response:
 
     task = asyncio.create_task(gen())
 
+    async def cancel_and_drain():
+        if not task.done():
+            task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except ValueError as error:
+            error_text = str(error)
+            expected_prefix = (
+                "Request is disconnected from the client side (type 1). "
+                "Abort request obj.rid='"
+            )
+            if (
+                error_text.startswith(expected_prefix)
+                and error_text.endswith("'")
+                and error_text[len(expected_prefix) : -1] == rid
+            ):
+                logger.debug(
+                    "Health check generation request disconnected for rid=%s", rid
+                )
+            else:
+                logger.exception("Health check generation failed for rid=%s", rid)
+        except Exception:
+            logger.exception("Health check generation failed for rid=%s", rid)
+
     # As long as we receive any response from the detokenizer/scheduler, we consider the server is healthy.
     try:
         tic = time.time()
@@ -742,26 +768,20 @@ async def health_generate(request: Request) -> Response:
                 _global_state.tokenizer_manager.server_status = ServerStatus.Up
                 return Response(status_code=200)
 
-        tic_time = time.strftime("%H:%M:%S", time.localtime(tic))
-        last_receive_time = time.strftime(
-            "%H:%M:%S",
-            time.localtime(_global_state.tokenizer_manager.last_receive_tstamp),
-        )
         logger.error(
             "Health check failed. Server couldn't get a response from detokenizer for last <redacted> seconds. tic start time: <redacted>. last_heartbeat time: <redacted>"
         )
         _global_state.tokenizer_manager.server_status = ServerStatus.UnHealthy
         return Response(status_code=503)
     finally:
-        task.cancel()
         try:
-            await task
-        except asyncio.CancelledError:
-            pass
+            await cancel_and_drain()
         finally:
             # Abort while ownership state exists; abort_request deduplicates dispatch.
-            _global_state.tokenizer_manager.abort_request(rid)
-            _global_state.tokenizer_manager.rid_to_state.pop(rid, None)
+            try:
+                _global_state.tokenizer_manager.abort_request(rid)
+            finally:
+                _global_state.tokenizer_manager.rid_to_state.pop(rid, None)
 
 
 @app.get("/get_model_info")

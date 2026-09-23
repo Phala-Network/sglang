@@ -366,13 +366,22 @@ void transfer_kv_launcher(
   TORCH_CHECK(dst_indices.scalar_type() == at::kLong, "Destination indices must be of type long");
   TORCH_CHECK(src_indices.numel() == dst_indices.numel(), "Source and destination indices must have the same length");
   TORCH_CHECK(item_size % 8 == 0, "Item byte size must be divisible by 8");
+  TORCH_CHECK(block_quota > 0, "Block quota must be positive");
+  TORCH_CHECK(num_warps_per_block > 0, "Warp count must be positive");
+  TORCH_CHECK(
+      block_quota <= std::numeric_limits<int64_t>::max() / num_warps_per_block,
+      "Launch quota product exceeds int64 range");
+
+  const int64_t num_items = src_indices.numel();
+  if (num_items == 0) {
+    return;
+  }
 
 #if !defined(USE_MUSA)
   const at::cuda::OptionalCUDAGuard device_guard(src_indices.device());
 #endif
 
-  auto div_up = [](int64_t x, int64_t y) { return (x + y - 1) / y; };
-  const int64_t num_items = src_indices.numel();
+  auto div_up = [](int64_t x, int64_t y) { return x / y + (x % y != 0); };
   const int64_t items_per_warp = div_up(num_items, block_quota * num_warps_per_block);
   const int32_t num_blocks = div_up(num_items, items_per_warp * num_warps_per_block);
   dim3 grid_dim(num_blocks, 1, 1);

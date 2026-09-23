@@ -275,6 +275,21 @@ class KvBackendTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "hash does not match"):
                 generator.generate(altered, lock)
 
+    def test_zero_work_and_invalid_quota_are_guarded_before_launch_arithmetic(self):
+        source = (
+            ROOT / "python/sglang/kernels/aot/csrc/kvcacheio/transfer.cu"
+        ).read_text(encoding="utf-8")
+        body = source.split("void transfer_kv_launcher(", 1)[1].split(
+            "\nvoid transfer_kv_per_layer(", 1
+        )[0]
+        empty = body.index("if (num_items == 0)")
+        self.assertLess(empty, body.index("OptionalCUDAGuard"))
+        self.assertLess(empty, body.index("resolve_device_accessible_ptr(src_k)"))
+        self.assertLess(body.index("Block quota must be positive"), empty)
+        self.assertLess(body.index("Warp count must be positive"), empty)
+        self.assertLess(body.index("Launch quota product exceeds int64 range"), empty)
+        self.assertIn("return x / y + (x % y != 0);", body)
+
 
 if __name__ == "__main__":
     unittest.main()

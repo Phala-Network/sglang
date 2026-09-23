@@ -162,6 +162,38 @@ def main() -> int:
         torch.cuda.synchronize()
         torch.testing.assert_close(per_layer[1].cpu(), host[0, 1])
         torch.testing.assert_close(per_layer[3].cpu(), host[2, 1])
+        before_empty = per_layer.clone()
+        empty_indices = torch.empty(0, dtype=torch.int64, device="cuda:0")
+        transfer_kv_per_layer_mla_pf_lf(
+            host,
+            per_layer,
+            empty_indices,
+            empty_indices,
+            layer_id=1,
+            item_size=item_size,
+            src_layout_dim=page_dim,
+        )
+        torch.cuda.synchronize()
+        torch.testing.assert_close(per_layer, before_empty)
+        for quota in (0, -1):
+            try:
+                transfer_kv_per_layer_mla_pf_lf(
+                    host,
+                    per_layer,
+                    src_indices,
+                    dst_indices,
+                    layer_id=1,
+                    item_size=item_size,
+                    src_layout_dim=page_dim,
+                    block_quota=quota,
+                )
+            except RuntimeError as error:
+                require(
+                    "Block quota must be positive" in str(error),
+                    "Unexpected quota error",
+                )
+            else:
+                raise RuntimeError("Invalid block quota unexpectedly passed")
 
         source_layers = [
             torch.full((pages, 1, width), layer + 11, dtype=dtype, device="cuda:0")
@@ -211,7 +243,9 @@ def main() -> int:
                 "per_layer_pf_lf": True,
                 "all_layer_lf_pf": True,
                 "installed_wrapper_selected_private_backend": True,
-                "private_transfer_calls": 2,
+                "private_roundtrip_transfer_calls": 2,
+                "empty_transfer_preserved_output": True,
+                "invalid_block_quota_rejected": True,
             },
             sort_keys=True,
         )

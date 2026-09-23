@@ -755,8 +755,7 @@ async def health_generate(request: Request) -> Response:
                 async for _ in responses:
                     break
         except ValueError as exc:
-            # A disconnected probe is not an inference failure. Match only the
-            # tokenizer's known disconnect messages for this exact health RID.
+            # Only this probe's known disconnects are benign.
             expected = {
                 "Request is disconnected from the client side "
                 f"(type {kind}). Abort request obj.rid={rid!r}"
@@ -764,7 +763,7 @@ async def health_generate(request: Request) -> Response:
             }
             if str(exc) not in expected:
                 raise
-            logger.debug("Health probe client disconnected: %s", rid)
+            logger.debug("Health probe client disconnected.")
 
     task = asyncio.create_task(gen())
 
@@ -774,7 +773,6 @@ async def health_generate(request: Request) -> Response:
         while time.time() < tic + HEALTH_CHECK_TIMEOUT:
             await asyncio.sleep(1)
             if task.done() and not task.cancelled():
-                # Retrieve failures promptly instead of leaving an orphaned task.
                 task.result()
             if _global_state.tokenizer_manager.last_receive_tstamp > tic:
                 _global_state.tokenizer_manager.server_status = ServerStatus.Up
@@ -782,7 +780,8 @@ async def health_generate(request: Request) -> Response:
 
         tic_time = time.strftime("%H:%M:%S", time.localtime(tic))
         last_receive_time = time.strftime(
-            "%H:%M:%S", time.localtime(_global_state.tokenizer_manager.last_receive_tstamp)
+            "%H:%M:%S",
+            time.localtime(_global_state.tokenizer_manager.last_receive_tstamp),
         )
         logger.error(
             f"Health check failed. Server couldn't get a response from detokenizer for last "
@@ -798,8 +797,7 @@ async def health_generate(request: Request) -> Response:
         except asyncio.CancelledError:
             pass
         finally:
-            # Abort before dropping state; abort_request deduplicates dispatch.
-            # This also runs when the HTTP handler itself is cancelled.
+            # Abort while ownership state exists; abort_request deduplicates dispatch.
             _global_state.tokenizer_manager.abort_request(rid)
             _global_state.tokenizer_manager.rid_to_state.pop(rid, None)
 
@@ -2575,6 +2573,8 @@ def _run_granian_server(
     from granian.http import HTTP2Settings
     from granian.server.embed import Server as GranianEmbeddedServer
 
+    from sglang.srt.utils.framework_log_privacy import configure_granian_log_privacy
+
     Server = GranianEmbeddedServer if tokenizer_worker_num == 1 else Granian
     target = (
         app if tokenizer_worker_num == 1 else "sglang.srt.entrypoints.http_server:app"
@@ -2590,6 +2590,7 @@ def _run_granian_server(
             max_concurrent_streams=http2_max_concurrent_streams,
         ),
         log_level=log_level,
+        log_dictconfig=configure_granian_log_privacy(),
         ssl_cert=ssl_certfile,
         ssl_key=ssl_keyfile,
         ssl_key_password=ssl_keyfile_password,

@@ -331,6 +331,11 @@ class EncoderBootstrapServer:
     # ------------------------------------------------------------------ #
     def _run_server(self):
 
+        from sglang.srt.utils.framework_log_privacy import (
+            configure_framework_log_privacy,
+        )
+
+        configure_framework_log_privacy()
         config = uvicorn.Config(
             self.app,
             host=self.host,

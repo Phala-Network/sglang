@@ -87,6 +87,11 @@ class EngineInfoBootstrapServer:
 
             return {"rank": rank, "remote_instance_transfer_engine_info": list(info)}
 
+        from sglang.srt.utils.framework_log_privacy import (
+            configure_framework_log_privacy,
+        )
+
+        configure_framework_log_privacy()
         config = uvicorn.Config(app, host=host, port=port, log_level="warning")
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(

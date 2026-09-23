@@ -52,6 +52,8 @@ jobs:
           python test/manual/phala/test_dsv41_chat_migration_cpu.py
           python test/manual/phala/test_dsv41_shared_protocol_cpu.py
           python test/manual/phala/test_initial_stream_error_cpu.py
+          python test/manual/phala/test_framework_log_privacy_cpu.py
+          python test/manual/phala/test_health_task_cleanup_cpu.py
           python test/manual/unit/function_call/test_qwen_complete_call_cpu.py
           python test/manual/unit/entrypoints/openai/test_qwen_historical_source_semantics.py
           python test/manual/unit/model_executor/model_runner_components/test_marlin_breakable_source_contract.py

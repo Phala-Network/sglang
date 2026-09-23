@@ -232,6 +232,9 @@ def launch_server(server_args: ServerArgs):
         _register_encoder_url_with_bootstrap()
         atexit.register(_unregister_encoder_url_from_bootstrap)
 
+    from sglang.srt.utils.framework_log_privacy import configure_framework_log_privacy
+
+    configure_framework_log_privacy()
     uvicorn.run(app, host=get_serving().host, port=get_serving().port)
 
 

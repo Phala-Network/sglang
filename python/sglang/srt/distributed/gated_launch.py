@@ -72,6 +72,11 @@ class _GatedLaunchServer:
         self._thread: Optional[threading.Thread] = None
 
     def serve(self, *, host: str, port: int) -> None:
+        from sglang.srt.utils.framework_log_privacy import (
+            configure_framework_log_privacy,
+        )
+
+        configure_framework_log_privacy()
         config = uvicorn.Config(
             _build_app(self), host=host, port=port, log_level="warning"
         )

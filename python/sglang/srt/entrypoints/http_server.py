@@ -26,7 +26,7 @@ import tempfile
 import threading
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from http import HTTPStatus
 from typing import (
     Annotated,
@@ -718,34 +718,58 @@ async def health_generate(request: Request) -> Response:
         )
 
     async def gen():
-        async for _ in _global_state.tokenizer_manager.generate_request(gri, request):
-            break
+        try:
+            async with aclosing(
+                _global_state.tokenizer_manager.generate_request(gri, request)
+            ) as responses:
+                async for _ in responses:
+                    break
+        except ValueError as exc:
+            # Only this probe's known disconnects are benign.
+            expected = {
+                "Request is disconnected from the client side "
+                f"(type {kind}). Abort request obj.rid={rid!r}"
+                for kind in (1, 3)
+            }
+            if str(exc) not in expected:
+                raise
+            logger.debug("Health probe client disconnected.")
 
     task = asyncio.create_task(gen())
 
     # As long as we receive any response from the detokenizer/scheduler, we consider the server is healthy.
-    tic = time.time()
-    while time.time() < tic + HEALTH_CHECK_TIMEOUT:
-        await asyncio.sleep(1)
-        if _global_state.tokenizer_manager.last_receive_tstamp > tic:
-            task.cancel()
-            _global_state.tokenizer_manager.rid_to_state.pop(rid, None)
-            _global_state.tokenizer_manager.server_status = ServerStatus.Up
-            return Response(status_code=200)
+    try:
+        tic = time.time()
+        while time.time() < tic + HEALTH_CHECK_TIMEOUT:
+            await asyncio.sleep(1)
+            if task.done() and not task.cancelled():
+                task.result()
+            if _global_state.tokenizer_manager.last_receive_tstamp > tic:
+                _global_state.tokenizer_manager.server_status = ServerStatus.Up
+                return Response(status_code=200)
 
-    task.cancel()
-    tic_time = time.strftime("%H:%M:%S", time.localtime(tic))
-    last_receive_time = time.strftime(
-        "%H:%M:%S", time.localtime(_global_state.tokenizer_manager.last_receive_tstamp)
-    )
-    logger.error(
-        f"Health check failed. Server couldn't get a response from detokenizer for last "
-        f"{HEALTH_CHECK_TIMEOUT} seconds. tic start time: {tic_time}. "
-        f"last_heartbeat time: {last_receive_time}"
-    )
-    _global_state.tokenizer_manager.rid_to_state.pop(rid, None)
-    _global_state.tokenizer_manager.server_status = ServerStatus.UnHealthy
-    return Response(status_code=503)
+        tic_time = time.strftime("%H:%M:%S", time.localtime(tic))
+        last_receive_time = time.strftime(
+            "%H:%M:%S",
+            time.localtime(_global_state.tokenizer_manager.last_receive_tstamp),
+        )
+        logger.error(
+            f"Health check failed. Server couldn't get a response from detokenizer for last "
+            f"{HEALTH_CHECK_TIMEOUT} seconds. tic start time: {tic_time}. "
+            f"last_heartbeat time: {last_receive_time}"
+        )
+        _global_state.tokenizer_manager.server_status = ServerStatus.UnHealthy
+        return Response(status_code=503)
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        finally:
+            # Abort while ownership state exists; abort_request deduplicates dispatch.
+            _global_state.tokenizer_manager.abort_request(rid)
+            _global_state.tokenizer_manager.rid_to_state.pop(rid, None)
 
 
 @app.get("/get_model_info")
@@ -2514,6 +2538,8 @@ def _run_granian_server(
     from granian.http import HTTP2Settings
     from granian.server.embed import Server as GranianEmbeddedServer
 
+    from sglang.srt.utils.framework_log_privacy import configure_granian_log_privacy
+
     Server = GranianEmbeddedServer if tokenizer_worker_num == 1 else Granian
     target = (
         app if tokenizer_worker_num == 1 else "sglang.srt.entrypoints.http_server:app"
@@ -2529,6 +2555,7 @@ def _run_granian_server(
             max_concurrent_streams=http2_max_concurrent_streams,
         ),
         log_level=log_level,
+        log_dictconfig=configure_granian_log_privacy(),
         ssl_cert=ssl_certfile,
         ssl_key=ssl_keyfile,
         ssl_key_password=ssl_keyfile_password,

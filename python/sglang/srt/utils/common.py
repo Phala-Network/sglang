@@ -3297,6 +3297,8 @@ class UvicornAccessLogFilter(logging.Filter):
 def set_uvicorn_logging_configs(server_args=None):
     from uvicorn.config import LOGGING_CONFIG
 
+    from sglang.srt.utils.framework_log_privacy import configure_framework_log_privacy
+
     LOGGING_CONFIG["formatters"]["default"]["fmt"] = (
         "[%(asctime)s] %(levelprefix)s %(message)s"
     )
@@ -3307,6 +3309,7 @@ def set_uvicorn_logging_configs(server_args=None):
     LOGGING_CONFIG["formatters"]["access"]["datefmt"] = "%Y-%m-%d %H:%M:%S"
 
     _configure_uvicorn_access_log_filter(LOGGING_CONFIG, server_args)
+    configure_framework_log_privacy(LOGGING_CONFIG)
 
 
 def _configure_uvicorn_access_log_filter(
@@ -3399,6 +3402,9 @@ def launch_dummy_health_check_server(host, port, enable_metrics):
         add_prometheus_middleware(app)
         enable_func_timer()
 
+    from sglang.srt.utils.framework_log_privacy import configure_framework_log_privacy
+
+    configure_framework_log_privacy()
     config = uvicorn.Config(
         app,
         host=host,

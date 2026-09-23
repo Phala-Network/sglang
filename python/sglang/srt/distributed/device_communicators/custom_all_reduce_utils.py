@@ -35,13 +35,13 @@ if _is_cuda:
     try:
         import pynvml
     except ImportError as e:
-        logger.warning("Failed to import pynvml with %r", e)
+        logger.warning("Failed to import pynvml with <redacted>")
 
 if _is_musa:
     try:
         import pymtml as pynvml
     except ImportError as e:
-        logger.warning("Failed to import pymtml with %r", e)
+        logger.warning("Failed to import pymtml with <redacted>")
 
 if _is_hip:
     try:
@@ -53,7 +53,7 @@ if _is_hip:
             amdsmi_topo_get_link_type,
         )
     except ImportError as e:
-        logger.warning("Failed to import amdsmi with %r", e)
+        logger.warning("Failed to import amdsmi with <redacted>")
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -366,7 +366,7 @@ def is_full_nvlink(physical_device_ids: List[int], world_size: int) -> bool:
                         if link_type["hops"] != 1 or link_type["type"] != 2:
                             return False
                     except AmdSmiException as error:
-                        logger.error("AMD 1 hop XGMI detection failed.", exc_info=error)
+                        logger.error("AMD 1 hop XGMI detection failed.", exc_info=False)
                         return False
         return True
     else:
@@ -385,8 +385,8 @@ def is_full_nvlink(physical_device_ids: List[int], world_size: int) -> bool:
                             return False
                     except pynvml.NVMLError:
                         logger.exception(
-                            "NVLink detection failed. This is normal if your"
-                            " machine has no NVLink equipped."
+                            "NVLink detection failed. This is normal if your machine has no NVLink equipped.",
+                            exc_info=False,
                         )
                         return False
         return True
@@ -405,7 +405,7 @@ def is_one_nvlink_clique(
         clique = _gpu_fabric_clique(device)
     except Exception as e:
         logger.warning(
-            "GPU fabric clique query failed (%r); custom-AR stays intra-node.", e
+            "GPU fabric clique query failed (<redacted>); custom-AR stays intra-node."
         )
         clique = None
     # Always all-gather (every rank calls it once) so a failed query on any rank

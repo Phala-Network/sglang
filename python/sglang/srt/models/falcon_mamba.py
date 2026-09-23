@@ -243,9 +243,7 @@ class FalconMambaForCausalLM(nn.Module):
         # A tied lm_head is legitimately absent from the checkpoint.
         unloaded_params = {p for p in unloaded_params if not p.startswith("lm_head")}
         if unloaded_params:
-            logger.warning(
-                f"The following parameters were not loaded: {unloaded_params}"
-            )
+            logger.warning("The following parameters were not loaded: <redacted>")
         return loaded_params
 
 

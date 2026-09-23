@@ -47,7 +47,7 @@ class AscendTransferEngine(MooncakeTransferEngine):
         elif disaggregation_mode == DisaggregationMode.DECODE:
             self.role = "Decode"
         else:
-            logger.error(f"Unsupported DisaggregationMode: {disaggregation_mode}")
+            logger.error("Unsupported DisaggregationMode: <redacted>")
             raise ValueError(f"Unsupported DisaggregationMode: {disaggregation_mode}")
         rpc_port = self.engine.get_rpc_port()
         self.session_id = NetworkAddress(self.hostname, rpc_port).to_host_port_str()

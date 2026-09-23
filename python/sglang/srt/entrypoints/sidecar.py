@@ -95,11 +95,7 @@ class Sidecar:
     def start(self) -> None:
         self.proc.start()
         self._watchdog.start()
-        logger.info(
-            "Sidecar module %s started pid=%s",
-            self.module_name,
-            self.proc.pid,
-        )
+        logger.info("Sidecar module <redacted> started pid=<redacted>")
 
     def stop(self) -> None:
         self._watchdog.stop()

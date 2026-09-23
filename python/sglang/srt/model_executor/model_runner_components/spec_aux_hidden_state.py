@@ -247,8 +247,6 @@ def _resolve_dflash_draft_cell_size(
         )
     except Exception as e:  # noqa: BLE001
         logger.warning(
-            "Could not resolve DFLASH draft KV bytes/token (%s); falling back to "
-            "layer-count scaling for the KV pool budget.",
-            e,
+            "Could not resolve DFLASH draft KV bytes/token (<redacted>); falling back to layer-count scaling for the KV pool budget."
         )
         return None

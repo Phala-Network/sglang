@@ -275,7 +275,7 @@ class RayDataParallelController(DataParallelController):
                 try:
                     ray.kill(actor)
                 except Exception:
-                    logger.error(f"Failed to kill Ray scheduler actor: {actor}")
+                    logger.error("Failed to kill Ray scheduler actor: <redacted>")
             raise RuntimeError(f"Scheduler actor failed to initialize: {e}")
 
         # Store init info from the first actor (same across all actors)

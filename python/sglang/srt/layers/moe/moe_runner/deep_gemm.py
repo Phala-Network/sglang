@@ -738,12 +738,7 @@ class DeepGemmRunnerCore(MoeRunnerCore):
             )
         except torch.OutOfMemoryError:
             logger.error(
-                "Masked grouped-GEMM workspace allocation failed "
-                "(num_groups=%d m=%d n=%d). If this happens under saturated "
-                "dp-attention prefill, try SGLANG_OPT_DG_MASKED_M_CAP=1.",
-                num_groups,
-                m,
-                n,
+                "Masked grouped-GEMM workspace allocation failed (num_groups=<redacted> m=<redacted> n=<redacted>). If this happens under saturated dp-attention prefill, try SGLANG_OPT_DG_MASKED_M_CAP=1."
             )
             raise
         deep_gemm_wrapper.grouped_gemm_nt_f8f8bf16_masked(

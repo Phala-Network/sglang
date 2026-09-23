@@ -81,7 +81,7 @@ class EnvField:
         except ValueError as e:
             default = self._resolve_default()
             warnings.warn(
-                f'Invalid value for {self.name}: {e}, using default "{default}"'
+                'Invalid value for <redacted>: <redacted>, using default "<redacted>"'
             )
             return default
 

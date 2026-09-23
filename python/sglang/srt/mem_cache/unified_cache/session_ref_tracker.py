@@ -110,9 +110,5 @@ class UnifiedSessionRefTracker:
         for component in self.components:
             indexed += component.release_session(session_id)
 
-        logger.info(
-            "release_session %s: indexed %d component leaves",
-            session_id,
-            indexed,
-        )
+        logger.info("release_session <redacted>: indexed <redacted> component leaves")
         return 0

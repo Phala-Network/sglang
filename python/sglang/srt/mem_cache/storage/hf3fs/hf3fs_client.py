@@ -103,7 +103,7 @@ class Hf3fsMockClient(Hf3fsClient):
                     results.append(len(bytes_read))
 
             except Exception as e:
-                logger.error(f"Error reading from offset {offset}: {e}")
+                logger.error("Error reading from offset <redacted>: <redacted>")
                 results.append(0)
 
         return results
@@ -132,7 +132,7 @@ class Hf3fsMockClient(Hf3fsClient):
                     results.append(bytes_written)
 
             except Exception as e:
-                logger.error(f"Error writing to offset {offset}: {e}")
+                logger.error("Error writing to offset <redacted>: <redacted>")
                 results.append(0)
 
         return results
@@ -153,11 +153,11 @@ class Hf3fsMockClient(Hf3fsClient):
                 self.file = -1  # Mark as closed
             logger.info(f"MockHf3fsClient closed: {self.path}")
         except Exception as e:
-            logger.error(f"Error closing MockHf3fsClient: {e}")
+            logger.error("Error closing MockHf3fsClient: <redacted>")
 
     def flush(self) -> None:
         """Flush data to disk."""
         try:
             os.fsync(self.file)
         except Exception as e:
-            logger.error(f"Error flushing MockHf3fsClient: {e}")
+            logger.error("Error flushing MockHf3fsClient: <redacted>")

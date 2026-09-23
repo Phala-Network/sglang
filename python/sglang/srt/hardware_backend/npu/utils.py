@@ -206,7 +206,7 @@ def init_npu_backend():
         import custom_ops  # noqa: F401
         import sgl_kernel_npu  # noqa: F401
     except ImportError as e:
-        logger.warning("NPU custom kernel packages unavailable: %s", e)
+        logger.warning("NPU custom kernel packages unavailable: <redacted>")
 
     import torch_npu
 

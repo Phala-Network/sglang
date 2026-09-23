@@ -416,10 +416,8 @@ class ModelRunner:
         try:
             torch.get_device_module(self.device).set_device(ps.gpu_id)
         except Exception:
-            import os
-
             logger.warning(
-                f"Context: {self.device=} {ps.gpu_id=} {os.environ.get('CUDA_VISIBLE_DEVICES')=} {ps.tp_rank=} {ps.tp_size=}"
+                "Context: self.device=<redacted> ps.gpu_id=<redacted> os.environ.get('CUDA_VISIBLE_DEVICES')=<redacted> ps.tp_rank=<redacted> ps.tp_size=<redacted>"
             )
             raise
 
@@ -2163,7 +2161,7 @@ class ModelRunner:
                 ElasticEPStateManager.fail_recovery(error)
                 self._report_elastic_scale_failure(error, effective_size)
                 if self.ps.tp_rank == 0 and not get_exec().moe.is_ep_scale_joiner:
-                    logger.error("[Elastic EP] %s", error)
+                    logger.error("[Elastic EP] <redacted>")
                 return
 
             recovered = maybe_recover_ep_ranks(
@@ -2189,7 +2187,7 @@ class ModelRunner:
             self._reset_eplb_after_elastic_scale_failure()
             self._report_elastic_scale_failure(error, effective_size)
             if self.ps.tp_rank == 0 and not get_exec().moe.is_ep_scale_joiner:
-                logger.error("[Elastic EP] %s", error)
+                logger.error("[Elastic EP] <redacted>")
             return
 
         if state.scale_phase == "waiting_for_cohort":
@@ -2205,7 +2203,7 @@ class ModelRunner:
                 self._reset_eplb_after_elastic_scale_failure()
                 self._report_elastic_scale_failure(error, effective_size)
                 if self.ps.tp_rank == 0 and not get_exec().moe.is_ep_scale_joiner:
-                    logger.error("[Elastic EP] %s", error)
+                    logger.error("[Elastic EP] <redacted>")
                 return
             if not ElasticEPStateManager.begin_scale():
                 return

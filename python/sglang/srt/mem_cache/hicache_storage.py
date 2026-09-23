@@ -654,7 +654,7 @@ class HiCacheFile(HiCacheStorage):
         except FileNotFoundError:
             if self.metadata_cache is not None:
                 self.metadata_cache.remove(suffixed)
-            logger.warning(f"Failed to fetch {key} from HiCacheFile storage.")
+            logger.warning("Failed to fetch <redacted> from HiCacheFile storage.")
             return None
 
     def batch_get(
@@ -722,7 +722,7 @@ class HiCacheFile(HiCacheStorage):
                 self.metadata_cache.add(suffixed)
             return True
         except Exception as e:
-            logger.error(f"Failed to save tensor {key}: {e}")
+            logger.error("Failed to save tensor <redacted>: <redacted>")
             # Roll back the reservation and clean up any half-written file.
             if reserved:
                 evictor.abort(suffixed)
@@ -876,11 +876,7 @@ class HiCacheFile(HiCacheStorage):
 
             if host_indices is None or host_indices.numel() != expected:
                 logger.error(
-                    "%s indices length mismatch for %s: expected %s, got %s",
-                    op_fn.__name__,
-                    transfer.name,
-                    expected,
-                    host_indices.numel() if host_indices is not None else 0,
+                    "<redacted> indices length mismatch for <redacted>: expected <redacted>, got <redacted>"
                 )
                 results[transfer.name] = [False] * len(keys)
                 continue
@@ -927,5 +923,5 @@ class HiCacheFile(HiCacheStorage):
             logger.info("Cleared all entries in HiCacheFile storage.")
             return True
         except Exception as e:
-            logger.error(f"Failed to clear HiCacheFile storage: {e}")
+            logger.error("Failed to clear HiCacheFile storage: <redacted>")
             return False

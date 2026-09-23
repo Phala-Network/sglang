@@ -1137,10 +1137,7 @@ class UMBPStore(HiCacheStorage):
                         f"mode and cannot fall back: {exc}"
                     ) from exc
                 logger.warning(
-                    "UMBPStore: register_memory failed (%s); falling back to staging "
-                    "buffer path. Per-transfer size will be capped by "
-                    "distributed.staging_buffer_size.",
-                    exc,
+                    "UMBPStore: register_memory failed (<redacted>); falling back to staging buffer path. Per-transfer size will be capped by distributed.staging_buffer_size."
                 )
                 return False
             if not ok:
@@ -1468,11 +1465,7 @@ class UMBPStore(HiCacheStorage):
             exists = list(self.client.batch_exists(component_keys))
             if len(exists) != len(component_keys):
                 logger.error(
-                    "UMBP v2 batch_exists result-size mismatch for pool %s: "
-                    "expected=%d actual=%d; treating the storage prefix as a miss",
-                    transfer.name,
-                    len(component_keys),
-                    len(exists),
+                    "UMBP v2 batch_exists result-size mismatch for pool <redacted>: expected=<redacted> actual=<redacted>; treating the storage prefix as a miss"
                 )
                 final_pages = 0
                 break
@@ -1535,12 +1528,7 @@ class UMBPStore(HiCacheStorage):
             io_results = [bool(value) for value in operation(key_strs, ptrs, sizes)]
             if len(io_results) != len(key_strs):
                 logger.error(
-                    "UMBP v2 %s result-size mismatch for pool %s: "
-                    "expected=%d actual=%d; treating every page as failed",
-                    "set" if is_set else "get",
-                    transfer.name,
-                    len(key_strs),
-                    len(io_results),
+                    "UMBP v2 <redacted> result-size mismatch for pool <redacted>: expected=<redacted> actual=<redacted>; treating every page as failed"
                 )
                 results[transfer.name] = [False] * len(keys)
                 continue
@@ -1646,14 +1634,16 @@ class UMBPStore(HiCacheStorage):
             try:
                 self._kv_events_subscriber.stop()
             except Exception:
-                logger.exception("KVEventsSubscriber stop during close failed")
+                logger.exception(
+                    "KVEventsSubscriber stop during close failed", exc_info=False
+                )
             self._kv_events_subscriber = None
         if getattr(self, "client", None) is None:
             return
         try:
             self.flush()
         except Exception:
-            logger.exception("UMBPStore flush during close failed")
+            logger.exception("UMBPStore flush during close failed", exc_info=False)
         self.client = None
 
 
@@ -1866,6 +1856,8 @@ class KVEventsSubscriber:
                     for event in batch.events:
                         self.on_event(event, batch.ts, batch.attn_dp_rank)
                 except Exception:
-                    logger.exception("KVEventsSubscriber error decoding message")
+                    logger.exception(
+                        "KVEventsSubscriber error decoding message", exc_info=False
+                    )
         finally:
             sub.close(linger=0)

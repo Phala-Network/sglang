@@ -266,7 +266,7 @@ for name, cls in _CONFIG_REGISTRY.items():
     except ValueError as e:
         err = str(e).lower()
         if "already registered" not in err and "already used" not in err:
-            logger.warning("Failed to register config %s: %s", name, e)
+            logger.warning("Failed to register config <redacted>: <redacted>")
 
 # Cosmos3 (understanding tower) reuses the Qwen3-VL config schema. Register it
 # with AutoConfig only (not `_CONFIG_REGISTRY`), so the nested `text_config` is
@@ -278,7 +278,7 @@ try:
 except ValueError as e:
     err = str(e).lower()
     if "already registered" not in err and "already used" not in err:
-        logger.warning("Failed to register config %s: %s", Cosmos3Config.model_type, e)
+        logger.warning("Failed to register config <redacted>: <redacted>")
 
 # Cosmos3-Edge native text support starts from the checkpoint root config, then
 # consumes ``text_config`` in ``sglang.srt.models.cosmos3_edge``. Keep it out of
@@ -298,11 +298,7 @@ for _cosmos3_edge_config_cls in (
     except ValueError as e:
         err = str(e).lower()
         if "already registered" not in err and "already used" not in err:
-            logger.warning(
-                "Failed to register config %s: %s",
-                _cosmos3_edge_config_cls.model_type,
-                e,
-            )
+            logger.warning("Failed to register config <redacted>: <redacted>")
 
 
 # ---------------------------------------------------------------------------
@@ -699,9 +695,7 @@ def get_generation_config(
         # it as benign — proceed without a generation config, at DEBUG level so
         # normal startup logs stay quiet.
         logger.debug(
-            "No generation config for %s: %s. Proceeding without it.",
-            model,
-            e,
+            "No generation config for <redacted>: <redacted>. Proceeding without it."
         )
         return None
 

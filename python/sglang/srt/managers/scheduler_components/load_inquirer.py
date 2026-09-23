@@ -146,7 +146,7 @@ class SchedulerLoadInquirer:
                 token_capacity=int(self.max_total_num_tokens),
             )
         except (AttributeError, TypeError) as e:
-            logger.debug(f"Memory metrics not available: {e}")
+            logger.debug("Memory metrics not available: <redacted>")
 
         speculative = None
         if (

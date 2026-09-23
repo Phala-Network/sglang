@@ -234,7 +234,7 @@ class MiniCPM5Detector(BaseFormatDetector):
 
             return StreamingParseResult(normal_text="".join(normal_parts), calls=calls)
         except Exception as e:
-            logger.error(f"Error in detect_and_parse: {e}")
+            logger.error("Error in detect_and_parse: <redacted>")
             return StreamingParseResult(normal_text=text)
 
     def _append_tool_call(self, call, all_calls: List) -> None:

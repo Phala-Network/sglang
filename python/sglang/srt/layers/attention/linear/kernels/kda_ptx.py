@@ -333,10 +333,8 @@ class PtxKDAKernel(LinearAttnKernelBase):
         except Exception:
             ssm_states.index_copy_(0, slot, state_backup)
             logger.warning(
-                "PTX KDA prefill failed (T=%d); restored state and fell back to "
-                "Triton for this batch",
-                num_tokens,
-                exc_info=True,
+                "PTX KDA prefill failed (T=<redacted>); restored state and fell back to Triton for this batch",
+                exc_info=False,
             )
             return self._triton_extend(
                 q,

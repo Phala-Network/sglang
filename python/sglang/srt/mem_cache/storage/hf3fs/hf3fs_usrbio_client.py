@@ -129,7 +129,7 @@ class Hf3fsUsrBioClient(Hf3fsClient):
                 )
                 current += size
             except Exception as e:
-                logger.error(f"Error preparing batch read: {e}")
+                logger.error("Error preparing batch read: <redacted>")
                 return results
         # submit
         ionum = len(offsets)
@@ -139,14 +139,16 @@ class Hf3fsUsrBioClient(Hf3fsClient):
                 timeout=datetime.timedelta(seconds=self.client_timeout),
             )
         except Exception as e:
-            logger.error(f"Error submitting batch read: {e}")
+            logger.error("Error submitting batch read: <redacted>")
             return results
         # results
         try:
             hf3fs_utils.read_shm(self.shm_r_tensor, tensors)
             results = [res.result for res in resv]
         except Exception as e:
-            logger.error(f"[Hf3fsUsrBioClient] read_shm failed: {e}", exc_info=True)
+            logger.error(
+                "[Hf3fsUsrBioClient] read_shm failed: <redacted>", exc_info=False
+            )
             return results
 
         return results
@@ -166,7 +168,7 @@ class Hf3fsUsrBioClient(Hf3fsClient):
                 )
                 current += size
             except Exception as e:
-                logger.error(f"Error preparing batch write: {e}")
+                logger.error("Error preparing batch write: <redacted>")
                 return results
 
         # submit
@@ -177,7 +179,7 @@ class Hf3fsUsrBioClient(Hf3fsClient):
                 timeout=datetime.timedelta(seconds=self.client_timeout),
             )
         except Exception as e:
-            logger.error(f"Error submitting batch write: {e}")
+            logger.error("Error submitting batch write: <redacted>")
             return results
 
         # results

@@ -30,7 +30,7 @@ def try_detect_fp4_experts(model_path: str) -> Optional[bool]:
     try:
         dtype = probe_routed_expert_weight_dtype(local_path)
     except Exception as e:
-        logger.warning("Failed to probe routed-expert dtype for %s: %s", model_path, e)
+        logger.warning("Failed to probe routed-expert dtype for <redacted>: <redacted>")
         return None
     if dtype is None:
         return None

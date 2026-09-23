@@ -550,8 +550,7 @@ def generate_token_bitmask(
             tree_traverse_time = time.perf_counter() - s
             if tree_traverse_time > TREE_TRAVERSE_TIME_THRESHOLD:
                 logger.warning(
-                    f"Bit mask generation took {tree_traverse_time} seconds with "
-                    f"grammar: {req.grammar}"
+                    "Bit mask generation took <redacted> seconds with grammar: <redacted>"
                 )
 
     return allocate_token_bitmask, grammar

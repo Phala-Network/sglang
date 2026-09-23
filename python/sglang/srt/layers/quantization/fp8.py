@@ -840,7 +840,7 @@ class Fp8LinearMethod(LinearMethodBase):
                 layer.weight_scale_inv.data, (n, k), self.weight_block_size
             )
         except ValueError as e:
-            logger.warning("Block-fp8 layer stays on the Triton kernel: %s", e)
+            logger.warning("Block-fp8 layer stays on the Triton kernel: <redacted>")
             return
         # weight_scale_inv stays in place for the Triton fallback and raw readers;
         # the swizzled copy is stored separately.

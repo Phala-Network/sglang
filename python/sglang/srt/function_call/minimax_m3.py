@@ -78,9 +78,8 @@ class MinimaxM3Detector(BaseFormatDetector):
             return StreamingParseResult(normal_text=normal_text, calls=calls)
         except Exception as exc:
             logger.warning(
-                "invalid MiniMax M3 tool call returned as content: %s",
-                exc,
-                exc_info=True,
+                "invalid MiniMax M3 tool call returned as content: <redacted>",
+                exc_info=False,
             )
             return StreamingParseResult(normal_text=original_text, calls=[])
 
@@ -141,7 +140,7 @@ class MinimaxM3Detector(BaseFormatDetector):
                     call.tool_index = len(results)
                     results.append(call)
             except Exception:
-                logger.warning("invalid tool call for %s dropped", func_name)
+                logger.warning("invalid tool call for <redacted> dropped")
         return results
 
     def parse_streaming_increment(

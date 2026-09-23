@@ -907,7 +907,8 @@ class PortArgs:
                     wait_port_available(scheduler_input_port, "scheduler_input_port")
             except ValueError:
                 logger.exception(
-                    f"Port is already in use. {dist_init_port=} {port_base=} {detokenizer_port=} {nccl_port=} {scheduler_input_port=}"
+                    "Port is already in use. dist_init_port=<redacted> port_base=<redacted> detokenizer_port=<redacted> nccl_port=<redacted> scheduler_input_port=<redacted>",
+                    exc_info=False,
                 )
                 raise
 

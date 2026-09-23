@@ -304,9 +304,7 @@ def _handle_dflash(server_args: ServerArgs) -> None:
             ).resolve_block_size(default=None)
         except Exception as e:
             logger.warning(
-                "Failed to infer DFLASH block_size from draft model config; "
-                "defaulting speculative_num_draft_tokens to 16. Error: %s",
-                e,
+                "Failed to infer DFLASH block_size from draft model config; defaulting speculative_num_draft_tokens to 16. Error: <redacted>"
             )
 
         if inferred_block_size is None:
@@ -634,9 +632,7 @@ def _handle_dspark(server_args: ServerArgs) -> None:
         draft_config = read_draft_checkpoint_config(server_args=server_args)
     except Exception as e:
         logger.warning(
-            "Failed to read DSpark draft config; preserving explicit/default "
-            "gamma resolution. Error: %s",
-            e,
+            "Failed to read DSpark draft config; preserving explicit/default gamma resolution. Error: <redacted>"
         )
 
     gamma: Optional[int] = None
@@ -761,13 +757,7 @@ def _resolve_dflash_draft_attention_backend(server_args: ServerArgs) -> None:
         all_causal = getattr(draft_text_config, "is_causal", False) is True
         if not (all_sliding or all_causal):
             logger.warning(
-                "DFLASH only enables 'trtllm_mha' when all layers use sliding "
-                "attention or the draft is explicitly causal; got "
-                "layer_types=%r, is_causal=%r. "
-                "Falling back to '%s'.",
-                layer_types,
-                getattr(draft_text_config, "is_causal", None),
-                fallback_backend,
+                "DFLASH only enables 'trtllm_mha' when all layers use sliding attention or the draft is explicitly causal; got layer_types=<redacted>, is_causal=<redacted>. Falling back to '<redacted>'."
             )
             draft_backend = fallback_backend
     elif draft_backend not in supported_draft_backends:

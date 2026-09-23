@@ -417,7 +417,7 @@ class MiniMaxM3SparseForConditionalGeneration(nn.Module):
         try:
             weight_loader(param, loaded_weight)
         except Exception as e:
-            logger.warning(f"Error loading weight {remapped}: {e}")
+            logger.warning("Error loading weight <redacted>: <redacted>")
 
 
 EntryClass = [MiniMaxM3SparseForConditionalGeneration]

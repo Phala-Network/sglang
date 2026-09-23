@@ -159,7 +159,7 @@ def get_libnuma():
         try:
             libnuma = ctypes.CDLL(libnuma_so)
         except OSError as e:
-            logger.debug(f"{e}")
+            logger.debug("<redacted>")
             libnuma = None
         if libnuma is not None:
             break
@@ -270,11 +270,11 @@ def _probe_numactl_args(numactl_args: str) -> tuple[Optional[str], str]:
             )
             stderr = proc.stderr.decode("utf-8", errors="replace").strip()
             if proc.returncode != 0:
-                logger.debug(f"numactl probe for {args!r} rejected: {stderr!r}")
+                logger.debug("numactl probe for <redacted> rejected: <redacted>")
             return proc.returncode == 0, stderr
         except Exception as e:
             # Missing numactl, timeout, etc. Treat as "this binding does not work".
-            logger.debug(f"numactl probe for {args!r} failed: {e}")
+            logger.debug("numactl probe for <redacted> failed: <redacted>")
             return False, str(e)
 
     def _suffix(err: str) -> str:
@@ -293,9 +293,7 @@ def _probe_numactl_args(numactl_args: str) -> tuple[Optional[str], str]:
         ok, _ = _probe(preferred_args)
         if ok:
             logger.warning(
-                f"numactl rejected hard memory binding ({numactl_args!r})"
-                f"{_suffix(last_err)}; falling back to soft preferred policy "
-                f"({preferred_args!r})."
+                "numactl rejected hard memory binding (<redacted>)<redacted>; falling back to soft preferred policy (<redacted>)."
             )
             return preferred_args, ""
 
@@ -305,9 +303,7 @@ def _probe_numactl_args(numactl_args: str) -> tuple[Optional[str], str]:
         ok, cpu_err = _probe(cpu_only_args)
         if ok:
             logger.warning(
-                f"numactl rejected memory binding ({numactl_args!r})"
-                f"{_suffix(last_err)}; falling back to CPU-only binding "
-                f"({cpu_only_args!r})."
+                "numactl rejected memory binding (<redacted>)<redacted>; falling back to CPU-only binding (<redacted>)."
             )
             return cpu_only_args, ""
         last_err = cpu_err
@@ -431,7 +427,7 @@ def _query_numa_node_for_gpu(device_id: int):
         return numa_nodes
     except pynvml.NVMLError as e:
         logger.warning(
-            f"NVML error querying memory affinity for GPU {device_id}: {e}, skipping NUMA node configuration for GPU"
+            "NVML error querying memory affinity for GPU <redacted>: <redacted>, skipping NUMA node configuration for GPU"
         )
         return []
     finally:
@@ -621,7 +617,7 @@ def _read_pci_numa_node(pci_address: str):
             node = int(f.read().strip())
     except (OSError, ValueError) as e:
         logger.warning(
-            f"Could not read {numa_path}: {e}, skipping NUMA node configuration for XPU"
+            "Could not read <redacted>: <redacted>, skipping NUMA node configuration for XPU"
         )
         return []
 

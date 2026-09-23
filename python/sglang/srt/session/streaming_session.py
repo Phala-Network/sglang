@@ -401,9 +401,7 @@ class StreamingSession(BasePrefixCache):
         tokens_freed = (
             max(0, slot.kv.kv_allocated_len - protected_len) if slot.kv.holds_kv else 0
         )
-        logger.info(
-            "Session KV released: %s (%d tokens freed)", session_id, tokens_freed
-        )
+        logger.info("Session KV released: <redacted> (<redacted> tokens freed)")
 
         if lock_node is not None:
             # skip_swa is an SWA-cache extension kwarg; a slot can only have

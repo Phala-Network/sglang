@@ -504,7 +504,7 @@ class FlexKVRadixCache(RadixCache):
         try:
             self.flexkv_connector.prefetch_async(handle, list(token_ids))
         except Exception as exc:  # noqa: BLE001
-            logger.debug("[FlexKV] prefetch_from_storage: %s", exc)
+            logger.debug("[FlexKV] prefetch_from_storage: <redacted>")
 
     def check_prefetch_progress(self, handle: CacheRequestHandle) -> bool:
         return self.flexkv_connector.check_prefetch_progress(handle)

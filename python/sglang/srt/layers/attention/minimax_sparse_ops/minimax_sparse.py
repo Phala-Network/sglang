@@ -29,8 +29,7 @@ def _warn_msa_fallback(err: Exception) -> None:
     if _msa_fallback_warned:
         return
     logger.warning(
-        "MiniMax MSA backend is unavailable (%s); falling back to Triton sparse attention.",
-        err,
+        "MiniMax MSA backend is unavailable (<redacted>); falling back to Triton sparse attention."
     )
     _msa_fallback_warned = True
 

@@ -619,7 +619,7 @@ class Qwen2VLForConditionalGeneration(nn.Module):
                         continue
                     param = params_dict[name]
                 except KeyError:
-                    print(params_dict.keys())
+                    print("Request-path diagnostic redacted")
                     raise
 
                 weight_loader = getattr(param, "weight_loader", default_weight_loader)

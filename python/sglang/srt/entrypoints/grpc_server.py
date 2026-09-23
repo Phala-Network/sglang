@@ -34,7 +34,7 @@ async def _start_sidecar_server(host: str, port: int, app):
     except BaseException:
         await runner.cleanup()
         raise
-    logger.info("HTTP sidecar server started on http://%s:%d", host, port)
+    logger.info("HTTP sidecar server started on http://<redacted>:<redacted>")
     return runner
 
 
@@ -59,7 +59,7 @@ def _add_metrics_routes(app):
                 headers={"Content-Type": CONTENT_TYPE_LATEST},
             )
         except Exception:
-            logger.exception("Failed to generate Prometheus metrics")
+            logger.exception("Failed to generate Prometheus metrics", exc_info=False)
             return web.Response(status=500, text="Failed to generate metrics")
 
     app.router.add_get("/metrics", metrics_handler)
@@ -127,7 +127,7 @@ def _add_admin_routes(app, request_manager):
                 return err
             return web.Response(text="Start profiling.\n")
         except Exception as e:
-            logger.exception("Failed to start profile")
+            logger.exception("Failed to start profile", exc_info=False)
             return web.Response(
                 status=500,
                 text=f"Internal error: {type(e).__name__}. Check server logs.\n",
@@ -144,7 +144,7 @@ def _add_admin_routes(app, request_manager):
                 return err
             return web.Response(text="Stop profiling. This will take some time.\n")
         except Exception as e:
-            logger.exception("Failed to stop profile")
+            logger.exception("Failed to stop profile", exc_info=False)
             return web.Response(
                 status=500,
                 text=f"Internal error: {type(e).__name__}. Check server logs.\n",
@@ -194,9 +194,8 @@ async def serve_grpc(server_args, model_info=None):
             _add_metrics_routes(sidecar_app)
         except Exception as e:
             logger.error(
-                "Failed to set up metrics: %s. Continuing without metrics.",
-                e,
-                exc_info=True,
+                "Failed to set up metrics: <redacted>. Continuing without metrics.",
+                exc_info=False,
             )
 
     async def _on_request_manager_ready(request_manager, srv_args, sched_info):
@@ -205,10 +204,8 @@ async def serve_grpc(server_args, model_info=None):
             _add_admin_routes(sidecar_app, request_manager)
         except Exception as e:
             logger.error(
-                "Failed to set up admin routes: %s. "
-                "Continuing without admin endpoints.",
-                e,
-                exc_info=True,
+                "Failed to set up admin routes: <redacted>. Continuing without admin endpoints.",
+                exc_info=False,
             )
         try:
             sidecar_runner = await _start_sidecar_server(
@@ -216,17 +213,13 @@ async def serve_grpc(server_args, model_info=None):
             )
         except OSError as e:
             logger.error(
-                "Failed to start HTTP sidecar server: %s. "
-                "Continuing without metrics/profile endpoints.",
-                e,
-                exc_info=True,
+                "Failed to start HTTP sidecar server: <redacted>. Continuing without metrics/profile endpoints.",
+                exc_info=False,
             )
         except Exception as e:
             logger.error(
-                "Unexpected error starting HTTP sidecar server: %s. "
-                "Continuing without metrics/profile endpoints.",
-                e,
-                exc_info=True,
+                "Unexpected error starting HTTP sidecar server: <redacted>. Continuing without metrics/profile endpoints.",
+                exc_info=False,
             )
 
     # Older smg-grpc-servicer releases (≤ 0.5.2) accept only (server_args,
@@ -266,6 +259,6 @@ async def serve_grpc(server_args, model_info=None):
                 await sidecar_runner.cleanup()
             except Exception as e:
                 logger.exception(
-                    "Failed to cleanly shut down HTTP sidecar server: %s",
-                    e,
+                    "Failed to cleanly shut down HTTP sidecar server: <redacted>",
+                    exc_info=False,
                 )

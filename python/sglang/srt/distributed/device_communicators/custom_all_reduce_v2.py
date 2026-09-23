@@ -289,12 +289,7 @@ class CustomAllReduceV2:
             self.obj.set_pull_multicast_blocks(self.config.num_mc_blocks)
         if self.rank == 0:
             logger.info(
-                "All Reduce config: symmetric_memory = %.2f MB, "
-                "local_buffer = %.2f MB, multicast = %s, pull = %s",
-                total_bytes / MB,
-                (self.graph_params.nbytes + self._push_counter.nbytes) / MB,
-                self.config.num_mc_blocks is not None,
-                self.pull_enabled,
+                "All Reduce config: symmetric_memory = <redacted> MB, local_buffer = <redacted> MB, multicast = <redacted>, pull = <redacted>"
             )
         dist.barrier(group=self.group)
 

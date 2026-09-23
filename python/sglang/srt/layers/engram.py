@@ -630,7 +630,7 @@ class _HostTable:
             if (
                 err != errno.EAGAIN or attempt == tries - 1
             ):  # EAGAIN is the only one worth retrying
-                logger.info("engram host table: MADV_COLLAPSE errno %d", err)
+                logger.info("engram host table: MADV_COLLAPSE errno <redacted>")
                 return
             time.sleep(1.0)
 

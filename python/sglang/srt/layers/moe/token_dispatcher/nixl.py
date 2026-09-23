@@ -93,10 +93,7 @@ class NixlEPBuffer:
 
         state.buffer.connect_ranks(ranks)
         logger.debug(
-            "[Elastic EP][nixl] connect (%s) ranks=%s group_size=%s",
-            tag,
-            ranks,
-            state.buffer.group_size,
+            "[Elastic EP][nixl] connect (<redacted>) ranks=<redacted> group_size=<redacted>"
         )
 
     @classmethod

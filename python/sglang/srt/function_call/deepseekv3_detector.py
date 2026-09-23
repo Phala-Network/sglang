@@ -81,7 +81,7 @@ class DeepSeekV3Detector(BaseFormatDetector):
                 calls.extend(self.parse_base_json(match_result, tools))
             return StreamingParseResult(normal_text=normal_text, calls=calls)
         except Exception as e:
-            logger.error(f"Error in detect_and_parse: {e}")
+            logger.error("Error in detect_and_parse: <redacted>")
             # return the normal text if parsing fails
             return StreamingParseResult(normal_text=text)
 
@@ -198,7 +198,7 @@ class DeepSeekV3Detector(BaseFormatDetector):
             return StreamingParseResult(normal_text="", calls=calls)
 
         except Exception as e:
-            logger.error(f"Error in parse_streaming_increment: {e}")
+            logger.error("Error in parse_streaming_increment: <redacted>")
             return StreamingParseResult(normal_text=current_text)
 
     def structure_info(self) -> _GetInfoFunc:

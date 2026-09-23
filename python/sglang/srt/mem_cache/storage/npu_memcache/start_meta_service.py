@@ -32,7 +32,7 @@ def launch_meta_service(config_path: str) -> int:
     try:
         config_data = _load_json_config(config_path)
     except Exception as e:
-        logger.error("Failed to load meta service config from %s: %s", config_path, e)
+        logger.error("Failed to load meta service config from <redacted>: <redacted>")
         return 1
 
     meta_cfg = MetaConfig()
@@ -43,7 +43,7 @@ def launch_meta_service(config_path: str) -> int:
     try:
         setup_ret = MetaService.setup(meta_cfg)
         if isinstance(setup_ret, int) and setup_ret != 0:
-            logger.error("MetaService.setup failed, ret=%s", setup_ret)
+            logger.error("MetaService.setup failed, ret=<redacted>")
             return setup_ret
         logger.info("MetaService setup succeeded with config=%s", config_path)
         MetaService.main()
@@ -52,7 +52,7 @@ def launch_meta_service(config_path: str) -> int:
         logger.info("MetaService interrupted by user.")
         return 0
     except Exception as e:
-        logger.error("MetaService failed to run: %s", e)
+        logger.error("MetaService failed to run: <redacted>")
         return 2
 
 

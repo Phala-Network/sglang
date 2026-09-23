@@ -155,7 +155,7 @@ class DSAMetadataManagementMixin:
                 )
             except Exception as e:
                 print(
-                    f"Warning: Fused metadata copy kernel failed with error: {e}, falling back to individual copies."
+                    "Warning: Fused metadata copy kernel failed with error: <redacted>, falling back to individual copies."
                 )
 
         # Fallback to individual copy operations if the fused kernel is unavailable

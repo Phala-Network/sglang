@@ -338,7 +338,7 @@ class LRUList:
             )
         except Exception as e:
             msg = f"SWA Radix tree sanity check failed, ping @hanming-lu: {e}"
-            logger.error(msg)
+            logger.error("Request-path diagnostic redacted")
             raise Exception(msg)
 
 

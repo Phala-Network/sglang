@@ -210,10 +210,12 @@ class LlavaVidForCausalLM(nn.Module):
                         try:
                             input_embeds[left_idx:right_idx] = tmp_image_feature
                         except RuntimeError as e:
-                            print(f"RuntimeError in image encoding: {e}")
-                            print(f"{input_embeds.shape=}, {tmp_image_feature.shape=}")
+                            print("RuntimeError in image encoding: <redacted>")
                             print(
-                                f"{start_idx=}, {image_offset=}, {prefix_len=}, {pad_len=}"
+                                "input_embeds.shape=<redacted>, tmp_image_feature.shape=<redacted>"
+                            )
+                            print(
+                                "start_idx=<redacted>, image_offset=<redacted>, prefix_len=<redacted>, pad_len=<redacted>"
                             )
                         pt += 1
 

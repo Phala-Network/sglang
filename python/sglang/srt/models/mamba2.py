@@ -252,9 +252,7 @@ class Mamba2ForCausalLM(nn.Module):
 
         unloaded_params = set(params_dict.keys()) - loaded_params
         if unloaded_params:
-            logger.warning(
-                f"The following parameters were not loaded: {unloaded_params}"
-            )
+            logger.warning("The following parameters were not loaded: <redacted>")
 
         return loaded_params
 

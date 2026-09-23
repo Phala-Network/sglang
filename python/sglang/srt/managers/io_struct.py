@@ -2472,7 +2472,7 @@ def _maybe_unwrap_pickle(obj: Any) -> Any:
     if isinstance(obj, PickleWrapper):
         obj = pickle.loads(obj.data)
         if envs.SGLANG_LOG_PICKLE_IPC_OBJECTS.get():
-            logger.info(f"Object of type {type(obj)} is unwrapped from PickleWrapper.")
+            logger.info("Object of type <redacted> is unwrapped from PickleWrapper.")
         return obj
 
     return obj

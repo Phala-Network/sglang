@@ -137,7 +137,7 @@ class ProfileMerger:
             return output
 
         except Exception as e:
-            logger.error(f"Failed to process trace file {path}: {e}")
+            logger.error("Failed to process trace file <redacted>: <redacted>")
             return {"traceEvents": []}
 
     def _process_events(

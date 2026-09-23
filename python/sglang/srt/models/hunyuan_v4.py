@@ -121,8 +121,7 @@ class HYV4HCPreLayer(nn.Module):
                 except Exception:
                     self._fused_ihc_pre_disabled = True
                     logger.warning(
-                        "fused_hy4_ihc_pre failed, disabling fused path",
-                        exc_info=True,
+                        "fused_hy4_ihc_pre failed, disabling fused path", exc_info=False
                     )
         shape = hidden_states.shape
         flat = hidden_states.flatten(1).float()
@@ -209,7 +208,7 @@ class HYV4HCLayer(nn.Module):
                     self._fused_ihc_post_disabled = True
                     logger.warning(
                         "fused_hy4_ihc_post failed, disabling fused path",
-                        exc_info=True,
+                        exc_info=False,
                     )
         result = post.float().unsqueeze(-1) * output.float().unsqueeze(1)
         return (result + residual.float()).to(output.dtype)
@@ -246,7 +245,7 @@ class HYV4HCLayer(nn.Module):
                     self._fused_ihc_post_pre_disabled = True
                     logger.warning(
                         "fused_hy4_ihc_post_pre failed, disabling fused path",
-                        exc_info=True,
+                        exc_info=False,
                     )
         next_residual = self.post(output, residual, post)
         next_residual = next_layer.prepare_input(next_residual)
@@ -298,7 +297,7 @@ class HYV4HCHeadLayer(nn.Module):
                     self._fused_ihc_head_disabled = True
                     logger.warning(
                         "fused_hy4_ihc_head failed, disabling fused path",
-                        exc_info=True,
+                        exc_info=False,
                     )
         shape = hidden_states.shape
         flat = hidden_states.flatten(1).float()

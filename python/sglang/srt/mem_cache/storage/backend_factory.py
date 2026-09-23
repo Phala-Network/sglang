@@ -145,7 +145,7 @@ class StorageBackendFactory:
             return backend_class(storage_config, kwargs)
         except Exception as e:
             logger.error(
-                f"Failed to create dynamic storage backend '{backend_name}': {e}"
+                "Failed to create dynamic storage backend '<redacted>': <redacted>"
             )
             raise
 

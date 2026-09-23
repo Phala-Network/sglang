@@ -83,7 +83,7 @@ class BaseFormatDetector(ABC):
         for act in action:
             name = act.get("name")
             if not (name and name in tool_indices):
-                logger.warning(f"Model attempted to call undefined function: {name}")
+                logger.warning("Model attempted to call undefined function: <redacted>")
                 if not envs.SGLANG_FORWARD_UNKNOWN_TOOLS.get():
                     continue  # Skip unknown tools (default legacy behavior)
 
@@ -340,7 +340,7 @@ class BaseFormatDetector(ABC):
             return res
 
         except Exception as e:
-            logger.error(f"Error in parse_streaming_increment: {e}")
+            logger.error("Error in parse_streaming_increment: <redacted>")
             return StreamingParseResult()
 
     @abstractmethod

@@ -797,9 +797,7 @@ class LoRAMemoryPool:
             self.uid_to_buffer_id.pop(victim_uid)
             self.eviction_policy.remove(victim_uid)
             self.buffer_id_to_uid[victim_buffer_id] = EMPTY_SLOT
-            logger.debug(
-                f"Evicting LoRA {victim_uid} from buffer slot {victim_buffer_id}."
-            )
+            logger.debug("Evicting LoRA <redacted> from buffer slot <redacted>.")
             return victim_buffer_id
 
         # Mark all adapters in current batch as used (for LRU tracking)

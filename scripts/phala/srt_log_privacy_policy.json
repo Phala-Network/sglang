@@ -1,0 +1,1143 @@
+{
+  "schema": "phala.srt-log-privacy-source-policy.v1",
+  "reviewed_source": "2e098cde62d22c3afc19e25923fd8a53578360de",
+  "migration_baseline": "db0a9f1ec46a3d417d7be190ebc0ce654dad9abd",
+  "approved_import_removals": {
+    "distributed/device_communicators/pynccl_wrapper.py": ["platform"],
+    "kv_canary/api.py": ["sglang.srt.runtime_context.get_disagg"],
+    "mem_cache/storage/nixl/hicache_nixl.py": ["traceback"],
+    "model_executor/model_runner.py": ["os"],
+    "models/exaone4.py": ["sglang.utils.get_exception_traceback"],
+    "models/granite.py": ["sglang.utils.get_exception_traceback"],
+    "models/llama.py": ["sglang.utils.get_exception_traceback"],
+    "models/opt.py": ["sglang.utils.get_exception_traceback"],
+    "multimodal/processors/llava.py": ["sglang.utils.get_exception_traceback"],
+    "speculative/dspark_components/dspark_observability.py": ["statistics"]
+  },
+  "scope": "Reviewed diagnostic evaluations only; unknown removals block migration. CLI business output remains unchanged.",
+  "business_print_files": [
+    "checkpoint_engine/update.py",
+    "debug_utils/dump_comparator.py",
+    "debug_utils/dump_loader.py",
+    "debug_utils/model_truncator.py",
+    "debug_utils/schedule_simulator/data_source/data_synthesis.py",
+    "debug_utils/schedule_simulator/entrypoint.py",
+    "debug_utils/text_comparator.py",
+    "entrypoints/http_server_engine.py",
+    "entrypoints/ollama/smart_router.py",
+    "mem_cache/storage/flexkv/verify_outputs.py",
+    "model_loader/expert_pack/build.py",
+    "model_loader/expert_pack/prepare_kimi_manifest.py",
+    "model_loader/expert_pack/prepare_kimi_pack.py",
+    "model_loader/expert_pack/validate.py",
+    "utils/model_file_verifier.py"
+  ],
+  "business_print_functions": [
+    {
+      "file": "mem_cache/unified_cache/unified_tree_core.py",
+      "function": "pretty_print"
+    }
+  ],
+  "reviewed_evaluations": [
+    {
+      "file": "arg_groups/speculative_hook.py",
+      "expression": "getattr(draft_text_config, 'is_causal', None)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "debug_utils/dump_loader.py",
+      "expression": "type(output)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "debug_utils/model_truncator.py",
+      "expression": "len(state_dict)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "debug_utils/schedule_simulator/data_source/data_synthesis.py",
+      "expression": "len(requests)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "debug_utils/schedule_simulator/entrypoint.py",
+      "expression": "len(requests)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/common/conn.py",
+      "expression": "len(affected_rooms)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/common/conn.py",
+      "expression": "na.to_host_port_str()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/common/conn.py",
+      "expression": "payload.get('bootstrap_room')",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/common/conn.py",
+      "expression": "payload.get('rid')",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/common/conn.py",
+      "expression": "str(e)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/common/dcp_pack.py",
+      "expression": "pack_buffer.get_size()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/decode.py",
+      "expression": "self._radix_full_available()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/decode.py",
+      "expression": "self._radix_full_evictable()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/decode.py",
+      "expression": "self._radix_full_protected()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/decode_hicache_mixin.py",
+      "expression": "len(new_indices)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/decode_hicache_mixin.py",
+      "expression": "len(rematch.device_indices)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/decode_kvcache_offload_manager.py",
+      "expression": "len(host_indices)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/decode_kvcache_offload_manager.py",
+      "expression": "time.time()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/encoder/http_server.py",
+      "expression": "request.get('modality', 'image')",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/encoder/receiver.py",
+      "expression": "getattr(recv_obj, 'error_code', None)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/encoder/receiver.py",
+      "expression": "len(encode_urls)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/encoder/receiver.py",
+      "expression": "len(mm_data)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/encoder/receiver.py",
+      "expression": "len(parts)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/encoder/runtime.py",
+      "expression": "p.request.get('req_id')",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/encoder/runtime.py",
+      "expression": "req.get('req_id')",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/encoder/runtime.py",
+      "expression": "request.get('modality', 'image')",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/encoder/runtime.py",
+      "expression": "request.get('req_id', '?')",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/encoder/runtime.py",
+      "expression": "str(err)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/encoder/runtime.py",
+      "expression": "time.time()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/encoder/runtime.py",
+      "expression": "type(msg)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/encoder/runtime.py",
+      "expression": "type(request)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/encoder/server.py",
+      "expression": "len(fallback_indices)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/encoder/server.py",
+      "expression": "len(hit_indices)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/encoder/server.py",
+      "expression": "len(new_targets)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/encoder/server.py",
+      "expression": "len(sent_urls)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/encoder/server.py",
+      "expression": "task.exception()",
+      "action": "preserve"
+    },
+    {
+      "file": "disaggregation/mooncake/conn.py",
+      "expression": "len(data)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/mooncake/conn.py",
+      "expression": "len(dst_k_ptrs)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/mooncake/conn.py",
+      "expression": "set(self.kv_args.kv_item_lens)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/nixl/conn.py",
+      "expression": "len(prefill_data_indices)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/nixl/conn.py",
+      "expression": "len(src_addrs)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/nixl/conn.py",
+      "expression": "len(x)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "disaggregation/nixl/conn.py",
+      "expression": "sum((len(x) for x in waiting_req_bytes))",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "distributed/device_communicators/pynccl_wrapper.py",
+      "expression": "platform.platform()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "distributed/parallel_state.py",
+      "expression": "type(e)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/anthropic/serving.py",
+      "expression": "len(thinking_parts)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/anthropic/serving.py",
+      "expression": "type(e)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/engine.py",
+      "expression": "', '.join(legacy_dirs)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/engine.py",
+      "expression": "attr.replace('_', '-')",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/engine.py",
+      "expression": "envs.SGLANG_CACHE_DIR.get()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/engine.py",
+      "expression": "get_model()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/engine.py",
+      "expression": "get_parallel()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/engine.py",
+      "expression": "server_args.diagnostic_dict()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/http_server.py",
+      "expression": "get_disagg()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/http_server.py",
+      "expression": "get_exception_traceback()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/http_server.py",
+      "expression": "get_exec()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/http_server.py",
+      "expression": "get_parallel()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/http_server.py",
+      "expression": "get_serving()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/http_server.py",
+      "expression": "os.getpid()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/http_server.py",
+      "expression": "time.time()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/http_server.py",
+      "expression": "type(e)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/openai/realtime/session.py",
+      "expression": "len(self.audio.pcm_buffer)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/openai/serving_chat.py",
+      "expression": "len(text)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/openai/serving_transcription.py",
+      "expression": "len(audio_chunks or [])",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/openai/serving_transcription.py",
+      "expression": "len(audio_chunks)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/openai/serving_transcription.py",
+      "expression": "len(chunk_offsets_s)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "entrypoints/openai/serving_transcription.py",
+      "expression": "str(len(chunk_offsets_s))",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "function_call/internlm_detector.py",
+      "expression": "json.dumps(parameters, ensure_ascii=False)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "function_call/internlm_detector.py",
+      "expression": "len(calls)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "function_call/internlm_detector.py",
+      "expression": "len(matches)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "function_call/internlm_detector.py",
+      "expression": "len(normal_text)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "function_call/internlm_detector.py",
+      "expression": "list(tool_indices.keys())",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "function_call/internlm_detector.py",
+      "expression": "tool_indices.keys()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "function_call/kimik2_detector.py",
+      "expression": "len(tools)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "function_call/kimik3_detector.py",
+      "expression": "len(section)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "function_call/lfm2_detector.py",
+      "expression": "type(call.func)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "function_call/mistral_detector.py",
+      "expression": "str(e)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "function_call/qwen25_detector.py",
+      "expression": "str(e)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "kv_canary/api.py",
+      "expression": "get_disagg()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "kv_canary/api.py",
+      "expression": "len(buffer_groups)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "kv_canary/runner/stats_logger.py",
+      "expression": "host_data['slot_sum'].item()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "kv_canary/runner/stats_logger.py",
+      "expression": "host_data['write_index'].item()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "kv_canary/runner/stats_logger.py",
+      "expression": "int(host_data['slot_sum'].item())",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "kv_canary/runner/stats_logger.py",
+      "expression": "int(host_data['step'])",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "kv_canary/runner/stats_logger.py",
+      "expression": "int(host_data['write_index'].item())",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "kv_canary/runner/stats_logger.py",
+      "expression": "len(CanaryLaunchTag)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "kv_canary/runner/stats_logger.py",
+      "expression": "len(self._active_tags)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "kv_canary/runner/swa_divergence.py",
+      "expression": "SwaDivergenceLog(forward_ct=host_data['forward_ct'], verify_full=int(verify_totals[_FULL_IDX]), verify_swa=int(verify_totals[_SWA_IDX]), swa_full_idx_divergence=swa_full_idx_divergence, swa_out_of_window_tokens=swa_out_of_window_tokens)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "kv_canary/runner/swa_divergence.py",
+      "expression": "SwaDivergenceLog(forward_ct=host_data['forward_ct'], verify_full=int(verify_totals[_FULL_IDX]), verify_swa=int(verify_totals[_SWA_IDX]), swa_full_idx_divergence=swa_full_idx_divergence, swa_out_of_window_tokens=swa_out_of_window_tokens).format()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "kv_canary/runner/swa_divergence.py",
+      "expression": "int(verify_totals[_FULL_IDX])",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "kv_canary/runner/swa_divergence.py",
+      "expression": "int(verify_totals[_SWA_IDX])",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "layers/attention/linear/kernels/gdn_flashinfer.py",
+      "expression": "tensor.data_ptr()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "layers/attention/linear/kernels/kda_nvidia.py",
+      "expression": "len(seq_lens)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "layers/moe/token_dispatcher/deepep_v2.py",
+      "expression": "dist.get_world_size(group)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "layers/moe/token_dispatcher/moriep.py",
+      "expression": "str(e)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "managers/cache_controller.py",
+      "expression": "getattr(t, 'name', repr(t))",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "managers/cache_controller.py",
+      "expression": "repr(t)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "managers/communicator.py",
+      "expression": "type(recv_obj)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "managers/io_struct.py",
+      "expression": "type(obj)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "managers/multi_tokenizer_mixin.py",
+      "expression": "len(self.all_worker_ipcs)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "managers/multi_tokenizer_mixin.py",
+      "expression": "type(output)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "managers/scheduler.py",
+      "expression": "len(recv_req)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "managers/scheduler.py",
+      "expression": "str(e)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "managers/tokenizer_manager.py",
+      "expression": "len(out_list)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "managers/tokenizer_manager.py",
+      "expression": "len(self.crash_dump_request_list)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "managers/tokenizer_manager.py",
+      "expression": "len(tokenizer_input)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "managers/tokenizer_manager.py",
+      "expression": "len(unfinished_requests)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "managers/tokenizer_manager.py",
+      "expression": "meta_info.get('id')",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "managers/utils.py",
+      "expression": "len(req.origin_input_ids)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/buffer_mode/pipeline.py",
+      "expression": "len(self.pending_write_queue)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/embedding_cache_controller.py",
+      "expression": "len(keys)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/embedding_cache_controller.py",
+      "expression": "len(op.keys)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/hicache_storage.py",
+      "expression": "host_indices.numel()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/kv_cache_dtype.py",
+      "expression": "server_args_kv_cache_dtype.upper()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/eic/eic_storage.py",
+      "expression": "len(eic_keys)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/eic/eic_storage.py",
+      "expression": "len(keys)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/hf3fs/storage_hf3fs.py",
+      "expression": "len(indices)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/hf3fs/storage_hf3fs.py",
+      "expression": "len(keys)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/hf3fs/storage_hf3fs.py",
+      "expression": "len(page_indices)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/hf3fs/storage_hf3fs.py",
+      "expression": "pool_name.upper()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/mooncake_store/mooncake_direct_linker.py",
+      "expression": "len(restorable)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/mooncake_store/mooncake_store.py",
+      "expression": "', '.join(unsupported_kwargs)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/mooncake_store/mooncake_store.py",
+      "expression": "time.perf_counter()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/nixl/hicache_nixl.py",
+      "expression": "host_indices.numel()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/nixl/hicache_nixl.py",
+      "expression": "len(key_list)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/nixl/hicache_nixl.py",
+      "expression": "len(key_strs)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/nixl/hicache_nixl.py",
+      "expression": "len(keys)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/nixl/hicache_nixl.py",
+      "expression": "len(ptr_list)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/nixl/hicache_nixl.py",
+      "expression": "traceback.format_exc()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/nixl/nixl_utils.py",
+      "expression": "agent.get_backend_params(self.backend_name)",
+      "action": "preserve"
+    },
+    {
+      "file": "mem_cache/storage/npu_memcache/npu_memcache_store.py",
+      "expression": "time.perf_counter()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/simm/hicache_simm.py",
+      "expression": "len(key_list)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/simm/hicache_simm.py",
+      "expression": "len(ptr_list)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/umbp/umbp_direct_linker.py",
+      "expression": "len(valid_pages)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/umbp/umbp_store.py",
+      "expression": "len(component_keys)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/umbp/umbp_store.py",
+      "expression": "len(exists)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/umbp/umbp_store.py",
+      "expression": "len(io_results)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/storage/umbp/umbp_store.py",
+      "expression": "len(key_strs)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/unified_cache/unified_tree_core.py",
+      "expression": "len(node.key)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/unified_memory_pool.py",
+      "expression": "unified_buffer.max_slots('full')",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "mem_cache/unified_memory_pool.py",
+      "expression": "unified_buffer.max_slots('swa')",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_executor/model_runner.py",
+      "expression": "os.environ.get('CUDA_VISIBLE_DEVICES')",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_executor/runner_backend/cuda_graph_dedup_mixin.py",
+      "expression": "type(self)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_executor/runner_backend_utils/breakable_cuda_graph/context.py",
+      "expression": "type(exc)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_executor/runner_backend_utils/tc_piecewise_cuda_graph/context_manager.py",
+      "expression": "type(exc)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_loader/ci_weight_validation.py",
+      "expression": "os.getpid()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_loader/ci_weight_validation.py",
+      "expression": "os.path.basename(f)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_loader/ci_weight_validation.py",
+      "expression": "os.path.basename(file_path)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_loader/ci_weight_validation.py",
+      "expression": "str(e)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_loader/ci_weight_validation.py",
+      "expression": "type(e)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_loader/expert_pack/build.py",
+      "expression": "args.manifest.resolve()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_loader/expert_pack/build.py",
+      "expression": "json.dumps({'pack': manifest['pack_path'], 'pack_sha256': manifest['pack_sha256'], 'manifest': str(args.manifest.resolve()), 'objects': manifest['object_count'], 'entries': manifest['index_count'], 'pack_size': manifest['pack_size']}, sort_keys=True)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_loader/expert_pack/build.py",
+      "expression": "str(args.manifest.resolve())",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_loader/expert_pack/build.py",
+      "expression": "stream.tell()",
+      "action": "preserve"
+    },
+    {
+      "file": "model_loader/expert_pack_loader.py",
+      "expression": "len(expected_params)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_loader/expert_pack_loader.py",
+      "expression": "len(set(loaded_params) & expected_params)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_loader/expert_pack_loader.py",
+      "expression": "set(loaded_params)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_loader/loader.py",
+      "expression": "getattr(getattr(model_config, 'hf_config', None), 'model_type', 'unknown')",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_loader/loader.py",
+      "expression": "getattr(model_config, 'hf_config', None)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_loader/loader.py",
+      "expression": "len(shard_names)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_loader/loader.py",
+      "expression": "tensor.element_size()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_loader/loader.py",
+      "expression": "tensor.numel()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "model_loader/weight_utils.py",
+      "expression": "os.path.basename(bin_file)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/exaone4.py",
+      "expression": "get_exception_traceback()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/glm4v.py",
+      "expression": "params_dict.keys()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/glm_ocr.py",
+      "expression": "params_dict.keys()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/glmasr.py",
+      "expression": "params_dict.keys()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/granite.py",
+      "expression": "get_exception_traceback()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/llama.py",
+      "expression": "get_exception_traceback()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/midashenglm.py",
+      "expression": "(input_ids == mm_input.audio_token_id).sum()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/midashenglm.py",
+      "expression": "(input_ids == mm_input.audio_token_id).sum().item()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/midashenglm.py",
+      "expression": "(input_ids == pad_value).sum()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/midashenglm.py",
+      "expression": "(input_ids == pad_value).sum().item()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/midashenglm.py",
+      "expression": "input_ids[:20].tolist()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/midashenglm.py",
+      "expression": "len(torch.unique(input_ids))",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/midashenglm.py",
+      "expression": "torch.unique(input_ids)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/opt.py",
+      "expression": "get_exception_traceback()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/points_v15_chat.py",
+      "expression": "params_dict.keys()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/qwen2_5_vl.py",
+      "expression": "params_dict.keys()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/qwen2_audio.py",
+      "expression": "params_dict.keys()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/qwen2_vl.py",
+      "expression": "params_dict.keys()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/qwen3_vl.py",
+      "expression": "params_dict.keys()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "models/qwen4_exp.py",
+      "expression": "tuple(emb.weight.data.shape)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "multimodal/audio_from_video.py",
+      "expression": "len(chunks)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "multimodal/processors/base_processor.py",
+      "expression": "type(data)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "multimodal/processors/base_processor.py",
+      "expression": "type(self)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "multimodal/processors/dots_note_omni.py",
+      "expression": "len(audio_data)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "multimodal/processors/dots_note_omni.py",
+      "expression": "len(image_data)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "multimodal/processors/internvl.py",
+      "expression": "len(base_output.images)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "multimodal/processors/internvl.py",
+      "expression": "len(base_output.videos)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "multimodal/processors/internvl.py",
+      "expression": "prompt.count(self.IMAGE_PLACEHOLDER_TOKEN)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "multimodal/processors/internvl.py",
+      "expression": "prompt.count(self.IMG_CONTEXT)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "multimodal/processors/internvl.py",
+      "expression": "prompt.count(self.VIDEO_PLACEHOLDER_TOKEN)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "multimodal/processors/llava.py",
+      "expression": "get_exception_traceback()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "multimodal/processors/midashenglm.py",
+      "expression": "(input_ids == self.audio_token_id).sum()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "multimodal/processors/midashenglm.py",
+      "expression": "(input_ids == self.audio_token_id).sum().item()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "multimodal/processors/mimo_audio.py",
+      "expression": "len(content)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "multimodal/processors/mimo_audio.py",
+      "expression": "type(e)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "multimodal/processors/unlimited_ocr.py",
+      "expression": "', '.join(_IMAGE_MODE_PRESETS)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "observability/trace_async.py",
+      "expression": "len(ops)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "observability/trace_async.py",
+      "expression": "msg.get('rid')",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "runtime_context.py",
+      "expression": "os.getpid()",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "speculative/dspark_components/dspark_observability.py",
+      "expression": "float('nan')",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "speculative/dspark_components/dspark_observability.py",
+      "expression": "len(self._sps_window)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "speculative/dspark_components/dspark_observability.py",
+      "expression": "statistics.fmean([p - a for p, a in self._sps_window])",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "speculative/dspark_components/dspark_observability.py",
+      "expression": "statistics.fmean(abs_err)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "speculative/dspark_components/dspark_observability.py",
+      "expression": "statistics.fmean(actuals)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "speculative/dspark_components/dspark_observability.py",
+      "expression": "statistics.fmean(predictions)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "speculative/dspark_components/dspark_observability.py",
+      "expression": "statistics.median(rel_err)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "speculative/dspark_components/dspark_planner.py",
+      "expression": "int(lens[row])",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "speculative/dspark_components/dspark_planner.py",
+      "expression": "int(prefixes[row])",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "speculative/dspark_components/dspark_planner.py",
+      "expression": "int(req_ids[row])",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "speculative/dspark_components/dspark_planner.py",
+      "expression": "len(req_ids)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "state_capturer/base.py",
+      "expression": "tuple(self.buffer.shape)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "utils/common.py",
+      "expression": "str(e)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "utils/hf_transformers/mistral_utils.py",
+      "expression": "type(tokenizer)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "utils/model_file_verifier.py",
+      "expression": "len(manifest.files)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "utils/numa_utils.py",
+      "expression": "_suffix(last_err)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "utils/request_logger.py",
+      "expression": "_dataclass_to_string_truncated(obj, max_length, skip_names=skip_names)",
+      "action": "drop-diagnostic"
+    },
+    {
+      "file": "utils/request_logger.py",
+      "expression": "_dataclass_to_string_truncated(obj_to_log, max_length)",
+      "action": "drop-diagnostic"
+    }
+  ]
+}

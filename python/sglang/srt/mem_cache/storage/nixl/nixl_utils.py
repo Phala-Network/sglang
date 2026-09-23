@@ -161,9 +161,7 @@ class NixlBackendSelection:
                 self.backend_name = self.plugin
 
             if self.backend_name not in plugin_list:
-                logger.error(
-                    f"Backend {self.backend_name} not available in plugins: {plugin_list}"
-                )
+                logger.error("Backend <redacted> not available in plugins: <redacted>")
                 return False
 
             # obtain initparams for the backend from the NIXL config
@@ -188,7 +186,10 @@ class NixlBackendSelection:
             agent.create_backend(self.backend_name, initparams)
 
             logger.info(
-                f"NixlBackendSelection.create_backend: backend_name {self.backend_name} initparams {initparams} customParams {agent.get_backend_params(self.backend_name)} supported plugins {plugin_list}"
+                (
+                    f"NixlBackendSelection.create_backend: backend_name {self.backend_name} initparams {initparams} customParams {agent.get_backend_params(self.backend_name)} supported plugins {plugin_list}",
+                    "NixlBackendSelection.create_backend: backend_name <redacted> initparams <redacted> customParams <redacted> supported plugins <redacted>",
+                )[1]
             )
 
             self.mem_type = "OBJ" if self.backend_name in self.OBJ_PLUGINS else "FILE"
@@ -199,7 +200,7 @@ class NixlBackendSelection:
 
         except Exception as e:
             logger.error(
-                f"Failed to create NIXL backend: {e}, backend_name {self.backend_name}, supported plugins {plugin_list} initparams {initparams}"
+                "Failed to create NIXL backend: <redacted>, backend_name <redacted>, supported plugins <redacted> initparams <redacted>"
             )
             return False
 
@@ -247,9 +248,11 @@ class NixlFileManager:
                         try:
                             os.remove(file_path)
                         except OSError as e:
-                            logger.warning(f"Failed to remove file {file_path}: {e}")
+                            logger.warning(
+                                "Failed to remove file <redacted>: <redacted>"
+                            )
             except Exception as e:
-                logger.error(f"Failed to clear base directory {base}: {e}")
+                logger.error("Failed to clear base directory <redacted>: <redacted>")
         logger.debug(f"Cleared all files in base directories: {self.base_dirs}")
 
     def ensure_all_bucket_dirs(self) -> None:
@@ -302,7 +305,7 @@ class NixlFileManager:
                     self._created_bucket_dirs.add(parent)
             return os.open(file_path, flags, 0o644)
         except Exception as e:
-            logger.error(f"Failed to open file {file_path}: {e}")
+            logger.error("Failed to open file <redacted>: <redacted>")
             return None
 
     def close_file(self, fd: int) -> bool:
@@ -311,5 +314,5 @@ class NixlFileManager:
             os.close(fd)
             return True
         except Exception as e:
-            logger.error(f"Failed to close file descriptor {fd}: {e}")
+            logger.error("Failed to close file descriptor <redacted>: <redacted>")
             return False

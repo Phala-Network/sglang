@@ -322,9 +322,7 @@ class StreamOrderedMmFeaturePool:
                     self._recycle_ready_leases_locked()
             except Exception:
                 logger.warning(
-                    "%s multimodal pool recycle failed",
-                    self.transport_name,
-                    exc_info=True,
+                    "<redacted> multimodal pool recycle failed", exc_info=False
                 )
             self._recycler_stop_event.wait(self._recycle_interval)
 

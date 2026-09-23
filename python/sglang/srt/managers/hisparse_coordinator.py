@@ -416,7 +416,7 @@ class HiSparseCoordinator:
 
         req.hisparse_staging = False
         self._skip_first_backup[req.kv.req_pool_idx] = True
-        logger.debug("HiSparse: admitting request %s directly", req.rid)
+        logger.debug("HiSparse: admitting request <redacted> directly")
 
     def host_token_len(self, kv_allocated_len: int) -> int:
         if self.is_dsv4_hisparse:
@@ -466,11 +466,7 @@ class HiSparseCoordinator:
         )
         if buffer_indices is None:
             logger.error(
-                "HiSparse: alloc_device_buffer failed for req %s "
-                "(compressed_len=%d, alloc_size=%d)",
-                req.rid,
-                compressed_len,
-                alloc_size,
+                "HiSparse: alloc_device_buffer failed for req <redacted> (compressed_len=<redacted>, alloc_size=<redacted>)"
             )
             raise RuntimeError("HiSparse alloc_device_buffer returned None")
 
@@ -535,9 +531,7 @@ class HiSparseCoordinator:
                 )
                 if all_new_indices is None:
                     logger.error(
-                        "HiSparse: _grow_device_buffers bulk alloc failed "
-                        "(total_grow=%d)",
-                        total_grow,
+                        "HiSparse: _grow_device_buffers bulk alloc failed (total_grow=<redacted>)"
                     )
                     raise RuntimeError(
                         f"HiSparse _grow_device_buffers failed (total_grow={total_grow})"

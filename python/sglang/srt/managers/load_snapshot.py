@@ -499,7 +499,7 @@ class ShmLoadSnapshotReader:
         try:
             return snapshot_decoder.decode(self.mmap[payload_start:payload_end])
         except Exception as e:
-            logger.debug("load snapshot decode failed for rank %s: %s", dp_rank, e)
+            logger.debug("load snapshot decode failed for rank <redacted>: <redacted>")
             return None
 
     def read_all(self) -> list[LoadSnapshot]:
@@ -562,7 +562,7 @@ class ZmqShmLoadSnapshotReader:
                 if 0 <= snapshot.dp_rank < self.dp_size:
                     latest[snapshot.dp_rank] = snapshot
             except Exception as e:
-                logger.warning("load snapshot zmq decode failed: %s", e)
+                logger.warning("load snapshot zmq decode failed: <redacted>")
 
         for dp_rank, snapshot in latest.items():
             if dp_rank not in self._shm_writers:
@@ -573,7 +573,7 @@ class ZmqShmLoadSnapshotReader:
                 self._shm_writers[dp_rank].write(snapshot)
             except Exception as e:
                 logger.warning(
-                    "load snapshot shm write failed for rank %d: %s", dp_rank, e
+                    "load snapshot shm write failed for rank <redacted>: <redacted>"
                 )
 
     def fileno(self) -> int:

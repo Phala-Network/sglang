@@ -51,7 +51,7 @@ def _get_flashinfer_kda_kernel():
             if _flashinfer_kda_available:
                 logger.info("FlashInfer KDA kernel (recurrent_kda) loaded successfully")
         except (ImportError, RuntimeError) as e:
-            logger.warning(f"FlashInfer KDA kernel not available: {e}")
+            logger.warning("FlashInfer KDA kernel not available: <redacted>")
             _flashinfer_kda_available = False
             _flashinfer_recurrent_kda = None
     return _flashinfer_kda_available, _flashinfer_recurrent_kda

@@ -113,7 +113,7 @@ class GrammarManager:
     def abort_requests(self, recv_req: AbortReq):
         for req in self.grammar_queue:
             if recv_req.abort_all or req.rid.startswith(recv_req.rid):
-                logger.debug(f"Abort grammar queue request. {req.rid=}")
+                logger.debug("Abort grammar queue request. req.rid=<redacted>")
                 if isinstance(req.grammar, futures.Future) and req.grammar:
                     req.grammar.cancel()
                 req.set_finish_with_abort("Aborted by AbortReq.")
@@ -322,8 +322,7 @@ class GrammarManager:
                 req.grammar = req.grammar.result()
             except Exception as e:
                 logger.error(
-                    f"Grammar compilation raised an exception: {e}, "
-                    f"grammar_key={req.grammar_key}"
+                    "Grammar compilation raised an exception: <redacted>, grammar_key=<redacted>"
                 )
                 req.grammar = InvalidGrammarObject(f"Grammar compilation failed: {e}")
             self.grammar_backend.set_cache(req.grammar_key, req.grammar.copy())

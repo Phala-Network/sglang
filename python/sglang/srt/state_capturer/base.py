@@ -55,8 +55,7 @@ class BaseDeviceCache:
     def _log_allocation(self):
         size_mb = self.get_buffer_size_bytes() / _MB
         logger.info(
-            f"DeviceCache[{self.name}] allocated: shape={tuple(self.buffer.shape)}, "
-            f"size={size_mb:.2f} MB"
+            "DeviceCache[<redacted>] allocated: shape=<redacted>, size=<redacted> MB"
         )
 
 
@@ -92,8 +91,7 @@ class BaseHostCache:
     def _log_allocation(self):
         size_gb = self.get_buffer_size_bytes() / _GB
         logger.info(
-            f"HostCache[{self.name}] allocated: shape={tuple(self.buffer.shape)}, "
-            f"size={size_gb:.2f} GB"
+            "HostCache[<redacted>] allocated: shape=<redacted>, size=<redacted> GB"
         )
 
 

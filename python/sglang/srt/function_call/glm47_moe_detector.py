@@ -399,7 +399,7 @@ class Glm47MoeDetector(BaseFormatDetector):
                 calls.extend(self.parse_base_json(match_result, tools))
             return StreamingParseResult(normal_text=normal_text, calls=calls)
         except Exception as e:
-            logger.error(f"Error in detect_and_parse: {e}", exc_info=True)
+            logger.error("Error in detect_and_parse: <redacted>", exc_info=False)
             # return the normal text if parsing fails
             return StreamingParseResult(normal_text=text)
 
@@ -706,7 +706,7 @@ class Glm47MoeDetector(BaseFormatDetector):
                         arguments
                     )
             except Exception as e:
-                logger.debug(f"Failed to parse arguments: {e}", exc_info=True)
+                logger.debug("Failed to parse arguments: <redacted>", exc_info=False)
 
         self._buffer = current_text[match_end_pos:]
 
@@ -776,7 +776,7 @@ class Glm47MoeDetector(BaseFormatDetector):
                 func_args_raw = func_detail.group(2) or ""
                 if func_name not in self._tool_indices:
                     logger.warning(
-                        "Model attempted to call undefined function: %s", func_name
+                        "Model attempted to call undefined function: <redacted>"
                     )
                     if not envs.SGLANG_FORWARD_UNKNOWN_TOOLS.get():
                         continue
@@ -799,7 +799,7 @@ class Glm47MoeDetector(BaseFormatDetector):
                 self._reset_streaming_state()
             except Exception as e:
                 logger.error(
-                    "Error parsing complete GLM tool call: %s", e, exc_info=True
+                    "Error parsing complete GLM tool call: <redacted>", exc_info=False
                 )
 
         return StreamingParseResult(normal_text="".join(normal_parts), calls=calls)

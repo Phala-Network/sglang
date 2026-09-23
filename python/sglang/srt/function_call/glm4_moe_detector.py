@@ -235,7 +235,7 @@ class Glm4MoeDetector(BaseFormatDetector):
                 calls.extend(self.parse_base_json(match_result, tools))
             return StreamingParseResult(normal_text=normal_text, calls=calls)
         except Exception as e:
-            logger.error(f"Error in detect_and_parse: {e}", exc_info=True)
+            logger.error("Error in detect_and_parse: <redacted>", exc_info=False)
             # return the normal text if parsing fails
             return StreamingParseResult(normal_text=text)
 
@@ -312,7 +312,7 @@ class Glm4MoeDetector(BaseFormatDetector):
             except (ValueError, AttributeError):
                 # Fallback to string if not a valid number
                 logger.warning(
-                    f"Failed to parse '{value}' as number, treating as string"
+                    "Failed to parse '<redacted>' as number, treating as string"
                 )
                 return json.dumps(str(value), ensure_ascii=False)
         else:
@@ -602,7 +602,7 @@ class Glm4MoeDetector(BaseFormatDetector):
                                 ] = arguments
                         except Exception as e:
                             logger.debug(
-                                f"Failed to parse arguments: {e}", exc_info=True
+                                "Failed to parse arguments: <redacted>", exc_info=False
                             )
 
                         # Remove the completed tool call from buffer
@@ -619,7 +619,9 @@ class Glm4MoeDetector(BaseFormatDetector):
             return StreamingParseResult(normal_text="", calls=calls)
 
         except Exception as e:
-            logger.error(f"Error in parse_streaming_increment: {e}", exc_info=True)
+            logger.error(
+                "Error in parse_streaming_increment: <redacted>", exc_info=False
+            )
             return StreamingParseResult(normal_text=current_text)
 
     def _parse_argument_pairs(

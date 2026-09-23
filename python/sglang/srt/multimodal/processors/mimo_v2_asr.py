@@ -260,7 +260,9 @@ class MiMoV2ASRProcessor(BaseMultimodalProcessor):
                 lambda: self._process_contents(contents),
             )
         except RuntimeError as e:
-            logger.error(f"MiMo ASR processor failed in process_mm_data_async: {e}")
+            logger.error(
+                "MiMo ASR processor failed in process_mm_data_async: <redacted>"
+            )
             raise ValueError(f"Multimodal data is corrupted or cannot be decoded: {e}")
 
         input_ids_flat = input_ids.flatten()

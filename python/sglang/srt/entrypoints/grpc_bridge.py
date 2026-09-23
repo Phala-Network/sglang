@@ -98,7 +98,7 @@ class RuntimeHandle:
         try:
             return chunk_callback(payload, **kwargs)
         except Exception as e:
-            logger.warning("gRPC chunk_callback failed: %s", e)
+            logger.warning("gRPC chunk_callback failed: <redacted>")
             return None
 
     def _send_native_error(self, chunk_callback, message: str):
@@ -150,13 +150,11 @@ class RuntimeHandle:
             if timeout_abort_rid is not None:
                 self._abort_request_id(timeout_abort_rid)
                 logger.warning(
-                    "gRPC chunk backpressure wait timed out after %ss; aborted request",
-                    self._BACKPRESSURE_TIMEOUT_S,
+                    "gRPC chunk backpressure wait timed out after <redacted>s; aborted request"
                 )
             else:
                 logger.warning(
-                    "gRPC chunk backpressure wait timed out after %ss; closing stream",
-                    self._BACKPRESSURE_TIMEOUT_S,
+                    "gRPC chunk backpressure wait timed out after <redacted>s; closing stream"
                 )
             return False
         ready_event.clear()
@@ -175,7 +173,7 @@ class RuntimeHandle:
         try:
             set_on_ready(_on_ready)
         except Exception as e:
-            logger.warning("gRPC set_on_ready failed: %s", e)
+            logger.warning("gRPC set_on_ready failed: <redacted>")
             raise
         return ready_event
 
@@ -187,7 +185,7 @@ class RuntimeHandle:
         try:
             clear()
         except Exception as e:
-            logger.warning("gRPC clear_on_ready failed: %s", e)
+            logger.warning("gRPC clear_on_ready failed: <redacted>")
 
     def _submit_on_tm_loop(self, coro: Awaitable) -> None:
         future = asyncio.run_coroutine_threadsafe(coro, self._tm_loop)
@@ -199,9 +197,8 @@ class RuntimeHandle:
             future.result()
         except Exception as e:
             logger.error(
-                "gRPC scheduled coroutine raised unhandled exception: %s",
-                e,
-                exc_info=True,
+                "gRPC scheduled coroutine raised unhandled exception: <redacted>",
+                exc_info=False,
             )
 
     def _submit_json_unary(
@@ -223,7 +220,7 @@ class RuntimeHandle:
                     finished=True,
                 )
             except Exception as e:
-                logger.error("gRPC %s error: %s", op_name, e)
+                logger.error("gRPC <redacted> error: <redacted>")
                 self._safe_callback(
                     chunk_callback,
                     json.dumps(error_fn(e), default=str).encode("utf-8"),
@@ -348,7 +345,7 @@ class RuntimeHandle:
         except StopAsyncIteration:
             self._safe_callback(chunk_callback, {}, finished=True)
         except Exception as e:
-            logger.error("gRPC generate error for rid=%s: %s", obj.rid, e)
+            logger.error("gRPC generate error for rid=<redacted>: <redacted>")
             self._send_native_error(chunk_callback, str(e))
         finally:
             if gen is not None:
@@ -363,7 +360,7 @@ class RuntimeHandle:
         except StopAsyncIteration:
             self._safe_callback(chunk_callback, {}, finished=True)
         except Exception as e:
-            logger.error("gRPC embed error for rid=%s: %s", obj.rid, e)
+            logger.error("gRPC embed error for rid=<redacted>: <redacted>")
             self._send_native_error(chunk_callback, str(e))
 
     # Bounded so a stuck TM loop can't deadlock the gRPC handler thread that
@@ -394,11 +391,7 @@ class RuntimeHandle:
         except TimeoutError:
             future.cancel()
             logger.error(
-                "gRPC abort timed out after %ss (rid=%r, abort_all=%s); "
-                "tokenizer_manager loop appears stuck",
-                self._ABORT_TIMEOUT_S,
-                rid,
-                abort_all,
+                "gRPC abort timed out after <redacted>s (rid=<redacted>, abort_all=<redacted>); tokenizer_manager loop appears stuck"
             )
 
     async def _abort_async(self, rid: str, abort_all: bool) -> None:
@@ -817,7 +810,7 @@ class RuntimeHandle:
                 )
 
         except Exception as e:
-            logger.error("gRPC OpenAI %s error: %s", serving_key, e)
+            logger.error("gRPC OpenAI <redacted> error: <redacted>")
             error_body = json.dumps({"error": {"message": str(e)}}).encode("utf-8")
             if streaming:
                 self._safe_callback(

@@ -305,7 +305,7 @@ class MinimaxM2Detector(BaseFormatDetector):
                         continue
                     else:
                         # Invalid function name, reset state
-                        logger.warning(f"Invalid function name: {function_name}")
+                        logger.warning("Invalid function name: <redacted>")
                         self._reset_streaming_state()
                         normal += self._buf
                         self._buf = ""
@@ -499,7 +499,7 @@ class MinimaxM2Detector(BaseFormatDetector):
                 # call will always be -1 in parse_base_json
                 res.extend(self.parse_base_json(raw, tools))
             except Exception:
-                logger.warning("invalid tool call for %s dropped", fname)
+                logger.warning("invalid tool call for <redacted> dropped")
         return res
 
     def _parse_parameter(

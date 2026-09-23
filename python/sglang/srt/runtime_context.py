@@ -1529,8 +1529,7 @@ def _append_role_ns_out(role: str | None, name: str) -> None:
     except OSError as e:
         # The entry stays in the in-memory set; the exit summary still covers it.
         print(
-            f"[role-namespaces] pid={os.getpid()} failed to append "
-            f"({role}, {name}) to {out!r}: {e}",
+            "[role-namespaces] pid=<redacted> failed to append (<redacted>, <redacted>) to <redacted>: <redacted>",
             file=sys.stderr,
             flush=True,
         )

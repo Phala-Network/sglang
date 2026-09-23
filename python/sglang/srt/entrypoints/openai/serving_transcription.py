@@ -124,7 +124,7 @@ class OpenAIServingTranscription(OpenAIServingBase):
                 audio = load_audio(audio_data, sr=16000, mono=True)
                 return audio.shape[-1] / 16000.0
             except Exception as e:
-                logger.warning(f"Could not calculate audio duration: {e}")
+                logger.warning("Could not calculate audio duration: <redacted>")
                 return 0.0
 
     async def create_transcription(
@@ -171,10 +171,7 @@ class OpenAIServingTranscription(OpenAIServingBase):
                 )
             except Exception as e:
                 logger.warning(
-                    "Failed to split %.1fs audio into chunks of <=%ss: %s",
-                    audio_duration_s,
-                    max_clip_s,
-                    e,
+                    "Failed to split <redacted>s audio into chunks of <=<redacted>s: <redacted>"
                 )
                 return self.create_error_response(split_error)
             else:
@@ -185,22 +182,11 @@ class OpenAIServingTranscription(OpenAIServingBase):
                     or len(chunk_offsets_s) != len(audio_chunks)
                 ):
                     logger.error(
-                        "Audio splitter returned an invalid result for %.1fs audio: "
-                        "%d chunks and %s offsets",
-                        audio_duration_s,
-                        len(audio_chunks or []),
-                        (
-                            "no"
-                            if chunk_offsets_s is None
-                            else str(len(chunk_offsets_s))
-                        ),
+                        "Audio splitter returned an invalid result for <redacted>s audio: <redacted> chunks and <redacted> offsets"
                     )
                     return self.create_error_response(split_error)
                 logger.info(
-                    "Split %.1fs audio into %d chunks of <=%ss for transcription",
-                    audio_duration_s,
-                    len(audio_chunks),
-                    max_clip_s,
+                    "Split <redacted>s audio into <redacted> chunks of <=<redacted>s for transcription"
                 )
 
         # When language is not specified and the adapter supports detection,
@@ -317,7 +303,7 @@ class OpenAIServingTranscription(OpenAIServingBase):
             return self._adapter.strip_special_tokens(text)
         if lang is not None and visible.strip() and request.language is None:
             request.language = lang
-            logger.info("Auto-detected language: '%s'", lang)
+            logger.info("Auto-detected language: '<redacted>'")
         return visible
 
     def _build_chunk_request(
@@ -545,7 +531,7 @@ class OpenAIServingTranscription(OpenAIServingBase):
                         and request.language is None
                     ):
                         request.language = lang
-                        logger.info("Auto-detected language: '%s'", lang)
+                        logger.info("Auto-detected language: '<redacted>'")
                 else:
                     visible = cumulative_text
 
@@ -685,7 +671,7 @@ class OpenAIServingTranscription(OpenAIServingBase):
                             and request.language is None
                         ):
                             request.language = lang
-                            logger.info("Auto-detected language: '%s'", lang)
+                            logger.info("Auto-detected language: '<redacted>'")
                     else:
                         visible = cumulative_text
 
@@ -793,7 +779,7 @@ class OpenAIServingTranscription(OpenAIServingBase):
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.exception("[streaming_asr] unrecoverable error")
+            logger.exception("[streaming_asr] unrecoverable error", exc_info=False)
             error = self.create_streaming_error_response(str(e))
             yield f"data: {error}\n\n"
 

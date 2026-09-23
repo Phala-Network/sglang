@@ -287,9 +287,7 @@ class CudaIpcTensorTransportProxy(StreamOrderedPoolConsumerMixin):
                 ipc_extra["pool_handle"], rebuild_device_idx
             )
             logger.info(
-                "Failed to deserialize from cached pooled CUDA IPC handle (%s). "
-                "Invalidating cache entry and retrying uncached.",
-                exc,
+                "Failed to deserialize from cached pooled CUDA IPC handle (<redacted>). Invalidating cache entry and retrying uncached."
             )
             _pool_handle_cache_invalidate(cache_key)
             result = self._reconstruct_from_ipc_extra(

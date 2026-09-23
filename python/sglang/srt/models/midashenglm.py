@@ -527,7 +527,7 @@ class MiDashengLMModel(nn.Module):
             logger.debug(f"Item {i} pad_value: {getattr(item, 'pad_value', 'NOT SET')}")
             logger.debug(f"Item {i} hash: {getattr(item, 'hash', 'NOT SET')}")
         input_values = torch.cat([item.feature for item in items], dim=0)
-        logger.debug(f"Concatenated input_values shape: {input_values.shape}")
+        logger.debug("Concatenated input_values shape: <redacted>")
         audio_lengths = []
         for item in items:
             if hasattr(item, "audio_length") and item.audio_length is not None:
@@ -577,24 +577,18 @@ class MiDashengLMModel(nn.Module):
         """
         if forward_batch.contains_mm_inputs():
             logger.debug("=" * 80)
-            logger.debug(f"input_ids shape: {input_ids.shape}")
-            logger.debug(f"input_ids first 20: {input_ids[:20].tolist()}")
-            logger.debug(
-                f"input_ids unique values count: {len(torch.unique(input_ids))}"
-            )
+            logger.debug("input_ids shape: <redacted>")
+            logger.debug("input_ids first 20: <redacted>")
+            logger.debug("input_ids unique values count: <redacted>")
             if forward_batch.mm_inputs and len(forward_batch.mm_inputs) > 0:
                 mm_input = forward_batch.mm_inputs[0]
                 if mm_input and len(mm_input.mm_items) > 0:
                     pad_value = mm_input.mm_items[0].pad_value
                     logger.debug(f"Expected pad_value: {pad_value}")
-                    logger.debug(
-                        f"Count of pad_value in input_ids: {(input_ids == pad_value).sum().item()}"
-                    )
+                    logger.debug("Count of pad_value in input_ids: <redacted>")
                     if hasattr(mm_input, "audio_token_id") and mm_input.audio_token_id:
-                        logger.debug(f"audio_token_id: {mm_input.audio_token_id}")
-                        logger.debug(
-                            f"Count of audio_token_id in input_ids: {(input_ids == mm_input.audio_token_id).sum().item()}"
-                        )
+                        logger.debug("audio_token_id: <redacted>")
+                        logger.debug("Count of audio_token_id in input_ids: <redacted>")
             logger.debug("=" * 80)
 
         return general_mm_embed_routine(

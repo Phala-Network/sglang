@@ -101,7 +101,7 @@ class SocketMapping:
     def send_output(self, ipc_name: str, output: Any, is_tokenizer: bool = False):
         if ipc_name is None:
             # Some unhandled cases
-            logger.warning(f"IPC name is None, output type={type(output)}, skipping...")
+            logger.warning("IPC name is None, output type=<redacted>, skipping...")
             return
 
         if ipc_name not in self._mapping:
@@ -520,8 +520,7 @@ class MultiTokenizerRouter:
                 if recv_obj.worker_ipc_name not in self.all_worker_ipcs:
                     self.all_worker_ipcs.add(recv_obj.worker_ipc_name)
                     logger.info(
-                        f"Router registered worker IPC: {recv_obj.worker_ipc_name} "
-                        f"(total: {len(self.all_worker_ipcs)})"
+                        "Router registered worker IPC: <redacted> (total: <redacted>)"
                     )
                 continue
 
@@ -649,7 +648,7 @@ def run_multi_detokenizer_router_process(
         router.event_loop()
     except Exception:
         traceback = get_exception_traceback()
-        logger.error(f"MultiDetokenizerRouter hit an exception: {traceback}")
+        logger.error("MultiDetokenizerRouter hit an exception: <redacted>")
         if router is not None:
             router.socket_mapping.clear_all_sockets()
         parent_process.send_signal(signal.SIGQUIT)
@@ -761,7 +760,7 @@ async def print_exception_wrapper(func):
         await func()
     except Exception:
         traceback = get_exception_traceback()
-        logger.error(f"MultiTokenizerRouter hit an exception: {traceback}")
+        logger.error("MultiTokenizerRouter hit an exception: <redacted>")
         if hasattr(func, "__self__") and isinstance(
             func.__self__, MultiTokenizerRouter
         ):

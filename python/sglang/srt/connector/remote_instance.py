@@ -63,7 +63,7 @@ class RemoteInstanceConnector(BaseConnector):
             return True, "Succeeded to initialize custom process group."
         except Exception as e:
             message = f"Failed to initialize custom process group: {e}."
-            logger.error(message)
+            logger.error("Request-path diagnostic redacted")
             return False, message
 
     # Implemented as a no-op to make BaseConnector interface consistent.

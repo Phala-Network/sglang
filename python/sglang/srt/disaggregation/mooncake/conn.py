@@ -731,8 +731,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             # Use correct item lengths for K and V separately
             if layers_current_pp_stage > len(dst_k_ptrs):
                 logger.error(
-                    "Prefill transfer kvcache error, layers_current_pp_stage is out of range: "
-                    f"layers_current_pp_stage={layers_current_pp_stage}, len(dst_k_ptrs)={len(dst_k_ptrs)}"
+                    "Prefill transfer kvcache error, layers_current_pp_stage is out of range: layers_current_pp_stage=<redacted>, len(dst_k_ptrs)=<redacted>"
                 )
                 return -1
             layers_params = [
@@ -1172,8 +1171,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             # layer ID instead of the half-split used by get_mha_kv_ptrs_with_pp.
             if any(l != src_kv_item_len for l in self.kv_args.kv_item_lens):
                 logger.error(
-                    f"[{mooncake_session_id}] head-sliced transfer assumes one item "
-                    f"length for every KV entry, got {set(self.kv_args.kv_item_lens)}"
+                    "[<redacted>] head-sliced transfer assumes one item length for every KV entry, got <redacted>"
                 )
                 return -1
             layer_ptr_pairs = [
@@ -1203,8 +1201,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
         # This means heads_bytes_per_token_to_send <= (dst_kv_item_len // page_size)
         if heads_bytes_per_token_to_send > (dst_kv_item_len // page_size):
             logger.error(
-                f"[{mooncake_session_id}] slice size ({heads_bytes_per_token_to_send}) exceeds "
-                f"target token slot size ({dst_kv_item_len // page_size})"
+                "[<redacted>] slice size (<redacted>) exceeds target token slot size (<redacted>)"
             )
             return -1
 
@@ -1325,7 +1322,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
         data = msg[5]
 
         if len(data) != data_length:
-            logger.error(f"AUX_DATA length mismatch for bootstrap_room {room}")
+            logger.error("AUX_DATA length mismatch for bootstrap_room <redacted>")
             return
 
         AuxDataCodec.deserialize_data_to_buffer(
@@ -1333,7 +1330,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
         )
 
         logger.debug(
-            f"Received AUX_DATA for bootstrap_room {room} with length:{len(data)}"
+            "Received AUX_DATA for bootstrap_room <redacted> with length:<redacted>"
         )
 
     def _get_dsa_cache_transfer_skip_flags(
@@ -1693,7 +1690,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                 dst_item_lens,
             )
         except ValueError as exc:
-            logger.error("%s: %s", label, exc)
+            logger.error("<redacted>: <redacted>")
             return -1
         return self._transfer_data(req.mooncake_session_id, transfer_blocks)
 
@@ -2057,9 +2054,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                                 # Failures should never happen if the session is not dead, if the session fails once, mark it as failed
                                 if self.session_failures[req.mooncake_session_id] >= 1:
                                     self.failed_sessions.add(req.mooncake_session_id)
-                                    logger.error(
-                                        f"Session {req.mooncake_session_id} failed."
-                                    )
+                                    logger.error("Session <redacted> failed.")
                             self.conclude_failure(
                                 bootstrap_room=kv_chunk.room,
                                 failure_reason=(
@@ -2257,7 +2252,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                         )
                     except Exception as e:
                         logger.debug(
-                            f"Failed to send ABORT_ACK for room {room_to_be_aborted}: {e}"
+                            "Failed to send ABORT_ACK for room <redacted>: <redacted>"
                         )
                     continue
                 mooncake_session_id = waiting_req_bytes[3].decode("ascii")
@@ -2286,9 +2281,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                             self.failed_sessions.remove(mooncake_session_id)
                         if mooncake_session_id in self.session_failures:
                             del self.session_failures[mooncake_session_id]
-                    logger.debug(
-                        f"Register KVArgs from {mooncake_session_id} successfully"
-                    )
+                    logger.debug("Register KVArgs from <redacted> successfully")
                     continue
                 else:
                     required_dst_info_num = int(waiting_req_bytes[7].decode("ascii"))
@@ -2439,7 +2432,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                 try:
                     rc = send_probe(session_id)
                 except Exception as e:
-                    logger.warning("send_probe(%s) raised: %s", session_id, e)
+                    logger.warning("send_probe(<redacted>) raised: <redacted>")
                     continue
             if rc == 0:
                 with self.session_lock:
@@ -2448,18 +2441,14 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                     self.session_failures.pop(session_id, None)
                 if was_blacklisted:
                     logger.info(
-                        "Session %s recovered via probe; un-blacklisted",
-                        session_id,
+                        "Session <redacted> recovered via probe; un-blacklisted"
                     )
                     FAILED_SESSION_RECOVERIES.inc()
             else:
-                logger.debug("Probe still failing for %s (rc=%d)", session_id, rc)
+                logger.debug("Probe still failing for <redacted> (rc=<redacted>)")
 
     def _failed_session_probe_loop(self) -> None:
-        logger.info(
-            "Starting failed-session probe loop (interval=%.1fs)",
-            self.failed_session_probe_interval,
-        )
+        logger.info("Starting failed-session probe loop (interval=<redacted>s)")
         while not self._failed_session_probe_shutdown.wait(
             self.failed_session_probe_interval
         ):

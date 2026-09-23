@@ -418,11 +418,7 @@ class InternVLProcessor(BaseMultimodalProcessor):
                 prompt, self.VIDEO_PLACEHOLDER_TOKEN, len(video_data)
             )
 
-        logger.info(
-            "[internvl][qwen] placeholders image=%d video=%d",
-            prompt.count(self.IMAGE_PLACEHOLDER_TOKEN),
-            prompt.count(self.VIDEO_PLACEHOLDER_TOKEN),
-        )
+        logger.info("[internvl][qwen] placeholders image=<redacted> video=<redacted>")
 
         base_output = await self.load_mm_data(
             prompt=prompt,
@@ -432,11 +428,7 @@ class InternVLProcessor(BaseMultimodalProcessor):
             discard_alpha_channel=True,
         )
 
-        logger.info(
-            "[internvl][qwen] loaded images=%d videos=%d",
-            len(base_output.images),
-            len(base_output.videos),
-        )
+        logger.info("[internvl][qwen] loaded images=<redacted> videos=<redacted>")
 
         mean, std = self._get_normalize_tensors(device=get_device())
 
@@ -640,10 +632,7 @@ class InternVLProcessor(BaseMultimodalProcessor):
                 prompt, self.IMG_CONTEXT, len(image_data)
             )
 
-        logger.info(
-            "[internvl][internlm2] placeholders img_context=%d",
-            prompt.count(self.IMG_CONTEXT),
-        )
+        logger.info("[internvl][internlm2] placeholders img_context=<redacted>")
 
         base_output = await self.load_mm_data(
             prompt=prompt,

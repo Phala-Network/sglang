@@ -173,10 +173,7 @@ def handle_crash_dump_env(server_args: Any):
             os.makedirs(coredump_dir, exist_ok=True)
         except OSError as e:
             logger.warning(
-                "Failed to create CUDA coredump directory %s: %s; "
-                "coredumps may fail to write.",
-                coredump_dir,
-                e,
+                "Failed to create CUDA coredump directory <redacted>: <redacted>; coredumps may fail to write."
             )
 
 

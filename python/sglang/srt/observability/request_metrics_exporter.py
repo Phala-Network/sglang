@@ -102,7 +102,7 @@ class FileRequestMetricsExporter(RequestMetricsExporter):
                 try:
                     self._current_file_handler.close()
                 except Exception as e:
-                    logger.warning(f"Failed to close previous file handler: {e}")
+                    logger.warning("Failed to close previous file handler: <redacted>")
 
             # Open new file handler
             log_filename = f"sglang-request-metrics-{hour_suffix}.log"
@@ -112,7 +112,7 @@ class FileRequestMetricsExporter(RequestMetricsExporter):
                 self._current_file_handler = open(log_filepath, "a", encoding="utf-8")
                 self._current_hour_suffix = hour_suffix
             except Exception as e:
-                logger.error(f"Failed to open log file {log_filepath}: {e}")
+                logger.error("Failed to open log file <redacted>: <redacted>")
                 self._current_file_handler = None
                 self._current_hour_suffix = None
                 raise
@@ -123,7 +123,7 @@ class FileRequestMetricsExporter(RequestMetricsExporter):
             try:
                 self._current_file_handler.close()
             except Exception as e:
-                logger.warning(f"Failed to close file handler: {e}")
+                logger.warning("Failed to close file handler: <redacted>")
             finally:
                 self._current_file_handler = None
                 self._current_hour_suffix = None
@@ -156,7 +156,9 @@ class FileRequestMetricsExporter(RequestMetricsExporter):
 
                 await asyncio.to_thread(write_file)
         except Exception as e:
-            logger.exception(f"Failed to write perf metrics to file: {e}")
+            logger.exception(
+                "Failed to write perf metrics to file: <redacted>", exc_info=False
+            )
 
 
 class RequestMetricsExporterManager:

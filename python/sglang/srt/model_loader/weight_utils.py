@@ -540,7 +540,7 @@ def _check_index_files_exist(
                     f"{missing_files[:3]}{'...' if len(missing_files) > 3 else ''}",
                 )
         except Exception as e:
-            logger.warning("Failed to read index file %s: %s", index_file, e)
+            logger.warning("Failed to read index file <redacted>: <redacted>")
             continue
 
     return True, None
@@ -585,9 +585,7 @@ def _find_local_hf_snapshot_dir_unlocked(
                     found_local_snapshot_dir = rev_dir
         except Exception as e:
             logger.warning(
-                "Failed to find local snapshot in custom cache_dir %s: %s",
-                cache_dir,
-                e,
+                "Failed to find local snapshot in custom cache_dir <redacted>: <redacted>"
             )
 
     # Check default HF cache as well
@@ -597,7 +595,9 @@ def _find_local_hf_snapshot_dir_unlocked(
             if rev_dir and os.path.isdir(rev_dir):
                 found_local_snapshot_dir = rev_dir
         except Exception as e:
-            logger.warning("Failed to find local snapshot in default HF cache: %s", e)
+            logger.warning(
+                "Failed to find local snapshot in default HF cache: <redacted>"
+            )
 
     # if local snapshot exists, validate it contains at least one weight file
     # matching allow_patterns before skipping download.
@@ -620,10 +620,7 @@ def _find_local_hf_snapshot_dir_unlocked(
                 local_weight_files.append(f)
     except Exception as e:
         logger.warning(
-            "Failed to scan local snapshot %s with patterns %s: %s",
-            found_local_snapshot_dir,
-            allow_patterns,
-            e,
+            "Failed to scan local snapshot <redacted> with patterns <redacted>: <redacted>"
         )
         local_weight_files = []
 
@@ -781,9 +778,9 @@ def download_safetensors_index_file_from_hf(
         # If file not found on remote or locally, we should not fail since
         # only some models will have index_file.
         except huggingface_hub.utils.EntryNotFoundError:
-            logger.debug("No %s found in remote.", index_file)
+            logger.debug("No <redacted> found in remote.")
         except huggingface_hub.utils.LocalEntryNotFoundError:
-            logger.debug("No %s found in local cache.", index_file)
+            logger.debug("No <redacted> found in local cache.")
 
 
 # For models like Mistral-7B-v0.3, there are both sharded
@@ -1125,9 +1122,7 @@ def _prefetch_all_checkpoints(
                     if exc is not None:
                         errors.append((path, exc))
                         logger.warning(
-                            "Failed to prefetch checkpoint file %r: %s",
-                            path,
-                            exc,
+                            "Failed to prefetch checkpoint file <redacted>: <redacted>"
                         )
                     record_complete()
 
@@ -1174,7 +1169,7 @@ def _drop_file_cache_after_load(path: str) -> None:
         fd = os.open(path, os.O_RDONLY)
         posix_fadvise(fd, 0, 0, dontneed)
     except OSError as e:
-        logger.debug("Failed to drop file cache for %s: %s", path, e)
+        logger.debug("Failed to drop file cache for <redacted>: <redacted>")
     finally:
         if fd is not None:
             os.close(fd)
@@ -1403,8 +1398,7 @@ def _load_pt_file(bin_file: str) -> dict:
     except RuntimeError as e:
         if "legacy .tar format" in str(e):
             logger.warning(
-                "Loading %s with weights_only=False (legacy tar format)",
-                os.path.basename(bin_file),
+                "Loading <redacted> with weights_only=False (legacy tar format)"
             )
             return torch.load(bin_file, map_location="cpu", weights_only=False)
         raise
@@ -1973,11 +1967,11 @@ def kv_cache_scales_loader(
             layer_scales_map = schema.kv_cache.scaling_factor[tp_rank]
             return layer_scales_map.items()
     except FileNotFoundError:
-        logger.error("File or directory '%s' not found.", filename)
+        logger.error("File or directory '<redacted>' not found.")
     except json.JSONDecodeError:
-        logger.error("Error decoding JSON in file '%s'.", filename)
+        logger.error("Error decoding JSON in file '<redacted>'.")
     except Exception:
-        logger.error("An error occurred while reading '%s'.", filename)
+        logger.error("An error occurred while reading '<redacted>'.")
     # This section is reached if and only if any of the excepts are hit
     # Return an empty iterable (list) => no KV cache scales are loaded
     # which ultimately defaults to 1.0 scales

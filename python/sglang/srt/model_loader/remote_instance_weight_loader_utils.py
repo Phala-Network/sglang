@@ -48,7 +48,7 @@ def trigger_init_weights_send_group_for_remote_instance_request(
         )
     except Exception as e:
         logger.error(
-            f"Failed to trigger init_weights_send_group_for_remote_instance_request to seed instance {seed_instance_service_url}: {e}."
+            "Failed to trigger init_weights_send_group_for_remote_instance_request to seed instance <redacted>: <redacted>."
         )
         raise
 
@@ -75,7 +75,9 @@ def trigger_transferring_weights_request(
             },
         )
     except Exception as e:
-        logger.error(f"Failed to trigger send weights to remote instance request: {e}")
+        logger.error(
+            "Failed to trigger send weights to remote instance request: <redacted>"
+        )
         raise
 
 
@@ -99,10 +101,10 @@ def get_remote_instance_transfer_engine_info_per_rank(seed_url: str, rank: int):
                 )
                 return None, None
         else:
-            logger.error(f"request.get failed: {response.status_code}")
+            logger.error("request.get failed: <redacted>")
             return None, None
     except Exception as e:
-        logger.error(f"Exception: {e}")
+        logger.error("Exception: <redacted>")
         return None, None
 
 

@@ -128,9 +128,8 @@ async def await_task_completion_on_cancel(task: asyncio.Task, operation: str):
                 break
         if not task.cancelled() and task.exception() is not None:
             logger.error(
-                "%s failed while draining cancellation",
-                operation,
-                exc_info=task.exception(),
+                "<redacted> failed while draining cancellation",
+                exc_info=(task.exception(), False)[1],
             )
         raise
 
@@ -210,7 +209,9 @@ class EncoderMetaRegistry:
         try:
             await self._release(req_id)
         except Exception:
-            logger.exception("Failed to release stale encoder request %s", req_id)
+            logger.exception(
+                "Failed to release stale encoder request <redacted>", exc_info=False
+            )
             # Keep the request eligible for a later sweep without retrying in a
             # tight loop. Its metadata and buffer ownership remain intact.
             async with rid_lock:
@@ -713,7 +714,7 @@ class MMEncoder:
         except asyncio.CancelledError:
             pass
         except Exception:
-            logger.exception("MMEncoder background task failed")
+            logger.exception("MMEncoder background task failed", exc_info=False)
 
     def _create_background_task(self, awaitable: Awaitable[Any]) -> asyncio.Task:
         task = asyncio.create_task(awaitable)
@@ -1354,9 +1355,8 @@ class MMEncoder:
                 )
             except Exception:
                 logger.exception(
-                    "Global multimodal cache lookup failed for req %s; "
-                    "falling back to ViT",
-                    ctx.req_id,
+                    "Global multimodal cache lookup failed for req <redacted>; falling back to ViT",
+                    exc_info=False,
                 )
                 exist_mask = [False] * ctx.num_items
             mask_tensor = torch.tensor(
@@ -1388,9 +1388,8 @@ class MMEncoder:
             )
         except Exception:
             logger.exception(
-                "Global multimodal cache prefetch failed for req %s; "
-                "falling back to ViT",
-                ctx.req_id,
+                "Global multimodal cache prefetch failed for req <redacted>; falling back to ViT",
+                exc_info=False,
             )
             return [], True
         return hit_hashes, False
@@ -1424,13 +1423,11 @@ class MMEncoder:
                     num_partial_fail = int(fallback_mask.sum().item())
                     if num_partial_fail > 0:
                         logger.warning(
-                            f"Req {ctx.req_id}: {num_partial_fail}/{len(hit_indices)} "
-                            f"cache-hit items failed to load, falling back to ViT"
+                            "Req <redacted>: <redacted>/<redacted> cache-hit items failed to load, falling back to ViT"
                         )
                 except Exception as e:
                     logger.error(
-                        f"Prefetch failed for req {ctx.req_id}: {e}. "
-                        f"Falling back to ViT for {len(hit_indices)} hit items."
+                        "Prefetch failed for req <redacted>: <redacted>. Falling back to ViT for <redacted> hit items."
                     )
                     for idx in hit_indices:
                         fallback_mask[idx] = 1
@@ -1457,8 +1454,8 @@ class MMEncoder:
             )
         except Exception:
             logger.exception(
-                "Global multimodal cache staging failed for req %s; skipping insert",
-                ctx.req_id,
+                "Global multimodal cache staging failed for req <redacted>; skipping insert",
+                exc_info=False,
             )
             return [], []
         return hashes, handles
@@ -1485,7 +1482,8 @@ class MMEncoder:
                 )
             except Exception:
                 logger.exception(
-                    "Global multimodal cache insert failed for req %s", ctx.req_id
+                    "Global multimodal cache insert failed for req <redacted>",
+                    exc_info=False,
                 )
 
         self._create_background_task(_background_insert())
@@ -1645,8 +1643,7 @@ class MMEncoder:
         fallback_d2h_handles = []
         if fallback_indices:
             logger.info(
-                f"Req {ctx.req_id}: All ranks running ViT fallback "
-                f"for {len(fallback_indices)} items."
+                "Req <redacted>: All ranks running ViT fallback for <redacted> items."
             )
             fallback_slices = self._encode_missing(
                 ctx.mm_feature,
@@ -1937,9 +1934,8 @@ class MMEncoder:
                         if transfer_error is None:
                             raise
                         logger.exception(
-                            "Per-send MR deregistration also failed for %s; "
-                            "preserving the transfer error",
-                            req_id,
+                            "Per-send MR deregistration also failed for <redacted>; preserving the transfer error",
+                            exc_info=False,
                         )
             xfer_ms = (time.monotonic() - _t_xfer_start) * 1000.0
             if encoder_metrics_collector is not None:
@@ -1955,8 +1951,7 @@ class MMEncoder:
             # Emit at INFO for slow transfers or per-send registrations.
             if xfer_ms > 200.0 or not mr_already_registered:
                 logger.info(
-                    f"[{req_id}] mooncake transfer_sync={xfer_ms:.1f}ms "
-                    f"nbytes={embedding.nbytes} shared_mr={mr_already_registered}"
+                    "[<redacted>] mooncake transfer_sync=<redacted>ms nbytes=<redacted> shared_mr=<redacted>"
                 )
 
             # Sibling ranks re-read mm_data here; meta_registry owns the release.
@@ -2096,8 +2091,7 @@ class MMEncoder:
             mm_data._mr_ptr = embedding.data_ptr()
         except Exception as reg_err:
             logger.warning(
-                f"Shared-MR register failed for {mm_data.req_id}, "
-                f"falling back to per-/send register: {reg_err}"
+                "Shared-MR register failed for <redacted>, falling back to per-/send register: <redacted>"
             )
 
     def _deregister_shared_mr(self, mm_data: EmbeddingData) -> None:
@@ -2106,9 +2100,7 @@ class MMEncoder:
         try:
             self.engine.deregister(mm_data._mr_ptr)
         except Exception as dereg_err:
-            logger.warning(
-                f"Shared-MR deregister failed for {mm_data.req_id}: {dereg_err}"
-            )
+            logger.warning("Shared-MR deregister failed for <redacted>: <redacted>")
         finally:
             mm_data._mr_ptr = None
 
@@ -2193,7 +2185,10 @@ class MMEncoder:
             exc.code if isinstance(exc, MMError) else HTTPStatus.INTERNAL_SERVER_ERROR
         )
         msg = str(exc)
-        logger.error(f"Rank {self.rank} encode failed: {msg} {code = }", exc_info=True)
+        logger.error(
+            "Rank <redacted> encode failed: <redacted> code = <redacted>",
+            exc_info=False,
+        )
         if self.rank == 0:
             for req in requests:
                 self._stage_embedding(
@@ -2286,8 +2281,7 @@ class MMEncoder:
             # False = nothing transferred: callers must not count this send
             # nor report success, or the decoder waits on an ack never coming.
             logger.warning(
-                f"MMEncoder.send: no embedding for req_id={req_id} "
-                f"(already released or unknown)"
+                "MMEncoder.send: no embedding for req_id=<redacted> (already released or unknown)"
             )
             return False
         await self.send_to_destination(
@@ -2328,7 +2322,7 @@ class MMEncoder:
 
                 if new_targets:
                     logger.info(
-                        f"Found {len(new_targets)} new endpoints for {req_id}. Starting tasks..."
+                        "Found <redacted> new endpoints for <redacted>. Starting tasks..."
                     )
                     for url in new_targets:
                         task = asyncio.create_task(
@@ -2341,14 +2335,12 @@ class MMEncoder:
                         sent_urls.add(url)  # Mark as handled immediately
                 if expected_count is not None and len(sent_urls) >= expected_count:
                     logger.info(
-                        f"All {expected_count} endpoints initiated for {req_id}. Breaking loop."
+                        "All <redacted> endpoints initiated for <redacted>. Breaking loop."
                     )
                     break
                 remaining = timeout - (asyncio.get_running_loop().time() - start_time)
                 if remaining <= 0:
-                    logger.error(
-                        f"[{req_id}] Timeout! Sent {len(sent_urls)}/{expected_count}"
-                    )
+                    logger.error("[<redacted>] Timeout! Sent <redacted>/<redacted>")
                     break
 
                 async with cond:
@@ -2368,14 +2360,14 @@ class MMEncoder:
                 for i, result in enumerate(results):
                     url = all_tasks[i][1]  # Retrieve URL associated with the task
                     if isinstance(result, Exception):
-                        logger.error(f"Failed to send to {url}: {result}")
+                        logger.error("Failed to send to <redacted>: <redacted>")
                     else:
-                        logger.debug(f"Successfully sent to {url}")
+                        logger.debug("Successfully sent to <redacted>")
 
-            logger.info(f"All tasks completed for req_id: {req_id}")
+            logger.info("All tasks completed for req_id: <redacted>")
 
         finally:
-            logger.info(f"Cleaning up resources for req_id {req_id}")
+            logger.info("Cleaning up resources for req_id <redacted>")
             await self.release_request(req_id)
 
 
@@ -2418,7 +2410,7 @@ class EncoderProfiler:
         self.profiler.start()
         self.steps_left = obj.num_steps
         logger.info(
-            f"Encoder profiling started. output_dir={self.output_dir} profile_id={self.profile_id}"
+            "Encoder profiling started. output_dir=<redacted> profile_id=<redacted>"
         )
         return True, None
 
@@ -2477,9 +2469,11 @@ def launch_encoder(server_args, schedule_path, dist_init_method, rank):
     try:
         asyncio.run(run_encoder(server_args, schedule_path, dist_init_method, rank))
     except KeyboardInterrupt:
-        logger.info(f"Exit rank {rank}")
+        logger.info("Exit rank <redacted>")
     except Exception:
-        traceback.print_exc()
+        traceback.print_exception(
+            RuntimeError("Exception details redacted"), chain=False
+        )
 
 
 # Per-process encoder metrics collector. Set by

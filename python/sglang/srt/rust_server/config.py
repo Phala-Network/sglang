@@ -114,7 +114,7 @@ def _partition_cores(
     try:
         allowed = sorted(os.sched_getaffinity(0))
     except OSError as e:
-        logger.warning("rust server: cannot read cpu affinity: %s", e)
+        logger.warning("rust server: cannot read cpu affinity: <redacted>")
         return None, None
 
     # Need enough cores to reserve launch cores and still pin the pools.

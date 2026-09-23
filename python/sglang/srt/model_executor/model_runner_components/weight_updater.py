@@ -122,7 +122,7 @@ class WeightUpdater:
             return True, "Succeeded to initialize custom process group."
         except Exception as e:
             message = f"Failed to initialize custom process group: {e}."
-            logger.error(message)
+            logger.error("Request-path diagnostic redacted")
             return False, message
 
     def destroy_weights_update_group(self, group_name):
@@ -135,7 +135,7 @@ class WeightUpdater:
                 return False, "The group to be destroyed does not exist."
         except Exception as e:
             message = f"Failed to destroy custom process group: {e}."
-            logger.error(message)
+            logger.error("Request-path diagnostic redacted")
             return False, message
 
     def _assert_weight_cache_inactive(self: WeightUpdater, op: str) -> None:
@@ -294,7 +294,7 @@ class WeightUpdater:
                 f"The full weights of the ModelRunner are partially updated. "
                 f"Please discard the whole weights."
             )
-            logger.error(error_msg)
+            logger.error("Request-path diagnostic redacted")
             return False, error_msg
 
     def _update_bucketed_weights_from_distributed(
@@ -328,7 +328,7 @@ class WeightUpdater:
                 f"The full weights of the ModelRunner are partially updated. "
                 f"Please discard the whole weights."
             )
-            logger.error(error_msg)
+            logger.error("Request-path diagnostic redacted")
             return False, error_msg
 
     def update_weights_from_tensor(
@@ -346,7 +346,7 @@ class WeightUpdater:
             named_tensors, load_format, tp_rank=self.tp_rank
         )
         if validation_error is not None:
-            logger.error(validation_error)
+            logger.error("Request-path diagnostic redacted")
             return False, validation_error
         if load_format not in (None, "direct", "flattened_bucket"):
             if not isinstance(load_format, str):
@@ -354,14 +354,14 @@ class WeightUpdater:
                     "Invalid update_weights_from_tensor payload: "
                     "load_format must be a string or null"
                 )
-                logger.error(message)
+                logger.error("Request-path diagnostic redacted")
                 return False, message
             if load_format not in self.custom_weight_loaders:
                 message = (
                     "Invalid update_weights_from_tensor payload: "
                     f"unknown load_format={load_format}"
                 )
-                logger.error(message)
+                logger.error("Request-path diagnostic redacted")
                 return False, message
         if load_format == "flattened_bucket":
             # Handle flattened bucket format
@@ -386,7 +386,7 @@ class WeightUpdater:
                 "Invalid update_weights_from_tensor payload: failed to unwrap "
                 f"tensor: {type(exc).__name__}: {exc}"
             )
-            logger.error(message)
+            logger.error("Request-path diagnostic redacted")
             return False, message
         if load_format == "direct":
             _model_load_weights_direct(self.get_model(), named_tensors)
@@ -432,7 +432,7 @@ class WeightUpdater:
                 "Invalid update_weights_from_tensor payload: failed to reconstruct "
                 f"flattened bucket: {type(exc).__name__}: {exc}"
             )
-            logger.error(message)
+            logger.error("Request-path diagnostic redacted")
             return False, message
 
         # Load the reconstructed tensors using the standard method
@@ -459,7 +459,7 @@ class WeightUpdater:
         except ImportError as e:
             return False, f"IPC weight update failed: ImportError {e}"
         except Exception as e:
-            logger.error(f"IPC weight update failed: {e}")
+            logger.error("IPC weight update failed: <redacted>")
             return False, str(e)
 
 

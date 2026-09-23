@@ -75,7 +75,7 @@ def cleanup_stale_shm() -> None:
         _cleanup_stale_shm_impl()
     except Exception:
         logger.warning(
-            "cleanup_stale_shm: sweep failed, continuing startup", exc_info=True
+            "cleanup_stale_shm: sweep failed, continuing startup", exc_info=False
         )
 
 
@@ -96,7 +96,9 @@ def _cleanup_stale_shm_impl() -> None:
     try:
         entries = list(_SHM_DIR.iterdir())
     except OSError as e:
-        logger.warning("cleanup_stale_shm: cannot list %s, skipping: %s", _SHM_DIR, e)
+        logger.warning(
+            "cleanup_stale_shm: cannot list <redacted>, skipping: <redacted>"
+        )
         return
     for entry in entries:
         pid = _creator_pid(entry.name)
@@ -116,7 +118,7 @@ def _cleanup_stale_shm_impl() -> None:
         except FileNotFoundError:
             pass  # raced with another cleaner
         except OSError as e:
-            logger.warning("cleanup_stale_shm: failed to remove %s: %s", entry.name, e)
+            logger.warning("cleanup_stale_shm: failed to remove <redacted>: <redacted>")
     if removed:
         logger.info(
             "cleanup_stale_shm: removed %d stale segment(s), freed %.1f MiB",

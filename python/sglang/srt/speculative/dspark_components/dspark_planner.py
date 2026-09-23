@@ -619,21 +619,12 @@ class DSparkVerifyPlanner:
         lens = verify_lens.tolist()
         sort_rows = sort_survival.to(torch.float32).tolist()
         logger.info(
-            "[DSPARK-CPS] num_reqs=%d budget=%d gamma=%d verify_len_range=[%d,%d]",
-            len(req_ids),
-            budget,
-            cfg.gamma,
-            cfg.min_verify_len,
-            max_len,
+            "[DSPARK-CPS] num_reqs=<redacted> budget=<redacted> gamma=<redacted> verify_len_range=[<redacted>,<redacted>]"
         )
         for row in range(len(req_ids)):
             survival_str = "[" + ", ".join(f"{p:.3f}" for p in sort_rows[row]) + "]"
             logger.info(
-                "[DSPARK-CPS]   req=%d prefix=%d verify_len=%d sort_survival=%s",
-                int(req_ids[row]),
-                int(prefixes[row]),
-                int(lens[row]),
-                survival_str,
+                "[DSPARK-CPS]   req=<redacted> prefix=<redacted> verify_len=<redacted> sort_survival=<redacted>"
             )
 
 

@@ -255,12 +255,12 @@ def _ffprobe_has_audio(src, stdin=None, label=None) -> bool:
             raise RuntimeError(f"ffprobe failed for {label}: {stderr}")
         return bool(json.loads(r.stdout).get("streams"))
     except subprocess.TimeoutExpired:
-        logger.error("ffprobe timed out for %s", label)
+        logger.error("ffprobe timed out for <redacted>")
         raise
     except FileNotFoundError as e:
         raise RuntimeError("ffprobe not found; install ffmpeg") from e
     except json.JSONDecodeError:
-        logger.error("ffprobe returned invalid JSON for %s", label)
+        logger.error("ffprobe returned invalid JSON for <redacted>")
         raise
 
 
@@ -1666,7 +1666,7 @@ class MiMoV2Processor(BaseMultimodalProcessor):
         try:
             return _decode_frames_and_timestamps(vdw, ele)
         except Exception as e:
-            logger.error(f"Video decode failed in _preprocess_video_sync: {e}")
+            logger.error("Video decode failed in _preprocess_video_sync: <redacted>")
             raise HTTPException(
                 status_code=432, detail="Video file is corrupted or cannot be decoded"
             )
@@ -2005,7 +2005,7 @@ class MiMoV2Processor(BaseMultimodalProcessor):
                 lambda: self.mimo_processor.process(contents, verbose=False),
             )
         except RuntimeError as e:
-            logger.error(f"MiMo processor failed in process_mm_data_async: {e}")
+            logger.error("MiMo processor failed in process_mm_data_async: <redacted>")
             raise ValueError(f"Multimodal data is corrupted or cannot be decoded: {e}")
 
         input_ids = input_sample.input_ids.flatten()

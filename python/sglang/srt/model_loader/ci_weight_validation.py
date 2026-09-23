@@ -64,7 +64,7 @@ def _read_per_run_marker(snapshot_dir: str) -> Optional[dict]:
         return marker
 
     except Exception as e:
-        logger.debug("Failed to read per-run marker from %s: %s", marker_path, e)
+        logger.debug("Failed to read per-run marker from <redacted>: <redacted>")
         return None
 
 
@@ -105,7 +105,7 @@ def _write_per_run_marker(
         os.replace(temp_path, marker_path)
         logger.debug("Wrote per-run marker to %s", marker_path)
     except Exception as e:
-        logger.warning("Failed to write per-run marker to %s: %s", marker_path, e)
+        logger.warning("Failed to write per-run marker to <redacted>: <redacted>")
         try:
             if "temp_path" in locals() and os.path.exists(temp_path):
                 os.remove(temp_path)
@@ -172,7 +172,7 @@ def validate_cache_lightweight(
                         return False
         except (json.JSONDecodeError, OSError, KeyError) as e:
             # If we can't read config.json, it will be caught by earlier validation
-            logger.debug("Failed to check auto_map in config.json: %s", e)
+            logger.debug("Failed to check auto_map in config.json: <redacted>")
 
     # Check for weight files with index self-consistency
     index_path = os.path.join(snapshot_dir, "model.safetensors.index.json")
@@ -195,7 +195,7 @@ def validate_cache_lightweight(
                         )
                         return False
         except (json.JSONDecodeError, OSError, KeyError) as e:
-            logger.debug("Failed to validate index file %s: %s", index_path, e)
+            logger.debug("Failed to validate index file <redacted>: <redacted>")
             return False
     else:
         safetensors_files = glob_module.glob(
@@ -256,10 +256,7 @@ def _validate_safetensors_file(file_path: str) -> bool:
         return True
     except Exception as e:
         logger.warning(
-            "Corrupted safetensors file detected: %s - %s: %s",
-            file_path,
-            type(e).__name__,
-            str(e),
+            "Corrupted safetensors file detected: <redacted> - <redacted>: <redacted>"
         )
         return False
 
@@ -275,10 +272,7 @@ def _validate_pytorch_bin_file(file_path: str) -> bool:
         return True
     except Exception as e:
         logger.warning(
-            "Corrupted PyTorch bin file detected: %s - %s: %s",
-            file_path,
-            type(e).__name__,
-            str(e),
+            "Corrupted PyTorch bin file detected: <redacted> - <redacted>: <redacted>"
         )
         return False
 
@@ -307,7 +301,7 @@ def _check_index_files_exist(snapshot_dir: str) -> Tuple[bool, Optional[str]]:
                 if os.path.exists(blob_path):
                     os.remove(blob_path)
             except Exception as e:
-                logger.error("Failed to remove broken symlink %s: %s", index_file, e)
+                logger.error("Failed to remove broken symlink <redacted>: <redacted>")
             return (
                 False,
                 f"Broken index file symlink: {index_file} (cleaned up, will re-download)",
@@ -338,13 +332,13 @@ def _check_index_files_exist(snapshot_dir: str) -> Tuple[bool, Optional[str]]:
 
         except FileNotFoundError as e:
             # Index file was listed but can't be read - could be race condition or broken state
-            logger.warning("Failed to read index file %s: %s", index_file, e)
+            logger.warning("Failed to read index file <redacted>: <redacted>")
             return (
                 False,
                 f"Index file {index_file} unreadable (will re-download)",
             )
         except Exception as e:
-            logger.warning("Failed to read index file %s: %s", index_file, e)
+            logger.warning("Failed to read index file <redacted>: <redacted>")
             continue
 
     return True, None
@@ -461,11 +455,7 @@ def _cleanup_corrupted_files_selective(
                 cleaned_count += 1
 
         except Exception as e:
-            logger.error(
-                "Failed to remove corrupted file %s: %s",
-                os.path.basename(file_path),
-                e,
-            )
+            logger.error("Failed to remove corrupted file <redacted>: <redacted>")
 
     if cleaned_count > 0:
         logger.warning(
@@ -496,10 +486,7 @@ def _cleanup_corrupted_model_cache(
         logger.info("Successfully removed corrupted cache directory")
     except Exception as e:
         logger.error(
-            "Failed to remove corrupted cache directory %s: %s. "
-            "Manual cleanup may be required.",
-            repo_folder,
-            e,
+            "Failed to remove corrupted cache directory <redacted>: <redacted>. Manual cleanup may be required."
         )
 
 
@@ -672,9 +659,7 @@ def _cleanup_incomplete_blobs(model_name_or_path: str, cache_dir: Optional[str])
                 removed += 1
                 logger.debug("Removed incomplete blob: %s", os.path.basename(f))
             except OSError as e:
-                logger.debug(
-                    "Failed to remove incomplete blob %s: %s", os.path.basename(f), e
-                )
+                logger.debug("Failed to remove incomplete blob <redacted>: <redacted>")
 
         if removed > 0:
             logger.warning(
@@ -686,7 +671,7 @@ def _cleanup_incomplete_blobs(model_name_or_path: str, cache_dir: Optional[str])
         return removed
 
     except Exception as e:
-        logger.debug("Failed to clean up incomplete blobs: %s", e)
+        logger.debug("Failed to clean up incomplete blobs: <redacted>")
         return 0
 
 
@@ -762,7 +747,7 @@ def ci_download_with_validation_and_retry(
                 return cached_path
         except Exception as e:
             logger.debug(
-                "[CI Download] Re-check for cached model failed (non-fatal): %s", e
+                "[CI Download] Re-check for cached model failed (non-fatal): <redacted>"
             )
 
         # Clean up stale .incomplete files from previous failed downloads
@@ -798,23 +783,14 @@ def ci_download_with_validation_and_retry(
                 # process. With NFS-level locking this should be rare, but can
                 # still happen if lock acquisition fails on some NFS setups.
                 logger.warning(
-                    "[CI Download] Process %d hit download error "
-                    "(attempt %d/%d) for %s: %s: %s",
-                    os.getpid(),
-                    attempt + 1,
-                    max_retries,
-                    model_name_or_path,
-                    type(e).__name__,
-                    e,
+                    "[CI Download] Process <redacted> hit download error (attempt <redacted>/<redacted>) for <redacted>: <redacted>: <redacted>"
                 )
                 if attempt < max_retries - 1:
                     # Backoff: 10s, 20s, 40s. Clean only the stale
                     # .incomplete files (not active ones from other processes).
                     backoff = 10 * (2**attempt)
                     logger.info(
-                        "[CI Download] Cleaning up .incomplete files and "
-                        "retrying in %ds...",
-                        backoff,
+                        "[CI Download] Cleaning up .incomplete files and retrying in <redacted>s..."
                     )
                     _cleanup_incomplete_blobs(model_name_or_path, cache_dir)
                     time.sleep(backoff)
@@ -929,4 +905,4 @@ def ci_validate_and_clean_hf_cache(model_path: str) -> None:
 
     except Exception as e:
         # Don't fail if validation itself fails - let HF handle it
-        logger.debug("HF cache validation failed (non-fatal): %s", e)
+        logger.debug("HF cache validation failed (non-fatal): <redacted>")

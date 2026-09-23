@@ -504,10 +504,7 @@ class UMBPDirectLinker(UnifiedCacheLinker):
         self._stats["lookup"] += 1
         if valid_pages:
             logger.debug(
-                "UMBP direct linker lookup hit: rid=%s pages=%d candidates=%d",
-                rid,
-                valid_pages[-1],
-                len(valid_pages),
+                "UMBP direct linker lookup hit: rid=<redacted> pages=<redacted> candidates=<redacted>"
             )
         return valid_pages
 
@@ -658,7 +655,8 @@ class UMBPDirectLinker(UnifiedCacheLinker):
         except RuntimeError:
             self._async_offload_index_snapshot = False
             logger.exception(
-                "UMBP async index snapshot failed; falling back to synchronous D2H"
+                "UMBP async index snapshot failed; falling back to synchronous D2H",
+                exc_info=False,
             )
             return _materialize_cpu_indices(indices)
 
@@ -869,7 +867,7 @@ class UMBPDirectLinker(UnifiedCacheLinker):
                     self.layer_done_counter.complete(counter_index, logical_layer)
         except BaseException as error:
             self.layer_done_counter.fail(counter_index, error)
-            logger.exception("UMBP layer-wise load batch failed")
+            logger.exception("UMBP layer-wise load batch failed", exc_info=False)
 
     def _layer_groups(self) -> list[list[int]]:
         return [
@@ -928,7 +926,7 @@ class UMBPDirectLinker(UnifiedCacheLinker):
         try:
             success = self._run_offload(tasks)
         except BaseException:
-            logger.exception("UMBP offload failed")
+            logger.exception("UMBP offload failed", exc_info=False)
             success = False
         finally:
             # One result per task in submission order: the tree pairs them

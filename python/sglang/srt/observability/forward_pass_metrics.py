@@ -218,4 +218,4 @@ class _FpmPublisherThread:
             except zmq.Again:
                 pass
             except Exception:
-                logger.warning("FPM publisher send failed", exc_info=True)
+                logger.warning("FPM publisher send failed", exc_info=False)

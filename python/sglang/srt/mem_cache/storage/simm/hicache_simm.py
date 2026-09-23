@@ -109,7 +109,7 @@ def get_numa_nic_mapping() -> Dict[int, List[str]]:
     device_map = defaultdict(list)
 
     if not os.path.exists(ib_root):
-        logger.error(f"SiMM ERROR: {ib_root} not found. Are RDMA drivers loaded?")
+        logger.error("SiMM ERROR: <redacted> not found. Are RDMA drivers loaded?")
         return []
 
     for device_name in os.listdir(ib_root):
@@ -210,10 +210,12 @@ class HiCacheSiMM(HiCacheStorage):
                 self.mla_suffix = ""
 
         except ValueError as e:
-            logger.error("Configuration loading failed: %s", e)
+            logger.error("Configuration loading failed: <redacted>")
             raise
         except Exception as exc:
-            logger.error("An error occurred while loading the configuration: %s", exc)
+            logger.error(
+                "An error occurred while loading the configuration: <redacted>"
+            )
             raise
 
     def warmup(self):
@@ -252,11 +254,11 @@ class HiCacheSiMM(HiCacheStorage):
             self.mr_ext = register_mr(buffer)
             if self.mr_ext is None:
                 logger.error(
-                    f"Failed to register buffer, {buffer=}, please check buffer and RDMA network"
+                    "Failed to register buffer, buffer=<redacted>, please check buffer and RDMA network"
                 )
                 raise RuntimeError(f"Failed to register buffer to SiMM")
         except TypeError as err:
-            logger.error("Failed to register buffer to SiMM: %s", err)
+            logger.error("Failed to register buffer to SiMM: <redacted>")
             raise TypeError("SiMM Register Buffer Error.") from err
 
     def _get_mha_buffer_meta(self, keys, indices):
@@ -267,7 +269,7 @@ class HiCacheSiMM(HiCacheStorage):
             key_list.append(f"{key_}_{self.mha_suffix}_v")
         if len(key_list) != len(ptr_list):
             logger.error(
-                f"key size {len(key_list)} not equal with incides ptr size {len(ptr_list)}"
+                "key size <redacted> not equal with incides ptr size <redacted>"
             )
         assert len(key_list) == len(ptr_list)
         return key_list, ptr_list, element_size_list
@@ -279,7 +281,7 @@ class HiCacheSiMM(HiCacheStorage):
             key_list.append(f"{key_}_{self.mla_suffix}_k")
         if len(key_list) != len(ptr_list):
             logger.error(
-                f"key size {len(key_list)} not equal with incides ptr size {len(ptr_list)}"
+                "key size <redacted> not equal with incides ptr size <redacted>"
             )
         assert len(key_list) == len(ptr_list)
         return key_list, ptr_list, element_size_list

@@ -204,9 +204,8 @@ class KimiK3ViTCudaGraphRunner:
             except Exception:
                 self.failed_keys.add(key)
                 logger.exception(
-                    "Kimi-K3 ViT CUDA graph capture failed for key=%s; "
-                    "using eager fallback",
-                    key,
+                    "Kimi-K3 ViT CUDA graph capture failed for key=<redacted>; using eager fallback",
+                    exc_info=False,
                 )
                 outputs, _ = self._run_eager(pixel_values, grid_thws, grid_thw_list)
                 return outputs

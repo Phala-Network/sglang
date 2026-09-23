@@ -30,7 +30,7 @@ from sglang.srt.model_loader.weight_utils import (
 )
 from sglang.srt.runtime_context import get_parallel
 from sglang.srt.utils import add_prefix, make_layers
-from sglang.utils import get_exception_traceback, logger
+from sglang.utils import logger
 
 
 # Aligned with HF's implementation, using sliding window inclusive with the last token
@@ -675,7 +675,7 @@ class Exaone4ForCausalLM(nn.Module):
 
         except Exception:
             logger.error(
-                f"Error getting weights by name {name} in Exaone4ForCausalLM: {get_exception_traceback()}"
+                "Error getting weights by name <redacted> in Exaone4ForCausalLM: <redacted>"
             )
             return None
 

@@ -47,7 +47,6 @@ from sglang.srt.model_loader.weight_utils import (
 )
 from sglang.srt.runtime_context import get_parallel
 from sglang.srt.utils import add_prefix, make_layers
-from sglang.utils import get_exception_traceback
 
 logger = logging.getLogger(__name__)
 
@@ -595,7 +594,7 @@ class OPTForCausalLM(nn.Module):
 
         except Exception:
             logger.error(
-                f"Error getting weights by name {name} in OPTForCausalLM: {get_exception_traceback()}"
+                "Error getting weights by name <redacted> in OPTForCausalLM: <redacted>"
             )
             return None
 

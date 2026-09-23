@@ -138,15 +138,12 @@ def _register_encoder_url_with_bootstrap():
             )
             if resp.status_code == 200:
                 logger.info(
-                    f"Registered encoder URL '{encoder_url}' with bootstrap "
-                    f"at {bootstrap_url}"
+                    "Registered encoder URL '<redacted>' with bootstrap at <redacted>"
                 )
                 return True
-            logger.warning(
-                f"Bootstrap {bootstrap_url} returned {resp.status_code}: {resp.text}"
-            )
+            logger.warning("Bootstrap <redacted> returned <redacted>: <redacted>")
         except Exception as e:
-            logger.debug(f"Register attempt to {bootstrap_url} failed: {e}")
+            logger.debug("Register attempt to <redacted> failed: <redacted>")
         return False
 
     def _worker():
@@ -160,9 +157,7 @@ def _register_encoder_url_with_bootstrap():
                 retry_count[bootstrap_url] += 1
                 if retry_count[bootstrap_url] >= max_retries:
                     logger.error(
-                        f"Giving up on bootstrap {bootstrap_url} after "
-                        f"{max_retries} attempts. Encoder discovery via this "
-                        f"bootstrap will be incomplete."
+                        "Giving up on bootstrap <redacted> after <redacted> attempts. Encoder discovery via this bootstrap will be incomplete."
                     )
                     continue
                 still_pending.append(bootstrap_url)
@@ -192,16 +187,14 @@ def _unregister_encoder_url_from_bootstrap():
             )
             if resp.status_code == 200:
                 logger.info(
-                    f"Unregistered encoder URL '{encoder_url}' from "
-                    f"bootstrap at {bootstrap_url}"
+                    "Unregistered encoder URL '<redacted>' from bootstrap at <redacted>"
                 )
             else:
                 logger.warning(
-                    f"Bootstrap {bootstrap_url} returned "
-                    f"{resp.status_code} on unregister: {resp.text}"
+                    "Bootstrap <redacted> returned <redacted> on unregister: <redacted>"
                 )
         except Exception as e:
-            logger.debug(f"Unregister from {bootstrap_url} failed: {e}")
+            logger.debug("Unregister from <redacted> failed: <redacted>")
 
 
 def launch_server(server_args: ServerArgs):
@@ -274,13 +267,17 @@ async def _drain_health_encode(
     try:
         result = await asyncio.shield(encode_task)
     except Exception:
-        logger.exception("Encoder health check failed for req_id=%s", req_id)
+        logger.exception(
+            "Encoder health check failed for req_id=<redacted>", exc_info=False
+        )
     finally:
         try:
             await asyncio.shield(health_encoder.release_request(req_id))
         except Exception:
             cleanup_failed = True
-            logger.exception("Encoder health cleanup failed for req_id=%s", req_id)
+            logger.exception(
+                "Encoder health cleanup failed for req_id=<redacted>", exc_info=False
+            )
         finally:
             health_encoder.encode_dispatch_lock.release()
     return None if cleanup_failed else result
@@ -309,7 +306,7 @@ async def handle_encode_request(request: dict):
         except MMError as e:
             # Surface MMError.code (503 when all workers dead) instead of
             # FastAPI's default 500.
-            logger.error(f"DP dispatch refused req_id={req_id}: {e}")
+            logger.error("DP dispatch refused req_id=<redacted>: <redacted>")
             return ORJSONResponse(
                 status_code=int(e.code),
                 content={"status": "error", "message": str(e), "req_id": req_id},
@@ -322,7 +319,7 @@ async def handle_encode_request(request: dict):
                 if error_type == "ValueError"
                 else HTTPStatus.INTERNAL_SERVER_ERROR
             )
-            logger.error(f"DP worker error for req_id={req_id}: {result['_error']}")
+            logger.error("DP worker error for req_id=<redacted>: <redacted>")
             return ORJSONResponse(
                 status_code=status_code,
                 content={
@@ -333,8 +330,7 @@ async def handle_encode_request(request: dict):
             )
         elapsed = time.monotonic() - start_time
         logger.info(
-            f"[{req_id}] /encode completed in {elapsed:.3f}s, "
-            f"modality={request.get('modality', 'image')}"
+            "[<redacted>] /encode completed in <redacted>s, modality=<redacted>"
         )
         content = result.get("content")
         return ORJSONResponse(content=content)
@@ -350,8 +346,7 @@ async def handle_encode_request(request: dict):
         )
         elapsed = time.monotonic() - start_time
         logger.info(
-            f"[{req_id}] /encode completed in {elapsed:.3f}s, "
-            f"modality={request.get('modality', 'image')}"
+            "[<redacted>] /encode completed in <redacted>s, modality=<redacted>"
         )
         return ORJSONResponse(content=content)
     except asyncio.TimeoutError:
@@ -370,7 +365,7 @@ async def handle_encode_request(request: dict):
         )
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"Unexpected error in encoder logic for {req_id}: {error_msg}")
+        logger.error("Unexpected error in encoder logic for <redacted>: <redacted>")
         return ORJSONResponse(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             content={
@@ -390,7 +385,7 @@ async def handle_send_request(request: dict):
         try:
             result = await dp_dispatcher.dispatch_send(request)
         except MMError as e:
-            logger.error(f"DP dispatch_send refused req_id={req_id}: {e}")
+            logger.error("DP dispatch_send refused req_id=<redacted>: <redacted>")
             return Response(
                 content=f"Encoder DP worker send error: {e}",
                 status_code=int(e.code),
@@ -399,9 +394,7 @@ async def handle_send_request(request: dict):
             status_code = result.get("_error_code") or int(
                 HTTPStatus.INTERNAL_SERVER_ERROR
             )
-            logger.error(
-                f"DP worker send error for req_id={req_id}: {result['_error']}"
-            )
+            logger.error("DP worker send error for req_id=<redacted>: <redacted>")
             return Response(
                 content=f"Encoder DP worker send error: {result['_error']}",
                 status_code=status_code,
@@ -415,7 +408,7 @@ async def handle_send_request(request: dict):
             release_without_count=False,
         )
     except Exception as error:
-        logger.error("Mooncake send failed for req_id=%s: %s", req_id, error)
+        logger.error("Mooncake send failed for req_id=<redacted>: <redacted>")
         return ORJSONResponse(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             content={
@@ -465,7 +458,7 @@ async def handle_scheduler_receive_meta_data(request: dict):
         try:
             meta = await server_module.meta_registry.wait(req_id)
         except asyncio.TimeoutError:
-            logger.error(f"[{req_id}] /scheduler_receive_meta_data timed out")
+            logger.error("[<redacted>] /scheduler_receive_meta_data timed out")
             return ORJSONResponse(
                 status_code=HTTPStatus.GATEWAY_TIMEOUT,
                 content={
@@ -631,16 +624,16 @@ async def health_generate():
         _, _, _, error_msg, _ = result
 
         if error_msg:
-            logger.error(f"Encoder health check failed: {error_msg}")
+            logger.error("Encoder health check failed: <redacted>")
             return Response(status_code=503)
 
         return Response(status_code=200)
 
     except asyncio.TimeoutError:
-        logger.error(f"Encoder health check timed out after {HEALTH_CHECK_TIMEOUT}s")
+        logger.error("Encoder health check timed out after <redacted>s")
         return Response(status_code=503)
     except Exception as e:
-        logger.error(f"Encoder health check failed: {e}")
+        logger.error("Encoder health check failed: <redacted>")
         return Response(status_code=503)
     finally:
         if owns_dispatch_lock:

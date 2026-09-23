@@ -460,9 +460,7 @@ def _fused_gate_or_fallback(gate_proj, x, idx, x_up, sorted_indices=False):
         global _fallback_warned
         if not _fallback_warned:
             logger.warning(
-                "Path B: fused gate kernel declined inputs (%s); using the "
-                "unfused gate path for this and matching calls.",
-                e,
+                "Path B: fused gate kernel declined inputs (<redacted>); using the unfused gate path for this and matching calls."
             )
             _fallback_warned = True
         # Reference expression by construction: the same projection call with

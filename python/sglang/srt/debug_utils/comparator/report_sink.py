@@ -43,7 +43,7 @@ class ReportSink:
                 self._report_path = report_path
             except OSError as exc:
                 print(
-                    f"Warning: cannot open report file {report_path}: {exc}",
+                    "Warning: cannot open report file <redacted>: <redacted>",
                     file=sys.stderr,
                 )
 

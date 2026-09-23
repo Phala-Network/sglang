@@ -81,7 +81,9 @@ def load_plugins_by_group(
             plugins[ep.name] = (func, dist_name)
             logger.info("Loaded plugin %s from group %s", ep.name, group)
         except Exception:
-            logger.exception("Failed to load plugin %s from group %s", ep.name, group)
+            logger.exception(
+                "Failed to load plugin <redacted> from group <redacted>", exc_info=False
+            )
 
     return plugins
 
@@ -133,7 +135,9 @@ def load_plugins():
             func()
             logger.info("Executed general plugin: %s", name)
         except Exception:
-            logger.exception("Failed to execute general plugin: %s", name)
+            logger.exception(
+                "Failed to execute general plugin: <redacted>", exc_info=False
+            )
         finally:
             _current_plugin_source.reset(token)
 

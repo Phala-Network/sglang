@@ -184,7 +184,7 @@ class EncoderPreprocessor:
                 **image_processor_kwargs,
             )
         except Exception as e:
-            logger.warning(f"Failed to load image processor: {e}")
+            logger.warning("Failed to load image processor: <redacted>")
             self.image_processor = None
 
         try:
@@ -194,7 +194,7 @@ class EncoderPreprocessor:
                 revision=get_model().revision,
             )
         except Exception as e:
-            logger.warning(f"Failed to load video processor: {e}")
+            logger.warning("Failed to load video processor: <redacted>")
             self.video_processor = None
 
         try:
@@ -212,7 +212,7 @@ class EncoderPreprocessor:
             else:
                 self.audio_processor = _audio_proc
         except Exception as e:
-            logger.warning(f"Failed to load audio processor: {e}")
+            logger.warning("Failed to load audio processor: <redacted>")
             self.audio_processor = None
 
     # ------------------------------------------------------------------

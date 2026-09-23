@@ -94,7 +94,7 @@ class InternlmDetector(BaseFormatDetector):
             logger.warning("[InternLM Tool Call] No complete tool call blocks found")
             return StreamingParseResult(normal_text=text, calls=[])
 
-        logger.info(f"[InternLM Tool Call] Found {len(matches)} tool call(s)")
+        logger.info("[InternLM Tool Call] Found <redacted> tool call(s)")
 
         calls = []
         tool_indices = self._get_tool_indices(tools)
@@ -113,15 +113,13 @@ class InternlmDetector(BaseFormatDetector):
                         parameters = {}
 
                     logger.info(
-                        f"[InternLM Tool Call] Parsed tool call #{idx + 1}: name={name}, "
-                        f"parameters={json.dumps(parameters, ensure_ascii=False)}"
+                        "[InternLM Tool Call] Parsed tool call #<redacted>: name=<redacted>, parameters=<redacted>"
                     )
 
                     # Validate tool name
                     if not (name and name in tool_indices):
                         logger.warning(
-                            f"[InternLM Tool Call] Model attempted to call undefined function: {name}, "
-                            f"available_tools={list(tool_indices.keys())}"
+                            "[InternLM Tool Call] Model attempted to call undefined function: <redacted>, available_tools=<redacted>"
                         )
                         if not envs.SGLANG_FORWARD_UNKNOWN_TOOLS.get():
                             continue  # Skip this tool call
@@ -136,19 +134,19 @@ class InternlmDetector(BaseFormatDetector):
 
                 except json.JSONDecodeError as e:
                     logger.error(
-                        f"[InternLM Tool Call] Failed to parse JSON for tool call #{idx + 1}: {e}"
+                        "[InternLM Tool Call] Failed to parse JSON for tool call #<redacted>: <redacted>"
                     )
                     continue
 
             logger.info(
-                f"[InternLM Tool Call] Successfully parsed {len(calls)} tool call(s), "
-                f"normal_text_length={len(normal_text)}"
+                "[InternLM Tool Call] Successfully parsed <redacted> tool call(s), normal_text_length=<redacted>"
             )
             return StreamingParseResult(normal_text=normal_text, calls=calls)
 
         except Exception as e:
             logger.error(
-                f"[InternLM Tool Call] Error in detect_and_parse: {e}", exc_info=True
+                "[InternLM Tool Call] Error in detect_and_parse: <redacted>",
+                exc_info=False,
             )
             return StreamingParseResult(normal_text=text, calls=[])
 

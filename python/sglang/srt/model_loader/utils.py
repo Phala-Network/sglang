@@ -135,10 +135,7 @@ def resolve_transformers_arch(model_config: ModelConfig, architectures: list[str
             }
         except Exception as e:
             logger.warning(
-                "Failed to load dynamic modules from auto_map for '%s': %s. "
-                "Skipping remote model compatibility checks.",
-                arch,
-                e,
+                "Failed to load dynamic modules from auto_map for '<redacted>': <redacted>. Skipping remote model compatibility checks."
             )
         model_module = getattr(transformers, arch, None)
         if model_module is None:

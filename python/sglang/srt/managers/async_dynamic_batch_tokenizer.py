@@ -118,7 +118,7 @@ class AsyncDynamicbatchTokenizer:
                 await self._process_dynamic_batch(prompts, kwargs_list, result_futures)
 
             except Exception as e:
-                logger.error(f"Error in dynamic batch loop: {e}")
+                logger.error("Error in dynamic batch loop: <redacted>")
                 # Continue the loop to handle other requests
 
     async def _process_dynamic_batch(
@@ -166,7 +166,7 @@ class AsyncDynamicbatchTokenizer:
                     if not fut.done():
                         fut.set_result(res)
         except Exception as e:
-            logger.error(f"Error in dynamic batch processing: {e}")
+            logger.error("Error in dynamic batch processing: <redacted>")
             for fut in result_futures:
                 if not fut.done():
                     fut.set_exception(e)

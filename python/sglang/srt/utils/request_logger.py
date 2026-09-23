@@ -103,12 +103,10 @@ class RequestLogger:
             }
             if headers:
                 log_data["headers"] = headers
-            log_json(self.targets, "request.received", log_data)
+            log_json(self.targets, "request.received", {"redacted": True})
         else:
             headers_str = f", headers={headers}" if headers else ""
-            self._log(
-                f"Receive: obj={_dataclass_to_string_truncated(obj, max_length, skip_names=skip_names)}{headers_str}"
-            )
+            self._log("Receive: obj=<redacted><redacted>")
 
         # FIXME: This is a temporary fix to get the text from the input ids.
         # We should remove this once we have a proper way.
@@ -149,12 +147,10 @@ class RequestLogger:
             }
             if headers:
                 log_data["headers"] = headers
-            log_json(self.targets, "request.received.openai", log_data)
+            log_json(self.targets, "request.received.openai", {"redacted": True})
         else:
             headers_str = f", headers={headers}" if headers else ""
-            self._log(
-                f"Receive OpenAI: obj={_dataclass_to_string_truncated(obj_to_log, max_length)}{headers_str}"
-            )
+            self._log("Receive OpenAI: obj=<redacted><redacted>")
 
     def log_finished_request(
         self,
@@ -181,14 +177,14 @@ class RequestLogger:
             log_data["out"] = _transform_data_for_logging(
                 out, max_length, out_skip_names
             )
-            log_json(self.targets, "request.finished", log_data)
+            log_json(self.targets, "request.finished", {"redacted": True})
         else:
             obj_str = _dataclass_to_string_truncated(
                 obj, max_length, skip_names=skip_names
             )
             out_str = f", out={_dataclass_to_string_truncated(out, max_length, skip_names=out_skip_names)}"
             headers_str = f", headers={headers}" if headers else ""
-            self._log(f"Finish: obj={obj_str}{headers_str}{out_str}")
+            self._log("Finish: obj=<redacted><redacted><redacted>")
 
     def _compute_metadata(
         self,

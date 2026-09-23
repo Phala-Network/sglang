@@ -426,8 +426,8 @@ class MoriKVManager(CommonKVManager):
                 failure_reason = f"transfer worker raised: {exc!r}"
                 try:
                     logger.exception(
-                        "Mori transfer worker failed for room %s",
-                        kv_chunk.room,
+                        "Mori transfer worker failed for room <redacted>",
+                        exc_info=False,
                     )
                 except Exception:
                     pass
@@ -438,8 +438,8 @@ class MoriKVManager(CommonKVManager):
                 except Exception:
                     try:
                         logger.exception(
-                            "Mori transfer worker failover failed for room %s",
-                            kv_chunk.room,
+                            "Mori transfer worker failover failed for room <redacted>",
+                            exc_info=False,
                         )
                     except Exception:
                         pass
@@ -581,7 +581,7 @@ class MoriKVManager(CommonKVManager):
             register_info = KVArgsRegisterInfo.from_zmq(payload)
             self._add_remote_peer(register_info)
         except Exception:
-            logger.exception("Failed to register remote peer")
+            logger.exception("Failed to register remote peer", exc_info=False)
 
     def _handle_transfer_message(self, payload: List[bytes]) -> None:
         try:
@@ -638,7 +638,7 @@ class MoriKVManager(CommonKVManager):
                         )
                     self.update_status(transfer_info.room, KVPoll.WaitingForInput)
         except Exception:
-            logger.exception("Failed to parse transfer info message")
+            logger.exception("Failed to parse transfer info message", exc_info=False)
 
     def _validate_message(self, msg: List[bytes]) -> Optional[List[bytes]]:
         if not msg or msg[0] != MORI_GUARD:
@@ -658,7 +658,7 @@ class MoriKVManager(CommonKVManager):
         try:
             bootstrap_room = int(msg[1].decode("ascii"))
         except (ValueError, UnicodeDecodeError):
-            logger.warning("Malformed ABORT message: invalid room field %r", msg[1])
+            logger.warning("Malformed ABORT message: invalid room field <redacted>")
             return
 
         with self.transfer_lock:
@@ -705,7 +705,7 @@ class MoriKVManager(CommonKVManager):
                     else:
                         self._handle_transfer_message(payload)
                 except Exception:
-                    logger.exception("Bootstrap worker failed")
+                    logger.exception("Bootstrap worker failed", exc_info=False)
 
         threading.Thread(target=bootstrap_worker, daemon=True).start()
 
@@ -732,7 +732,7 @@ class MoriKVManager(CommonKVManager):
                         failure_reason=reason,
                     )
                 except Exception:
-                    logger.exception("Decode status worker failed")
+                    logger.exception("Decode status worker failed", exc_info=False)
 
         threading.Thread(target=decode_worker, daemon=True).start()
 
@@ -1404,7 +1404,7 @@ class MoriKVManager(CommonKVManager):
         data = msg[5]
 
         if len(data) != data_length:
-            logger.error(f"AUX_DATA length mismatch for bootstrap_room {room}")
+            logger.error("AUX_DATA length mismatch for bootstrap_room <redacted>")
             return
 
         AuxDataCodec.deserialize_data_to_buffer(
@@ -1486,8 +1486,8 @@ class MoriKVManager(CommonKVManager):
                     )
         except Exception as e:
             logger.exception(
-                "Mori KV transfer submission failed for bootstrap_room=%s",
-                bootstrap_room,
+                "Mori KV transfer submission failed for bootstrap_room=<redacted>",
+                exc_info=False,
             )
             raise RuntimeError(f"Transfer submission failed: {e}") from e
 

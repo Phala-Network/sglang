@@ -124,8 +124,7 @@ def get_developer_message(
                 # No harmony prompt template for the remaining built-ins;
                 # drop them so the request still runs.
                 logger.debug(
-                    "harmony: ignoring unsupported response tool type %r",
-                    tool.type,
+                    "harmony: ignoring unsupported response tool type <redacted>"
                 )
         if function_tools:
             function_tool_descriptions = [

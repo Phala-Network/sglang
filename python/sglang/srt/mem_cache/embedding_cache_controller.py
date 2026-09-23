@@ -583,15 +583,14 @@ class EmbeddingCacheController:
                         self._lru_touch(mm_hash)
                     else:
                         logger.debug(
-                            f"Req {req_id}: {mm_hash} is FILLING; treating as miss."
+                            "Req <redacted>: <redacted> is FILLING; treating as miss."
                         )
                     continue
 
                 page_runs = self._allocate_with_eviction(pool, int(num_tokens))
                 if page_runs is None:
                     logger.warning(
-                        f"Req {req_id}: Failed to allocate {num_tokens} tokens "
-                        f"in {pool.modality} pool; falling back to encoder."
+                        "Req <redacted>: Failed to allocate <redacted> tokens in <redacted> pool; falling back to encoder."
                     )
                     continue
 
@@ -613,8 +612,7 @@ class EmbeddingCacheController:
                 return
 
             logger.info(
-                f"Req {req_id}: Starting global fetch for {len(keys)} "
-                f"embeddings from Mooncake."
+                "Req <redacted>: Starting global fetch for <redacted> embeddings from Mooncake."
             )
 
             op = EmbeddingPrefetchOperation(req_id, keys, all_ptrs, all_sizes)
@@ -703,12 +701,11 @@ class EmbeddingCacheController:
                         op.keys, op.ptrs, op.sizes
                     )
                 except Exception:
-                    logger.exception("Mooncake multi-buffer GET failed")
+                    logger.exception("Mooncake multi-buffer GET failed", exc_info=False)
                     results = [False] * len(op.keys)
                 success_count = sum(results)
                 logger.info(
-                    f"Mooncake GET Finished: Req {op.req_id}, "
-                    f"Successfully fetched {success_count}/{len(op.keys)} embeddings."
+                    "Mooncake GET Finished: Req <redacted>, Successfully fetched <redacted>/<redacted> embeddings."
                 )
                 self._finish_get(op, results)
                 self.prefetch_queue.task_done()
@@ -723,7 +720,7 @@ class EmbeddingCacheController:
                         op.keys, op.ptrs, op.sizes
                     )
                 except Exception:
-                    logger.exception("Mooncake multi-buffer PUT failed")
+                    logger.exception("Mooncake multi-buffer PUT failed", exc_info=False)
                     results = [False] * len(op.keys)
                 self._finish_put(op, results)
                 logger.info(

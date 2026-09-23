@@ -54,4 +54,4 @@ def maybe_pre_warm_aiter_chip_info() -> None:
             os.environ["GPU_ARCHS"] = gfx
             logger.info("Pre-warmed aiter GPU_ARCHS=%s", gfx)
     except Exception as e:
-        logger.warning("Failed to pre-warm aiter chip info: %s", e)
+        logger.warning("Failed to pre-warm aiter chip info: <redacted>")

@@ -1528,15 +1528,7 @@ class UnifiedSWAKVPool(SWAKVPool):
         self._swa_allocator = None
 
         logger.info(
-            "[unified-memory-pool] UnifiedSWAKVPool wrapped unified buffer: "
-            "full_layers=%d (max_slots=%d), swa_layers=%d (max_slots=%d), "
-            "head_num=%d, head_dim=%d",
-            self.full_layer_nums,
-            unified_buffer.max_slots("full"),
-            self.swa_layer_nums,
-            unified_buffer.max_slots("swa"),
-            self.head_num,
-            self.head_dim,
+            "[unified-memory-pool] UnifiedSWAKVPool wrapped unified buffer: full_layers=<redacted> (max_slots=<redacted>), swa_layers=<redacted> (max_slots=<redacted>), head_num=<redacted>, head_dim=<redacted>"
         )
 
     # -- allocator wiring --

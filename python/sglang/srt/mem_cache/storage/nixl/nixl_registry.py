@@ -101,7 +101,9 @@ class NixlRegistry:
                 try:
                     reg = self.agent.register_memory(reg_descs)
                 except Exception as e:
-                    logger.error(f"Failed to register memory of type {mem_type}: {e}")
+                    logger.error(
+                        "Failed to register memory of type <redacted>: <redacted>"
+                    )
         try:
             yield reg
         finally:
@@ -109,7 +111,7 @@ class NixlRegistry:
                 try:
                     self.agent.deregister_memory(reg)
                 except Exception as e:
-                    logger.debug("deregister_memory skipped: %s", e)
+                    logger.debug("deregister_memory skipped: <redacted>")
 
     def _probe_path_mode(self) -> bool:
         """Probe whether NIXL honours path-mode metaInfo.

@@ -303,7 +303,7 @@ class Gemma4Detector(BaseFormatDetector):
             return StreamingParseResult(normal_text=normal_text, calls=calls)
 
         except (ValueError, IndexError, TypeError, KeyError) as e:
-            logger.error(f"Error in detect_and_parse: {e}", exc_info=True)
+            logger.error("Error in detect_and_parse: <redacted>", exc_info=False)
             return StreamingParseResult(normal_text=text)
 
     def parse_streaming_increment(
@@ -424,7 +424,9 @@ class Gemma4Detector(BaseFormatDetector):
                             break
 
         except (ValueError, IndexError, TypeError, KeyError) as e:
-            logger.error(f"Error in parse_streaming_increment: {e}", exc_info=True)
+            logger.error(
+                "Error in parse_streaming_increment: <redacted>", exc_info=False
+            )
             # Reset parser state to prevent corruption
             self.is_inside_tool_call = False
             self.current_func_name = None

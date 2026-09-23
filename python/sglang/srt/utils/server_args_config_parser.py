@@ -117,7 +117,7 @@ class ConfigArgumentMerger:
             with open(file_path, "r") as file:
                 config_data = yaml.safe_load(file)
         except Exception as e:
-            logger.error(f"Failed to read config file {file_path}: {e}")
+            logger.error("Failed to read config file <redacted>: <redacted>")
             raise
 
         # Handle empty files or None content

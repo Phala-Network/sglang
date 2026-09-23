@@ -106,7 +106,10 @@ class StorageAttachment:
                 storage_backend_extra_config_json
             )
         except Exception as e:
-            logger.exception(f"Failed to parse storage_backend_extra_config_json: {e}")
+            logger.exception(
+                "Failed to parse storage_backend_extra_config_json: <redacted>",
+                exc_info=False,
+            )
             return (
                 False,
                 f"Failed to parse storage_backend_extra_config_json "
@@ -124,7 +127,8 @@ class StorageAttachment:
             )
         except Exception as e:
             logger.exception(
-                f"Failed to attach storage backend '{storage_backend}': {e}"
+                "Failed to attach storage backend '<redacted>': <redacted>",
+                exc_info=False,
             )
             return False, f"Failed to attach storage backend '{storage_backend}': {e}"
 
@@ -167,7 +171,7 @@ class StorageAttachment:
             # partial detach.
             controller.detach_storage_backend()
         except Exception as e:
-            logger.exception("Failed to detach storage backend.")
+            logger.exception("Failed to detach storage backend.", exc_info=False)
             # Never crash the server for an admin operation. The controller raises
             # while its threads are still alive, so leave `ongoing_*` untouched --
             # a retry must still be able to match their acks.
@@ -177,7 +181,9 @@ class StorageAttachment:
             self._release_pending_storage_ops()
             cache.drain_storage_control_queues_local()
         except Exception:
-            logger.exception("Failed post-detach cleanup of storage bookkeeping.")
+            logger.exception(
+                "Failed post-detach cleanup of storage bookkeeping.", exc_info=False
+            )
 
         cache.enable_storage = False
         cache.enable_storage_metrics = False
@@ -193,14 +199,18 @@ class StorageAttachment:
             if self._cache.enable_storage:
                 self.detach()
         except Exception:
-            logger.exception("Failed to detach storage backend on process shutdown.")
+            logger.exception(
+                "Failed to detach storage backend on process shutdown.", exc_info=False
+            )
 
     def clear(self) -> bool:
         """Drop everything the backend has stored, keeping it attached."""
         try:
             ok = self._cache.cache_controller.clear_storage_backend()
         except Exception as e:
-            logger.error("Failed to clear hierarchical cache storage backend: %s", e)
+            logger.error(
+                "Failed to clear hierarchical cache storage backend: <redacted>"
+            )
             return False
         if ok:
             logger.info("Hierarchical cache storage backend cleared successfully!")
@@ -406,7 +416,9 @@ class StorageAttachment:
                     ),
                 )
             except Exception:
-                logger.exception("Failed to release pending prefetch %s", handle.rid)
+                logger.exception(
+                    "Failed to release pending prefetch <redacted>", exc_info=False
+                )
                 cache.ongoing_prefetch.pop(handle, None)
 
         for ack_id in list(cache.ongoing_backup):
@@ -414,7 +426,10 @@ class StorageAttachment:
             try:
                 cache.dec_host_lock_ref(node_id, lock_params)
             except Exception:
-                logger.exception("Failed to release host lock for backup op %s", ack_id)
+                logger.exception(
+                    "Failed to release host lock for backup op <redacted>",
+                    exc_info=False,
+                )
 
         for handle in list(cache._storage_prefetch_hit_remaining_by_reqid):
             cache.discard_storage_prefetch_accounting(handle)

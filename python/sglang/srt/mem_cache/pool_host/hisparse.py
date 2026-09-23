@@ -38,12 +38,7 @@ class HiSparseHostPoolMixin:
             host_locs = self.alloc_page(num_new_pages)
             if host_locs is None:
                 logger.error(
-                    "HiSparse: host mem pool alloc failed for %d host pages "
-                    "(req_pool_idx=%d, start_pos=%d, num_tokens=%d)",
-                    num_new_pages,
-                    req_pool_idx,
-                    start_pos,
-                    num_tokens,
+                    "HiSparse: host mem pool alloc failed for <redacted> host pages (req_pool_idx=<redacted>, start_pos=<redacted>, num_tokens=<redacted>)"
                 )
                 raise RuntimeError(
                     f"HiSparse host mem pool alloc failed for {num_new_pages} pages"

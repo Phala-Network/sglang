@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import math
-import statistics
 import time
 from collections import deque
 from contextlib import contextmanager, nullcontext
@@ -394,18 +393,7 @@ class DsparkInfoDumper:
         rel_err = [abs(p - a) / a * 100 for p, a in self._sps_window if a > 0]
         total = len(self._sps_window) + self._sps_mismatched
         logger.info(
-            "DSpark SPS prediction: n=%d  mean predicted=%.3fms  mean actual=%.3fms  "
-            "MAE=%.3fms  median rel-err=%.1f%%  mean bias(pred-actual)=%+.3fms  "
-            "M_mismatch_rate=%.1f%% (%d/%d)",
-            len(self._sps_window),
-            statistics.fmean(predictions),
-            statistics.fmean(actuals),
-            statistics.fmean(abs_err),
-            statistics.median(rel_err) if rel_err else float("nan"),
-            statistics.fmean([p - a for p, a in self._sps_window]),
-            self._sps_mismatched / total * 100 if total else 0.0,
-            self._sps_mismatched,
-            total,
+            "DSpark SPS prediction: n=<redacted>  mean predicted=<redacted>ms  mean actual=<redacted>ms  MAE=<redacted>ms  median rel-err=<redacted>%  mean bias(pred-actual)=<redacted>ms  M_mismatch_rate=<redacted>% (<redacted>/<redacted>)"
         )
         self._sps_window = []
         self._sps_mismatched = 0

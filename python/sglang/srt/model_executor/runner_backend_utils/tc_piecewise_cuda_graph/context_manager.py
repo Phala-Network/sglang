@@ -59,7 +59,7 @@ def enable_tc_piecewise_cuda_graph():
         msg = PREFILL_CUDA_GRAPH_CAPTURE_FAILED_MSG.format(
             backend=Backend.TC_PIECEWISE, suggestions=TCPCG_FAILURE_HINT
         )
-        logger.error(f"{type(exc).__name__}: {exc}\n{msg}")
+        logger.error("<redacted>: <redacted>\n<redacted>")
         raise
     finally:
         _in_tc_piecewise_cuda_graph = False

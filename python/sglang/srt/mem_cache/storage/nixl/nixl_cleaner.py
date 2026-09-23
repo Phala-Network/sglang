@@ -71,10 +71,10 @@ def _safe_unlink(path: str) -> tuple[bool, int]:
         os.unlink(path)
         return True, size
     except FileNotFoundError:
-        logger.debug("NIXL L3 file already removed before cleanup: %s", path)
+        logger.debug("NIXL L3 file already removed before cleanup: <redacted>")
         return False, 0
     except OSError:
-        logger.debug("Failed to unlink NIXL L3 file %s", path, exc_info=True)
+        logger.debug("Failed to unlink NIXL L3 file <redacted>", exc_info=False)
         return False, 0
 
 
@@ -161,7 +161,7 @@ class HiCacheL3Cleaner:
             try:
                 self._tick()
             except Exception:
-                logger.warning("NIXL L3 cleaner tick failed", exc_info=True)
+                logger.warning("NIXL L3 cleaner tick failed", exc_info=False)
             if self._stop.wait(self.interval_sec):
                 break
 
@@ -228,7 +228,7 @@ class HiCacheL3Cleaner:
         try:
             bucket_entries = list(os.scandir(base_dir))
         except OSError:
-            logger.warning("NIXL L3 cleaner failed to scan %s", base_dir, exc_info=True)
+            logger.warning("NIXL L3 cleaner failed to scan <redacted>", exc_info=False)
             return
 
         for bucket_entry in bucket_entries:
@@ -249,9 +249,7 @@ class HiCacheL3Cleaner:
         try:
             entries = list(os.scandir(bucket_path))
         except OSError:
-            logger.debug(
-                "NIXL L3 cleaner skipped bucket %s", bucket_path, exc_info=True
-            )
+            logger.debug("NIXL L3 cleaner skipped bucket <redacted>", exc_info=False)
             return
 
         for entry in entries:

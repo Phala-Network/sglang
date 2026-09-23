@@ -261,7 +261,7 @@ class BaseGrammarBackend:
         s = time.perf_counter()
         key_type, key_string = key
         if _grammar_key_contains_nul(key_type, key_string):
-            logger.error(f"Rejecting {key_type} grammar containing a NUL byte")
+            logger.error("Rejecting <redacted> grammar containing a NUL byte")
             return InvalidGrammarObject(
                 f"Invalid {key_type}: NUL bytes (\\u0000) are not allowed"
             )
@@ -411,9 +411,7 @@ def create_grammar_backend(
                     f"thinking enabled."
                 ) from e
             logger.warning(
-                f"Grammar backend disabled because tokenizer is not supported by XGrammar: {e}. "
-                "Falling back to grammar_backend='none'. "
-                "Structured outputs (JSON schema, regex, EBNF) will not be available."
+                "Grammar backend disabled because tokenizer is not supported by XGrammar: <redacted>. Falling back to grammar_backend='none'. Structured outputs (JSON schema, regex, EBNF) will not be available."
             )
             get_context().override("grammar.import_fallback", grammar_backend="none")
             return None

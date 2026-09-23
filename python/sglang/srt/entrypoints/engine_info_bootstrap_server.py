@@ -63,12 +63,11 @@ class EngineInfoBootstrapServer:
                     )
 
                 logger.info(
-                    f"Registered transfer engine info for tp_rank={tp_rank}, "
-                    f"session_id={session_id}"
+                    "Registered transfer engine info for tp_rank=<redacted>, session_id=<redacted>"
                 )
                 return PlainTextResponse("OK")
             except Exception as e:
-                logger.error(f"Failed to register engine info: {e}")
+                logger.error("Failed to register engine info: <redacted>")
                 raise HTTPException(status_code=400, detail=str(e))
 
         @app.get("/get_transfer_engine_info")
@@ -99,7 +98,7 @@ class EngineInfoBootstrapServer:
             daemon=True,
         )
         self._thread.start()
-        logger.info(f"EngineInfoBootstrapServer started on {host}:{port}")
+        logger.info("EngineInfoBootstrapServer started on <redacted>:<redacted>")
 
     def close(self):
         self._server.should_exit = True

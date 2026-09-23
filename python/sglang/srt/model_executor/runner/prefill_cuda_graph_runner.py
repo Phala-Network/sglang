@@ -492,18 +492,7 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
             )
             self._prefix_capture_buffers = self._create_chunked_prefix_buffers()
             logger.info(
-                "Full prefill CUDA graph cached-prefix chunks: "
-                "%d aggregate tokens/chunk (%d/request x %d slots), "
-                "variants=%s (%s)",
-                self._prefix_chunk_capacity,
-                self._prefix_chunk_len,
-                self._capture_req_slots,
-                self._prefix_capture_variants,
-                (
-                    "configured"
-                    if prefix_config.full_prefill_prefix_chunk_tokens is not None
-                    else "auto from chunked_prefill_size"
-                ),
+                "Full prefill CUDA graph cached-prefix chunks: <redacted> aggregate tokens/chunk (<redacted>/request x <redacted> slots), variants=<redacted> (<redacted>)"
             )
         if isinstance(self.backend, (BreakableCudaGraphBackend, FullCudaGraphBackend)):
             with torch.device(self.device):

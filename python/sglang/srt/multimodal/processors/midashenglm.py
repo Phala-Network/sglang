@@ -103,8 +103,8 @@ class MiDashengLMMultimodalProcessor(BaseMultimodalProcessor):
         """
         logger.info("=" * 80)
         logger.info("process_mm_data_async called")
-        logger.info(f"audio_data is not None: {audio_data is not None}")
-        logger.info(f"input_text: {input_text}")
+        logger.info("audio_data is not None: <redacted>")
+        logger.info("input_text: <redacted>")
         logger.info("=" * 80)
 
         if audio_data and not self.AUDIO_TOKEN_REGEX.search(input_text):
@@ -125,13 +125,11 @@ class MiDashengLMMultimodalProcessor(BaseMultimodalProcessor):
         )
         logger.info(f"mm_items count: {len(mm_items)}")
         logger.info(f"ret keys: {list(ret.keys())}")
-        logger.info(f"input_ids shape: {input_ids.shape}")
+        logger.info("input_ids shape: <redacted>")
         logger.info(
             f"audio_token_id={self.audio_token_id}, audio_start_id={self.audio_start_id}, audio_end_id={self.audio_end_id}"
         )
-        logger.info(
-            f"Count of audio_token_id in input_ids: {(input_ids == self.audio_token_id).sum().item()}"
-        )
+        logger.info("Count of audio_token_id in input_ids: <redacted>")
         for i, item in enumerate(mm_items):
             logger.info(f"mm_item[{i}] modality: {item.modality}")
             logger.info(

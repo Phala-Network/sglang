@@ -617,7 +617,7 @@ def _log_p2p_op_metrics(
             f"{direction}_nbytes_cross_node={nbytes_cross_node.item()} "
         )
 
-    logger.info(f"[ExpertLocationUpdater] {text}")
+    logger.info("[ExpertLocationUpdater] <redacted>")
 
 
 def _get_direction_from_op(op: P2POp):

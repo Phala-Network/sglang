@@ -49,7 +49,7 @@ def _parse_size_to_bytes(value: Any) -> int:
     try:
         return max(0, human_readable_int(s))
     except (argparse.ArgumentTypeError, ValueError):
-        logger.warning(f"Invalid size {value!r} for HiCacheFile; disabling.")
+        logger.warning("Invalid size <redacted> for HiCacheFile; disabling.")
         return 0
 
 
@@ -351,7 +351,7 @@ class LRUFileEvictor:
             if self._on_evict is not None:
                 self._on_evict(evict_stem)
         except OSError as e:
-            logger.warning(f"HiCacheFile eviction failed for {evict_stem}: {e}")
+            logger.warning("HiCacheFile eviction failed for <redacted>: <redacted>")
             self._lru[evict_stem] = evict_size
             self._lru.move_to_end(evict_stem, last=False)
             return "stop", 0

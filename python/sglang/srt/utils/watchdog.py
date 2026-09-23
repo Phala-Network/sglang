@@ -129,7 +129,7 @@ class WatchdogRaw:
                 self._watchdog_once()
         except Exception as e:
             logger.error(
-                f"{self.debug_name} watchdog thread crashed: {e}", exc_info=True
+                "<redacted> watchdog thread crashed: <redacted>", exc_info=False
             )
 
     def _watchdog_once(self):
@@ -157,26 +157,24 @@ class WatchdogRaw:
                 info_msg = self.dump_info()
             except Exception as e:
                 logger.error(
-                    f"{self.debug_name} failed to dump watchdog debug info: {e}",
-                    exc_info=True,
+                    "<redacted> failed to dump watchdog debug info: <redacted>",
+                    exc_info=False,
                 )
             else:
                 if info_msg:
-                    logger.error(f"{self.debug_name} debug info:\n{info_msg}")
+                    logger.error("<redacted> debug info:\n<redacted>")
 
         try:
             pyspy_dump_schedulers()
         except Exception as e:
             logger.error(
-                f"{self.debug_name} failed to dump scheduler stacks: {e}",
-                exc_info=True,
+                "<redacted> failed to dump scheduler stacks: <redacted>", exc_info=False
             )
 
     def _handle_timeout(self):
         """Handle a detected timeout without letting diagnostics block recovery."""
         logger.error(
-            f"{self.debug_name} watchdog timeout "
-            f"({self.watchdog_timeout=}, {self.soft=})"
+            "<redacted> watchdog timeout (self.watchdog_timeout=<redacted>, self.soft=<redacted>)"
         )
         sys.stderr.flush()
         sys.stdout.flush()
@@ -191,8 +189,8 @@ class WatchdogRaw:
             return
         except psutil.Error as e:
             logger.error(
-                f"{self.debug_name} failed to send SIGQUIT to parent: {e}",
-                exc_info=True,
+                "<redacted> failed to send SIGQUIT to parent: <redacted>",
+                exc_info=False,
             )
 
         try:
@@ -202,14 +200,12 @@ class WatchdogRaw:
             return
         except psutil.TimeoutExpired:
             logger.error(
-                f"{self.debug_name} parent did not exit within "
-                f"{HARD_WATCHDOG_GRACE_SECONDS}s after SIGQUIT; sending SIGKILL"
+                "<redacted> parent did not exit within <redacted>s after SIGQUIT; sending SIGKILL"
             )
         except psutil.Error as e:
             logger.error(
-                f"{self.debug_name} failed while waiting for parent exit: {e}; "
-                "sending SIGKILL",
-                exc_info=True,
+                "<redacted> failed while waiting for parent exit: <redacted>; sending SIGKILL",
+                exc_info=False,
             )
 
         try:
@@ -218,8 +214,8 @@ class WatchdogRaw:
             pass
         except psutil.Error as e:
             logger.error(
-                f"{self.debug_name} failed to send SIGKILL to parent: {e}",
-                exc_info=True,
+                "<redacted> failed to send SIGKILL to parent: <redacted>",
+                exc_info=False,
             )
 
 
@@ -266,7 +262,9 @@ class SubprocessWatchdog:
                 if self._check_processes():
                     return
         except Exception as e:
-            logger.error(f"SubprocessWatchdog thread crashed: {e}", exc_info=True)
+            logger.error(
+                "SubprocessWatchdog thread crashed: <redacted>", exc_info=False
+            )
 
     def _check_processes(self) -> bool:
         for proc, name in zip(self._processes, self._names):
@@ -274,9 +272,7 @@ class SubprocessWatchdog:
                 continue
 
             logger.error(
-                f"Subprocess {name} (pid={proc.pid}) crashed "
-                f"with exit code {proc.exitcode}. "
-                f"Triggering SIGQUIT for cleanup..."
+                "Subprocess <redacted> (pid=<redacted>) crashed with exit code <redacted>. Triggering SIGQUIT for cleanup..."
             )
             os.kill(os.getpid(), signal.SIGQUIT)
             return True

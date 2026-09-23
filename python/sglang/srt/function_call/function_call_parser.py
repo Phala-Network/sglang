@@ -369,5 +369,5 @@ class FunctionCallParser:
                 )
                 return ("json_schema", json_schema)
         except Exception as e:
-            logger.error(f"Error getting structure constraint: {e}")
+            logger.error("Error getting structure constraint: <redacted>")
             return None

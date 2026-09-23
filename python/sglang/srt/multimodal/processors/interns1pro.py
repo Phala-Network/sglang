@@ -103,12 +103,7 @@ class InternS1_1ImageProcessor(QwenVLImageProcessor):
         get_rope_index_time = time.perf_counter()
 
         logger.debug(
-            f"[QwenVLProcessor Perf] {rid=}, "
-            f"load_time: {(load_time - entry_time) * 1000:.2f} ms, "
-            f"preprocess_time: {(preprocess_time - load_time) * 1000:.2f} ms, "
-            f"process_time: {(process_time - preprocess_time) * 1000:.2f} ms, "
-            f"get_rope_index_time: {(get_rope_index_time - process_time) * 1000:.2f} ms, "
-            f"total_time: {(get_rope_index_time - entry_time) * 1000:.2f} ms"
+            "[QwenVLProcessor Perf] rid=<redacted>, load_time: <redacted> ms, preprocess_time: <redacted> ms, process_time: <redacted> ms, get_rope_index_time: <redacted> ms, total_time: <redacted> ms"
         )
 
         return MultimodalProcessorOutput(

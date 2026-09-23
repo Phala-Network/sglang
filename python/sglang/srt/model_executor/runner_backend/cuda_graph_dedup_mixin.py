@@ -313,9 +313,7 @@ class DedupedCudaGraphMixin:
             return None
         except Exception as e:
             logger.warning(
-                "[CudaGraph][dedup] %s init failed (%s); using plain executables.",
-                type(self).__name__,
-                e,
+                "[CudaGraph][dedup] <redacted> init failed (<redacted>); using plain executables."
             )
             return None
 

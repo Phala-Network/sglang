@@ -497,7 +497,7 @@ class ZmqEventPublisher(EventPublisher):
                 try:
                     self._service_replay()
                 except Exception as e:
-                    logger.exception("Error in replay: %s", e)
+                    logger.exception("Error in replay: <redacted>", exc_info=False)
 
             # --- main queue (critical) ---------------------------------
             try:
@@ -519,7 +519,9 @@ class ZmqEventPublisher(EventPublisher):
 
             except Exception as e:
                 # Publishing failed;  back-off a bit to avoid a tight error loop
-                logger.exception("Error in publisher thread: %s", e)
+                logger.exception(
+                    "Error in publisher thread: <redacted>", exc_info=False
+                )
                 time.sleep(0.1)
 
     def _service_replay(self) -> None:

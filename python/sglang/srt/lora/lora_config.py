@@ -104,5 +104,5 @@ class LoRAConfig:
             with open(added_tokens_path, "r") as f:
                 return json.load(f)
         except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse added_tokens.json: {e}")
+            logger.warning("Failed to parse added_tokens.json: <redacted>")
             return None

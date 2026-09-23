@@ -520,7 +520,7 @@ def patch_mistral_common_tokenizer(tokenizer):
             return _orig_convert(val)
         except AssertionError:
             logger.debug(
-                "convert_tokens_to_ids failed for %r, returning unk_token_id", val
+                "convert_tokens_to_ids failed for <redacted>, returning unk_token_id"
             )
             return getattr(tokenizer, "unk_token_id", None)
 
@@ -708,9 +708,7 @@ def patch_mistral_common_tokenizer(tokenizer):
             )
         except Exception as e:
             logger.warning(
-                "Failed to build XGrammar TokenizerInfo for %s: %s",
-                type(tokenizer).__name__,
-                e,
+                "Failed to build XGrammar TokenizerInfo for <redacted>: <redacted>"
             )
             return None, None
         return tokenizer_info, override_stop_tokens

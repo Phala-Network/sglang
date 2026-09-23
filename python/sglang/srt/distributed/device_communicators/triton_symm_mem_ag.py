@@ -548,5 +548,5 @@ class MultimemAllGatherer:
                 return None
             return state
         except Exception as e:
-            logger.warning("multimem all-gather disabled (%s)", e)
+            logger.warning("multimem all-gather disabled (<redacted>)")
             return None

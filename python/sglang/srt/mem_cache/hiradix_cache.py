@@ -305,7 +305,9 @@ class HiRadixCache(RadixCache):
             if self.enable_storage:
                 self.detach_storage_backend()
         except Exception:
-            logger.exception("Failed to detach storage backend on process shutdown.")
+            logger.exception(
+                "Failed to detach storage backend on process shutdown.", exc_info=False
+            )
 
     def _apply_storage_runtime_config(
         self,
@@ -443,7 +445,10 @@ class HiRadixCache(RadixCache):
                 storage_backend_extra_config_json
             )
         except Exception as e:
-            logger.exception(f"Failed to parse storage_backend_extra_config_json: {e}")
+            logger.exception(
+                "Failed to parse storage_backend_extra_config_json: <redacted>",
+                exc_info=False,
+            )
             return (
                 False,
                 f"Failed to parse storage_backend_extra_config_json '{storage_backend_extra_config_json}': {e}",
@@ -459,7 +464,8 @@ class HiRadixCache(RadixCache):
             )
         except Exception as e:
             logger.exception(
-                f"Failed to attach storage backend '{storage_backend}': {e}"
+                "Failed to attach storage backend '<redacted>': <redacted>",
+                exc_info=False,
             )
             return False, f"Failed to attach storage backend '{storage_backend}': {e}"
 
@@ -489,7 +495,7 @@ class HiRadixCache(RadixCache):
             # previous partial detach).
             self.cache_controller.detach_storage_backend()
         except Exception as e:
-            logger.exception("Failed to detach storage backend.")
+            logger.exception("Failed to detach storage backend.", exc_info=False)
             # Do NOT crash the server for admin operations. Return failure with detail.
             return False, f"Failed to detach HiCache storage backend: {e}"
 
@@ -528,14 +534,16 @@ class HiRadixCache(RadixCache):
                         cc.mem_pool_host.free(_operation.host_indices)
                 except Exception:
                     logger.exception(
-                        "Failed to free host indices for prefetch %s", req_id
+                        "Failed to free host indices for prefetch <redacted>",
+                        exc_info=False,
                     )
 
                 try:
                     last_host_node.release_host()
                 except Exception:
                     logger.exception(
-                        "Failed to release host protection for prefetch %s", req_id
+                        "Failed to release host protection for prefetch <redacted>",
+                        exc_info=False,
                     )
 
                 try:
@@ -547,7 +555,9 @@ class HiRadixCache(RadixCache):
 
                 self.ongoing_prefetch.pop(req_id, None)
         except Exception:
-            logger.exception("Force release pending prefetch ops failed.")
+            logger.exception(
+                "Force release pending prefetch ops failed.", exc_info=False
+            )
 
         # Force release leftover backup ops: drop host protection on nodes.
         try:
@@ -556,11 +566,12 @@ class HiRadixCache(RadixCache):
                     node.release_host()
                 except Exception:
                     logger.exception(
-                        "Failed to release host protection for backup op %s", ack_id
+                        "Failed to release host protection for backup op <redacted>",
+                        exc_info=False,
                     )
                 self.ongoing_backup.pop(ack_id, None)
         except Exception:
-            logger.exception("Force release pending backup ops failed.")
+            logger.exception("Force release pending backup ops failed.", exc_info=False)
 
     def _drain_storage_control_queues_local(self):
         """Drain storage control queues without TP synchronization.
@@ -623,7 +634,7 @@ class HiRadixCache(RadixCache):
                     # not to prefetch if not enough benefits
                     self._revoke_pending_prefetch(req_id)
                     logger.debug(
-                        f"Revoking prefetch for request {req_id} due to insufficient hits ({operation.storage_hit_count})."
+                        "Revoking prefetch for request <redacted> due to insufficient hits (<redacted>)."
                     )
                     continue
 
@@ -644,7 +655,7 @@ class HiRadixCache(RadixCache):
                 if host_indices is None:
                     self._revoke_pending_prefetch(req_id)
                     logger.debug(
-                        f"Revoking prefetch for request {req_id} due to host memory allocation failure."
+                        "Revoking prefetch for request <redacted> due to host memory allocation failure."
                     )
                     continue
 
@@ -737,7 +748,7 @@ class HiRadixCache(RadixCache):
                     # read config from JSON string
                     extra_config = json.loads(storage_backend_extra_config)
             except Exception as e:
-                logger.error(f"Invalid backend extra config JSON: {e}")
+                logger.error("Invalid backend extra config JSON: <redacted>")
                 raise e
 
         defaults = PrefetchTimeoutConfig()
@@ -848,7 +859,9 @@ class HiRadixCache(RadixCache):
                     )
                     return False
             except Exception as e:
-                logger.error(f"Failed to clear hierarchical cache storage backend: {e}")
+                logger.error(
+                    "Failed to clear hierarchical cache storage backend: <redacted>"
+                )
                 return False
         else:
             logger.warning("Hierarchical cache storage backend is not enabled.")
@@ -1675,9 +1688,7 @@ class HiRadixCache(RadixCache):
         # All PP/TP ranks will get the same `min_completed_tokens`, because `completed_tokens`
         # and `pool_hits` in their operations are same.  No need to sync cross-rank here.
         min_completed_tokens = self._clamp_prefetch_result(operation)
-        logger.debug(
-            f"Prefetch {req_id} completed with {operation.completed_tokens} tokens"
-        )
+        logger.debug("Prefetch <redacted> completed with <redacted> tokens")
         last_host_node, prefetch_key, operation = self.ongoing_prefetch.pop(req_id)
         host_indices = operation.host_indices
         fetched_key = prefetch_key[:min_completed_tokens]

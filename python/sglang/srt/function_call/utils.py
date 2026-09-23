@@ -548,7 +548,7 @@ def coerce_argument_to_schema(raw_value: str, schema: dict) -> Tuple[Any, bool]:
             if validator.is_valid(candidate)
         ]
     except Exception:
-        logger.debug("Unable to validate tool argument schema", exc_info=True)
+        logger.debug("Unable to validate tool argument schema", exc_info=False)
         return raw_value, False
 
     if not valid_candidates:

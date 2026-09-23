@@ -710,7 +710,7 @@ class NixlKVManager(StagingManagerMixin, CommonKVManager):
                     elif state != "DONE":
                         all_settled = False
             except Exception as e:
-                logger.warning(f"Failed to read NIXL transfer state: {e}")
+                logger.warning("Failed to read NIXL transfer state: <redacted>")
                 return False, True
             if all_settled:
                 return True, any_failed
@@ -1465,10 +1465,13 @@ class NixlKVManager(StagingManagerMixin, CommonKVManager):
                 # Catch all exceptions to prevent silently killing this
                 # worker thread, but still propagate via failure_exception().
                 if isinstance(e, _NIXL_TRANSPORT_ERRORS):
-                    logger.warning(f"NIXL transport error for room {room}: {e}")
+                    logger.warning(
+                        "NIXL transport error for room <redacted>: <redacted>"
+                    )
                 else:
                     logger.exception(
-                        f"Unexpected transfer worker error for room {room}"
+                        "Unexpected transfer worker error for room <redacted>",
+                        exc_info=False,
                     )
                 self.exceptions[room] = e
                 # An exception raised while the batch was still being built
@@ -1739,7 +1742,7 @@ class NixlKVManager(StagingManagerMixin, CommonKVManager):
         )
 
         logger.debug(
-            f"len(src_addrs): before group: {len(prefill_data_indices)}, after group: {len(src_addrs)}"
+            "len(src_addrs): before group: <redacted>, after group: <redacted>"
         )
         src_descs = self.agent.get_xfer_descs(src_reqs, src_mem_kind)
         dst_descs = self.agent.get_xfer_descs(dst_reqs, dst_mem_kind)
@@ -2923,7 +2926,7 @@ class NixlKVManager(StagingManagerMixin, CommonKVManager):
             decode_ip = msg[2].decode("ascii") if len(msg) > 2 else None
             decode_port = int(msg[3].decode("ascii")) if len(msg) > 3 else None
         except Exception as e:
-            logger.debug(f"Ignoring malformed abort notification: {e}")
+            logger.debug("Ignoring malformed abort notification: <redacted>")
             return True
 
         room_active = (
@@ -2968,9 +2971,7 @@ class NixlKVManager(StagingManagerMixin, CommonKVManager):
             """This thread recvs transfer info from the decode engine"""
             while True:
                 waiting_req_bytes = self.server_socket.recv_multipart()
-                logger.debug(
-                    f"Received multipart with total byte size {sum(len(x) for x in waiting_req_bytes)}"
-                )
+                logger.debug("Received multipart with total byte size <redacted>")
 
                 # Staging: decode reports consumption watermark back to prefill
                 if waiting_req_bytes[0] == b"WATERMARK":
@@ -3170,7 +3171,7 @@ class NixlKVReceiver(CommonKVReceiver):
     ):
         if self.bootstrap_infos is None:
             logger.error(
-                f"Could not fetch prefill parallel info from bootstrap_addr: {self.bootstrap_addr}",
+                "Could not fetch prefill parallel info from bootstrap_addr: <redacted>"
             )
             self.kv_mgr.update_status(self.bootstrap_room, KVPoll.Failed)
             return
@@ -3187,7 +3188,7 @@ class NixlKVReceiver(CommonKVReceiver):
 
         for bootstrap_info in self.bootstrap_infos:
             logger.debug(
-                f"Fetched bootstrap info: {bootstrap_info} for engine rank: {self.kv_mgr.kv_args.engine_rank}"
+                "Fetched bootstrap info: <redacted> for engine rank: <redacted>"
             )
             is_dummy = bootstrap_info["is_dummy"]
             logger.debug(

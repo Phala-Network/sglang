@@ -514,10 +514,7 @@ class HiCacheController:
 
         alive = [t for t in threads if getattr(t, "is_alive", lambda: False)()]
         if alive:
-            logger.error(
-                "Failed to stop HiCache storage threads cleanly: %s",
-                [getattr(t, "name", repr(t)) for t in alive],
-            )
+            logger.error("Failed to stop HiCache storage threads cleanly: <redacted>")
             raise RuntimeError("Failed to stop HiCache storage threads cleanly.")
 
     def attach_storage_backend(
@@ -656,7 +653,7 @@ class HiCacheController:
             # Do not proceed tearing down backend/process group if threads are not
             # fully stopped; otherwise still-alive threads may touch released state.
             # Caller can retry detach.
-            logger.exception("Stop storage threads failed: %s", e)
+            logger.exception("Stop storage threads failed: <redacted>", exc_info=False)
             # IMPORTANT: Do not silently succeed. Upper layers rely on exceptions here
             # to avoid flipping `enable_storage` flags while threads are still alive.
             raise RuntimeError("Stop storage threads failed; detach aborted.") from e
@@ -677,7 +674,7 @@ class HiCacheController:
             ):
                 self.storage_backend.close()
         except Exception:
-            logger.exception("Failed to close storage backend cleanly.")
+            logger.exception("Failed to close storage backend cleanly.", exc_info=False)
 
         self.storage_backend = None
         self.storage_backend_type = None
@@ -1035,7 +1032,7 @@ class HiCacheController:
         for i in range(len(hash_values)):
             if not results[i]:
                 logger.warning(
-                    f"Prefetch operation {operation.request_id} failed to retrieve page {hash_values[i]}."
+                    "Prefetch operation <redacted> failed to retrieve page <redacted>."
                 )
                 break
             inc += 1
@@ -1055,7 +1052,7 @@ class HiCacheController:
         for i in range(len(hash_values)):
             if page_data[i] is None:
                 logger.warning(
-                    f"Prefetch operation {operation.request_id} failed to retrieve page {hash_values[i]}."
+                    "Prefetch operation <redacted> failed to retrieve page <redacted>."
                 )
                 break
             if operation.is_terminated():

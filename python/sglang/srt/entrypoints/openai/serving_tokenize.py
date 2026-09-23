@@ -82,7 +82,7 @@ class OpenAIServingTokenize(OpenAIServingBase):
         except ValueError as e:
             return self.create_error_response(str(e))
         except Exception as e:
-            logger.error("Error during tokenization", exc_info=True)
+            logger.error("Error during tokenization", exc_info=False)
             return self.create_error_response(
                 f"Internal server error during tokenization: {e}",
                 err_type="InternalServerError",
@@ -180,7 +180,7 @@ class OpenAIServingDetokenize(OpenAIServingBase):
 
             return DetokenizeResponse(text=text_out)
         except Exception as e:
-            logger.error("Error during detokenization", exc_info=True)
+            logger.error("Error during detokenization", exc_info=False)
             if "decode" in str(e).lower():
                 return self.create_error_response(
                     f"Error decoding tokens: {e}. Input tokens might be invalid for the model.",

@@ -196,16 +196,7 @@ class DeepEPv2Buffer:
         state.buffer = buffer
         state.key = key
         logger.info(
-            "Initialized DeepEP v2 ElasticBuffer: world_size=%s hidden_size=%s "
-            "num_topk=%s max_dispatch_tokens_per_rank=%s use_fp8_dispatch=%s "
-            "allow_hybrid_mode=%s num_bytes=%s",
-            dist.get_world_size(group),
-            hidden_size,
-            router_topk,
-            num_max_dispatch_tokens_per_rank,
-            use_fp8_dispatch,
-            allow_hybrid_mode,
-            buffer.num_bytes,
+            "Initialized DeepEP v2 ElasticBuffer: world_size=<redacted> hidden_size=<redacted> num_topk=<redacted> max_dispatch_tokens_per_rank=<redacted> use_fp8_dispatch=<redacted> allow_hybrid_mode=<redacted> num_bytes=<redacted>"
         )
         return buffer
 

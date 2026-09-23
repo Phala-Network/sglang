@@ -21,7 +21,9 @@ def import_processors(package_name: str, overwrite: bool = False):
             try:
                 module = importlib.import_module(name)
             except Exception as e:
-                logger.warning(f"Ignore import error when loading {name}: {e}")
+                logger.warning(
+                    "Ignore import error when loading <redacted>: <redacted>"
+                )
                 continue
             all_members = inspect.getmembers(module, inspect.isclass)
             classes = [

@@ -55,12 +55,5 @@ class PeriodicCanaryStatsLogger:
 
     def _postprocess_on_host(self, host_data: dict[str, Any]) -> None:
         logger.info(
-            "[canary] step=%d protected_tokens=%d sweep_passes=%d violations=%d "
-            "launch_tags_active=%d/%d",
-            int(host_data["step"]),
-            int(host_data["slot_sum"].item()),
-            self._sweep_orchestrator.sweep_passes,
-            int(host_data["write_index"].item()),
-            len(self._active_tags),
-            len(CanaryLaunchTag),
+            "[canary] step=<redacted> protected_tokens=<redacted> sweep_passes=<redacted> violations=<redacted> launch_tags_active=<redacted>/<redacted>"
         )

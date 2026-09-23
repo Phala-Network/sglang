@@ -122,7 +122,7 @@ class OpenAIServingClassify(OpenAIServingBase):
                 return {i: f"LABEL_{i}" for i in range(num_labels)}
 
         except Exception as e:
-            logger.warning(f"Failed to get id2label mapping: {e}")
+            logger.warning("Failed to get id2label mapping: <redacted>")
 
         return None
 
@@ -172,7 +172,9 @@ class OpenAIServingClassify(OpenAIServingBase):
                     label = self.id2label[predicted_class]
 
                 except Exception as e:
-                    logger.error(f"Error processing embedding for item {i}: {e}")
+                    logger.error(
+                        "Error processing embedding for item <redacted>: <redacted>"
+                    )
                     probs = [1.0]
                     label = "Default"
             else:

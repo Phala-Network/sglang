@@ -149,6 +149,6 @@ class SGLangCheckpointEngineWorkerExtensionImpl(SGLangCheckpointEngineWorkerExte
                 if hasattr(self.model_runner.model, "post_load_weights"):
                     self.model_runner.model.post_load_weights()
             except Exception as e:
-                logger.warning(f"Post-hook processing failed: {e}")
+                logger.warning("Post-hook processing failed: <redacted>")
 
         return post_hook

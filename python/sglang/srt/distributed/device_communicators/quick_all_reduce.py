@@ -34,7 +34,7 @@ def qr_rocm_arch_available():
         supported_archs = ["gfx94", "gfx95"]
         return any(gfx in gcn_arch for gfx in supported_archs)
     except Exception as e:
-        logger.warning("Failed to determine ROCm for quick allreduce: %s", e)
+        logger.warning("Failed to determine ROCm for quick allreduce: <redacted>")
         return False
 
 

@@ -196,8 +196,7 @@ class EncoderScheduler:
             # Free anything the abandoned batch may still stage for this rid.
             await self.encoder.release_request(req_id)
             logger.error(
-                f"EncoderScheduler.submit timed out after {self.request_timeout}s "
-                f"for req_id={req_id}"
+                "EncoderScheduler.submit timed out after <redacted>s for req_id=<redacted>"
             )
             raise
 
@@ -240,7 +239,7 @@ class EncoderScheduler:
                 raise
             except Exception as e:
                 logger.error(
-                    f"Error in EncoderScheduler batch worker: {e}", exc_info=True
+                    "Error in EncoderScheduler batch worker: <redacted>", exc_info=False
                 )
                 for p in batch:
                     if not p.future.done():
@@ -273,7 +272,7 @@ class EncoderScheduler:
             if err is None:
                 valid.append(p)
                 continue
-            logger.error(f"Dropping req_id={p.request.get('req_id')} from batch: {err}")
+            logger.error("Dropping req_id=<redacted> from batch: <redacted>")
             if not p.future.done():
                 p.future.set_exception(server_module.BadRequestError(err))
         if not valid:
@@ -321,7 +320,7 @@ class EncoderScheduler:
             # If it raised, rank-0 may have skipped a collective broadcast, leaving
             # TP workers stuck. Don't try to recover — fail every pending future
             # and let the client retry. Re-broadcasting would risk a deadlock.
-            logger.error(f"batch_encode raised: {e}", exc_info=True)
+            logger.error("batch_encode raised: <redacted>", exc_info=False)
             for p in group:
                 if not p.future.done():
                     p.future.set_exception(e)
@@ -331,7 +330,7 @@ class EncoderScheduler:
             err = RuntimeError(
                 f"batch_encode returned {len(results)} results for {len(group)} requests"
             )
-            logger.error(str(err))
+            logger.error("Request-path diagnostic redacted")
             for p in group:
                 if not p.future.done():
                     p.future.set_exception(err)
@@ -389,7 +388,7 @@ class EncoderScheduler:
                     p.future.set_result(result)
             except Exception as e:
                 logger.error(
-                    f"Per-request encode failed for req_id={req.get('req_id')}: {e}"
+                    "Per-request encode failed for req_id=<redacted>: <redacted>"
                 )
                 if not p.future.done():
                     p.future.set_exception(e)
@@ -522,9 +521,8 @@ class DPDispatcher:
                 )
             except Exception:
                 logger.exception(
-                    "Failed to retire abandoned encoder DP request %s on rank %s",
-                    req_id,
-                    rank,
+                    "Failed to retire abandoned encoder DP request <redacted> on rank <redacted>",
+                    exc_info=False,
                 )
 
         task = asyncio.create_task(notify_worker())
@@ -618,9 +616,7 @@ class DPDispatcher:
         self._update_pending_gauge()
         dispatched = False
         logger.info(
-            f"MM-Encoder DP dispatch: req_id={req_id}, "
-            f"modality={request.get('modality', 'image')}, "
-            f"dp_rank={rank}, pending={self.pending_counts}"
+            "MM-Encoder DP dispatch: req_id=<redacted>, modality=<redacted>, dp_rank=<redacted>, pending=<redacted>"
         )
 
         try:
@@ -802,8 +798,7 @@ class DPDispatcher:
         rank = self.req_id_to_rank.get(req_id)
         if rank is None:
             logger.warning(
-                f"MM-Encoder dispatch_send: unknown req_id={req_id}, "
-                f"cannot route to worker"
+                "MM-Encoder dispatch_send: unknown req_id=<redacted>, cannot route to worker"
             )
             return {"req_id": req_id, "_error": f"Unknown req_id: {req_id}"}
         if rank in self._dead_ranks:
@@ -821,8 +816,7 @@ class DPDispatcher:
         request["_dp_type"] = "send"
         request["_dp_send_key"] = key
         logger.info(
-            f"MM-Encoder DP dispatch_send: req_id={req_id}, "
-            f"dp_rank={rank}, send_key={key}, pending={self.pending_counts}"
+            "MM-Encoder DP dispatch_send: req_id=<redacted>, dp_rank=<redacted>, send_key=<redacted>, pending=<redacted>"
         )
         try:
             await async_sock_send(self.dispatch_sockets[rank], wrap_as_pickle(request))
@@ -938,8 +932,7 @@ class DPDispatcher:
                 rank = fut.result()
                 proc = self.worker_processes[rank]
                 logger.error(
-                    f"DP worker rank={rank} (pid={proc.pid}) exited "
-                    f"with code={proc.exitcode}; failing pending requests"
+                    "DP worker rank=<redacted> (pid=<redacted>) exited with code=<redacted>; failing pending requests"
                 )
                 self._dead_ranks.add(rank)
                 reason = f"DP worker rank={rank} died (exitcode={proc.exitcode})"
@@ -961,7 +954,7 @@ class DPDispatcher:
                 raise
             except Exception:
                 consecutive_errors += 1
-                logger.error("_result_listener recv error", exc_info=True)
+                logger.error("_result_listener recv error", exc_info=False)
                 if consecutive_errors >= 30:
                     logger.error(
                         "_result_listener giving up after 30 consecutive errors"
@@ -976,8 +969,7 @@ class DPDispatcher:
                 continue
             if not isinstance(msg, dict):
                 logger.error(
-                    "_result_listener received a non-dict envelope (%s); dropping",
-                    type(msg).__name__,
+                    "_result_listener received a non-dict envelope (<redacted>); dropping"
                 )
                 continue
             req_id = msg.get("req_id", "")
@@ -988,24 +980,21 @@ class DPDispatcher:
                     # Workers always echo the key; never fall back to req_id,
                     # which would wrongly resolve the encode future.
                     logger.warning(
-                        f"_result_listener: send envelope without _dp_send_key "
-                        f"for req_id={req_id}, dropping"
+                        "_result_listener: send envelope without _dp_send_key for req_id=<redacted>, dropping"
                     )
                     continue
             elif dp_type == "register_destinations":
                 key = msg.get("_dp_register_key")
                 if key is None:
                     logger.warning(
-                        f"_result_listener: URL registration envelope without "
-                        f"_dp_register_key for req_id={req_id}, dropping"
+                        "_result_listener: URL registration envelope without _dp_register_key for req_id=<redacted>, dropping"
                     )
                     continue
             elif dp_type == "wait_metadata":
                 key = msg.get("_dp_metadata_key")
                 if key is None:
                     logger.warning(
-                        f"_result_listener: metadata envelope without "
-                        f"_dp_metadata_key for req_id={req_id}, dropping"
+                        "_result_listener: metadata envelope without _dp_metadata_key for req_id=<redacted>, dropping"
                     )
                     continue
             else:
@@ -1013,8 +1002,7 @@ class DPDispatcher:
             rank = self.req_id_to_rank.get(req_id)
             if rank is None or key not in self.pending_futures[rank]:
                 logger.warning(
-                    f"_result_listener: no pending future for "
-                    f"req_id={req_id}, dp_type={dp_type}, key={key}, dropping"
+                    "_result_listener: no pending future for req_id=<redacted>, dp_type=<redacted>, key=<redacted>, dropping"
                 )
                 continue
             future = self.pending_futures[rank].pop(key)
@@ -1049,8 +1037,7 @@ class DPDispatcher:
 
             except asyncio.InvalidStateError:
                 logger.warning(
-                    f"_result_listener: future already done for "
-                    f"req_id={req_id}, dp_type={dp_type}, key={key}"
+                    "_result_listener: future already done for req_id=<redacted>, dp_type=<redacted>, key=<redacted>"
                 )
 
             if dp_type == "register_destinations":
@@ -1182,7 +1169,8 @@ async def send_staged_embedding(
                 error.add_note(f"Failed to release encoder request: {cleanup_error}")
             else:
                 logger.exception(
-                    "Failed to release encoder request %s after send failure", req_id
+                    "Failed to release encoder request <redacted> after send failure",
+                    exc_info=False,
                 )
         raise
 
@@ -1200,7 +1188,9 @@ async def _publish_pipeline_error(req_id: str, error_msg: str) -> bool:
         await server_module.meta_registry.publish(req_id, 0, 0, 0, error=error_msg)
         return True
     except Exception:
-        logger.exception("Failed to publish encoder error for req_id=%s", req_id)
+        logger.exception(
+            "Failed to publish encoder error for req_id=<redacted>", exc_info=False
+        )
         return False
 
 
@@ -1214,7 +1204,9 @@ async def _release_failed_request(
     try:
         await enc.release_request(req_id, preserve_metadata=preserve_metadata)
     except Exception:
-        logger.exception("Failed to release encoder resources for req_id=%s", req_id)
+        logger.exception(
+            "Failed to release encoder resources for req_id=<redacted>", exc_info=False
+        )
 
 
 async def _run_dispatched_encode(
@@ -1296,7 +1288,9 @@ async def execute_encode_pipeline(
         try:
             await asyncio.shield(enc.release_request(req_id))
         except Exception:
-            logger.exception("Failed to release cancelled encoder request %s", req_id)
+            logger.exception(
+                "Failed to release cancelled encoder request <redacted>", exc_info=False
+            )
         _record_pipeline_result(modality, "error")
         raise
     except asyncio.TimeoutError:
@@ -1341,8 +1335,8 @@ async def execute_encode_pipeline(
                 )
             except Exception as send_err:
                 logger.error(
-                    f"Error-send failed for req_id={req_id}: {send_err}",
-                    exc_info=True,
+                    "Error-send failed for req_id=<redacted>: <redacted>",
+                    exc_info=False,
                 )
                 await _release_failed_request(enc, req_id)
         _record_pipeline_result(modality, "error")
@@ -1487,10 +1481,7 @@ async def _dp_worker_handle_request(
             content = await execute_encode_pipeline(enc, sched, request)
 
         logger.info(
-            f"MM-Encoder [dp_rank={dp_rank}] {dp_type} done: "
-            f"req_id={request.get('req_id', '?')}, "
-            f"modality={request.get('modality', 'image')}, "
-            f"cost={(time.time() - t0) * 1000:.1f}ms"
+            "MM-Encoder [dp_rank=<redacted>] <redacted> done: req_id=<redacted>, modality=<redacted>, cost=<redacted>ms"
         )
         envelope = {
             "req_id": request.get("req_id", ""),
@@ -1508,9 +1499,8 @@ async def _dp_worker_handle_request(
             envelope["_dp_metadata_key"] = request["_dp_metadata_key"]
     except Exception as e:
         logger.error(
-            f"DP worker {dp_rank} error on {dp_type} "
-            f"req_id={request.get('req_id', '?')}: {e}",
-            exc_info=True,
+            "DP worker <redacted> error on <redacted> req_id=<redacted>: <redacted>",
+            exc_info=False,
         )
         # Only MMError carries an HTTP status in this protocol. Third-party
         # exceptions may expose a callable ``code`` attribute (for example
@@ -1542,9 +1532,8 @@ async def _dp_worker_handle_request(
             await async_sock_send(send_sock, wrap_as_pickle(envelope))
     except Exception:
         logger.error(
-            f"DP worker {dp_rank} failed to send envelope for "
-            f"req_id={request.get('req_id', '?')}",
-            exc_info=True,
+            "DP worker <redacted> failed to send envelope for req_id=<redacted>",
+            exc_info=False,
         )
 
 
@@ -1560,7 +1549,9 @@ async def _retire_abandoned_encode(
         else:
             await enc.release_request(req_id)
     except Exception:
-        logger.exception("Failed to release abandoned encoder DP request %s", req_id)
+        logger.exception(
+            "Failed to release abandoned encoder DP request <redacted>", exc_info=False
+        )
 
 
 async def run_dp_worker(
@@ -1626,10 +1617,10 @@ async def run_dp_worker(
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.error(f"DP worker {dp_rank} release recv error", exc_info=True)
+                logger.error("DP worker <redacted> release recv error", exc_info=False)
                 continue
             if not isinstance(request, dict) or not request.get("req_id"):
-                logger.error(f"DP worker {dp_rank} received malformed release request")
+                logger.error("DP worker <redacted> received malformed release request")
                 continue
             req_id = request["req_id"]
             task = asyncio.create_task(
@@ -1662,12 +1653,11 @@ async def run_dp_worker(
                 except asyncio.CancelledError:
                     raise
                 except Exception:
-                    logger.error(f"DP worker {dp_rank} recv error", exc_info=True)
+                    logger.error("DP worker <redacted> recv error", exc_info=False)
                     continue
                 if not isinstance(request, dict):
                     logger.error(
-                        f"DP worker {dp_rank} received non-dict request "
-                        f"({type(request).__name__}); dropping"
+                        "DP worker <redacted> received non-dict request (<redacted>); dropping"
                     )
                     continue
                 dp_type = request.pop("_dp_type", "encode")
@@ -1733,9 +1723,11 @@ def launch_dp_worker(
             )
         )
     except KeyboardInterrupt:
-        logger.info(f"DP worker {dp_rank} exiting")
+        logger.info("DP worker <redacted> exiting")
     except Exception:
-        traceback.print_exc()
+        traceback.print_exception(
+            RuntimeError("Exception details redacted"), chain=False
+        )
 
 
 def launch_local_runtime(server_args: ServerArgs) -> EncoderRuntime:

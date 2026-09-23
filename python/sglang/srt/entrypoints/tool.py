@@ -54,7 +54,7 @@ class HarmonyBrowserTool(Tool):
             args = orjson.loads(last_msg.content[0].text)
             result_text = await self._dispatch_browser_call(context, recipient, args)
         except Exception as exc:
-            logger.exception("Browser tool call failed")
+            logger.exception("Browser tool call failed", exc_info=False)
             result_text = f"Browser tool call failed: {exc}"
 
         content = TextContent(text=result_text)
@@ -101,7 +101,7 @@ class HarmonyBrowserTool(Tool):
         results = data.get("results") or []
         request_id = data.get("requestId")
         if request_id:
-            logger.debug("Exa search request id: %s", request_id)
+            logger.debug("Exa search request id: <redacted>")
         lines = [f"Search results for: {query}"]
         lines.append("Use browser.open with the cursor number to inspect a result.")
 

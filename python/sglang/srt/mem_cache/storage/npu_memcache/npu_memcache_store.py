@@ -71,7 +71,7 @@ class NpuMemcacheConfig:
                 logger.info("Memcache configuration loaded from %s", path)
             except Exception as exc:
                 logger.warning(
-                    "Failed to load memcache configuration from %s: %s", path, exc
+                    "Failed to load memcache configuration from <redacted>: <redacted>"
                 )
 
         extra = getattr(storage_config, "extra_config", None) or {}
@@ -129,7 +129,7 @@ def _resolve_memcache_device_id(
         try:
             device_config = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
-            logger.warning("Failed to parse device_id as JSON: %s", raw)
+            logger.warning("Failed to parse device_id as JSON: <redacted>")
             device_config = None
 
     if isinstance(device_config, dict):
@@ -224,10 +224,10 @@ class NpuMemcacheStore(HiCacheStorage):
             self._init_runtime_fields(storage_config)
 
         except ValueError as e:
-            logger.error("Ascend MemCache configuration failed: %s", e)
+            logger.error("Ascend MemCache configuration failed: <redacted>")
             raise
         except Exception as exc:
-            logger.error("Ascend MemCache store initialization failed: %s", exc)
+            logger.error("Ascend MemCache store initialization failed: <redacted>")
             raise
 
     def _init_runtime_fields(
@@ -288,7 +288,7 @@ class NpuMemcacheStore(HiCacheStorage):
         size = tensor.numel() * tensor.element_size()
         ret_code = self.store.register_buffer(ptr, size)
         if ret_code != 0:
-            logger.error("Failed to register buffer, error code: %s", ret_code)
+            logger.error("Failed to register buffer, error code: <redacted>")
             raise RuntimeError(
                 f"Failed to register buffer to Ascend MemCache, error code: {ret_code}"
             )
@@ -311,9 +311,7 @@ class NpuMemcacheStore(HiCacheStorage):
             except Exception:
                 pass
             logger.debug(
-                "Waiting for Memcache metrics endpoint at %s (%.1fs elapsed).",
-                url,
-                time.perf_counter() - start,
+                "Waiting for Memcache metrics endpoint at <redacted> (<redacted>s elapsed)."
             )
             time.sleep(3)
 
@@ -360,7 +358,9 @@ class NpuMemcacheStore(HiCacheStorage):
                 ):
                     self.register_buffer(self.mem_pool_host.index_k_scale_buffer)
         except TypeError as err:
-            logger.error("Failed to register buffer to Ascend MemCache Store: %s", err)
+            logger.error(
+                "Failed to register buffer to Ascend MemCache Store: <redacted>"
+            )
             raise TypeError("Ascend MemCache Store Register Buffer Error.") from err
 
         if envs.SGLANG_NPU_MEMCACHE_ENABLE_WARMUP.get():
@@ -906,7 +906,7 @@ class NpuMemcacheStore(HiCacheStorage):
         try:
             self.store.close()
         except Exception as e:
-            logger.warning("Ascend MemCache store.close failed: %s", e)
+            logger.warning("Ascend MemCache store.close failed: <redacted>")
         self.store = None
 
     def _put_batch_zero_copy_impl(

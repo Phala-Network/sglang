@@ -1245,7 +1245,7 @@ class SchedulerMetricsReporter:
             self.stats.lora_pool_utilization = utilization
 
         except Exception as e:
-            logger.warning(f"Failed to update LoRA metrics: {e}")
+            logger.warning("Failed to update LoRA metrics: <redacted>")
 
     def _calculate_utilization(self):
         if self.scheduler.disaggregation_mode == DisaggregationMode.PREFILL:

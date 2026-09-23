@@ -446,7 +446,7 @@ class K2V3Detector(BaseFormatDetector):
         items: list[ToolCallItem] = []
         for name, arguments in parsed:
             if name not in known_names and not envs.SGLANG_FORWARD_UNKNOWN_TOOLS.get():
-                logger.warning("Model attempted to call undefined function: %s", name)
+                logger.warning("Model attempted to call undefined function: <redacted>")
                 continue
             items.append(
                 ToolCallItem(

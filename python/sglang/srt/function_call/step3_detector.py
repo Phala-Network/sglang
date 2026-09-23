@@ -165,7 +165,7 @@ class Step3Detector(BaseFormatDetector):
             return StreamingParseResult(normal_text=normal_text, calls=calls)
 
         except Exception as e:
-            logger.error(f"Error in detect_and_parse: {e}")
+            logger.error("Error in detect_and_parse: <redacted>")
             # Return the original text if parsing fails
             return StreamingParseResult(normal_text=text)
 
@@ -307,7 +307,7 @@ class Step3Detector(BaseFormatDetector):
                     )
                 else:
                     # Invalid function name
-                    logger.warning(f"Invalid function name: {func_name}")
+                    logger.warning("Invalid function name: <redacted>")
                     self._reset_streaming_state()
                     return StreamingParseResult(calls=calls)
             else:

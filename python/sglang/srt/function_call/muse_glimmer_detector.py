@@ -113,7 +113,7 @@ class MuseGlimmerDetector(BaseFormatDetector):
         """Build one ToolCallItem, honoring the unknown-tool policy."""
         name = _normalize_name(name, registered)
         if name not in registered:
-            logger.warning("Model attempted to call undefined function: %s", name)
+            logger.warning("Model attempted to call undefined function: <redacted>")
             if not envs.SGLANG_FORWARD_UNKNOWN_TOOLS.get():
                 return None
         self.current_tool_id += 1

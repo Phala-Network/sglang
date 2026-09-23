@@ -966,7 +966,7 @@ class _StatAccumulator(_UtilizationRateAccumulatorMixin):
 def _dump_to_file(name, data):
     save_dir = Path(envs.SGLANG_EXPERT_DISTRIBUTION_RECORDER_DIR.get())
     path_output = save_dir / name
-    logger.info(f"Write expert distribution to {path_output}")
+    logger.info("Write expert distribution to <redacted>")
     if not save_dir.exists():
         save_dir.mkdir(parents=True, exist_ok=True)
     torch.save(data, str(path_output))

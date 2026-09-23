@@ -565,7 +565,7 @@ class TokenizerControlMixin:
             success, message = FanOutCommunicator.merge_results(results)
         except Exception as e:
             error_msg = f"IPC weight update failed: {str(e)}"
-            logger.error(error_msg)
+            logger.error("Request-path diagnostic redacted")
             success, message = False, error_msg
 
         if success and obj.flush_cache and self.mm_processor is not None:
@@ -615,9 +615,7 @@ class TokenizerControlMixin:
                 "dp_size must be 1 or dp attention must be enabled for dynamic lora loading"
             )
             logger.info(
-                "Start load Lora adapter. Lora name=%s, path=%s",
-                obj.lora_name,
-                obj.lora_path,
+                "Start load Lora adapter. Lora name=<redacted>, path=<redacted>"
             )
 
             async with self.lora_update_lock:
@@ -692,10 +690,7 @@ class TokenizerControlMixin:
             assert get_parallel().dp_size == 1 or get_parallel().enable_dp_attention, (
                 "dp_size must be 1 or dp attention must be enabled for dynamic lora loading"
             )
-            logger.info(
-                "Start load Lora adapter from tensors. Lora name=%s",
-                obj.lora_name,
-            )
+            logger.info("Start load Lora adapter from tensors. Lora name=<redacted>")
 
             obj.serialized_named_tensors = normalize_serialized_named_tensor_payloads(
                 obj.serialized_named_tensors
@@ -772,10 +767,7 @@ class TokenizerControlMixin:
             assert get_parallel().dp_size == 1 or get_parallel().enable_dp_attention, (
                 "dp_size must be 1 or dp attention must be enabled for dynamic lora loading"
             )
-            logger.info(
-                "Start unload Lora adapter. Lora name=%s",
-                obj.lora_name,
-            )
+            logger.info("Start unload Lora adapter. Lora name=<redacted>")
 
             async with self.lora_update_lock:
                 return await self._unload_lora_adapter_locked(obj)

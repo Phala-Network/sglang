@@ -74,7 +74,7 @@ class WeightChecker:
 
     def handle(self, action: str, allow_quant_error: bool = False) -> Optional[Dict]:
         logger.info(
-            f"[WeightChecker] handle action={action} allow_quant_error={allow_quant_error}"
+            "[WeightChecker] handle action=<redacted> allow_quant_error=<redacted>"
         )
         if action == "snapshot":
             return self._snapshot()

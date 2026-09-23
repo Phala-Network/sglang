@@ -191,7 +191,7 @@ class DotsToolDetector(BaseFormatDetector):
                 for parsed in self._parse_block(block.group(1), tools):
                     calls.extend(self.parse_base_json(parsed, tools))
             except (json.JSONDecodeError, ValueError, TypeError) as exc:
-                logger.warning("Failed to parse dots tool call: %s", exc)
+                logger.warning("Failed to parse dots tool call: <redacted>")
 
         return StreamingParseResult(
             normal_text=text[:marker_index].strip(), calls=calls
@@ -278,7 +278,7 @@ class DotsToolDetector(BaseFormatDetector):
                 elif not self.current_tool_name_sent:
                     normal_parts.append(content.strip())
             except (json.JSONDecodeError, ValueError, TypeError) as exc:
-                logger.warning("Failed to parse streamed dots tool call: %s", exc)
+                logger.warning("Failed to parse streamed dots tool call: <redacted>")
                 normal_parts.append(content.strip())
 
             self.current_tool_name_sent = False

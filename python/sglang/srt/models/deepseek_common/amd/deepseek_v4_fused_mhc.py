@@ -72,7 +72,7 @@ def _get_triton_mhc_post_pre_ops():
         from aiter.ops.triton.utils.mhc_config_utils import get_mhc_config
     except Exception as err:
         logger.warning(
-            "Triton fused mHC (mhc_post_pre) is unavailable, falling back: %s", err
+            "Triton fused mHC (mhc_post_pre) is unavailable, falling back: <redacted>"
         )
         return None
 
@@ -100,7 +100,9 @@ def _get_fused_hc_post_pre_buffers(
     try:
         cfg, _ = get_mhc_config("MHC_FUSED", num_tokens, hidden_size, mode="sinkhorn")
     except Exception as err:
-        logger.warning("Failed to initialize fused mHC config, falling back: %s", err)
+        logger.warning(
+            "Failed to initialize fused mHC config, falling back: <redacted>"
+        )
         return None
 
     n_total = 2 * hc_mult + hc_mult * hc_mult
@@ -198,7 +200,7 @@ def try_fused_hc_post_pre(
         )
     except Exception as err:
         logger.warning(
-            "Triton fused mHC kernel failed, disabling fallback path: %s", err
+            "Triton fused mHC kernel failed, disabling fallback path: <redacted>"
         )
         _TRITON_MHC_POST_PRE_RUNTIME_DISABLED = True
         return None
@@ -243,7 +245,7 @@ def try_aiter_fused_mhc_post_pre(
         from aiter.ops.mhc import mhc_fused_post_pre
     except Exception as err:
         if not _AITER_MHC_IMPORT_WARNED:
-            logger.warning("aiter fused mHC is unavailable, falling back: %s", err)
+            logger.warning("aiter fused mHC is unavailable, falling back: <redacted>")
             _AITER_MHC_IMPORT_WARNED = True
         _AITER_MHC_FUSED_POST_PRE_RUNTIME_DISABLED = True
         return None
@@ -271,7 +273,7 @@ def try_aiter_fused_mhc_post_pre(
         )
     except Exception as err:
         logger.warning(
-            "aiter fused mHC kernel failed, disabling fallback path: %s", err
+            "aiter fused mHC kernel failed, disabling fallback path: <redacted>"
         )
         _AITER_MHC_FUSED_POST_PRE_RUNTIME_DISABLED = True
         return None

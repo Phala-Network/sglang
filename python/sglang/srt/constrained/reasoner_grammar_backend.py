@@ -225,8 +225,7 @@ class ReasonerGrammarObject(BaseGrammarObject):
                 and self._channel_header_tokens >= self.max_channel_header_tokens
             ):
                 logger.warning(
-                    "Channel header did not close within %d tokens; resuming grammar",
-                    self.max_channel_header_tokens,
+                    "Channel header did not close within <redacted> tokens; resuming grammar"
                 )
                 self._saw_channel_reasoning_header = False
                 self._finish_channel_header()

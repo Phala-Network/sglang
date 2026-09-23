@@ -102,7 +102,7 @@ def _on_kernel_load(module, function, name, metadata_group, hash) -> None:
                 "cuda", torch.cuda.current_device(), empty_cache=False
             )
         except RuntimeError:
-            logger.debug("Unable to query free device memory", exc_info=True)
+            logger.debug("Unable to query free device memory", exc_info=False)
 
     should_crash = envs.SGLANG_CRASH_ON_TRITON_LOAD_AFTER_READY.get()
     if not should_crash and (

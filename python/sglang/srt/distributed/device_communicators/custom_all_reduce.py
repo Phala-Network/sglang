@@ -403,9 +403,7 @@ def dispatch_custom_allreduce(
             )
         except ImportError as e:
             logger.warning(
-                "[AR] Aiter custom all-reduce not available; "
-                "falling back to sglang CustomAllreduce. Details: %s",
-                e,
+                "[AR] Aiter custom all-reduce not available; falling back to sglang CustomAllreduce. Details: <redacted>"
             )
             return CustomAllreduce
 

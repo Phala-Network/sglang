@@ -243,7 +243,7 @@ class DeepSeekV32Detector(BaseFormatDetector):
 
             return StreamingParseResult(normal_text=normal_text, calls=calls)
         except Exception as e:
-            logger.error(f"Error in detect_and_parse: {e}")
+            logger.error("Error in detect_and_parse: <redacted>")
             # return the normal text if parsing fails
             return StreamingParseResult(normal_text=text)
 
@@ -388,7 +388,7 @@ class DeepSeekV32Detector(BaseFormatDetector):
             return StreamingParseResult(normal_text=preamble, calls=all_calls)
 
         except Exception as e:
-            logger.error(f"Error in parse_streaming_increment: {e}")
+            logger.error("Error in parse_streaming_increment: <redacted>")
             # Re-emit verbatim rather than swallowing the turn; the preamble is
             # still inside current_text unless a completed call advanced past it.
             # Calls are dropped on purpose: the failure can land between a tool's

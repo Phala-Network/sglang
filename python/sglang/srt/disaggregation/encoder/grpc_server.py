@@ -182,12 +182,15 @@ class SGLangEncoderServer(SGLangEncoderServicer):
                 await asyncio.shield(self.encoder.release_request(request.req_id))
             except Exception:
                 logger.exception(
-                    "Failed to release cancelled encoder request %s", request.req_id
+                    "Failed to release cancelled encoder request <redacted>",
+                    exc_info=False,
                 )
             raise
         except Exception as e:
-            logger.error(f"Encode error: {e}")
-            traceback.print_exc()
+            logger.error("Encode error: <redacted>")
+            traceback.print_exception(
+                RuntimeError("Exception details redacted"), chain=False
+            )
             await self.encoder.release_request(request.req_id)
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
@@ -214,12 +217,15 @@ class SGLangEncoderServer(SGLangEncoderServicer):
                 await asyncio.shield(self.encoder.release_request(request.req_id))
             except Exception:
                 logger.exception(
-                    "Failed to release cancelled encoder request %s", request.req_id
+                    "Failed to release cancelled encoder request <redacted>",
+                    exc_info=False,
                 )
             raise
         except Exception as e:
-            logger.error(f"Send error: {e}")
-            traceback.print_exc()
+            logger.error("Send error: <redacted>")
+            traceback.print_exception(
+                RuntimeError("Exception details redacted"), chain=False
+            )
             await self.encoder.release_request(request.req_id)
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
@@ -237,8 +243,10 @@ class SGLangEncoderServer(SGLangEncoderServicer):
             return sglang_encoder_pb2.SchedulerReceiveUrlResponse()
 
         except Exception as e:
-            logger.error(f"SchedulerReceiveUrl error: {e}")
-            traceback.print_exc()
+            logger.error("SchedulerReceiveUrl error: <redacted>")
+            traceback.print_exception(
+                RuntimeError("Exception details redacted"), chain=False
+            )
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
             return sglang_encoder_pb2.SchedulerReceiveUrlResponse()

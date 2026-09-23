@@ -19,8 +19,7 @@ def _timing_events_supported() -> bool:
         return True
     except (TypeError, NotImplementedError):
         logger.warning(
-            "%s.Event does not support timing; L2 transfer timing is disabled",
-            device_module.__name__,
+            "<redacted>.Event does not support timing; L2 transfer timing is disabled"
         )
         return False
 

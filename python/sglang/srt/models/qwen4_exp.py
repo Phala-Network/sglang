@@ -1930,9 +1930,7 @@ class Qwen4ExpForConditionalGeneration(Qwen3VLForConditionalGeneration):
                         'text_config.ple_embedding_dtype="float8_e4m3fn" instead'
                     )
                 logger.info(
-                    "PLE embedding switched to fp8 storage: %s (%s)",
-                    mod_prefix,
-                    tuple(emb.weight.data.shape),
+                    "PLE embedding switched to fp8 storage: <redacted> (<redacted>)"
                 )
                 old_weight_data = emb.weight.data
                 # StartupWeightLoadManager enforces tensor identity/dtype; this

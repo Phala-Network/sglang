@@ -115,9 +115,7 @@ class MCPToolServer(ToolServer):
                 self.urls[tool_from_mcp.name] = url
             else:
                 logger.warning(
-                    "Tool %s already exists. Ignoring duplicate tool server %s",
-                    tool_from_mcp.name,
-                    url,
+                    "Tool <redacted> already exists. Ignoring duplicate tool server <redacted>"
                 )
 
     def has_tool(self, tool_name: str):
@@ -137,7 +135,7 @@ class MCPToolServer(ToolServer):
                 await session.initialize()
                 yield session
         else:
-            logger.warning("Tool %s not found", tool_name)
+            logger.warning("Tool <redacted> not found")
 
 
 class DemoToolServer(ToolServer):

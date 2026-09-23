@@ -1803,7 +1803,9 @@ class MiniMaxM3SparseForCausalLM(nn.Module):
                         try:
                             weight_loader(param, loaded_weight)
                         except Exception as e:
-                            logger.warning(f"Error loading weight {name}: {e}")
+                            logger.warning(
+                                "Error loading weight <redacted>: <redacted>"
+                            )
                             continue
                     else:
                         logger.warning(f"Parameter {name} not found in params_dict")

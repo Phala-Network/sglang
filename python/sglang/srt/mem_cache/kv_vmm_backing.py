@@ -112,7 +112,7 @@ class KvVmmArena:
         try:
             torch.cuda.synchronize()
         except Exception as e:  # pragma: no cover
-            logger.warning("KvVmmArena.close synchronize failed: %s", e)
+            logger.warning("KvVmmArena.close synchronize failed: <redacted>")
         self._allocation.close()
 
 

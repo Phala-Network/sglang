@@ -255,7 +255,7 @@ class RayEngine(Engine):
             try:
                 ray.kill(actor)
             except Exception:
-                logger.error(f"Failed to kill Ray scheduler actor: {actor}")
+                logger.error("Failed to kill Ray scheduler actor: <redacted>")
         super().shutdown()
 
     @classmethod
@@ -315,7 +315,7 @@ class RayEngine(Engine):
             try:
                 _validate_custom_placement_group(pg, world_size)
             except ValueError as e:
-                logger.error(f"Custom placement group validation failed: {e}")
+                logger.error("Custom placement group validation failed: <redacted>")
                 raise RuntimeError(
                     f"Custom placement group validation failed: {e}"
                 ) from e
@@ -371,7 +371,7 @@ class RayEngine(Engine):
                 try:
                     bundle_indices = _resolve_bundle_indices(pg, world_size)
                 except ValueError as e:
-                    logger.error(f"Failed to resolve bundle indices: {e}")
+                    logger.error("Failed to resolve bundle indices: <redacted>")
                     raise RuntimeError(f"Failed to resolve bundle indices: {e}") from e
 
                 logger.info(
@@ -408,7 +408,7 @@ class RayEngine(Engine):
                     try:
                         ray.kill(actor)
                     except Exception:
-                        logger.error(f"Failed to kill Ray scheduler actor: {actor}")
+                        logger.error("Failed to kill Ray scheduler actor: <redacted>")
                 raise RuntimeError(f"Scheduler actor failed to initialize: {e}")
 
             event_loop_refs = [
@@ -419,7 +419,9 @@ class RayEngine(Engine):
                 try:
                     ray.get(event_loop_refs)
                 except Exception as e:
-                    logger.error(f"Ray scheduler actor terminated with error: {e}")
+                    logger.error(
+                        "Ray scheduler actor terminated with error: <redacted>"
+                    )
 
             return (
                 RaySchedulerInitResult(
@@ -509,7 +511,7 @@ class RayEngine(Engine):
             try:
                 ray.get(event_loop_refs)
             except Exception as e:
-                logger.error(f"Ray scheduler actor terminated with error: {e}")
+                logger.error("Ray scheduler actor terminated with error: <redacted>")
 
         return RaySchedulerInitResult(
             scheduler_infos=scheduler_infos,

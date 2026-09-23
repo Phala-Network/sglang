@@ -84,4 +84,4 @@ except ValueError as exc:
     # The registry refuses duplicates. Importing this package twice
     # (e.g. via both --enable-flexkv and --radix-cache-backend=flexkv)
     # is fine — log and move on.
-    logger.debug("flexkv backend already registered: %s", exc)
+    logger.debug("flexkv backend already registered: <redacted>")

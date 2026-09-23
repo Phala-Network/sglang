@@ -278,13 +278,7 @@ class HybridMambaDecodeReqToTokenPool(HybridReqToTokenPool):
             effective_mamba_size = max(mamba_size, max_slots_needed)
             if mamba_size < max_slots_needed:
                 logger.warning(
-                    "mamba_size (%d) is less than decode side's max_slots_needed (%d = %d reqs * %d slots/req), "
-                    "raising effective_mamba_size to %d",
-                    mamba_size,
-                    max_slots_needed,
-                    size + pre_alloc_size,
-                    slots_per_req,
-                    effective_mamba_size,
+                    "mamba_size (<redacted>) is less than decode side's max_slots_needed (<redacted> = <redacted> reqs * <redacted> slots/req), raising effective_mamba_size to <redacted>"
                 )
         else:
             effective_mamba_size = max_slots_needed
@@ -794,7 +788,7 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
         input_len = self._rebootstrap_prefill_len(req)
         if input_len > capacity:
             message = f"Request {req.rid} exceeds the maximum number of tokens: {input_len} > {capacity}"
-            logger.error(message)
+            logger.error("Request-path diagnostic redacted")
             prepare_abort(req, message, status_code=HTTPStatus.BAD_REQUEST)
             self.scheduler.output_streamer.stream_output([req], req.return_logprob)
             return True
@@ -806,7 +800,7 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
                     f"Request {req.rid} requires too many SWA KV tokens for "
                     f"decode preallocation: {swa_required} > {swa_capacity}"
                 )
-                logger.error(message)
+                logger.error("Request-path diagnostic redacted")
                 prepare_abort(req, message, status_code=HTTPStatus.BAD_REQUEST)
                 self.scheduler.output_streamer.stream_output([req], req.return_logprob)
                 return True
@@ -936,9 +930,9 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
                     is_propagated = getattr(e, "is_from_another_rank", False)
                 # Mute error message for propagated exceptions to avoid duplicate logging
                 if is_propagated:
-                    logger.debug(error_message)
+                    logger.debug("Request-path diagnostic redacted")
                 else:
-                    logger.error(error_message)
+                    logger.error("Request-path diagnostic redacted")
                 prepare_abort(
                     decode_req.req,
                     error_message,
@@ -981,7 +975,7 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
 
             if count >= self._max_ensure_retries:
                 error_msg = f"Could not fetch prefill parallel info from {bootstrap_addr} after {count} attempts"
-                logger.error(error_msg)
+                logger.error("Request-path diagnostic redacted")
                 for decode_req in reqs:
                     # kv_receiver may be None from a prior self.queue cleanup
                     if decode_req.kv_receiver is not None:
@@ -1356,7 +1350,7 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
                 if reclaim_error is not None:
                     if prefix_match is not None and prefix_match.l1_prefix_len > 0:
                         self._release_matched_prefix_lock(decode_req.req)
-                    logger.error(reclaim_error)
+                    logger.error("Request-path diagnostic redacted")
                     prepare_abort(
                         decode_req.req,
                         reclaim_error,
@@ -1864,15 +1858,7 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
             )
             if self._radix_full_available() < required_alloc_tokens:
                 logger.warning(
-                    f"Eviction insufficient: needed {required_alloc_tokens} tokens, "
-                    f"available {self._radix_full_available()} "
-                    f"after evicting {result.num_tokens_evicted}/{num_to_evict} tokens. "
-                    f"evictable_size={self._radix_full_evictable()}, "
-                    f"protected_size={self._radix_full_protected()}, "
-                    f"fill_len={fill_len}, prefix_len={prefix_len}, "
-                    f"total_prefix_len={total_prefix_len}, delta_len={delta_len}, "
-                    f"page_size={self.token_to_kv_pool_allocator.page_size}, "
-                    f"req={req.rid}"
+                    "Eviction insufficient: needed <redacted> tokens, available <redacted> after evicting <redacted>/<redacted> tokens. evictable_size=<redacted>, protected_size=<redacted>, fill_len=<redacted>, prefix_len=<redacted>, total_prefix_len=<redacted>, delta_len=<redacted>, page_size=<redacted>, req=<redacted>"
                 )
 
         allocator = self.token_to_kv_pool_allocator
@@ -2165,9 +2151,7 @@ class DecodeTransferQueue(DecodeHiCacheTransferMixin):
             # readiness on all TP ranks. Abort deterministically to avoid
             # cross-rank queue divergence.
             logger.error(
-                f"Metadata unexpectedly not ready after readiness gate: "
-                f"request {decode_req.req.rid}, bootstrap_room={expected_room}, "
-                f"metadata_buffer_index={idx}"
+                "Metadata unexpectedly not ready after readiness gate: request <redacted>, bootstrap_room=<redacted>, metadata_buffer_index=<redacted>"
             )
             prepare_abort(
                 decode_req.req,
@@ -2188,7 +2172,7 @@ class DecodeTransferQueue(DecodeHiCacheTransferMixin):
                 f"Metadata buffer index: {idx}. "
                 f"This indicates metadata buffer index collision."
             )
-            logger.error(error_msg)
+            logger.error("Request-path diagnostic redacted")
             prepare_abort(
                 decode_req.req,
                 "Metadata corruption detected - bootstrap_room mismatch",
@@ -2377,9 +2361,9 @@ class DecodeTransferQueue(DecodeHiCacheTransferMixin):
                 self._clean_hicache_prefetch_resources(decode_req)
                 # Mute error message for propagated exceptions to avoid duplicate logging
                 if is_propagated:
-                    logger.debug(error_message)
+                    logger.debug("Request-path diagnostic redacted")
                 else:
-                    logger.error(error_message)
+                    logger.error("Request-path diagnostic redacted")
                 prepare_abort(
                     decode_req.req,
                     error_message,
@@ -2522,7 +2506,9 @@ class DecodeTransferQueue(DecodeHiCacheTransferMixin):
                 self._do_release(decode_req, idx)
             except Exception:
                 # Isolate a failed release so the rest still run; entry already dropped.
-                logger.exception(f"Deferred KV release failed for room {room}")
+                logger.exception(
+                    "Deferred KV release failed for room <redacted>", exc_info=False
+                )
 
     def release_memory_occupation(self):
         """Clean up in-flight transfers before releasing GPU memory."""

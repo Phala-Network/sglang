@@ -85,7 +85,7 @@ class _PosixFdBroker:
                 if self._stop.is_set():
                     return
                 self._error = error
-                logger.exception("CUDA VMM POSIX FD broker failed")
+                logger.exception("CUDA VMM POSIX FD broker failed", exc_info=False)
                 return
 
             try:
@@ -93,7 +93,7 @@ class _PosixFdBroker:
                     _send_fd(conn, self.fd, src_rank=0, base_idx=0)
             except Exception as error:
                 self._error = error
-                logger.exception("CUDA VMM POSIX FD broker failed")
+                logger.exception("CUDA VMM POSIX FD broker failed", exc_info=False)
                 return
 
     def raise_if_failed(self) -> None:
@@ -256,9 +256,7 @@ class CudaVmmMemoryPool:
             if not allow_posix_fallback or self.handle_type != fabric:
                 raise
             logger.warning(
-                "CUDA FABRIC VMM allocation is unavailable; falling back to "
-                "a POSIX FD handle: %s",
-                error,
+                "CUDA FABRIC VMM allocation is unavailable; falling back to a POSIX FD handle: <redacted>"
             )
             self.handle_type = posix_fd
             self.use_fabric = False
@@ -594,11 +592,7 @@ class CudaVmmMemoryPool:
             return
         self._pool_full_warned = True
         logger.warning(
-            "CUDA VMM multimodal pool has no free chunk for a %.2f MiB tensor "
-            "(pool size: %.2f MiB); falling back to CPU transport. Increase "
-            "SGLANG_MM_FEATURE_CACHE_MB to avoid inline request broadcasts.",
-            data_nbytes / (1024 * 1024),
-            self.allocation_size / (1024 * 1024),
+            "CUDA VMM multimodal pool has no free chunk for a <redacted> MiB tensor (pool size: <redacted> MiB); falling back to CPU transport. Increase SGLANG_MM_FEATURE_CACHE_MB to avoid inline request broadcasts."
         )
 
     def _recycle_loop(self) -> None:
@@ -608,7 +602,9 @@ class CudaVmmMemoryPool:
                     self._recycle_chunks()
                     self._merge_chunks()
             except Exception as error:
-                logger.exception("CUDA VMM multimodal pool recycle failed")
+                logger.exception(
+                    "CUDA VMM multimodal pool recycle failed", exc_info=False
+                )
                 self._pool_error = error
                 self._stop_recycler.set()
 

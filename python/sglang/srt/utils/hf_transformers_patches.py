@@ -140,9 +140,7 @@ def _ensure_gguf_version():
                 gguf.__version__ = "0.0.0"
             except (ValueError, OSError, TypeError) as e:
                 logger.warning(
-                    "Failed to determine gguf package version: %s. "
-                    "Falling back to '0.0.0'.",
-                    e,
+                    "Failed to determine gguf package version: <redacted>. Falling back to '0.0.0'."
                 )
                 gguf.__version__ = "0.0.0"
     except ImportError:

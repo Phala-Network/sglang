@@ -28,7 +28,7 @@ class RedisConnector(BaseKVConnector):
         val = self.connection.get(key)
 
         if val is None:
-            logger.error("Key %s not found", key)
+            logger.error("Key <redacted> not found")
             return None
 
         return self.d.from_bytes(val)
@@ -36,7 +36,7 @@ class RedisConnector(BaseKVConnector):
     def getstr(self, key: str) -> Optional[str]:
         val = self.connection.get(key)
         if val is None:
-            logger.error("Key %s not found", key)
+            logger.error("Key <redacted> not found")
             return None
 
         return val.decode("utf-8")

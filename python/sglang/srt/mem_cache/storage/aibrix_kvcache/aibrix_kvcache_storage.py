@@ -110,9 +110,7 @@ class AibrixKVCacheStorage(HiCacheStorage):
         block_hash = BlockHashes(keys, self.page_size)
         status = self.kv_cache_manager.allocate_for(None, block_hash)
         if not status.is_ok():
-            logger.warning(
-                f"aibrix_kvcache set allocate failed, error_code {status.error_code}"
-            )
+            logger.warning("aibrix_kvcache set allocate failed, error_code <redacted>")
             return False
         handle = status.value
         tensors = handle.to_tensors()
@@ -128,9 +126,7 @@ class AibrixKVCacheStorage(HiCacheStorage):
             )
         status = self.kv_cache_manager.put(None, block_hash, handle)
         if not status.is_ok():
-            logger.info(
-                f"AIBrix KVCache Storage set failed, error_code {status.error_code}"
-            )
+            logger.info("AIBrix KVCache Storage set failed, error_code <redacted>")
             return False
         completed = status.value
         return completed == len(keys) * self.page_size

@@ -3814,7 +3814,7 @@ class DeepseekSparseAttnMultiStepBackend:
                     )
                 else:
                     print(
-                        f"Warning: Multi-backend fused metadata copy kernel failed with error: {e}, falling back to loop."
+                        "Warning: Multi-backend fused metadata copy kernel failed with error: <redacted>, falling back to loop."
                     )
                 for i in range(self.speculative_num_steps - 1):
                     self.attn_backends[

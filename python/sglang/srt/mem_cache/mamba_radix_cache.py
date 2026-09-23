@@ -434,7 +434,7 @@ class LRUList:
         except Exception as e:
             if get_parallel().tp_rank == 0:
                 msg = f"Mamba Radix tree sanity check failed, ping @yizhang2077: {e}"
-                logger.error(msg)
+                logger.error("Request-path diagnostic redacted")
                 tree_cache.pretty_print()
                 tree_cache.full_lru_list.pretty_print(tree_cache)
                 tree_cache.mamba_lru_list.pretty_print(tree_cache)

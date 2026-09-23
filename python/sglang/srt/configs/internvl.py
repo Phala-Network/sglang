@@ -610,7 +610,7 @@ class InternLM2Tokenizer(PreTrainedTokenizer):
             `Tuple(str)`: Paths to the files saved.
         """
         if not os.path.isdir(save_directory):
-            logger.error(f"Vocabulary path ({save_directory}) should be a directory")
+            logger.error("Vocabulary path (<redacted>) should be a directory")
             return
         out_vocab_file = os.path.join(
             save_directory,

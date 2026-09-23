@@ -42,7 +42,7 @@ def _get_yes_no_token_ids(tokenizer) -> tuple[int, int]:
             return yes_id, no_id
 
     except Exception as e:
-        logger.warning(f"Failed to get yes/no token IDs dynamically: {e}")
+        logger.warning("Failed to get yes/no token IDs dynamically: <redacted>")
 
     # Fallback to known Qwen3 token IDs (may not work for all model sizes)
     logger.warning("Using fallback token IDs for yes/no (9693/2152)")
@@ -458,7 +458,7 @@ class OpenAIServingRerank(OpenAIServingBase):
         except ValueError as e:
             return self.create_error_response(str(e))
         except Exception as e:
-            logger.exception("Error handling VL reranker request")
+            logger.exception("Error handling VL reranker request", exc_info=False)
             return self.create_error_response(str(e))
 
     def _build_vl_reranker_content(

@@ -337,7 +337,7 @@ class MooncakeBaseStore:
             return
         ret_code = self.store.register_buffer(ptr, size)
         if ret_code != 0:
-            logger.error(f"Failed to register buffer, error code: {ret_code}")
+            logger.error("Failed to register buffer, error code: <redacted>")
             raise RuntimeError(
                 f"Failed to register buffer to Mooncake Store, error code: {ret_code}"
             )
@@ -464,9 +464,7 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
                     else:
                         device_name = ""
                 except (json.JSONDecodeError, AttributeError):
-                    logger.warning(
-                        f"Failed to parse device_name as JSON: {device_name}"
-                    )
+                    logger.warning("Failed to parse device_name as JSON: <redacted>")
                     device_name = ""
             if self.config.standalone_storage:
                 if not isinstance(mem_pool.allocator, MooncakeHostTensorAllocator):
@@ -560,10 +558,7 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
                                 "Mooncake tenants with SGLang."
                             ) from e
                         logger.warning(
-                            "The installed Mooncake version does not support the "
-                            f"{', '.join(unsupported_kwargs)} parameter(s) in setup(). "
-                            f"Retrying without {', '.join(unsupported_kwargs)}. "
-                            "Please upgrade Mooncake to enable SSD offload support."
+                            "The installed Mooncake version does not support the <redacted> parameter(s) in setup(). Retrying without <redacted>. Please upgrade Mooncake to enable SSD offload support."
                         )
                         for key in unsupported_kwargs:
                             setup_kwargs.pop(key, None)
@@ -628,10 +623,12 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
             self.backup_bandwidth = []
 
         except ValueError as e:
-            logger.error("Configuration loading failed: %s", e)
+            logger.error("Configuration loading failed: <redacted>")
             raise
         except Exception as exc:
-            logger.error("An error occurred while loading the configuration: %s", exc)
+            logger.error(
+                "An error occurred while loading the configuration: <redacted>"
+            )
             raise
 
     @staticmethod
@@ -656,8 +653,7 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
                 check_segments_resp = requests.get(segments_url, timeout=3)
             except Exception:
                 logger.info(
-                    "waiting mooncake store server started, cost_time: %.2f seconds.",
-                    time.perf_counter() - start_time,
+                    "waiting mooncake store server started, cost_time: <redacted> seconds."
                 )
                 time.sleep(3)
                 continue
@@ -714,7 +710,7 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
             for buffer in self._iter_host_pool_buffers(self.mem_pool_host):
                 super().register_buffer(buffer)
         except TypeError as err:
-            logger.error("Failed to register buffer to Mooncake Store: %s", err)
+            logger.error("Failed to register buffer to Mooncake Store: <redacted>")
             raise TypeError("Mooncake Store Register Buffer Error.") from err
 
         bytes_per_page = mem_pool_host.get_ksize_per_token() * mem_pool_host.page_size

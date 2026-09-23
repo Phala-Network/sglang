@@ -2906,7 +2906,7 @@ class UnifiedTreeCore(UnifiedTreeCoreInterface):
                 f"across {len(all_nodes)} nodes):\n"
                 + "\n".join(f"  {e}" for e in errors)
             )
-            logger.error(msg)
+            logger.error("Request-path diagnostic redacted")
             self.pretty_print()
             raise AssertionError(msg)
 

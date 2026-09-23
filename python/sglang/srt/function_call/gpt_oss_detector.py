@@ -205,7 +205,7 @@ class GptOssDetector(BaseFormatDetector):
         match = self.tool_extract_pattern.search(content)
 
         if not match:
-            logger.debug(f"Could not extract tool call from: {content[:100]}")
+            logger.debug("Could not extract tool call from: <redacted>")
             return None
 
         full_function_name = match.group(1)
@@ -220,7 +220,7 @@ class GptOssDetector(BaseFormatDetector):
 
         # Check if tool exists
         if function_name not in tool_indices:
-            logger.debug(f"Function {function_name} not in available tools")
+            logger.debug("Function <redacted> not in available tools")
             if not envs.SGLANG_FORWARD_UNKNOWN_TOOLS.get():
                 return None  # Skip unknown tools (default legacy behavior)
 
@@ -228,7 +228,7 @@ class GptOssDetector(BaseFormatDetector):
         try:
             arguments = json.loads(json_content) if json_content.strip() else {}
         except json.JSONDecodeError as e:
-            logger.debug(f"Failed to parse JSON arguments: {e}")
+            logger.debug("Failed to parse JSON arguments: <redacted>")
             return None
 
         return ToolCallItem(

@@ -208,7 +208,7 @@ class TransportProxyTensor(torch.Tensor):
                     ).set_(storage, storage_offset=s_offset, size=shape, stride=stride)
                     self.set_(reconstructed_tensor)
             except Exception as e:
-                print(f"Error: Failed to deserialize from CUDA IPC handle ({e}).")
+                print("Error: Failed to deserialize from CUDA IPC handle (<redacted>).")
                 raise e
 
         elif state["tensor_data"] is not None:
@@ -1349,7 +1349,7 @@ class ShmPointerMMData:
                 except Exception:
                     logger.warning(
                         "Failed to close a malformed multimodal SHM handle",
-                        exc_info=True,
+                        exc_info=False,
                     )
             self._materialization_error = f"{type(error).__name__}: {error}"
 
@@ -1375,7 +1375,7 @@ class ShmPointerMMData:
             except OSError:
                 logger.warning(
                     "Failed to reopen a multimodal SHM segment for cleanup",
-                    exc_info=True,
+                    exc_info=False,
                 )
                 return
         try:
@@ -1385,16 +1385,14 @@ class ShmPointerMMData:
                 pass
             except OSError:
                 logger.warning(
-                    "Failed to unlink a multimodal SHM segment",
-                    exc_info=True,
+                    "Failed to unlink a multimodal SHM segment", exc_info=False
                 )
         finally:
             try:
                 handle.close()
             except Exception:
                 logger.warning(
-                    "Failed to close a multimodal SHM handle",
-                    exc_info=True,
+                    "Failed to close a multimodal SHM handle", exc_info=False
                 )
 
     def __del__(self):

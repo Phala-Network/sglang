@@ -1672,7 +1672,7 @@ class MiniCPMV:
             )
             self.minicpmv = minicpmv
         except Exception as e:
-            print(f"Failed to instantiate MiniCPMV: {e}")
+            print("Failed to instantiate MiniCPMV: <redacted>")
             raise e
         self.config = config
 

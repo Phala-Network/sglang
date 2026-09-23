@@ -300,7 +300,7 @@ class InklingDetector(BaseFormatDetector):
         name = payload.get("name")
         args = payload.get("args")
         if not isinstance(name, str) or not isinstance(args, Mapping):
-            logger.warning("Invalid Inkling tool call payload: %s", payload)
+            logger.warning("Invalid Inkling tool call payload: <redacted>")
             return None
 
         if not hasattr(self, "_tool_indices"):
@@ -310,7 +310,7 @@ class InklingDetector(BaseFormatDetector):
             # the harness sees a structured tool_call, returns a tool error, and
             # the model can self-correct — instead of the serialized invocation
             # degrading into terminal answer text.
-            logger.warning("Surfacing Inkling call to undeclared tool: %s", name)
+            logger.warning("Surfacing Inkling call to undeclared tool: <redacted>")
 
         return ToolCallItem(
             tool_index=call_index,

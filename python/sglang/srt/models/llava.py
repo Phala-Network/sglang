@@ -285,7 +285,7 @@ class LlavaBaseForCausalLM(nn.Module):
                                         )
                                     )
                                 except Exception as e:
-                                    print(f"Error: {e}")
+                                    print("Error: <redacted>")
                                     num_patch_width, num_patch_height = 2, 2
                                 image_feature = image_feature.view(
                                     num_patch_height, num_patch_width, height, width, -1
@@ -446,10 +446,12 @@ class LlavaBaseForCausalLM(nn.Module):
                         try:
                             input_embeds[left_idx:right_idx] = tmp_image_feature
                         except RuntimeError as e:
-                            print(f"RuntimeError in image encoding: {e}")
-                            print(f"{input_embeds.shape=}, {tmp_image_feature.shape=}")
+                            print("RuntimeError in image encoding: <redacted>")
                             print(
-                                f"{start_idx=}, {image_offset=}, {prefix_len=}, {pad_len=}"
+                                "input_embeds.shape=<redacted>, tmp_image_feature.shape=<redacted>"
+                            )
+                            print(
+                                "start_idx=<redacted>, image_offset=<redacted>, prefix_len=<redacted>, pad_len=<redacted>"
                             )
                         pt += 1
 
@@ -702,10 +704,7 @@ class LlavaForConditionalGeneration(LlavaBaseForCausalLM):
                 ):
                     raise
                 logger.warning(
-                    "Skipping broken %s mapping for config %s: %s",
-                    auto_model_type.__name__,
-                    config_cls.__name__,
-                    exc,
+                    "Skipping broken <redacted> mapping for config <redacted>: <redacted>"
                 )
                 continue
             if archs is not None:

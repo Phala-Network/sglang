@@ -44,12 +44,4 @@ class SchedulerStatusLogger:
             return
 
         self.last_dump_time = now
-        log_json(
-            self.loggers,
-            "scheduler.status",
-            {
-                "rank": self.rank,
-                "running_rids": [r.rid for r in running_batch.reqs],
-                "queued_rids": [r.rid for r in waiting_queue],
-            },
-        )
+        log_json(self.loggers, "scheduler.status", {"redacted": True})

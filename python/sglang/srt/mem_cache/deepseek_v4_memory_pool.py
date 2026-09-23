@@ -1070,10 +1070,7 @@ class DeepSeekV4TokenToKVPool(BaseSWAKVPool):
             )
 
         logger.info(
-            "DSV4 SWA storage: worker=%s, storage=%s, paged_allocator=%s",
-            "draft" if is_draft_worker else "target",
-            "request_window" if self.request_window is not None else "paged",
-            self.needs_paged_swa_allocator,
+            "DSV4 SWA storage: worker=<redacted>, storage=<redacted>, paged_allocator=<redacted>"
         )
         self.full_size = full_size
         self.kv_source_layers = list(kv_source_layers)

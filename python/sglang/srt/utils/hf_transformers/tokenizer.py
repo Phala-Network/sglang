@@ -73,9 +73,7 @@ def _load_tokenizer_by_declared_class(tokenizer_name, *args, **kwargs):
     except FileNotFoundError:
         return None
     except (OSError, json.JSONDecodeError) as e:
-        logger.debug(
-            "Failed to read tokenizer_config.json for %s: %s", tokenizer_name, e
-        )
+        logger.debug("Failed to read tokenizer_config.json for <redacted>: <redacted>")
         return None
 
     if not tok_class_name:
@@ -104,7 +102,7 @@ def _load_tokenizer_by_declared_class(tokenizer_name, *args, **kwargs):
                     code_revision=revision,
                 )
         except (OSError, ImportError, ValueError, RuntimeError) as e:
-            logger.debug("Dynamic module lookup for %s failed: %s", tok_class_name, e)
+            logger.debug("Dynamic module lookup for <redacted> failed: <redacted>")
     if tok_cls is None:
         return None
 
@@ -117,11 +115,7 @@ def _load_tokenizer_by_declared_class(tokenizer_name, *args, **kwargs):
         return tok_cls.from_pretrained(tokenizer_name, *args, **kwargs)
     except (OSError, ValueError, TypeError, ImportError) as e:
         logger.warning(
-            "Direct load as %s failed for %s: %s. "
-            "Falling back to AutoTokenizer result.",
-            tok_class_name,
-            tokenizer_name,
-            e,
+            "Direct load as <redacted> failed for <redacted>: <redacted>. Falling back to AutoTokenizer result."
         )
         return None
 
@@ -290,10 +284,7 @@ def _fix_v5_tokenizer_components(tokenizer, model_name_or_path, revision=None):
         return
     except (OSError, ValueError, RuntimeError) as e:
         logger.warning(
-            "_fix_v5_tokenizer_components: unexpected error loading tokenizer.json "
-            "for %s, v5 component fix will not be applied: %s",
-            model_name_or_path,
-            e,
+            "_fix_v5_tokenizer_components: unexpected error loading tokenizer.json for <redacted>, v5 component fix will not be applied: <redacted>"
         )
         return
 
@@ -355,10 +346,7 @@ def _fix_v5_add_bos_eos_token(tokenizer, model_name_or_path, revision=None):
         return
     except (OSError, json.JSONDecodeError, ValueError) as e:
         logger.warning(
-            "_fix_v5_add_bos_eos_token: failed to read tokenizer_config.json "
-            "for %s, BOS/EOS token restoration will not be applied: %s",
-            model_name_or_path,
-            e,
+            "_fix_v5_add_bos_eos_token: failed to read tokenizer_config.json for <redacted>, BOS/EOS token restoration will not be applied: <redacted>"
         )
         return
 
@@ -613,7 +601,7 @@ def _fix_added_tokens_encoding(tokenizer):
             ids = tokenizer.encode(token_str, add_special_tokens=False)
             return len(ids) == 1 and ids[0] == expected_id
         except (ValueError, OverflowError, RuntimeError) as e:
-            logger.debug("Token %s encode check failed: %s", token_str, e)
+            logger.debug("Token <redacted> encode check failed: <redacted>")
             return False
 
     broken = [

@@ -347,9 +347,7 @@ class HiCacheHF3FS(HiCacheStorage):
             metadata_server_url = config["metadata_server_url"]
             metadata_client = Hf3fsGlobalMetadataClient(metadata_server_url)
 
-            logger.info(
-                f"Using global metadata client with server url: {metadata_server_url}"
-            )
+            logger.info("Using global metadata client with server url: <redacted>")
         else:
             # Enable MLA optimization only when using the global metadata client
             if is_mla_model:
@@ -384,7 +382,7 @@ class HiCacheHF3FS(HiCacheStorage):
         page_indices = self.metadata_client.get_page_indices(self.rank, keys)
         if len(page_indices) != len(keys):
             logger.error(
-                f"[Rank {self.rank}] HiCacheHF3FS get: page_indices length {len(page_indices)} mismatch keys length {len(keys)}."
+                "[Rank <redacted>] HiCacheHF3FS get: page_indices length <redacted> mismatch keys length <redacted>."
             )
             return [False] * len(keys)
         batch_indices, file_offsets = [], []
@@ -423,9 +421,7 @@ class HiCacheHF3FS(HiCacheStorage):
             if read_result == self.bytes_per_page:
                 results[batch_index] = True
             else:
-                logger.error(
-                    f"[Rank {self.rank}] HiCacheHF3FS get {keys[batch_index]} failed"
-                )
+                logger.error("[Rank <redacted>] HiCacheHF3FS get <redacted> failed")
 
         return results
 
@@ -445,7 +441,7 @@ class HiCacheHF3FS(HiCacheStorage):
         )
         if len(indices) != len(keys):
             logger.error(
-                f"[Rank {self.rank}] HiCacheHF3FS batch_get: mismatched lengths {len(indices)} != {len(keys)}"
+                "[Rank <redacted>] HiCacheHF3FS batch_get: mismatched lengths <redacted> != <redacted>"
             )
             # free allocated pages
             if indices:
@@ -498,7 +494,7 @@ class HiCacheHF3FS(HiCacheStorage):
             if write_result:
                 written_keys_to_confirm.append((key, page_index))
             else:
-                logger.error(f"[Rank {self.rank}] HiCacheHF3FS set {key} failed")
+                logger.error("[Rank <redacted>] HiCacheHF3FS set <redacted> failed")
                 pages_to_release.append(page_index)
             results[batch_index] = write_result
 
@@ -539,7 +535,7 @@ class HiCacheHF3FS(HiCacheStorage):
                 self.metadata_client.clear(self.rank, namespace=ctx.namespace)
             logger.info(f"Cleared HiCacheHF3FS for rank {self.rank}")
         except Exception as e:
-            logger.error(f"Failed to clear HiCacheHF3FS: {e}")
+            logger.error("Failed to clear HiCacheHF3FS: <redacted>")
 
     def close(self) -> None:
         try:
@@ -550,7 +546,7 @@ class HiCacheHF3FS(HiCacheStorage):
                     c.close()
             self.executor.shutdown(wait=True)
         except Exception as e:
-            logger.error(f"close HiCacheHF3FS: {e}")
+            logger.error("close HiCacheHF3FS: <redacted>")
         logger.info("close HiCacheHF3FS")
 
     def get_stats(self):
@@ -774,7 +770,7 @@ class HiCacheHF3FS(HiCacheStorage):
                 results[batch_idx] = True
             else:
                 logger.error(
-                    f"[Rank {self.rank}][Pool {pool_name.upper()}] HiCacheHF3FS get {keys[batch_idx]} failed"
+                    "[Rank <redacted>][Pool <redacted>] HiCacheHF3FS get <redacted> failed"
                 )
 
         return results
@@ -795,9 +791,7 @@ class HiCacheHF3FS(HiCacheStorage):
         )
 
         if len(indices) != page_num:
-            logger.error(
-                f"[Rank {self.rank}] Pool {pool_name}: mismatched indices length"
-            )
+            logger.error("[Rank <redacted>] Pool <redacted>: mismatched indices length")
             if indices:
                 self.metadata_client.confirm_write(
                     self.rank, [], [idx[1] for idx in indices], namespace=ctx.namespace
@@ -844,7 +838,7 @@ class HiCacheHF3FS(HiCacheStorage):
                 written_keys_to_confirm.append((key, page_index))
             else:
                 logger.error(
-                    f"[Rank {self.rank}][Pool {pool_name.upper()}] HiCacheHF3FS set {keys[batch_idx]} failed"
+                    "[Rank <redacted>][Pool <redacted>] HiCacheHF3FS set <redacted> failed"
                 )
                 pages_to_release.append(page_index)
             results[batch_idx] = write_ok

@@ -56,7 +56,7 @@ class HermesDetector(BaseFormatDetector):
                     calls.extend(self.parse_base_json(parsed, tools))
             return StreamingParseResult(normal_text=normal_text, calls=calls)
         except Exception as e:
-            logger.error(f"Error in detect_and_parse: {e}")
+            logger.error("Error in detect_and_parse: <redacted>")
             return StreamingParseResult(normal_text=text)
 
     def _clean_normal_text(self, text: str) -> str:

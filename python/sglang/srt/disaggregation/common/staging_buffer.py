@@ -146,8 +146,7 @@ class StagingBuffer:
         self.data_ptr = self.buffer.data_ptr()
 
         logger.info(
-            f"StagingBuffer allocated: {size_bytes / (1024 * 1024):.1f} MB "
-            f"on {device}, method={alloc_method}, ptr=0x{self.data_ptr:x}"
+            "StagingBuffer allocated: <redacted> MB on <redacted>, method=<redacted>, ptr=0x<redacted>"
         )
 
     def get_ptr(self) -> int:

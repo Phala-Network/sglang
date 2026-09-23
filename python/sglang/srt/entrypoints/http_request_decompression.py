@@ -73,7 +73,7 @@ class RequestDecompressionMiddleware:
             loop = asyncio.get_running_loop()
             body = await loop.run_in_executor(None, decompress, body)
         except Exception as e:
-            logger.warning("request body decompress failed: %s", e)
+            logger.warning("request body decompress failed: <redacted>")
             return await Response("decompress failed", status_code=400)(
                 scope, receive, send
             )

@@ -381,7 +381,7 @@ class SessionController:
     def open(self, recv_req: OpenSessionReqInput) -> OpenSessionReqOutput:
         session_id = recv_req.session_id
         if session_id in self.sessions:
-            logger.warning(f"session id {session_id} already exist, cannot open.")
+            logger.warning("session id <redacted> already exist, cannot open.")
             return OpenSessionReqOutput(session_id=session_id, success=False)
         elif session_id is None:
             logger.warning("session id is None, cannot open.")
@@ -401,7 +401,7 @@ class SessionController:
     def close(self, recv_req: CloseSessionReqInput):
         session_id = recv_req.session_id
         if session_id not in self.sessions:
-            logger.warning(f"session id {session_id} does not exist, cannot delete.")
+            logger.warning("session id <redacted> does not exist, cannot delete.")
         else:
             self._close(session_id)
 
@@ -425,10 +425,7 @@ class SessionController:
             # reference so cache_finished_req takes the streaming path,
             # and we schedule release_session for after it completes.
             session.close_on_finish = True
-            logger.info(
-                "Deferring session close for %s (unfinished request)",
-                session_id,
-            )
+            logger.info("Deferring session close for <redacted> (unfinished request)")
             return
 
         # No owning request -- safe to release immediately.

@@ -146,8 +146,8 @@ class GlobalMetadataState:
                 )
         except (json.JSONDecodeError, KeyError, TypeError) as e:
             logging.error(
-                f"Failed to load or parse persistence file: {e}. Starting fresh.",
-                exc_info=True,
+                "Failed to load or parse persistence file: <redacted>. Starting fresh.",
+                exc_info=False,
             )
             self.ranks.clear()
 
@@ -173,7 +173,7 @@ class GlobalMetadataState:
             temp_path.rename(self.persistence_path)
             logging.info(f"Metadata successfully persisted to {self.persistence_path}")
         except Exception as e:
-            logging.error(f"Failed to save metadata to disk: {e}", exc_info=True)
+            logging.error("Failed to save metadata to disk: <redacted>", exc_info=False)
 
     def schedule_save(self):
         if self.is_shutting_down or not self.persistence_path:
@@ -369,7 +369,7 @@ class Hf3fsGlobalMetadataClient(Hf3fsMetadataInterface):
                 return {}
             return orjson.loads(response.content)  # type: ignore[union-attr]
         except requests.exceptions.RequestException as e:
-            logging.error(f"Failed to POST to {endpoint} after retries: {e}")
+            logging.error("Failed to POST to <redacted> after retries: <redacted>")
             raise RuntimeError(f"Failed to connect to metadata server: {e}") from e
 
     def initialize(

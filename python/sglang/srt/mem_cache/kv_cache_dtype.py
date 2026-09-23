@@ -70,10 +70,7 @@ def configure_kv_cache_dtype(
     elif server_args_kv_cache_dtype in ("nvfp4", "fp4_mx_block16"):
         if hasattr(torch, "float4_e2m1fn_x2"):
             kv_cache_dtype = torch.float4_e2m1fn_x2
-            logger.warning(
-                "%s KV Cache might lead to an accuracy drop!",
-                server_args_kv_cache_dtype.upper(),
-            )
+            logger.warning("<redacted> KV Cache might lead to an accuracy drop!")
         else:
             raise ValueError(
                 f"--kv-cache-dtype={server_args_kv_cache_dtype} requires "

@@ -2271,13 +2271,7 @@ class UnifiedRadixCache(BasePrefixCache):
         else:
             self.prefetch_loaded_storage_start_by_reqid.pop(request, None)
         logger.info(
-            "HiCache prefetch %s req=%s completed=%d matched=%d loaded=%d occupied=%d",
-            "dropped" if insert_result.host_insert_dropped else "success",
-            request.rid,
-            completed_tokens,
-            insert_result.prefix_len,
-            loaded_from_storage,
-            self.cache_controller.prefetch_tokens_occupied,
+            "HiCache prefetch <redacted> req=<redacted> completed=<redacted> matched=<redacted> loaded=<redacted> occupied=<redacted>"
         )
         return
 
@@ -2374,12 +2368,7 @@ class UnifiedRadixCache(BasePrefixCache):
             self.prefetch_loaded_tokens_by_reqid[request] = 0
             self.prefetch_loaded_storage_start_by_reqid.pop(request, None)
             logger.warning(
-                "HiCache hybrid prefetch discarded req=%s completed=%d requested=%d "
-                "kv_beliefs_kept_pages=%d",
-                request.rid,
-                completed_tokens,
-                expected_tokens,
-                keep_pages,
+                "HiCache hybrid prefetch discarded req=<redacted> completed=<redacted> requested=<redacted> kv_beliefs_kept_pages=<redacted>"
             )
             return False
         return True
@@ -2396,10 +2385,7 @@ class UnifiedRadixCache(BasePrefixCache):
             return
         if request in self._storage_prefetch_hit_remaining_by_reqid:
             logger.warning(
-                "Replacing unresolved storage-hit accounting req=%s old=%d new=%d",
-                request.rid,
-                self._storage_prefetch_hit_remaining_by_reqid[request],
-                num_tokens,
+                "Replacing unresolved storage-hit accounting req=<redacted> old=<redacted> new=<redacted>"
             )
             self.discard_storage_prefetch_accounting(request)
         self._storage_prefetch_hit_remaining_by_reqid[request] = num_tokens
@@ -2416,12 +2402,7 @@ class UnifiedRadixCache(BasePrefixCache):
         dropped = min(num_tokens, remaining)
         if num_tokens > remaining:
             logger.warning(
-                "Storage-prefetch accounting exceeded remaining "
-                "tokens req=%s requested=%d remaining=%d reason=%s",
-                request.rid,
-                num_tokens,
-                remaining,
-                reason,
+                "Storage-prefetch accounting exceeded remaining tokens req=<redacted> requested=<redacted> remaining=<redacted> reason=<redacted>"
             )
         if reason is not None:
             self.storage_metrics_collector.log_storage_prefetch_unfulfilled_tokens(
@@ -2441,11 +2422,7 @@ class UnifiedRadixCache(BasePrefixCache):
             return
         if fulfilled_tokens > remaining:
             logger.warning(
-                "Storage-prefetch fulfilled accounting exceeded remaining "
-                "tokens req=%s fulfilled=%d remaining=%d",
-                request.rid,
-                fulfilled_tokens,
-                remaining,
+                "Storage-prefetch fulfilled accounting exceeded remaining tokens req=<redacted> fulfilled=<redacted> remaining=<redacted>"
             )
         unfulfilled = max(0, remaining - fulfilled_tokens)
         if reason is not None:

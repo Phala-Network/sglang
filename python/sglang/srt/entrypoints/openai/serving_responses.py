@@ -406,7 +406,7 @@ class OpenAIServingResponses(OpenAIServingChat):
         except _MediaInputValidationError as e:
             return self.create_error_response(str(e))
         except (ValueError, TypeError, RuntimeError, jinja2.TemplateError) as e:
-            logger.exception("Error in preprocessing prompt inputs")
+            logger.exception("Error in preprocessing prompt inputs", exc_info=False)
             return self.create_error_response(f"{e} {e.__cause__}")
 
         request_metadata = RequestResponseMetadata(request_id=request.request_id)
@@ -1121,7 +1121,7 @@ class OpenAIServingResponses(OpenAIServingChat):
                         )
                     parsed_via_native = bool(call_info_list)
                 except Exception as e:
-                    logger.error("Tool call parsing error: %s", e)
+                    logger.error("Tool call parsing error: <redacted>")
 
         if (
             content
@@ -1148,7 +1148,7 @@ class OpenAIServingResponses(OpenAIServingChat):
                         )
                     content = ""
             except Exception as e:
-                logger.error("Required tool JSON parse error: %s", e)
+                logger.error("Required tool JSON parse error: <redacted>")
 
         if content:
             output_text = ResponseOutputText(
@@ -1595,7 +1595,7 @@ class OpenAIServingResponses(OpenAIServingChat):
                 require_reasoning=require_reasoning,
             )
         except Exception as e:
-            logger.exception("Background request failed for %s", request.request_id)
+            logger.exception("Background request failed for <redacted>", exc_info=False)
             response = self.create_error_response(str(e))
 
         if isinstance(response, ORJSONResponse):
@@ -1653,7 +1653,9 @@ class OpenAIServingResponses(OpenAIServingChat):
             try:
                 await task
             except asyncio.CancelledError:
-                logger.exception("Background task for %s was cancelled", response_id)
+                logger.exception(
+                    "Background task for <redacted> was cancelled", exc_info=False
+                )
         return response
 
     def _make_invalid_id_error(self, response_id: str):
@@ -2613,7 +2615,7 @@ class OpenAIServingResponses(OpenAIServingChat):
                     yield ev
         except Exception as e:
             logger.exception(
-                "Error while streaming /v1/responses %s", request.request_id
+                "Error while streaming /v1/responses <redacted>", exc_info=False
             )
             failed = _sanitize_response_dict(
                 ResponsesResponse.from_request(

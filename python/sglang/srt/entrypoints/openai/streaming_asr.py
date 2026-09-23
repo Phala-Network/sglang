@@ -192,13 +192,11 @@ async def process_asr_chunk(
     except asyncio.CancelledError:
         raise
     except ValueError:
-        logger.warning(
-            "[streaming_asr] chunk %d failed", state.chunk_index, exc_info=True
-        )
+        logger.warning("[streaming_asr] chunk <redacted> failed", exc_info=False)
         raise
 
     if ret is None:
-        logger.warning("[streaming_asr] empty response for chunk %d", state.chunk_index)
+        logger.warning("[streaming_asr] empty response for chunk <redacted>")
         return ""
 
     text = normalize_whitespace(adapter.postprocess_text(ret.get("text", "")))

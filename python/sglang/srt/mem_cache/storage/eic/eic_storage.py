@@ -128,7 +128,7 @@ class FlexibleKVCacheMemoryPool:
             numel *= i
         if numel != self.kv_cache_numel or dtype != self.kvcache_dtype:
             logger.error(
-                f"allocate from mempool failed, self.kvcache_shape {self.kvcache_shape}, dtype {self.kvcache_dtype}, require shape {shape}, dtype {dtype}"
+                "allocate from mempool failed, self.kvcache_shape <redacted>, dtype <redacted>, require shape <redacted>, dtype <redacted>"
             )
             return None
 
@@ -141,7 +141,7 @@ class FlexibleKVCacheMemoryPool:
     def free_to_mempool(self, data_ptr):
         if data_ptr not in self.data_ptr_to_index:
             logger.error(
-                f"free_to_mempool failed, data_ptr {data_ptr} not in allocated_data_addr"
+                "free_to_mempool failed, data_ptr <redacted> not in allocated_data_addr"
             )
             return
         self.free_data_addr.add(self.data_ptr_to_index[data_ptr])
@@ -162,7 +162,7 @@ class EICStorage(HiCacheStorage):
 
         config_file = get_eic_config_file_path()
         if os.path.exists(config_file) is False:
-            logger.error(f"config file {config_file} not exists")
+            logger.error("config file <redacted> not exists")
             raise RuntimeError(f"eic config file {config_file} not exists")
 
         with open(config_file, "r") as fin:
@@ -174,7 +174,7 @@ class EICStorage(HiCacheStorage):
 
         endpoint = remote_url[len("eic://") :]
 
-        logger.info(f"eic remote_url:" + remote_url + " endpoint: " + endpoint)
+        logger.info("Request-path diagnostic redacted")
 
         eic_instance_id = config.get("eic_instance_id", None)
         logger.info(f"eic instance_id: {eic_instance_id}")
@@ -254,7 +254,7 @@ class EICStorage(HiCacheStorage):
 
         ret = self.connection.init(eic_instance_id, endpoint, init_option)
         if ret != 0:
-            logger.error(f"fail to init eic client, ret: {ret}")
+            logger.error("fail to init eic client, ret: <redacted>")
             raise RuntimeError("EIC Client Init Failed.")
         self.warmup()
 
@@ -394,9 +394,7 @@ class EICStorage(HiCacheStorage):
             exist_option.ns = self.eic_namespace
             status_code, exist_outcome = self.connection.mexist(keys_vec, exist_option)
             if status_code != eic.StatusCode.SUCCESS:
-                logger.error(
-                    f"eic exists {len(keys)} failed, status_code {status_code}"
-                )
+                logger.error("eic exists <redacted> failed, status_code <redacted>")
                 result.extend([False] * len(batch_keys))
             for err_code in exist_outcome.status_codes:
                 result.append(err_code == eic.StatusCode.SUCCESS)
@@ -467,7 +465,7 @@ class EICStorage(HiCacheStorage):
         set_option.ttl_second = -1
         status_code, set_outcome = self.connection.mset(keys_vec, vals_vec, set_option)
         if status_code != eic.StatusCode.SUCCESS:
-            logger.error(f"eic mset {len(keys)} failed, status_code {status_code}")
+            logger.error("eic mset <redacted> failed, status_code <redacted>")
             return [False] * len(keys)
         else:
             logger.debug(f"eic zero copy mset {len(keys)} success")
@@ -507,19 +505,17 @@ class EICStorage(HiCacheStorage):
                         logger.debug(f"eic get data {eic_keys[i]} success")
                     else:
                         logger.error(
-                            f"eic get data {eic_keys[i]} failed, err_code {err_code}"
+                            "eic get data <redacted> failed, err_code <redacted>"
                         )
                         success_mask[i] = False
             else:
-                logger.error(
-                    f"eic mget {len(eic_keys)} keys failed, status_code {status_code}"
-                )
+                logger.error("eic mget <redacted> keys failed, status_code <redacted>")
                 success_mask = [False] * len(keys)
                 return success_mask
 
         get_data_end_time = time.perf_counter()
         get_data_execution_time = (get_data_end_time - get_data_start_time) * 1e6
-        logger.debug(f"eic get {count} keys data cost %.2f us", get_data_execution_time)
+        logger.debug("eic get <redacted> keys data cost %.2f us")
         return success_mask
 
     def generic_batch_set(
@@ -585,7 +581,7 @@ class EICStorage(HiCacheStorage):
         set_option.ttl_second = -1
         status_code, set_outcome = self.connection.mset(keys_vec, vals_vec, set_option)
         if status_code != eic.StatusCode.SUCCESS:
-            logger.error(f"eic mset {len(eic_keys)} failed, status_code {status_code}")
+            logger.error("eic mset <redacted> failed, status_code <redacted>")
         else:
             logger.debug(f"eic mset {len(eic_keys)} success")
 
@@ -595,7 +591,7 @@ class EICStorage(HiCacheStorage):
 
         err_code = set_outcome.status_codes[0]
         if err_code != eic.StatusCode.SUCCESS:
-            logger.error(f"set data key {len(eic_keys)} failed, err_code {err_code}")
+            logger.error("set data key <redacted> failed, err_code <redacted>")
             return [False] * len(keys)
 
         logger.debug(f"set data key {len(eic_keys)} success")
@@ -661,13 +657,11 @@ class EICStorage(HiCacheStorage):
                         logger.debug(f"eic get data {eic_keys[i]} success")
                     else:
                         logger.error(
-                            f"eic get data {eic_keys[i]} failed, err_code {err_code}"
+                            "eic get data <redacted> failed, err_code <redacted>"
                         )
                         success_mask[i] = False
             else:
-                logger.error(
-                    f"eic mget {len(eic_keys)} keys failed, status_code {status_code}"
-                )
+                logger.error("eic mget <redacted> keys failed, status_code <redacted>")
                 success_mask = [False] * len(keys)
 
         if registered:
@@ -678,7 +672,7 @@ class EICStorage(HiCacheStorage):
 
         get_data_end_time = time.perf_counter()
         get_data_execution_time = (get_data_end_time - get_data_start_time) * 1e6
-        logger.debug(f"eic get {count} keys data cost %.2f us", get_data_execution_time)
+        logger.debug("eic get <redacted> keys data cost %.2f us")
         return success_mask
 
     def _get_mha_zero_copy_keys(self, keys: List[str]) -> List[str]:

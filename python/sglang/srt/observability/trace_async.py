@@ -308,7 +308,7 @@ class _TraceExporterProcess(multiprocessing.Process):
                             last_cleanup = now
                         continue
                 except Exception as e:
-                    logger.error("Trace exporter recv error: %s", e)
+                    logger.error("Trace exporter recv error: <redacted>")
                     continue
 
                 if not isinstance(msg, dict):
@@ -344,9 +344,7 @@ class _TraceExporterProcess(multiprocessing.Process):
                         )
                     except Exception as e:
                         logger.error(
-                            "Trace exporter replay error for rid=%s: %s",
-                            msg.get("rid"),
-                            e,
+                            "Trace exporter replay error for rid=<redacted>: <redacted>"
                         )
 
                 now = time.perf_counter()
@@ -508,7 +506,9 @@ class _TraceExporterProcess(multiprocessing.Process):
                     contexts.pop(context_id, None)
 
             except Exception as e:
-                logger.error("Replay op %s for rid %s failed: %s", op_type, rid, e)
+                logger.error(
+                    "Replay op <redacted> for rid <redacted> failed: <redacted>"
+                )
 
     def _cleanup_stale(self, contexts: Dict[str, tuple], now: float) -> None:
         expired = [
@@ -671,12 +671,10 @@ class TraceReqContextAsync:
             )
         except zmq.Again:
             logger.warning(
-                "ZMQ send buffer full, dropping %d trace ops for %s",
-                len(ops),
-                self.rid,
+                "ZMQ send buffer full, dropping <redacted> trace ops for <redacted>"
             )
         except Exception as e:
-            logger.error("Failed to flush trace for %s: %s", self.rid, e)
+            logger.error("Failed to flush trace for <redacted>: <redacted>")
 
     # -- trace interface (mirrors TraceReqContext) -----------------------
 

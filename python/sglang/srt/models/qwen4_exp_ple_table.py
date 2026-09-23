@@ -216,7 +216,7 @@ class PleFileRssTrimmer:
             try:
                 self.trim_once()
             except Exception as exc:  # advisory only; never fail a request
-                logger.warning("PLE table: resident-set trim skipped (%s)", exc)
+                logger.warning("PLE table: resident-set trim skipped (<redacted>)")
 
     def close(self) -> None:
         self._stop.set()

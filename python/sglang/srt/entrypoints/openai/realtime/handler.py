@@ -28,14 +28,14 @@ async def _safe_send(websocket: WebSocket, text: str) -> None:
     try:
         await websocket.send_text(text)
     except (WebSocketDisconnect, RuntimeError) as e:
-        logger.debug("[realtime] send failed (peer gone): %s", e)
+        logger.debug("[realtime] send failed (peer gone): <redacted>")
 
 
 async def _safe_close(websocket: WebSocket) -> None:
     try:
         await websocket.close()
     except (WebSocketDisconnect, RuntimeError) as e:
-        logger.debug("[realtime] close failed (already closed): %s", e)
+        logger.debug("[realtime] close failed (already closed): <redacted>")
 
 
 async def _reject_before_session(
@@ -50,9 +50,9 @@ async def _reject_before_session(
     try:
         await websocket.accept()
     except (WebSocketDisconnect, RuntimeError) as e:
-        logger.debug("[realtime] reject: accept failed: %s", e)
+        logger.debug("[realtime] reject: accept failed: <redacted>")
         return
-    logger.info("[realtime] rejected (%s)", code)
+    logger.info("[realtime] rejected (<redacted>)")
     envelope = RealtimeErrorEvent(
         event_id=f"event_{random_uuid()}",
         type="error",
@@ -96,7 +96,7 @@ async def handle_realtime_transcription(
             try:
                 await websocket.accept()
             except (WebSocketDisconnect, RuntimeError) as e:
-                logger.debug("[realtime] accept failed: %s", e)
+                logger.debug("[realtime] accept failed: <redacted>")
                 return
             connection = RealtimeConnection(
                 websocket, tokenizer_manager, adapter, server_args
@@ -105,7 +105,7 @@ async def handle_realtime_transcription(
         except WebSocketDisconnect:
             logger.info("[realtime] client disconnected (normal)")
         except Exception:
-            logger.exception("[realtime] unexpected error in session")
+            logger.exception("[realtime] unexpected error in session", exc_info=False)
             envelope = RealtimeErrorEvent(
                 event_id=f"event_{random_uuid()}",
                 type="error",

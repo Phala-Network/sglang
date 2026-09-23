@@ -38,7 +38,7 @@ def _gluon_fn():
         import triton.experimental.gluon.language as gl
         from aiter.ops.triton.gluon.mla_gluon import mla_gluon
     except ImportError as exc:
-        logger.info("aiter mla gluon import error message: %s", exc)
+        logger.info("aiter mla gluon import error message: <redacted>")
         return None
     # mla_gluon builds its shared layouts with cga_layout, added in Triton 3.7;
     # older Triton fails at compile time with an opaque error instead.

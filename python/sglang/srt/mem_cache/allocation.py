@@ -163,7 +163,7 @@ def alloc_token_slots(
             f"Try to allocate {num_tokens} tokens.\n"
             f"{available_and_evictable_str(tree_cache)}"
         )
-        logger.error(error_msg)
+        logger.error("Request-path diagnostic redacted")
         if tree_cache is not None:
             tree_cache.pretty_print()
         raise RuntimeError(error_msg)
@@ -232,7 +232,7 @@ def alloc_paged_token_slots_extend(
             f"Try to allocate {extend_num_tokens} tokens.\n"
             f"{available_and_evictable_str(tree_cache)}"
         )
-        logger.error(error_msg)
+        logger.error("Request-path diagnostic redacted")
         if tree_cache is not None:
             tree_cache.pretty_print()
         raise RuntimeError(error_msg)
@@ -576,7 +576,7 @@ def alloc_paged_token_slots_decode(
             f"Try to allocate {len(seq_lens) * token_per_req} tokens.\n"
             f"{available_and_evictable_str(tree_cache)}"
         )
-        logger.error(error_msg)
+        logger.error("Request-path diagnostic redacted")
         if tree_cache is not None:
             tree_cache.pretty_print()
         raise RuntimeError(error_msg)

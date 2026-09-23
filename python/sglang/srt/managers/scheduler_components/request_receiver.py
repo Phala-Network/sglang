@@ -285,8 +285,8 @@ class SchedulerRequestReceiver:
                 unwrap_shm_features(req)
             except Exception:
                 logger.exception(
-                    "Failed to materialize shared-memory multimodal features for rid=%s",
-                    req.rid,
+                    "Failed to materialize shared-memory multimodal features for rid=<redacted>",
+                    exc_info=False,
                 )
                 discard_shm_features(req)
                 failed[index] = 1

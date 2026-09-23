@@ -69,11 +69,7 @@ def _convert_param_value(
             return int(param_value)
         except (ValueError, TypeError):
             logger.warning(
-                "Parsed value '%s' of parameter '%s' is not an "
-                "integer in tool '%s', degenerating to string.",
-                param_value,
-                param_name,
-                func_name,
+                "Parsed value '<redacted>' of parameter '<redacted>' is not an integer in tool '<redacted>', degenerating to string."
             )
             return param_value
     elif param_type.startswith("num") or param_type.startswith("float"):
@@ -86,23 +82,14 @@ def _convert_param_value(
             )
         except (ValueError, TypeError):
             logger.warning(
-                "Parsed value '%s' of parameter '%s' is not a float "
-                "in tool '%s', degenerating to string.",
-                param_value,
-                param_name,
-                func_name,
+                "Parsed value '<redacted>' of parameter '<redacted>' is not a float in tool '<redacted>', degenerating to string."
             )
             return param_value
     elif param_type in ["boolean", "bool", "binary"]:
         param_value = param_value.lower()
         if param_value not in ["true", "false"]:
             logger.warning(
-                "Parsed value '%s' of parameter '%s' is not a boolean "
-                "(`true` or `false`) in tool '%s', degenerating to "
-                "false.",
-                param_value,
-                param_name,
-                func_name,
+                "Parsed value '<redacted>' of parameter '<redacted>' is not a boolean (`true` or `false`) in tool '<redacted>', degenerating to false."
             )
         return param_value == "true"
     else:
@@ -116,23 +103,13 @@ def _convert_param_value(
                 return param_value
             except (json.JSONDecodeError, TypeError, ValueError):
                 logger.warning(
-                    "Parsed value '%s' of parameter '%s' cannot be "
-                    "parsed with json.loads in tool '%s', will try "
-                    "other methods to parse it.",
-                    param_value,
-                    param_name,
-                    func_name,
+                    "Parsed value '<redacted>' of parameter '<redacted>' cannot be parsed with json.loads in tool '<redacted>', will try other methods to parse it."
                 )
         try:
             param_value = safe_literal_eval(param_value)
         except (ValueError, SyntaxError, TypeError):
             logger.warning(
-                "Parsed value '%s' of parameter '%s' cannot be "
-                "converted via Python `ast.literal_eval()` in tool "
-                "'%s', degenerating to string.",
-                param_value,
-                param_name,
-                func_name,
+                "Parsed value '<redacted>' of parameter '<redacted>' cannot be converted via Python `ast.literal_eval()` in tool '<redacted>', degenerating to string."
             )
         return param_value
 
@@ -183,7 +160,7 @@ class MiMoDetector(BaseFormatDetector):
                 func_name = parsed.get("name")
                 if func_name not in tool_indices:
                     # Unknown function
-                    logger.warning(f"Unknown function: {func_name}")
+                    logger.warning("Unknown function: <redacted>")
                     if not envs.SGLANG_FORWARD_UNKNOWN_TOOLS.get():
                         # Return tool call block as normal text
                         normal_text += text[last_end : match.end()]

@@ -151,7 +151,7 @@ class OutlinesGrammarBackend(BaseGrammarBackend):
                 # outlines <= 0.0.46
                 guide = RegexGuide(regex, self.outlines_tokenizer)
         except interegular.patterns.InvalidSyntax as e:
-            logger.error(f"Hit invalid regex schema: {regex=}, {e=}")
+            logger.error("Hit invalid regex schema: regex=<redacted>, e=<redacted>")
             return InvalidGrammarObject(str(e))
 
         jump_forward_map = None
@@ -170,7 +170,7 @@ class OutlinesGrammarBackend(BaseGrammarBackend):
                 whitespace_pattern=self.whitespace_pattern,
             )
         except (NotImplementedError, json.decoder.JSONDecodeError, ValueError) as e:
-            logger.error(f"Hit invalid json_schema: {key_string=}, {e=}")
+            logger.error("Hit invalid json_schema: key_string=<redacted>, e=<redacted>")
             return InvalidGrammarObject(str(e))
         return self._compile_regex(regex)
 

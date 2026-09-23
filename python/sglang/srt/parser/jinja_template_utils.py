@@ -76,7 +76,7 @@ def _try_extract_ast(chat_template: str):
         jinja_compiled = hf_chat_utils._compile_jinja_template(chat_template)
         return jinja_compiled.environment.parse(chat_template)
     except Exception as e:
-        logger.debug(f"Error when compiling Jinja template: {e}")
+        logger.debug("Error when compiling Jinja template: <redacted>")
         return None
 
 
@@ -118,7 +118,7 @@ def detect_jinja_template_content_format(chat_template: str) -> str:
 
         return "string"  # No content loops found → string format
     except Exception as e:
-        logger.debug(f"Error when parsing AST of Jinja template: {e}")
+        logger.debug("Error when parsing AST of Jinja template: <redacted>")
         return "string"
 
 

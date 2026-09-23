@@ -90,7 +90,7 @@ class PythonicDetector(BaseFormatDetector):
                 # Validate that the function exists in the tools
                 if function_name not in tool_indices:
                     logger.warning(
-                        f"Model attempted to call undefined function: {function_name}"
+                        "Model attempted to call undefined function: <redacted>"
                     )
                     if not envs.SGLANG_FORWARD_UNKNOWN_TOOLS.get():
                         continue  # Skip unknown tools (default legacy behavior)
@@ -111,7 +111,7 @@ class PythonicDetector(BaseFormatDetector):
                         arguments, ensure_ascii=False, allow_nan=False
                     )
                 except (ValueError, TypeError) as e:
-                    logger.warning(f"Skipping tool call {function_name}: {e}")
+                    logger.warning("Skipping tool call <redacted>: <redacted>")
                     continue
                 calls.append(
                     ToolCallItem(
@@ -123,7 +123,7 @@ class PythonicDetector(BaseFormatDetector):
 
             return StreamingParseResult(normal_text=normal_text, calls=calls)
         except Exception:
-            logger.exception("Error in pythonic tool call parsing.")
+            logger.exception("Error in pythonic tool call parsing.", exc_info=False)
             return StreamingParseResult(normal_text=normal_text, calls=[])
 
     def _find_matching_bracket(self, buffer: str, start: int) -> int:

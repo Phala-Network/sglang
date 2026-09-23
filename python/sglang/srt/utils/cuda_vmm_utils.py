@@ -197,7 +197,7 @@ def is_gpu_fabric_ready(device: torch.device) -> bool:
         finally:
             pynvml.nvmlShutdown()
     except Exception as error:
-        logger.warning("GPU fabric readiness query failed: %r", error)
+        logger.warning("GPU fabric readiness query failed: <redacted>")
         return False
 
 
@@ -251,10 +251,7 @@ def get_device_allocation_handle_type(device_id: int) -> int:
         except RuntimeError as error:
             last_error = error
             logger.warning(
-                "CUDA VMM %s backing unavailable on device %d; trying fallback: %s",
-                name,
-                device_id,
-                error,
+                "CUDA VMM <redacted> backing unavailable on device <redacted>; trying fallback: <redacted>"
             )
             continue
         logger.info(
@@ -653,16 +650,16 @@ class VmmReservation:
             err = drv.cuMemUnmap(address, size)
             err = err[0] if isinstance(err, tuple) else err
             if err != drv.CUresult.CUDA_SUCCESS:
-                logger.warning("cuMemUnmap(local) -> %s", err)
+                logger.warning("cuMemUnmap(local) -> <redacted>")
             if release_handles and handle is not None:
                 err = drv.cuMemRelease(handle)
                 err = err[0] if isinstance(err, tuple) else err
                 if err != drv.CUresult.CUDA_SUCCESS:
-                    logger.warning("cuMemRelease(local) -> %s", err)
+                    logger.warning("cuMemRelease(local) -> <redacted>")
         err = drv.cuMemAddressFree(self.base, self.size)
         err = err[0] if isinstance(err, tuple) else err
         if err != drv.CUresult.CUDA_SUCCESS:
-            logger.warning("cuMemAddressFree(local) -> %s", err)
+            logger.warning("cuMemAddressFree(local) -> <redacted>")
 
 
 def all_ranks_ok(group: ProcessGroup, ok: bool) -> bool:
@@ -747,10 +744,7 @@ def export_shareable_handles(retained_handles, group: ProcessGroup, rank: int):
         fabric_ok = False
         fabric_handles = []
         logger.info(
-            "FABRIC handle export failed on rank %s; falling back to "
-            "POSIX fd transport: %s",
-            rank,
-            e,
+            "FABRIC handle export failed on rank <redacted>; falling back to POSIX fd transport: <redacted>"
         )
 
     if all_ranks_ok(group, fabric_ok):

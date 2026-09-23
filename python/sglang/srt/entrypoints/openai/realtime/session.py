@@ -218,9 +218,9 @@ class RealtimeConnection:
         try:
             await self._run_loop()
         except WebSocketDisconnect:
-            logger.info("[realtime] client disconnected: %s", self.session_id)
+            logger.info("[realtime] client disconnected: <redacted>")
         except Exception:
-            logger.exception("[realtime] unexpected error: %s", self.session_id)
+            logger.exception("[realtime] unexpected error: <redacted>", exc_info=False)
             try:
                 await self._send_error(
                     "inference_failed",
@@ -229,8 +229,7 @@ class RealtimeConnection:
                 )
             except (WebSocketDisconnect, RuntimeError) as e:
                 logger.debug(
-                    "[realtime] failed to notify client of unexpected error: %s",
-                    e,
+                    "[realtime] failed to notify client of unexpected error: <redacted>"
                 )
 
     async def _run_loop(self) -> None:
@@ -396,18 +395,11 @@ class RealtimeConnection:
         # Side effects: log + ack.
         if cfg.include:
             logger.info(
-                "[realtime] %s: include[] received but not implemented; ignoring: %s",
-                self.session_id,
-                cfg.include,
+                "[realtime] <redacted>: include[] received but not implemented; ignoring: <redacted>"
             )
         if self.config.input_sample_rate != self.model_sample_rate:
             logger.info(
-                "[realtime] %s configured: resample %d→%d (ratio %.2f), language=%s",
-                self.session_id,
-                self.config.input_sample_rate,
-                self.model_sample_rate,
-                self.config.input_sample_rate / self.model_sample_rate,
-                self.config.language,
+                "[realtime] <redacted> configured: resample <redacted>→<redacted> (ratio <redacted>), language=<redacted>"
             )
         await self._send(
             SessionUpdatedEvent(
@@ -597,10 +589,8 @@ class RealtimeConnection:
             )
         except Exception:
             logger.exception(
-                "[realtime] inference failed: session=%s item=%s buffer_bytes=%d",
-                self.session_id,
-                self.item.current_item_id,
-                len(self.audio.pcm_buffer),
+                "[realtime] inference failed: session=<redacted> item=<redacted> buffer_bytes=<redacted>",
+                exc_info=False,
             )
             if is_last:
                 # Commit-time failure: committed + created already emitted,
@@ -734,8 +724,12 @@ class RealtimeConnection:
         try:
             await self._send_error(code, message, error_type=error_type)
         except (WebSocketDisconnect, RuntimeError) as e:
-            logger.debug("[realtime] send error %s before close failed: %s", code, e)
+            logger.debug(
+                "[realtime] send error <redacted> before close failed: <redacted>"
+            )
         try:
             await self.websocket.close(code=close_code)
         except (WebSocketDisconnect, RuntimeError) as e:
-            logger.debug("[realtime] close %d after %s failed: %s", close_code, code, e)
+            logger.debug(
+                "[realtime] close <redacted> after <redacted> failed: <redacted>"
+            )

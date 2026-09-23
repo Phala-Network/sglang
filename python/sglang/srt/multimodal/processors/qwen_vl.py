@@ -144,7 +144,7 @@ if _is_cpu and _is_cpu_amx_available:
         transformers.models.qwen2_vl.image_processing_qwen2_vl_fast.Qwen2VLImageProcessorFast._preprocess = fast_preprocess_cpu
     except Exception as e:
         logger.warning(
-            f"Failed to hack Qwen2VLImageProcessorFast with AMX optimization: {e}"
+            "Failed to hack Qwen2VLImageProcessorFast with AMX optimization: <redacted>"
         )
 
 
@@ -908,9 +908,7 @@ class QwenVLImageProcessor(MediaArtifactCacheMixin, SGLangBaseProcessor):
             if "prompt placeholders" not in str(exc):
                 raise
             logger.debug(
-                "Qwen-VL fast path skipped after normalization (%s); "
-                "falling back to full preprocessing",
-                exc,
+                "Qwen-VL fast path skipped after normalization (<redacted>); falling back to full preprocessing"
             )
             return None
         input_ids_list = list(input_ids_tuple)
@@ -1151,12 +1149,7 @@ class QwenVLImageProcessor(MediaArtifactCacheMixin, SGLangBaseProcessor):
             mrope_positions = mrope_positions.squeeze(1)
         get_rope_index_time = time.perf_counter()
         logger.debug(
-            f"[QwenVLProcessor Perf] {rid=}, "
-            f"load_time: {(load_time - entry_time) * 1000:.2f} ms, "
-            f"preprocess_time: {(preprocess_time - load_time) * 1000:.2f} ms, "
-            f"process_time: {(process_time - preprocess_time) * 1000:.2f} ms, "
-            f"get_rope_index_time: {(get_rope_index_time - process_time) * 1000:.2f} ms, "
-            f"total_time: {(get_rope_index_time - entry_time) * 1000:.2f} ms"
+            "[QwenVLProcessor Perf] rid=<redacted>, load_time: <redacted> ms, preprocess_time: <redacted> ms, process_time: <redacted> ms, get_rope_index_time: <redacted> ms, total_time: <redacted> ms"
         )
 
         return MultimodalProcessorOutput(

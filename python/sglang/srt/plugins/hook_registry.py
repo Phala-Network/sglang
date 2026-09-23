@@ -163,7 +163,7 @@ class HookRegistry:
                 cls._apply_target(target, hooks)
                 cls._patched.add(target)
             except Exception:
-                logger.exception("Failed to apply hooks to %s", target)
+                logger.exception("Failed to apply hooks to <redacted>", exc_info=False)
 
     @staticmethod
     def _target_sort_key(item):

@@ -202,7 +202,7 @@ class NPUGraphRunner(DecodeCudaGraphRunner):
         if not Path(output_dir).exists():
             Path(output_dir).mkdir(parents=True, exist_ok=True)
         logger.info(
-            f"Profiling starts for graph capture for NPU. Traces will be saved to: {output_dir}"
+            "Profiling starts for graph capture for NPU. Traces will be saved to: <redacted>"
         )
         experimental_config = torch_npu.profiler._ExperimentalConfig(
             export_type=[torch_npu.profiler.ExportType.Text],

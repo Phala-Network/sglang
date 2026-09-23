@@ -229,7 +229,7 @@ class BaseTpWorker(ABC):
                 "Invalid update_weights_from_tensor serialized payload: "
                 f"{type(exc).__name__}: {exc}"
             )
-            logger.error(message)
+            logger.error("Request-path diagnostic redacted")
             return False, message
 
         success, message = self.model_runner.weight_updater.update_weights_from_tensor(

@@ -134,9 +134,7 @@ def _resolve_attention_backend_model_cls(config: PretrainedConfig):
             )
         except Exception as e:
             logger.warning(
-                "Failed to load dynamic module from auto_map[%s]: %s.",
-                key,
-                e,
+                "Failed to load dynamic module from auto_map[<redacted>]: <redacted>."
             )
     return None
 
@@ -739,9 +737,7 @@ class TransformersBase(nn.Module):
                         )
                 except Exception as e:
                     logger.debug(
-                        "Could not infer TP plan from base model type '%s': %s",
-                        base_type,
-                        e,
+                        "Could not infer TP plan from base model type '<redacted>': <redacted>"
                     )
         return plan
 

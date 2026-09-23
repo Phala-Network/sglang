@@ -782,6 +782,10 @@ class Envs:
     SGLANG_HUGEPAGE_SIZE = EnvStr("")
     # Opt-in single-host DSA startup accounting; external L3 is not supported.
     SGLANG_HICACHE_DSA_STARTUP_BUDGET = EnvBool(False)
+    # Ordinary RAM kept outside the DSA KV/index startup budget. HugeTLB pages
+    # are accounted separately, so large 1GB-page pools may need an explicit
+    # lower value after measuring the host's real post-model-load headroom.
+    SGLANG_HICACHE_HOST_MEMORY_RESERVE_GB = EnvInt(128)
 
     # ===================================================================
     # KV-transfer staging and Mooncake transport

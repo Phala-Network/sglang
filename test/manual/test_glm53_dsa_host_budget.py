@@ -138,7 +138,7 @@ class Cuda:
 
 
 def fixture(world_size=1, rank=0, transport=None):
-    env = NS(value="", enabled=True)
+    env = NS(value="", enabled=True, reserve=128)
     cuda = Cuda()
     events = []
     torch = install("torch")
@@ -180,6 +180,7 @@ def fixture(world_size=1, rank=0, transport=None):
         SGLANG_HUGEPAGE_SIZE=NS(get=lambda: env.value),
         SGLANG_HICACHE_DSA_STARTUP_BUDGET=NS(get=lambda: env.enabled),
         SGLANG_HICACHE_HOST_REGISTER_CHUNK_GB=NS(get=lambda: 256),
+        SGLANG_HICACHE_HOST_MEMORY_RESERVE_GB=NS(get=lambda: env.reserve),
     )
     install("sglang.srt.environ").envs = envs
     mmap_stub = NS(PAGESIZE=4096, MAP_SHARED=1, MAP_ANONYMOUS=0x20, mmap=object)
@@ -261,7 +262,8 @@ def fixture(world_size=1, rank=0, transport=None):
             get_parallel=runtime.get_parallel,
             get_allocator_from_storage=common.get_allocator_from_storage,
             _cuda_host_unregister=common._cuda_host_unregister,
-            HICACHE_HOST_MEMORY_RESERVE_BYTES=budget.HICACHE_HOST_MEMORY_RESERVE_BYTES,
+            requested_hugepage_bytes=mmap_module.requested_hugepage_bytes,
+            available_hugepage_bytes=budget.available_hugepage_bytes,
             host_slot_metadata_bytes=budget.host_slot_metadata_bytes,
             active_host_allocation_budget=budget.active_host_allocation_budget,
             is_cuda=lambda: True,
@@ -355,7 +357,7 @@ def worker(rank, shared, barrier, output, mode, fail_rank):
         ordinary = 3000 * GB if mode == "ordinary" else 1000 * GB
         if mode == "oversubscribed":
             ordinary = 2100 * GB
-        ordinary -= f.budget.HICACHE_HOST_MEMORY_RESERVE_BYTES
+        ordinary -= f.budget.host_memory_reserve_bytes()
         f.budget._resource_snapshot = lambda size: (ordinary, total_huge if size else 0)
         if mode == "huge_short":
             f.budget._resource_snapshot = lambda size: (ordinary, total_huge - PAGE)
@@ -700,7 +702,7 @@ class CandidateTests(unittest.TestCase):
         f = self.f
         f.env.enabled = False
         self.assertEqual(f.base.HICACHE_HOST_MEMORY_RESERVE_BYTES, 10 * GIB)
-        self.assertEqual(f.budget.HICACHE_HOST_MEMORY_RESERVE_BYTES, 128 * GIB)
+        self.assertEqual(f.budget.host_memory_reserve_bytes(), 128 * GIB)
         f.psutil.virtual_memory = lambda: NS(available=100 * GIB)
         with f.budget.dsa_host_allocation_budget(NS(pp_size=1)) as b:
             self.assertIsNone(b)

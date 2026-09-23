@@ -97,20 +97,22 @@ def _parse_nodes(value: str) -> set[int]:
     return nodes
 
 
-def _resource_snapshot(hugepage_bytes: int) -> tuple[int, int]:
-    ordinary = int(psutil.virtual_memory().available)
-    cgroup = _cgroup_headroom("memory")
-    if cgroup is not None:
-        ordinary = min(ordinary, cgroup)
-    ordinary = max(0, ordinary - host_memory_reserve_bytes())
-    if not hugepage_bytes:
-        return ordinary, 0
+def available_hugepage_bytes(hugepage_bytes: int) -> int:
+    """Unreserved pages in the explicit pool, constrained by allowed NUMA nodes."""
+    if hugepage_bytes not in (2 * 1024**2, 1024**3):
+        raise ValueError("HugeTLB accounting requires an explicit 2 MiB or 1 GiB pool")
+
+    def read_count(path: Path) -> int:
+        value = path.read_text().strip()
+        if not value.isascii() or not value.isdecimal():
+            raise ValueError(f"Invalid HugeTLB page count in {path}")
+        return int(value)
 
     size_kb = hugepage_bytes // 1024
     name = f"hugepages-{size_kb}kB"
     directory = Path("/sys/kernel/mm/hugepages") / name
-    free = int((directory / "free_hugepages").read_text())
-    reserved = int((directory / "resv_hugepages").read_text())
+    free = read_count(directory / "free_hugepages")
+    reserved = read_count(directory / "resv_hugepages")
     status = Path("/proc/self/status").read_text().splitlines()
     allowed = _parse_nodes(
         next(
@@ -126,18 +128,28 @@ def _resource_snapshot(hugepage_bytes: int) -> tuple[int, int]:
         free = min(
             free,
             sum(
-                int(
-                    (
-                        Path(f"/sys/devices/system/node/node{node}")
-                        / "hugepages"
-                        / name
-                        / "free_hugepages"
-                    ).read_text()
+                read_count(
+                    Path(f"/sys/devices/system/node/node{node}")
+                    / "hugepages"
+                    / name
+                    / "free_hugepages"
                 )
                 for node in allowed
             ),
         )
-    huge = max(0, free - reserved) * hugepage_bytes
+    return max(0, free - reserved) * hugepage_bytes
+
+
+def _resource_snapshot(hugepage_bytes: int) -> tuple[int, int]:
+    ordinary = int(psutil.virtual_memory().available)
+    cgroup = _cgroup_headroom("memory")
+    if cgroup is not None:
+        ordinary = min(ordinary, cgroup)
+    ordinary = max(0, ordinary - host_memory_reserve_bytes())
+    if not hugepage_bytes:
+        return ordinary, 0
+
+    huge = available_hugepage_bytes(hugepage_bytes)
     size_label = "2MB" if hugepage_bytes == 2 * 1024**2 else "1GB"
     for resource in (f"hugetlb.{size_label}", f"hugetlb.{size_label}.rsvd"):
         limit = _cgroup_headroom(resource)

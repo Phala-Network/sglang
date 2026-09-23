@@ -13,12 +13,14 @@ from sglang.srt.distributed.parallel_state import get_world_group
 from sglang.srt.mem_cache.memory_pool import KVCache
 from sglang.srt.mem_cache.pool_host.allocation_budget import (
     active_host_allocation_budget,
+    available_hugepage_bytes,
     host_slot_metadata_bytes,
 )
 from sglang.srt.mem_cache.pool_host.common import (
     _cuda_host_unregister,
     get_allocator_from_storage,
 )
+from sglang.srt.mem_cache.storage.mmap.mmap_allocator import requested_hugepage_bytes
 from sglang.srt.runtime_context import get_parallel
 from sglang.srt.utils import is_cuda, is_hip
 
@@ -53,12 +55,17 @@ def ranks_per_host() -> int:
 
 
 def host_memory_budget_bytes() -> int:
-    """Host RAM this rank may claim for a HiCache pool.
+    """Advisory availability check outside a coordinated allocation transaction.
 
-    psutil reports the whole machine, so co-located ranks each see the same free
-    memory; without the split every rank sizes its pool against all of it and
-    the host is oversubscribed by the number of ranks it holds.
+    Ordinary-memory estimates retain their reserve and rank split. Explicit
+    1 GiB mappings use remaining HugeTLB pages, which exclude ordinary RAM.
     """
+    hugepage_bytes = requested_hugepage_bytes()
+    if hugepage_bytes == 1024**3:
+        # Earlier ranks/pools may already own their pages. Splitting the
+        # remaining pool again rejects valid staggered allocations. This is
+        # not a reservation: strict mmap still enforces actual global limits.
+        return available_hugepage_bytes(hugepage_bytes)
     free = psutil.virtual_memory().available - HICACHE_HOST_MEMORY_RESERVE_BYTES
     return free // ranks_per_host()
 

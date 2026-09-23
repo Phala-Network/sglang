@@ -1622,8 +1622,15 @@ class OpenAIServingChat(OpenAIServingBase):
 
         effective_tools = self._effective_tools(request)
         effective_tool_choice = self._effective_tool_choice(request)
-        glm_constraint = self.tool_call_parser == "glm47" and not any(
-            tool.function.strict for tool in effective_tools
+        # The implicit single-turn grammar terminates at EOS independently of
+        # ignore_eos. Plain length-controlled requests must not acquire it.
+        glm_constraint = (
+            self.tool_call_parser == "glm47"
+            and not any(tool.function.strict for tool in effective_tools)
+            and not (
+                request.ignore_eos
+                and (not effective_tools or effective_tool_choice == "none")
+            )
         )
         if glm_constraint:
             enable_thinking = (request.chat_template_kwargs or {}).get(

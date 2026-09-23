@@ -17,11 +17,8 @@ from sglang.srt.mem_cache.pool_host.allocation_budget import (
 from sglang.srt.mem_cache.storage.mmap import alloc_mmap
 from sglang.srt.mem_cache.storage.mmap.mmap_allocator import requested_hugepage_bytes
 from sglang.srt.runtime_context import get_memory
-from sglang.srt.utils import is_hip
 
 logger = logging.getLogger(__name__)
-
-_is_hip = is_hip()
 
 _CUDA_HOST_REGISTERED_RANGES_ATTR = "_sglang_cuda_host_registered_ranges"
 
@@ -291,23 +288,10 @@ def _resolve_device_accessible_ptr_fn():
         from sgl_kernel.kvcacheio import get_device_accessible_ptr
     except ImportError:
         get_device_accessible_ptr = None
-    else:
-        if not hasattr(torch.ops.sgl_kernel, "get_device_accessible_ptr"):
-            get_device_accessible_ptr = None
-
-    if get_device_accessible_ptr is None:
-        # CUDA's UVA makes host and device addresses equal; on HIP they differ.
-        if _is_hip:
-            raise ImportError(
-                "sgl_kernel.kvcacheio.get_device_accessible_ptr is missing from the "
-                "installed sglang-kernel. It is required on ROCm, where registered "
-                "host memory carries a distinct device address. Rebuild sglang-kernel "
-                "from python/sglang/kernels/aot (setup_rocm.py)."
-            )
-        logger.warning(
-            "sgl_kernel.kvcacheio.get_device_accessible_ptr is missing from the "
-            "installed sglang-kernel; using raw host addresses for kernel pointer "
-            "tables. Build sglang-kernel from python/sglang/kernels/aot to enable it."
+    if not callable(get_device_accessible_ptr):
+        raise ImportError(
+            "sgl_kernel.kvcacheio.get_device_accessible_ptr is required for "
+            "registered host-memory pointer tables; raw-address fallback is disabled"
         )
     return get_device_accessible_ptr
 
@@ -324,6 +308,12 @@ def make_kernel_ptr_table(
         if host_memory_registered and device.type == "cuda"
         else None
     )
+    if (
+        host_memory_registered
+        and device.type == "cuda"
+        and get_device_accessible_ptr is None
+    ):
+        raise ImportError("Registered host-memory pointer resolution is required")
     if get_device_accessible_ptr is not None:
         if device.index is None:
             device_index = torch.cuda.current_device()

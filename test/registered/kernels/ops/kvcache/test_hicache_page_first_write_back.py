@@ -273,20 +273,11 @@ def test_page_first_staged_write_back_mla(element_dim: int, page_count: int) -> 
     _run_mla(element_dim, page_count)
 
 
-@pytest.mark.skipif(
-    is_hip(),
-    reason="ROCm maps registered host memory at a distinct device address.",
-)
-def test_registered_mmap_kernel_ptr_table_fallback_matches_device_alias(
+def test_registered_mmap_kernel_ptr_table_missing_resolver_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """CUDA maps registered host memory at the host address itself;
-    ``make_kernel_ptr_table``'s raw-host-address fallback depends on it."""
-    if _resolve_device_accessible_ptr_fn() is None:
-        pytest.skip(
-            "installed sglang-kernel has no get_device_accessible_ptr; "
-            "build it from python/sglang/kernels/aot to run this test"
-        )
+    """Registered memory requires a qualified alias, never a guessed raw address."""
+    resolve = _resolve_device_accessible_ptr_fn()
 
     buffer = alloc_with_host_register(
         (PAGE_SIZE * 4, 128),
@@ -297,11 +288,12 @@ def test_registered_mmap_kernel_ptr_table_fallback_matches_device_alias(
     )
     try:
         aliased = make_kernel_ptr_table([buffer], DEVICE, host_memory_registered=True)
+        assert aliased.cpu().tolist() == [resolve(buffer, torch.cuda.current_device())]
         monkeypatch.setattr(
             pool_host_common, "_resolve_device_accessible_ptr_fn", lambda: None
         )
-        raw = make_kernel_ptr_table([buffer], DEVICE, host_memory_registered=True)
-        assert torch.equal(aliased, raw)
+        with pytest.raises(ImportError, match="pointer resolution is required"):
+            make_kernel_ptr_table([buffer], DEVICE, host_memory_registered=True)
     finally:
         _cuda_host_unregister(buffer)
 

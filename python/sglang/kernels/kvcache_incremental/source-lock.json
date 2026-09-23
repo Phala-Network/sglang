@@ -1,0 +1,14 @@
+{
+  "schema": "phala.kvcache-incremental-source-lock.v2",
+  "date": "2026-09-22",
+  "namespace": "phala_kvcache_incremental",
+  "sources": {
+    "csrc/kvcacheio/transfer.cu": "b46994b2a5b0eb83a1b9e48689582d903cfd32f538322f903141229433ed4406"
+  },
+  "donor_commit": "a479d6ce0f7fdbefcafc4fac93af3737fc5df7f7",
+  "donor_preimages": {
+    "python/sgl_kernel/kvcacheio.py": "40fc71ba400fb8d70a2673bfbbf9c9d38d76b18092be2c3aeb6f15f918be610d",
+    "python/sglang/srt/mem_cache/pool_host/common.py": "7b05da6ae2453c0af8dc040d12ffa84043d0e087c9ad52cec0063f9f42daa303"
+  },
+  "integration_binding": "Current wrapper, host-pointer code and generator are bound by the complete engine commit, not by donor preimage hashes."
+}

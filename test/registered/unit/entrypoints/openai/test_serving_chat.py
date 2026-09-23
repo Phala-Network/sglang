@@ -1859,6 +1859,61 @@ class ServingChatTestCase(unittest.TestCase):
                 parser.get_structure_constraint.call_args.kwargs["thinking_mode"]
             )
 
+    def test_glm_ignore_eos_skips_only_implicit_plain_chat_grammar(self):
+        self.template_manager.chat_template_name = None
+        self.template_manager.jinja_template_content_format = "string"
+        self.chat.tool_call_parser = "glm47"
+        self.tm.tokenizer.apply_chat_template.return_value = [1, 2, 3]
+        tool = {
+            "type": "function",
+            "function": {
+                "name": "answer",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+        for streaming in (False, True):
+            for ignore_eos in (False, True):
+                for tools, choice in (([], None), ([tool], "none"), ([tool], "auto"),
+                                      ([tool], "required")):
+                    with self.subTest(streaming=streaming, ignore_eos=ignore_eos,
+                                      tools=bool(tools), choice=choice):
+                        req = ChatCompletionRequest(
+                            model="x",
+                            messages=[{"role": "user", "content": "What is 1+1?"}],
+                            tools=tools,
+                            tool_choice=choice,
+                            ignore_eos=ignore_eos,
+                            stream=streaming,
+                            max_completion_tokens=512,
+                        )
+                        with patch(
+                            "sglang.srt.entrypoints.openai.serving_chat.FunctionCallParser"
+                        ) as parser_cls:
+                            constraint = ("full_assistant_ebnf", "test-grammar")
+                            parser_cls.return_value.get_structure_constraint.return_value = constraint
+                            result = self.chat._process_messages(req, is_multimodal=False)
+                        skip = ignore_eos and (not tools or choice == "none")
+                        self.assertEqual(result.tool_call_constraint,
+                                         None if skip else constraint)
+                        if skip:
+                            parser_cls.assert_not_called()
+
+        req = ChatCompletionRequest(
+            model="x", messages=[{"role": "user", "content": "JSON please"}],
+            ignore_eos=True, response_format={"type": "json_object"},
+            max_completion_tokens=512, stop=["USER_STOP"],
+        )
+        result = self.chat._process_messages(req, is_multimodal=False)
+        params = req.to_sampling_params(
+            stop=result.stop, model_generation_config={},
+            tool_call_constraint=result.tool_call_constraint,
+        )
+        self.assertIsNone(result.tool_call_constraint)
+        self.assertEqual(params["json_schema"], '{"type": "object"}')
+        self.assertEqual(params["stop"], ["USER_STOP"])
+        self.assertTrue(params["ignore_eos"])
+        self.assertEqual(params["max_new_tokens"], 512)
+
     def test_kimi_k3_constraint_failure_keeps_native_stop_format(self):
         self.template_manager.chat_template_name = None
         self.template_manager.jinja_template_content_format = "string"

@@ -34,6 +34,7 @@ from .common import (
     _override_v_head_dim_if_zero,
     _resolve_local_or_cached_file,
     attach_additional_stop_token_ids,
+    check_gguf_file,
     download_from_hf,
     get_tokenizer_from_processor,
     resolve_runai_obj_uri,
@@ -233,7 +234,9 @@ def get_processor(
             trust_remote_code=trust_remote_code,
             revision=revision,
         )
-    elif model_name is not None:
+    elif model_name is not None and not (
+        model_name != tokenizer_name and check_gguf_file(model_name)
+    ):
         config = AutoConfig.from_pretrained(
             model_name,
             trust_remote_code=trust_remote_code,

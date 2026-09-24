@@ -273,6 +273,49 @@ class TestQwenGGUFConfig(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "<\\|image_pad\\|>"):
             self.build_config()
 
+    def test_processor_uses_tokenizer_config_for_separate_gguf_weights(self):
+        selected = []
+        tokenizer = SimpleNamespace(chat_template="synthetic")
+        processor = SimpleNamespace(tokenizer=tokenizer)
+        def no_op(*args, **kwargs):
+            return None
+        load = source_function(
+            "utils/hf_transformers/processor.py",
+            "get_processor",
+            {
+                "resolve_runai_obj_uri": lambda path: path,
+                "_normalize_image_processor_backend": lambda backend, use_fast: "auto",
+                "is_mistral_model": lambda path: False,
+                "check_gguf_file": lambda path: path == str(self.weight),
+                "AutoConfig": SimpleNamespace(
+                    from_pretrained=lambda path, **kwargs: (
+                        selected.append(path) or SimpleNamespace(model_type="qwen3_5")
+                    )
+                ),
+                "_is_deepseek_ocr_model": lambda config: False,
+                "_is_deepseek_ocr2_model": lambda config: False,
+                "_CUSTOMIZED_MM_PROCESSOR": {},
+                "AutoProcessor": SimpleNamespace(
+                    from_pretrained=lambda path, *args, **kwargs: processor
+                ),
+                "_apply_image_processor_backend": lambda proc, *args: proc,
+                "PreTrainedTokenizerBase": type("PreTrainedTokenizerBase", (), {}),
+                "get_tokenizer_from_processor": lambda proc: proc.tokenizer,
+                "_TOKENIZERS_BACKEND": "TokenizersBackend",
+                "_install_tokenizer_warnings_filter": no_op,
+                "patch_mistral_common_tokenizer": no_op,
+                "_fix_special_tokens_pattern": no_op,
+                "_fix_added_tokens_encoding": no_op,
+                "attach_additional_stop_token_ids": no_op,
+            },
+        )
+        processor_path = str(self.directory / "fp8-processor")
+        self.assertIs(load(processor_path, model_name=str(self.weight)), processor)
+        self.assertEqual(selected, [processor_path])
+        selected.clear()
+        self.assertIs(load(processor_path, model_name="ordinary-model"), processor)
+        self.assertEqual(selected, ["ordinary-model"])
+
     def test_missing_geometry_fails_closed(self):
         del FakeReader.records[str(self.weight)][0]["qwen35.ssm.group_count"]
         with self.assertRaisesRegex(ValueError, "qwen35.ssm.group_count"):

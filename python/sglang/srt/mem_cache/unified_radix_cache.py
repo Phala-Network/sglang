@@ -3162,15 +3162,16 @@ class UnifiedRadixCache(BasePrefixCache):
         return self._parse_ready_counts(ready_counts, extra_pool_names, digest)
 
     def _async_ready_counts_eligible(self) -> bool:
-        """Narrow canary guard for the queue lifecycle validated on GLM-5.3."""
+        """Guard the host-only ACK pipeline for validated write-through modes."""
+        memory_write_policy = get_memory().hicache_write_policy
         return (
             self._hicache_async_ack_sync_requested
             and self.pp_size == 1
             and get_parallel().dp_size == 1
             and self._ready_counts_group is not None
             and self.cache_controller is not None
-            and get_memory().hicache_write_policy == "write_through"
-            and self.cache_controller.write_policy == "write_through"
+            and memory_write_policy in ("write_through", "write_through_selective")
+            and self.cache_controller.write_policy == memory_write_policy
             and not self.is_write_back
             and get_disagg().disaggregation_mode == "null"
             and self.host_memory_mode == "cache"

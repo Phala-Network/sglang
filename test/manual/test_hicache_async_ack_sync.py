@@ -393,6 +393,17 @@ class TestHiCacheAsyncAckSync(unittest.TestCase):
         ):
             self.assertFalse(eligible())
 
+    def test_selective_write_through_requires_matching_controller_policy(self):
+        cache = self._cache(write_ready=())
+        eligible = UnifiedRadixCache._async_ready_counts_eligible.__get__(cache)
+        memory = SimpleNamespace(hicache_write_policy="write_through_selective")
+        with patch(__name__ + ".get_memory", return_value=memory):
+            self.assertFalse(eligible())
+            cache.cache_controller.write_policy = "write_through_selective"
+            self.assertTrue(eligible())
+            memory.hicache_write_policy = "write_through"
+            self.assertFalse(eligible())
+
     def test_single_process_group_selection(self):
         cache = self._cache()
         cache.attn_cp_group, cache.attn_tp_group, cache.tp_group = (

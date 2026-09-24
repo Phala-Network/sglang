@@ -376,6 +376,23 @@ def check_gguf_file(model: Union[str, os.PathLike]) -> bool:
     return header == b"GGUF"
 
 
+def resolve_local_gguf_directory(model: Union[str, os.PathLike]) -> Optional[str]:
+    """Select a local GGUF weight file, ignoring a neighboring vision projector."""
+    directory = Path(model)
+    if not directory.is_dir() or (directory / "config.json").is_file():
+        return None
+    files = sorted(directory.glob("*.gguf"))
+    if not files:
+        return None
+    weights = [file for file in files if not file.name.startswith("mmproj-")]
+    if len(weights) != 1:
+        raise ValueError(
+            f"Expected exactly one model GGUF in {directory}, found {len(weights)}: "
+            f"{[file.name for file in weights]}"
+        )
+    return str(weights[0])
+
+
 def resolve_hf_gguf_reference(
     model: str, revision: Optional[str] = None
 ) -> Optional[str]:

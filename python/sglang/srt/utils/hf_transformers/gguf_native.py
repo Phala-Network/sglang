@@ -30,6 +30,7 @@ Reaching for these is a last resort: a config.json next to the .gguf still wins,
 because the checkpoint author's own config outranks anything reconstructed.
 """
 
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from transformers import PretrainedConfig
@@ -38,6 +39,7 @@ from sglang.srt.configs.muse_glimmer import MuseGlimmerConfig
 
 GGUF_NATIVE_CONFIG_BUILDERS: Dict[str, Callable[[str], PretrainedConfig]] = {
     "muse-glimmer": MuseGlimmerConfig.from_gguf,
+    "qwen35": lambda path: build_qwen3_5_gguf_config(path),
 }
 
 
@@ -63,6 +65,135 @@ def has_native_gguf_support(gguf_path: str) -> bool:
 def build_gguf_config(gguf_path: str) -> PretrainedConfig:
     arch = read_gguf_architecture(gguf_path)
     return GGUF_NATIVE_CONFIG_BUILDERS[arch](gguf_path)
+
+
+def build_qwen3_5_gguf_config(gguf_path: str) -> PretrainedConfig:
+    """Reconstruct the Qwen3.5 text/vision config from llama.cpp GGUF metadata."""
+    from gguf import GGUFReader
+
+    from sglang.srt.configs.qwen3_5 import Qwen3_5Config, Qwen3_5TextConfig
+
+    reader = GGUFReader(gguf_path)
+    meta = {key: field.contents() for key, field in reader.fields.items()}
+    if meta.get("general.architecture") != "qwen35":
+        raise ValueError("Qwen3.5 GGUF requires general.architecture=qwen35")
+    tensors = {tensor.name: tensor for tensor in reader.tensors}
+
+    def required(key):
+        if key not in meta:
+            raise ValueError(f"Qwen3.5 GGUF is missing {key}")
+        return meta[key]
+
+    def integer(key):
+        value = int(required(f"qwen35.{key}"))
+        if value <= 0:
+            raise ValueError(f"Qwen3.5 GGUF requires positive qwen35.{key}")
+        return value
+
+    if "token_embd.weight" not in tensors:
+        raise ValueError("Qwen3.5 GGUF is missing token_embd.weight")
+    vocab_size = int(tensors["token_embd.weight"].shape[1])
+    total_layers = integer("block_count")
+    mtp_layers = int(meta.get("qwen35.nextn_predict_layers", 0))
+    if mtp_layers < 0 or mtp_layers >= total_layers:
+        raise ValueError("Qwen3.5 GGUF has invalid nextn_predict_layers")
+    layers = total_layers - mtp_layers
+    interval = integer("full_attention_interval")
+    key_dim = integer("ssm.state_size")
+    inner_size = integer("ssm.inner_size")
+    if inner_size % key_dim:
+        raise ValueError("Qwen3.5 GGUF ssm.inner_size must divide by ssm.state_size")
+    rope_dim = integer("rope.dimension_count")
+    head_dim = integer("attention.key_length")
+    if rope_dim > head_dim:
+        raise ValueError(
+            "Qwen3.5 GGUF rope.dimension_count exceeds attention.key_length"
+        )
+    rope_parameters = {
+        "rope_theta": float(required("qwen35.rope.freq_base")),
+        "partial_rotary_factor": rope_dim / head_dim,
+        "rope_type": "default",
+    }
+    sections = meta.get("qwen35.rope.dimension_sections")
+    if sections is not None:
+        sections = [int(section) for section in sections]
+        while sections and sections[-1] == 0:
+            sections.pop()
+        if len(sections) != 3 or sum(sections) * 2 != rope_dim:
+            raise ValueError("Qwen3.5 GGUF has invalid rope.dimension_sections")
+        rope_parameters.update(
+            mrope_section=sections,
+            mrope_interleaved=True,
+        )
+
+    text_kwargs = dict(
+        vocab_size=vocab_size,
+        hidden_size=integer("embedding_length"),
+        intermediate_size=integer("feed_forward_length"),
+        num_hidden_layers=layers,
+        num_attention_heads=integer("attention.head_count"),
+        num_key_value_heads=integer("attention.head_count_kv"),
+        head_dim=head_dim,
+        max_position_embeddings=integer("context_length"),
+        rms_norm_eps=float(required("qwen35.attention.layer_norm_rms_epsilon")),
+        rope_theta=rope_parameters["rope_theta"],
+        rope_parameters=rope_parameters,
+        partial_rotary_factor=rope_dim / head_dim,
+        linear_conv_kernel_dim=integer("ssm.conv_kernel"),
+        linear_key_head_dim=key_dim,
+        linear_value_head_dim=key_dim,
+        linear_num_key_heads=integer("ssm.group_count"),
+        linear_num_value_heads=inner_size // key_dim,
+        full_attention_interval=interval,
+        layer_types=[
+            "full_attention" if (i + 1) % interval == 0 else "linear_attention"
+            for i in range(layers)
+        ],
+        bos_token_id=meta.get("tokenizer.ggml.bos_token_id"),
+        eos_token_id=meta.get("tokenizer.ggml.eos_token_id"),
+        dtype="bfloat16",
+    )
+    projector_files = sorted(Path(gguf_path).parent.glob("mmproj-*.gguf"))
+    if not projector_files:
+        return Qwen3_5TextConfig(**text_kwargs, architectures=["Qwen3_5ForCausalLM"])
+    if len(projector_files) != 1:
+        raise ValueError("Qwen3.5 GGUF requires exactly one mmproj-*.gguf")
+
+    projector = GGUFReader(str(projector_files[0]))
+    vision_meta = {key: field.contents() for key, field in projector.fields.items()}
+    vision_tensors = {tensor.name: tensor for tensor in projector.tensors}
+    if (
+        vision_meta.get("general.architecture"),
+        vision_meta.get("clip.projector_type"),
+    ) != (
+        "clip",
+        "qwen3vl_merger",
+    ):
+        raise ValueError("Qwen3.5 GGUF has an unsupported vision projector")
+    try:
+        patch_shape = vision_tensors["v.patch_embd.weight"].shape
+        position_shape = vision_tensors["v.position_embd.weight"].shape
+        vision_kwargs = dict(
+            depth=int(vision_meta["clip.vision.block_count"]),
+            hidden_size=int(vision_meta["clip.vision.embedding_length"]),
+            intermediate_size=int(vision_meta["clip.vision.feed_forward_length"]),
+            num_heads=int(vision_meta["clip.vision.attention.head_count"]),
+            patch_size=int(vision_meta["clip.vision.patch_size"]),
+            spatial_merge_size=int(vision_meta["clip.vision.spatial_merge_size"]),
+            out_hidden_size=int(vision_meta["clip.vision.projection_dim"]),
+            in_channels=int(patch_shape[2]),
+            num_position_embeddings=int(position_shape[1]),
+            temporal_patch_size=2,
+            deepstack_visual_indexes=[],
+        )
+    except (KeyError, IndexError) as exc:
+        raise ValueError(f"Qwen3.5 GGUF vision metadata is incomplete: {exc}") from exc
+    return Qwen3_5Config(
+        text_config=text_kwargs,
+        vision_config=vision_kwargs,
+        architectures=["Qwen3_5ForConditionalGeneration"],
+        rope_scaling=rope_parameters,
+    )
 
 
 _GPT4O_SPLIT_REGEX = (

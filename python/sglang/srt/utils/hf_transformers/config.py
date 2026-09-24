@@ -42,6 +42,7 @@ from .common import (
     check_gguf_file,
     get_hf_text_config,
     gguf_sidecar_dir,
+    resolve_local_gguf_directory,
     resolve_runai_obj_uri,
 )
 from .gguf_native import build_gguf_config, has_native_gguf_support
@@ -282,6 +283,7 @@ def get_config(
     model_config_parser: str = "auto",
     **kwargs,
 ):
+    model = resolve_local_gguf_directory(model) or model
     is_gguf = check_gguf_file(model)
     gguf_has_sidecar_config = False
     if is_gguf:

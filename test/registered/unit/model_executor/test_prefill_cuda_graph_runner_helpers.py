@@ -14,6 +14,7 @@ from sglang.srt.model_executor.forward_batch_info import PPProxyTensors
 from sglang.srt.model_executor.runner.prefill_cuda_graph_runner import (
     PrefillCudaGraphRunner,
     _build_layer_model_forward_kwargs,
+    _input_embeds_arg_index,
     _resolve_transformer_layer_model,
 )
 from sglang.srt.model_executor.runner_utils.buffers import PrefillInputBuffers
@@ -30,6 +31,11 @@ class _LayerModel:
 
     def forward(self, input_ids, positions, forward_batch, input_embeds=None):
         return input_embeds
+
+
+class _PluralEmbedsLayerModel:
+    def forward(self, input_ids, positions, forward_batch, inputs_embeds=None):
+        return inputs_embeds
 
 
 def _make_pp_buffers_and_registry():
@@ -109,6 +115,27 @@ class TestPrefillCudaGraphRunnerHelpers(CustomTestCase):
                 )
                 self.assertEqual(kwargs, expected)
                 layer_model.forward(None, None, forward_batch, **kwargs)
+
+    def test_plural_input_embeds_refresh_static_graph_slot(self):
+        runner = PrefillCudaGraphRunner.__new__(PrefillCudaGraphRunner)
+        runner._input_embeds_arg_idx = _input_embeds_arg_index(
+            _PluralEmbedsLayerModel()
+        )
+        self.assertEqual(runner._input_embeds_arg_idx, 3)
+        self.assertEqual(_input_embeds_arg_index(_LayerModel()), 3)
+
+        slot = torch.zeros((4, 3))
+        runner.buffer_registry = SimpleNamespace(
+            get_slot=lambda _name: SimpleNamespace(slice_for=lambda *_args: slot)
+        )
+        live = torch.ones((2, 3))
+        runner._fill_input_embeds_slot((None, None, None, live), {}, 4)
+        torch.testing.assert_close(slot[:2], live)
+
+        runner._fill_input_embeds_slot(
+            (None, None, None), {"inputs_embeds": 2 * live}, 4
+        )
+        torch.testing.assert_close(slot[:2], 2 * live)
 
     def test_finalize_pp_proxy_trims_padded_token_rows(self):
         runner = PrefillCudaGraphRunner.__new__(PrefillCudaGraphRunner)

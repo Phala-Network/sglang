@@ -207,6 +207,14 @@ def _build_layer_model_forward_kwargs(
     return kwargs
 
 
+def _input_embeds_arg_index(layer_model: torch.nn.Module) -> Optional[int]:
+    parameters = list(inspect.signature(layer_model.forward).parameters)
+    for name in ("input_embeds", "inputs_embeds"):
+        if name in parameters:
+            return parameters.index(name)
+    return None
+
+
 def _slice_output_rows(output: Any, num_tokens: int) -> Any:
     """Slice every tensor leaf in a transformer-body output by token rows.
 
@@ -554,10 +562,7 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
                     f"{type(self.backend).__name__} {exc} This backend is "
                     f"unsupported for this model architecture."
                 ) from exc
-            params = list(inspect.signature(self.layer_model.forward).parameters)
-            self._input_embeds_arg_idx = (
-                params.index("input_embeds") if "input_embeds" in params else None
-            )
+            self._input_embeds_arg_idx = _input_embeds_arg_index(self.layer_model)
 
         # --- aiter chip info pre-warming (AMD) -------------------------
         maybe_pre_warm_aiter_chip_info()
@@ -1811,6 +1816,8 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
         """A text-only batch would otherwise replay the captured input_embeds."""
         ie_idx = self._input_embeds_arg_idx
         ie = layer_kwargs.get("input_embeds")
+        if ie is None:
+            ie = layer_kwargs.get("inputs_embeds")
         if ie is None and ie_idx is not None and len(args) > ie_idx:
             ie = args[ie_idx]
         if ie is None:

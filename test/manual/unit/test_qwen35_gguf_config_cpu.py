@@ -187,6 +187,7 @@ class TestQwenGGUFConfig(unittest.TestCase):
         self.assertEqual(config.linear_num_value_heads, 6)
         self.assertEqual(config.partial_rotary_factor, 0.25)
         self.assertEqual(config.dtype, "bfloat16")
+        self.assertIsNone(config.pad_token_id)
         self.assertEqual(config.layer_types, ["linear_attention", "full_attention"] * 2)
         self.assertEqual(config.architectures, ["Qwen3_5ForCausalLM"])
 
@@ -223,6 +224,15 @@ class TestQwenGGUFConfig(unittest.TestCase):
 
     def test_vision_projector_builds_multimodal_config(self):
         self.mmproj.write_bytes(b"GGUF")
+        tokens = [f"token-{i}" for i in range(8192)]
+        for token_id, token in (
+            (8053, "<|vision_start|>"),
+            (8054, "<|vision_end|>"),
+            (8056, "<|image_pad|>"),
+            (8057, "<|video_pad|>"),
+        ):
+            tokens[token_id] = token
+        FakeReader.records[str(self.weight)][0]["tokenizer.ggml.tokens"] = tokens
         FakeReader.records[str(self.weight)][0]["qwen35.rope.dimension_sections"] = [
             2,
             2,
@@ -243,7 +253,25 @@ class TestQwenGGUFConfig(unittest.TestCase):
         self.assertEqual(config.vision_config.deepstack_visual_indexes, [])
         self.assertEqual(config.rope_scaling["mrope_section"], [2, 2, 4])
         self.assertTrue(config.rope_scaling["mrope_interleaved"])
+        self.assertEqual(config.image_token_id, 8056)
+        self.assertEqual(config.video_token_id, 8057)
+        self.assertEqual(config.vision_start_token_id, 8053)
+        self.assertEqual(config.vision_end_token_id, 8054)
+        self.assertIsNone(config.text_config.pad_token_id)
         self.assertEqual(config.architectures, ["Qwen3_5ForConditionalGeneration"])
+
+    def test_multimodal_config_requires_image_marker(self):
+        self.mmproj.write_bytes(b"GGUF")
+        FakeReader.records[str(self.mmproj)] = (
+            vision_metadata(),
+            {
+                "v.patch_embd.weight": (16, 16, 3, 128),
+                "v.position_embd.weight": (128, 256),
+            },
+        )
+        FakeReader.records[str(self.weight)][0]["tokenizer.ggml.tokens"] = []
+        with self.assertRaisesRegex(ValueError, "<\\|image_pad\\|>"):
+            self.build_config()
 
     def test_missing_geometry_fails_closed(self):
         del FakeReader.records[str(self.weight)][0]["qwen35.ssm.group_count"]

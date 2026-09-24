@@ -151,6 +151,7 @@ def build_qwen3_5_gguf_config(gguf_path: str) -> PretrainedConfig:
         ],
         bos_token_id=meta.get("tokenizer.ggml.bos_token_id"),
         eos_token_id=meta.get("tokenizer.ggml.eos_token_id"),
+        pad_token_id=meta.get("tokenizer.ggml.padding_token_id"),
         dtype="bfloat16",
     )
     projector_files = sorted(Path(gguf_path).parent.glob("mmproj-*.gguf"))
@@ -188,11 +189,27 @@ def build_qwen3_5_gguf_config(gguf_path: str) -> PretrainedConfig:
         )
     except (KeyError, IndexError) as exc:
         raise ValueError(f"Qwen3.5 GGUF vision metadata is incomplete: {exc}") from exc
+    tokens = meta.get("tokenizer.ggml.tokens")
+    if tokens is None:
+        raise ValueError("Qwen3.5 multimodal GGUF is missing tokenizer.ggml.tokens")
+    token_ids = {}
+    for field, token in (
+        ("image_token_id", "<|image_pad|>"),
+        ("video_token_id", "<|video_pad|>"),
+        ("vision_start_token_id", "<|vision_start|>"),
+        ("vision_end_token_id", "<|vision_end|>"),
+    ):
+        try:
+            token_ids[field] = tokens.index(token)
+        except ValueError as exc:
+            raise ValueError(f"Qwen3.5 multimodal GGUF is missing {token}") from exc
     return Qwen3_5Config(
         text_config=text_kwargs,
         vision_config=vision_kwargs,
         architectures=["Qwen3_5ForConditionalGeneration"],
         rope_scaling=rope_parameters,
+        pad_token_id=text_kwargs["pad_token_id"],
+        **token_ids,
     )
 
 

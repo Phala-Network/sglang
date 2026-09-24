@@ -34,7 +34,7 @@ def _align_required_tool_call_repetition(
 
     def visit(node: Any) -> None:
         if isinstance(node, dict):
-            if node.get("type") == "tags_with_separator":
+            if node.get("type") in ("tags_with_separator", "triggered_tags"):
                 repetitions.append(node)
             for child in node.values():
                 visit(child)
@@ -48,8 +48,21 @@ def _align_required_tool_call_repetition(
             "Qwen3 Coder required structural tag must contain one repeated-tag format"
         )
 
-    repetitions[0]["separator"] = "\n"
-    repetitions[0]["stop_after_first"] = not parallel_tool_calls
+    repetition = repetitions[0]
+    if repetition.get("type") == "triggered_tags":
+        if not repetition.get("at_least_one") or repetition.get("triggers") != [
+            "<tool_call>\n<function="
+        ]:
+            raise ValueError("Unexpected Qwen3 Coder required tool-call trigger")
+        tags = repetition["tags"]
+        repetition.clear()
+        repetition.update(
+            type="tags_with_separator",
+            tags=tags,
+            at_least_one=True,
+        )
+    repetition["separator"] = "\n"
+    repetition["stop_after_first"] = not parallel_tool_calls
     return StructuralTag.model_validate(value)
 
 

@@ -1,6 +1,8 @@
 import xgrammar as xgr
+from xgrammar.testing import _is_grammar_accept_string
 
 from sglang.srt.entrypoints.openai.protocol import Function, Tool
+from sglang.srt.function_call.function_call_parser import FunctionCallParser
 from sglang.srt.function_call.qwen3_coder_detector import Qwen3CoderDetector
 
 
@@ -82,3 +84,23 @@ def test_required_reasoning_prefix_is_preserved():
     assert "</think>" in serialized
     assert "\\n\\n" in serialized
     assert _repetition(tag)["separator"] == "\n"
+
+
+def test_non_strict_required_uses_native_qwen_call_in_pinned_xgrammar():
+    tool = _tool()
+    tool.function.strict = False
+    constraint = FunctionCallParser([tool], "qwen3_coder").get_structure_constraint(
+        "required", thinking_mode=False
+    )
+
+    assert constraint is not None
+    assert constraint[0] == "structural_tag"
+    grammar = xgr.Grammar.from_structural_tag(constraint[1])
+    native_call = (
+        "<tool_call>\n<function=search_catalog>\n"
+        "<parameter=query>Paris</parameter>\n</function>\n</tool_call>"
+    )
+    assert _is_grammar_accept_string(grammar, native_call)
+    assert not _is_grammar_accept_string(
+        grammar, '[{"name":"search_catalog","parameters":{"query":"Paris"}}]'
+    )

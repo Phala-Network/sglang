@@ -246,9 +246,9 @@ def _patch_usage_processor(module) -> None:
             reasoning_tokens is not None
             and "completion_tokens_details" in type(usage).model_fields
         ):
-            usage.completion_tokens_details = {
-                "reasoning_tokens": int(reasoning_tokens)
-            }
+            usage.completion_tokens_details = module.CompletionTokensDetails(
+                reasoning_tokens=int(reasoning_tokens)
+            )
         return usage
 
     # The single funnel for chat (streaming and not) and /v1/completions usage;

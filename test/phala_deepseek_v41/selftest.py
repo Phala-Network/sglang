@@ -1,6 +1,7 @@
 """Tests against installed source-integrated adapters; no runtime package mounts."""
 
 import sys
+import warnings
 from types import SimpleNamespace
 
 _failures = []
@@ -508,27 +509,37 @@ usage = UP.UsageProcessor.calculate_token_usage(
     prompt_tokens=11, completion_tokens=9, reasoning_tokens=4
 )
 check("flat reasoning_tokens kept", usage.reasoning_tokens, 4)
-check("nested details built", usage.completion_tokens_details, {"reasoning_tokens": 4})
 check(
-    "continuous-usage stream dict carries the nested details",
-    usage.model_dump()["completion_tokens_details"],
+    "nested details built",
+    usage.completion_tokens_details.model_dump(),
     {"reasoning_tokens": 4},
 )
 
 non_stream = P.ChatCompletionResponse(
     id="x", created=1, model="m", choices=[], usage=usage
 )
-check(
-    "non-stream response keeps the nested details after serialization",
-    non_stream.model_dump()["usage"]["completion_tokens_details"],
-    {"reasoning_tokens": 4},
-)
 stream = P.ChatCompletionStreamResponse(
     id="x", created=1, model="m", choices=[], usage=usage
 )
+with warnings.catch_warnings(record=True) as usage_warnings:
+    warnings.simplefilter("always")
+    usage_dump = usage.model_dump()
+    non_stream_dump = non_stream.model_dump()
+    stream_dump = stream.model_dump()
+check("usage serialization emits no warnings", usage_warnings, [])
+check(
+    "continuous-usage stream dict carries the nested details",
+    usage_dump["completion_tokens_details"],
+    {"reasoning_tokens": 4},
+)
+check(
+    "non-stream response keeps the nested details after serialization",
+    non_stream_dump["usage"]["completion_tokens_details"],
+    {"reasoning_tokens": 4},
+)
 check(
     "final stream chunk keeps the nested details after serialization",
-    stream.model_dump()["usage"]["completion_tokens_details"],
+    stream_dump["usage"]["completion_tokens_details"],
     {"reasoning_tokens": 4},
 )
 check(

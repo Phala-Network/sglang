@@ -4,10 +4,13 @@ import ast
 import copy
 import importlib.util
 import logging
+import sys
+import types
 import typing
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 SRT = Path(__file__).resolve().parents[3] / "python/sglang/srt"
 
@@ -15,7 +18,17 @@ SRT = Path(__file__).resolve().parents[3] / "python/sglang/srt"
 def load_module(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    packages = {}
+    for package, package_path in (
+        ("sglang", SRT.parent),
+        ("sglang.srt", SRT),
+        ("sglang.srt.phala_compat", SRT / "phala_compat"),
+    ):
+        namespace = types.ModuleType(package)
+        namespace.__path__ = [str(package_path)]
+        packages[package] = namespace
+    with patch.dict(sys.modules, {name: module, **packages}):
+        spec.loader.exec_module(module)
     return module
 
 

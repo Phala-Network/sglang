@@ -87,9 +87,7 @@ class TestGemma4ConfigNormalization(CustomTestCase):
         root.architectures = ["Gemma4ForConditionalGeneration"]
         with TemporaryDirectory() as model_dir:
             root.save_pretrained(model_dir)
-            parsed = HfModelConfigParser().parse(
-                model_dir, trust_remote_code=False
-            )
+            parsed = HfModelConfigParser().parse(model_dir, trust_remote_code=False)
 
         self.assertEqual(
             (parsed.text_config.head_dim, parsed.text_config.num_key_value_heads),

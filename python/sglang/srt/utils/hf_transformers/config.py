@@ -59,6 +59,64 @@ def _apply_deepseek_ocr_overrides(config, model):
     config._name_or_path = model
 
 
+def _normalize_gemma4_text_config(text_config):
+    per_layer_attributes = getattr(text_config, "per_layer_attributes", None)
+    if per_layer_attributes:
+        unsupported = per_layer_attributes - {"head_dim", "num_key_value_heads"}
+        if unsupported:
+            raise ValueError(
+                "Gemma4 has unsupported per-layer config attributes: "
+                f"{sorted(unsupported)}"
+            )
+
+        layer_types = text_config.layer_types
+        if len(layer_types) != text_config.num_hidden_layers or set(layer_types) - {
+            "full_attention",
+            "sliding_attention",
+        }:
+            raise ValueError("Gemma4 has unsupported layer_types")
+
+        dimensions = {}
+        for layer_id, layer_type in enumerate(layer_types):
+            layer_config = text_config.per_layer_config[layer_id]
+            if getattr(layer_config, "skip", []):
+                raise ValueError("Gemma4 does not support skipped attention layers")
+            value = (layer_config.head_dim, layer_config.num_key_value_heads)
+            if layer_type in dimensions and dimensions[layer_type] != value:
+                raise ValueError(
+                    f"Gemma4 {layer_type} has inconsistent per-layer attention dimensions"
+                )
+            dimensions[layer_type] = value
+
+        if "full_attention" not in dimensions:
+            raise ValueError("Gemma4 has no full-attention layer")
+        full_head_dim, full_kv_heads = dimensions["full_attention"]
+        swa_head_dim, swa_kv_heads = dimensions.get(
+            "sliding_attention", dimensions["full_attention"]
+        )
+
+        # SGLang's Gemma4 model represents these two layer types with full/SWA
+        # fields. Keep an explicit empty HF override for a stable config roundtrip.
+        text_config.per_layer_config = {}
+    else:
+        full_head_dim = getattr(text_config, "global_head_dim", None)
+        full_kv_heads = getattr(text_config, "num_global_key_value_heads", None)
+        swa_head_dim = getattr(text_config, "swa_head_dim", text_config.head_dim)
+        swa_kv_heads = getattr(
+            text_config, "swa_num_key_value_heads", text_config.num_key_value_heads
+        )
+        full_head_dim = full_head_dim or text_config.head_dim
+        full_kv_heads = full_kv_heads or text_config.num_key_value_heads
+
+    text_config.head_dim = full_head_dim
+    text_config.num_key_value_heads = full_kv_heads
+    text_config.swa_head_dim = swa_head_dim
+    text_config.swa_v_head_dim = swa_head_dim
+    text_config.swa_num_key_value_heads = swa_kv_heads
+    if not hasattr(text_config, "v_head_dim"):
+        text_config.v_head_dim = full_head_dim
+
+
 _LONGCAT_ARCHS = {
     "LongcatCausalLM",
     "LongcatFlashForCausalLM",
@@ -222,29 +280,7 @@ class HfModelConfigParser(ModelConfigParserBase):
             "gemma4_unified",
             "gemma4_unified_assistant",
         ):
-            # Gemma4 configs use base attributes for SWA layers and `global_*`
-            # variants for full-attention layers.  SGLang expects the opposite:
-            # base = full-attention, `swa_*` = sliding-window overrides.
-            text_config = config.text_config
-            global_head_dim = getattr(text_config, "global_head_dim", None)
-            global_kv_heads = getattr(text_config, "num_global_key_value_heads", None)
-
-            swa_head_dim = text_config.head_dim
-            swa_kv_heads = text_config.num_key_value_heads
-
-            text_config.swa_head_dim = swa_head_dim
-            text_config.swa_v_head_dim = swa_head_dim
-            text_config.swa_num_key_value_heads = swa_kv_heads
-
-            if global_head_dim is not None:
-                text_config.head_dim = global_head_dim
-            if global_kv_heads is not None:
-                text_config.num_key_value_heads = global_kv_heads
-
-            if not hasattr(text_config, "v_head_dim"):
-                text_config.v_head_dim = text_config.head_dim
-            if not hasattr(text_config, "swa_v_head_dim"):
-                text_config.swa_v_head_dim = text_config.swa_head_dim
+            _normalize_gemma4_text_config(config.text_config)
 
             # Unified Gemma4 names the end-of-audio token `eoa_token_index`,
             # but the multimodal processor expects `eoa_token_id`.

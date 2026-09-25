@@ -674,7 +674,7 @@ check(
 check(
     "through FastAPI: integer budget",
     validate_body(reasoning_effort=50),
-    (None, {"reasoning_effort": 50, "thinking": True, "enable_thinking": True}),
+    (50, {"thinking": True, "enable_thinking": True}),
 )
 
 

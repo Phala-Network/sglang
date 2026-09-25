@@ -148,27 +148,19 @@ def _normalize(values):
                 out["reasoning_effort"] = "none"
             changed = True
 
-    # (4) Integer budget -> chat_template_kwargs, the only path that reaches the
-    # encoder's 1-100 scale. Thinking is turned on with it, mirroring what
-    # upstream does for any non-"none" effort.
-    budget = _int_budget(out.get("reasoning_effort"))
-    if budget is not None:
-        out.pop("reasoning_effort")
-    elif reasoning is not None:
+    # The typed request field carries integer budgets to the custom encoder and
+    # lets serving reject them for other models. Preserve nested precedence.
+    _int_budget(out.get("reasoning_effort"))
+    if reasoning is not None:
         nested = reasoning.get("effort")
         if nested is None:
             nested = reasoning.get("reasoning_effort")
-        budget = _int_budget(nested)
-        if budget is not None:
+        nested_budget = _int_budget(nested)
+        if nested_budget is not None:
+            out["reasoning_effort"] = nested_budget
             reasoning.pop("effort", None)
             reasoning.pop("reasoning_effort", None)
-    if budget is not None:
-        template_kwargs = dict(out.get("chat_template_kwargs") or {})
-        template_kwargs.setdefault("reasoning_effort", budget)
-        template_kwargs.setdefault("thinking", True)
-        template_kwargs.setdefault("enable_thinking", True)
-        out["chat_template_kwargs"] = template_kwargs
-        changed = True
+            changed = True
 
     # (3) Record reasoning.exclude for the response side.
     if (

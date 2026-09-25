@@ -186,9 +186,11 @@ class CompatProtocolContracts(unittest.TestCase):
         )
 
     def test_integer_budget_and_fractional_effort_are_distinct(self):
-        out = protocol._normalize({"reasoning_effort": 75})
-        self.assertEqual(out["chat_template_kwargs"]["reasoning_effort"], 75)
-        self.assertTrue(out["chat_template_kwargs"]["thinking"])
+        original_budget = {"reasoning_effort": 75}
+        self.assertIs(protocol._normalize(original_budget), original_budget)
+        nested_budget = protocol._normalize({"reasoning": {"effort": 75}})
+        self.assertEqual(nested_budget["reasoning_effort"], 75)
+        self.assertNotIn("effort", nested_budget["reasoning"])
         original = {"reasoning_effort": 0.75}
         self.assertIs(protocol._normalize(original), original)
         for bad in (-1, 101):

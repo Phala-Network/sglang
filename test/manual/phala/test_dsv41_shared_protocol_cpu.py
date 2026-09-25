@@ -32,12 +32,23 @@ def load_module(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
-    spec.loader.exec_module(module)
+    with patch.dict(sys.modules, packages):
+        spec.loader.exec_module(module)
     return module
 
 
 utils = types.ModuleType("sglang.utils")
 utils.convert_json_schema_to_str = json.dumps
+packages = {}
+for package, package_path in (
+    ("sglang", SRT.parent),
+    ("sglang.srt", SRT),
+    ("sglang.srt.phala_compat", SRT / "phala_compat"),
+):
+    namespace = types.ModuleType(package)
+    namespace.__path__ = [str(package_path)]
+    packages[package] = namespace
+
 with patch.dict(sys.modules, {"sglang.utils": utils}):
     protocol = load_module("ds_test_protocol", SRT / "entrypoints/openai/protocol.py")
 
@@ -152,6 +163,7 @@ def serving(spec="dsv41", multimodal=False, image=False, audio=False, video=Fals
     obj = Serving()
     obj.chat_encoding_spec = spec
     obj._grammar_backend = "none"
+    obj._dsv41_default_reasoning_effort = "high" if spec == "dsv41" else None
     obj.tokenizer_manager = NS(
         model_config=NS(
             is_multimodal=multimodal,
@@ -209,7 +221,6 @@ class SharedProtocolTests(unittest.TestCase):
             1.0,
             75.0,
             "75",
-            "default",
             "ultra",
             {},
             [],
@@ -217,6 +228,7 @@ class SharedProtocolTests(unittest.TestCase):
         ):
             with self.subTest(value=value), self.assertRaises(ValidationError):
                 request(reasoning_effort=value)
+        self.assertIsNone(request(reasoning_effort="default").reasoning_effort)
         from pydantic import TypeAdapter
 
         adapter = TypeAdapter(protocol.ReasoningEffortType)
@@ -238,9 +250,8 @@ class SharedProtocolTests(unittest.TestCase):
         self.assertTrue(req.reasoning_exclude)
         self.assertTrue(req.chat_template_kwargs["thinking"])
         self.assertEqual(req.chat_template_kwargs["reasoning_effort"], 99)
-        with self.assertRaises(ValidationError):
-            request(reasoning={"effort": 75})
-        for nested in (True, False, 1.0, 75, "75", "ultra"):
+        self.assertEqual(request(reasoning={"effort": 75}).reasoning_effort, 75)
+        for nested in (True, False, 1.0, "75", "ultra"):
             with self.subTest(nested=nested), self.assertRaises(ValidationError):
                 request(reasoning_effort=75, reasoning={"effort": nested})
 

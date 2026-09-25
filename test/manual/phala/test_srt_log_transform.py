@@ -4,12 +4,12 @@ import contextlib
 import importlib.util
 import io
 import logging
-from pathlib import Path
 import sys
 import traceback
 import unittest
-from unittest.mock import patch
 import warnings
+from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = importlib.util.spec_from_file_location(

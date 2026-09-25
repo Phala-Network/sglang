@@ -7,7 +7,6 @@ import sys
 from unittest.mock import patch
 
 import torch
-
 from phala_kvcache_incremental import ensure_loaded
 
 
@@ -69,6 +68,7 @@ def main() -> int:
         transfer_kv_all_layer_mla_lf_pf,
         transfer_kv_per_layer_mla_pf_lf,
     )
+
     from sglang.srt.mem_cache.pool_host.common import (
         _CUDA_HOST_REGISTERED_RANGES_ATTR,
         HostTensorAllocator,

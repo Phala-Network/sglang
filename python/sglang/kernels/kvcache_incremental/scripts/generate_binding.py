@@ -5,7 +5,6 @@ import hashlib
 import json
 from pathlib import Path
 
-
 PRIVATE_NAMESPACE = "phala_kvcache_incremental"
 CPP_NAMESPACE = "phala_kvcache_incremental_impl"
 

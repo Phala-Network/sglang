@@ -3,10 +3,10 @@
 import ast
 import math
 import os
-from pathlib import Path
 import tempfile
-from types import SimpleNamespace
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 SOURCE = Path(

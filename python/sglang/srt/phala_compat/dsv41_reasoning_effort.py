@@ -2,15 +2,6 @@
 No import hooks or external runtime code paths.
 """
 
-import importlib.abc
-
-
-import importlib.machinery
-
-
-import sys
-
-
 _TARGET = "sglang.srt.entrypoints.openai.encoding_dsv41"
 
 

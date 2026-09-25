@@ -12,8 +12,8 @@ import torch.distributed as dist
 
 import sglang.srt.distributed.parallel_state as ps
 from sglang.kernels.jit.utils import cache_once
-from sglang.kernels.ops.communication.all_reduce import AllReduceAlgo
 from sglang.kernels.ops.communication import all_reduce_fusion
+from sglang.kernels.ops.communication.all_reduce import AllReduceAlgo
 from sglang.kernels.ops.communication.mp import register_comm_cleanup
 from sglang.srt.distributed.device_communicators.custom_all_reduce_v2 import (
     CustomAllReduceV2,
@@ -150,7 +150,9 @@ def test_finalize_shared_rank_sum_graph_replay(num_tokens, weight_dtype):
         comm = medium
         comm_key = all_reduce_fusion.DSV41_MEDIUM_COMM_KEY
 
-    gemm2, indices, weights, shared = _make_inputs(num_tokens, seed=17, weight_dtype=weight_dtype)
+    gemm2, indices, weights, shared = _make_inputs(
+        num_tokens, seed=17, weight_dtype=weight_dtype
+    )
 
     def small_plane_reference():
         chunks = []

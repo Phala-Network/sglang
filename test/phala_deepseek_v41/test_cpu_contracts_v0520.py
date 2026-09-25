@@ -15,7 +15,11 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def load(name, relative=None):
-    path = ROOT / "python" / relative if relative is not None else ROOT / "python/sglang/srt/phala_compat" / (name + ".py")
+    path = (
+        ROOT / "python" / relative
+        if relative is not None
+        else ROOT / "python/sglang/srt/phala_compat" / (name + ".py")
+    )
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -136,6 +140,8 @@ class AsyncContracts(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await batcher.run_sync(lambda: 42), 42)
         finally:
             batcher._executor.shutdown()
+
+
 class CompatProtocolContracts(unittest.TestCase):
     def test_developer_preserves_caller_and_standalone_generation_role(self):
         solo = [{"role": "developer", "content": "one"}]

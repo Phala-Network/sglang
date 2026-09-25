@@ -329,6 +329,8 @@ def index_k_rope_pack(
             num_warps=4,
         )
     return (payload, scale) if cache is None else None
+
+
 @triton.jit
 def _e2m1_decode(code):
     # code: uint 0..15 -> e2m1 value. exp = bits 2..1, mantissa = bit 0, sign = bit 3.

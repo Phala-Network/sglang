@@ -3,16 +3,9 @@ No import hooks or external runtime code paths.
 """
 
 import functools
-
-
 import os
-
-
 import sys
-
-
 import traceback
-
 
 _ENCODING = "sglang.srt.entrypoints.openai.encoding_dsv41"
 

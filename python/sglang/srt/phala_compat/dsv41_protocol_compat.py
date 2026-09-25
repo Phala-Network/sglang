@@ -3,16 +3,9 @@ No import hooks or external runtime code paths.
 """
 
 import functools
-
-
 import sys
-
-
 import traceback
-
-
 from typing import Dict, Optional
-
 
 _PROTOCOL = "sglang.srt.entrypoints.openai.protocol"
 
@@ -84,7 +77,10 @@ def _force_continuous_usage(out):
         return out, False
     stream_options = out.get("stream_options")
     stream_options = dict(stream_options) if isinstance(stream_options, dict) else {}
-    if stream_options.get("include_usage") is True and stream_options.get("continuous_usage_stats") is True:
+    if (
+        stream_options.get("include_usage") is True
+        and stream_options.get("continuous_usage_stats") is True
+    ):
         return out, False
     stream_options["include_usage"] = True
     stream_options["continuous_usage_stats"] = True
@@ -103,8 +99,11 @@ def _normalize_reasoning_inputs(values):
         global _warned
         if not _warned:
             _warned = True
-            print("[dsv41-patches] reasoning-input normalization raised; "
-                  "passing the request through unchanged", file=sys.stderr)
+            print(
+                "[dsv41-patches] reasoning-input normalization raised; "
+                "passing the request through unchanged",
+                file=sys.stderr,
+            )
             traceback.print_exc()
         return values
 
@@ -124,7 +123,10 @@ def _normalize(values):
     changed = changed or usage_changed
 
     # (2) "default" means "whatever the server defaults to" -> drop the field.
-    for holder, keys in ((out, ("reasoning_effort",)), (reasoning, ("effort", "reasoning_effort"))):
+    for holder, keys in (
+        (out, ("reasoning_effort",)),
+        (reasoning, ("effort", "reasoning_effort")),
+    ):
         if holder is None:
             continue
         for key in keys:
@@ -135,9 +137,7 @@ def _normalize(values):
 
     # (1) OpenRouter's off-switch. The flat OpenAI field still wins if both are
     # present, which is upstream's existing precedence (protocol.py:1029-1030).
-    if reasoning is not None and (
-        "enabled" in reasoning or "enable" in reasoning
-    ):
+    if reasoning is not None and ("enabled" in reasoning or "enable" in reasoning):
         enabled = reasoning.get("enabled")
         if enabled is None:
             enabled = reasoning.get("enable")
@@ -171,7 +171,11 @@ def _normalize(values):
         changed = True
 
     # (3) Record reasoning.exclude for the response side.
-    if reasoning is not None and "exclude" in reasoning and "reasoning_exclude" not in out:
+    if (
+        reasoning is not None
+        and "exclude" in reasoning
+        and "reasoning_exclude" not in out
+    ):
         exclude = reasoning.get("exclude")
         if isinstance(exclude, str):
             exclude = exclude.strip().lower() in _TRUE_STRINGS
@@ -248,10 +252,13 @@ def _patch_usage_processor(module) -> None:
     def calculate_token_usage(*args, **kwargs):
         usage = original(*args, **kwargs)
         reasoning_tokens = getattr(usage, "reasoning_tokens", None)
-        if reasoning_tokens is not None and "completion_tokens_details" in type(
-            usage
-        ).model_fields:
-            usage.completion_tokens_details = {"reasoning_tokens": int(reasoning_tokens)}
+        if (
+            reasoning_tokens is not None
+            and "completion_tokens_details" in type(usage).model_fields
+        ):
+            usage.completion_tokens_details = {
+                "reasoning_tokens": int(reasoning_tokens)
+            }
         return usage
 
     # The single funnel for chat (streaming and not) and /v1/completions usage;

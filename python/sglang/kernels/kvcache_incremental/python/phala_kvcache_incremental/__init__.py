@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
 import threading
+from pathlib import Path
 
 import torch
-
 
 _LOCK = threading.Lock()
 _LOADED = False

@@ -8,7 +8,6 @@ import pytest
 from sglang.srt.environ import envs
 from sglang.srt.mem_cache.pool_host import allocation_budget
 
-
 GIB = 1024**3
 
 

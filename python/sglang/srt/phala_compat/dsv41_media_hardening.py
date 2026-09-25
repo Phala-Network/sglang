@@ -3,13 +3,8 @@ No import hooks or external runtime code paths.
 """
 
 import functools
-
-
 import sys
-
-
 import traceback
-
 
 _COMMON = "sglang.srt.utils.common"
 
@@ -60,7 +55,9 @@ def _part_type(part):
 
 def _part_url(part, part_type):
     holder = (
-        part.get(part_type) if isinstance(part, dict) else getattr(part, part_type, None)
+        part.get(part_type)
+        if isinstance(part, dict)
+        else getattr(part, part_type, None)
     )
     if isinstance(holder, str):
         return holder

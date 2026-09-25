@@ -8,8 +8,8 @@ import ast
 import copy
 import hashlib
 import json
-from pathlib import Path
 import re
+from pathlib import Path
 
 METHODS = {
     "debug",

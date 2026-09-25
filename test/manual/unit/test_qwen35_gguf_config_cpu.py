@@ -10,7 +10,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-
 ROOT = Path(__file__).resolve().parents[3]
 SRT = ROOT / "python/sglang/srt"
 
@@ -277,8 +276,10 @@ class TestQwenGGUFConfig(unittest.TestCase):
         selected = []
         tokenizer = SimpleNamespace(chat_template="synthetic")
         processor = SimpleNamespace(tokenizer=tokenizer)
+
         def no_op(*args, **kwargs):
             return None
+
         load = source_function(
             "utils/hf_transformers/processor.py",
             "get_processor",

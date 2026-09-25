@@ -4,16 +4,6 @@ No import hooks or external runtime code paths.
 
 import functools
 
-
-import importlib.abc
-
-
-import importlib.machinery
-
-
-import sys
-
-
 _TARGET = "sglang.srt.entrypoints.openai.serving_chat"
 
 

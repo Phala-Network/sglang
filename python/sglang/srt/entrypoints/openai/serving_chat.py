@@ -3824,6 +3824,7 @@ class OpenAIServingChat(OpenAIServingBase):
 
         return None
 
+
 # Phala source-integrated compatibility (no runtime source overlays).
 import sys as _phala_sys
 

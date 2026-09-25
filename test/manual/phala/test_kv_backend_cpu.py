@@ -1,18 +1,17 @@
 """Source contracts for device-scoped KV dispatch; no GPU emulation claim."""
 
 import ast
-from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache
 import importlib.util
 import inspect
-from pathlib import Path
 import sys
 import tempfile
+import unittest
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import List
-import unittest
 from unittest.mock import patch
-
 
 ROOT = Path(__file__).resolve().parents[3]
 EXTENSION = ROOT / "python/sglang/kernels/kvcache_incremental"

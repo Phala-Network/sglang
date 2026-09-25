@@ -190,7 +190,12 @@ class AllowedToolsOutputTest(unittest.IsolatedAsyncioTestCase):
                     choice for chunk in chunks for choice in chunk.get("choices", [])
                 ]
                 self.assertFalse(any(choice.get("finish_reason") for choice in choices))
-                self.assertFalse(any(chunk.get("usage") for chunk in chunks))
+                error_index = next(
+                    i for i, chunk in enumerate(chunks) if "error" in chunk
+                )
+                self.assertFalse(
+                    any(chunk.get("usage") for chunk in chunks[error_index:])
+                )
                 if prefix:
                     self.assertIn("get_weather", serialized)
 
@@ -229,7 +234,7 @@ class AllowedToolsOutputTest(unittest.IsolatedAsyncioTestCase):
             [
                 chunk["usage"]["completion_tokens"]
                 for chunk in chunks
-                if chunk.get("usage")
+                if not chunk.get("choices") and chunk.get("usage")
             ],
             [12],
         )

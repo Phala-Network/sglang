@@ -1873,10 +1873,18 @@ class ServingChatTestCase(unittest.TestCase):
         }
         for streaming in (False, True):
             for ignore_eos in (False, True):
-                for tools, choice in (([], None), ([tool], "none"), ([tool], "auto"),
-                                      ([tool], "required")):
-                    with self.subTest(streaming=streaming, ignore_eos=ignore_eos,
-                                      tools=bool(tools), choice=choice):
+                for tools, choice in (
+                    ([], None),
+                    ([tool], "none"),
+                    ([tool], "auto"),
+                    ([tool], "required"),
+                ):
+                    with self.subTest(
+                        streaming=streaming,
+                        ignore_eos=ignore_eos,
+                        tools=bool(tools),
+                        choice=choice,
+                    ):
                         req = ChatCompletionRequest(
                             model="x",
                             messages=[{"role": "user", "content": "What is 1+1?"}],
@@ -1891,21 +1899,28 @@ class ServingChatTestCase(unittest.TestCase):
                         ) as parser_cls:
                             constraint = ("full_assistant_ebnf", "test-grammar")
                             parser_cls.return_value.get_structure_constraint.return_value = constraint
-                            result = self.chat._process_messages(req, is_multimodal=False)
+                            result = self.chat._process_messages(
+                                req, is_multimodal=False
+                            )
                         skip = ignore_eos and (not tools or choice == "none")
-                        self.assertEqual(result.tool_call_constraint,
-                                         None if skip else constraint)
+                        self.assertEqual(
+                            result.tool_call_constraint, None if skip else constraint
+                        )
                         if skip:
                             parser_cls.assert_not_called()
 
         req = ChatCompletionRequest(
-            model="x", messages=[{"role": "user", "content": "JSON please"}],
-            ignore_eos=True, response_format={"type": "json_object"},
-            max_completion_tokens=512, stop=["USER_STOP"],
+            model="x",
+            messages=[{"role": "user", "content": "JSON please"}],
+            ignore_eos=True,
+            response_format={"type": "json_object"},
+            max_completion_tokens=512,
+            stop=["USER_STOP"],
         )
         result = self.chat._process_messages(req, is_multimodal=False)
         params = req.to_sampling_params(
-            stop=result.stop, model_generation_config={},
+            stop=result.stop,
+            model_generation_config={},
             tool_call_constraint=result.tool_call_constraint,
         )
         self.assertIsNone(result.tool_call_constraint)
@@ -3345,6 +3360,39 @@ class ServingChatTestCase(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "dsv4_reasoning_effort_profile"):
             OpenAIServingChat(tm, TemplateManager())
 
+    def test_dsv41_reasoning_off_keeps_other_models_effort_precedence(self):
+        def make_request(**kwargs):
+            return ChatCompletionRequest(
+                model="x",
+                messages=[{"role": "user", "content": "Hi?"}],
+                reasoning={"enabled": False, "effort": "low"},
+                **kwargs,
+            )
+
+        ordinary = make_request()
+        self.assertTrue(ordinary.dsv41_reasoning_off_requested)
+        self.assertEqual(ordinary.reasoning_effort, "low")
+        self.chat._apply_dsv41_reasoning_off(ordinary)
+        self.assertEqual(ordinary.reasoning_effort, "low")
+        self.assertTrue(ordinary.chat_template_kwargs["thinking"])
+
+        self.chat.chat_encoding_spec = "dsv41"
+        deepseek = make_request()
+        self.chat._apply_dsv41_reasoning_off(deepseek)
+        self.assertEqual(deepseek.reasoning_effort, "none")
+        self.assertFalse(deepseek.chat_template_kwargs["thinking"])
+        self.assertFalse(deepseek.chat_template_kwargs["enable_thinking"])
+
+        flat_effort = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "Hi?"}],
+            reasoning={"enabled": False},
+            reasoning_effort="high",
+        )
+        self.assertFalse(flat_effort.dsv41_reasoning_off_requested)
+        self.chat._apply_dsv41_reasoning_off(flat_effort)
+        self.assertEqual(flat_effort.reasoning_effort, "high")
+
     def test_streaming_abort_yields_error(self):
         """Test that an abort finish reason during streaming correctly yields an error and stops."""
         err_msg = "Aborted by scheduler"
@@ -3414,16 +3462,14 @@ class ServingChatTestCase(unittest.TestCase):
         self.assertEqual(error_chunk_data["error"]["message"], err_msg)
         self.assertEqual(error_chunk_data["error"]["code"], err_code.value)
 
-        # Ensure the stream stops after the abort error
-        # The last chunk should be "data: [DONE]\n\n"
+        # The forced final usage chunk follows an error abort.
         self.assertEqual(chunks[-1], "data: [DONE]\n\n")
-
-        # Check that there is an error chunk and a DONE chunk
-        self.assertEqual(len(chunks), 2)
+        self.assertEqual(len(chunks), 3)
         self.assertIn("error", chunks[0])
+        self.assertIsNotNone(json.loads(chunks[1][len("data: ") :])["usage"])
 
     def test_streaming_abort_with_ids_enabled(self):
-        """Test that a terminal abort with input/output ids enabled yields only an error and [DONE]."""
+        """An error abort keeps usage but does not leak input/output ids."""
         err_msg = "Aborted by scheduler"
         err_code = HTTPStatus.INTERNAL_SERVER_ERROR
 
@@ -3485,9 +3531,11 @@ class ServingChatTestCase(unittest.TestCase):
         loop = get_or_create_event_loop()
         chunks = loop.run_until_complete(run_stream())
 
-        # Exactly one error chunk followed by [DONE]; no sglext ids leak.
+        # Error, forced usage, then [DONE]; no sglext ids leak.
         self.assertIn("error", chunks[0])
-        self.assertEqual(chunks[1], "data: [DONE]\n\n")
+        self.assertIsNotNone(json.loads(chunks[1][len("data: ") :])["usage"])
+        self.assertEqual(chunks[2], "data: [DONE]\n\n")
+        self.assertEqual(len(chunks), 3)
         self.assertFalse(
             any("input_ids" in c or "output_ids" in c for c in chunks),
             "sglext ids event leaked after abort error",
@@ -3826,7 +3874,8 @@ class ServingChatTestCase(unittest.TestCase):
         empty_logprob_chunks = [
             c
             for c in parsed
-            if c["choices"][0].get("logprobs") is not None
+            if c.get("choices")
+            and c["choices"][0].get("logprobs") is not None
             and not c["choices"][0]["delta"].get("content")
             and not c["choices"][0]["delta"].get("reasoning_content")
             and not c["choices"][0]["delta"].get("tool_calls")

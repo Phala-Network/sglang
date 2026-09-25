@@ -158,7 +158,7 @@ class DSAIndexerPoolHost(HostKVCache):
             return
         # This pool keeps its registered backing tensor outside kv_buffer,
         # which is the buffer released by HostKVCache.destroy().
-        buffer = self.index_k_with_scale_buffer
+        buffer = getattr(self, "index_k_with_scale_buffer", None)
         if buffer is not None and self.pin_memory and (_is_cuda or _is_hip):
             _cuda_host_unregister(buffer)
         self.index_k_with_scale_buffer = None

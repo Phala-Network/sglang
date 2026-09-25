@@ -102,6 +102,7 @@ execute(
 chat_nodes = source("entrypoints/openai/serving_chat.py")
 owner = next(n for n in chat_nodes if getattr(n, "name", None) == "OpenAIServingChat")
 methods = {
+    "_apply_dsv41_reasoning_off",
     "_validate_request",
     "_validate_media_content",
     "_all_tools",
@@ -162,6 +163,7 @@ namespace["chat_encoding"] = NS(
 def serving(spec="dsv41", multimodal=False, image=False, audio=False, video=False):
     obj = Serving()
     obj.chat_encoding_spec = spec
+    obj.template_manager = NS(reasoning_config=None)
     obj._grammar_backend = "none"
     obj._dsv41_default_reasoning_effort = "high" if spec == "dsv41" else None
     obj.tokenizer_manager = NS(
@@ -388,7 +390,9 @@ class SharedProtocolTests(unittest.TestCase):
     def test_native_ds_prompt_receives_integer_and_filters_both_tool_carriers(self):
         obj = serving()
         obj.tool_call_parser = obj.reasoning_parser = "deepseekv41"
-        obj.template_manager = NS(jinja_template_content_format="openai")
+        obj.template_manager = NS(
+            jinja_template_content_format="openai", reasoning_config=None
+        )
         obj._fold_qwen35_system_messages = lambda messages: messages
         obj._apply_qwen35_reasoning_effort_guidance = lambda messages, effort: messages
         obj._expose_qwen35_reasoning_tool_history = lambda messages: None

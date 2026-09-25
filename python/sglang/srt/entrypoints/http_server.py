@@ -753,9 +753,13 @@ async def health_generate(request: Request) -> Response:
                     "Health check generation request disconnected for rid=%s", rid
                 )
             else:
-                logger.exception("Health check generation failed for rid=%s", rid)
+                logger.exception(
+                    "Health check generation failed for rid=%s", rid, exc_info=False
+                )
         except Exception:
-            logger.exception("Health check generation failed for rid=%s", rid)
+            logger.exception(
+                "Health check generation failed for rid=%s", rid, exc_info=False
+            )
 
     # As long as we receive any response from the detokenizer/scheduler, we consider the server is healthy.
     try:

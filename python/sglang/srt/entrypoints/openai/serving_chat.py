@@ -1466,8 +1466,21 @@ class OpenAIServingChat(OpenAIServingBase):
             and self.tool_call_parser
         )
 
+    def _apply_dsv41_reasoning_off(self, request: ChatCompletionRequest) -> None:
+        if (
+            self.chat_encoding_spec != "dsv41"
+            or not request.dsv41_reasoning_off_requested
+        ):
+            return
+        request.reasoning_effort = "none"
+        kwargs = dict(request.chat_template_kwargs or {})
+        kwargs["thinking"] = False
+        kwargs["enable_thinking"] = False
+        request.chat_template_kwargs = kwargs
+
     def _validate_request(self, request: ChatCompletionRequest) -> Optional[str]:
         """Validate that the input is valid."""
+        self._apply_dsv41_reasoning_off(request)
         if not request.messages:
             return "Messages cannot be empty."
 
@@ -1691,6 +1704,7 @@ class OpenAIServingChat(OpenAIServingBase):
         request: ChatCompletionRequest,
         raw_request: Request = None,
     ) -> tuple[GenerateReqInput, ChatCompletionRequest]:
+        self._apply_dsv41_reasoning_off(request)
 
         # Header-based opt-in (same rationale as request_headers.py).
         if raw_request is not None and not request.return_input_ids_in_sglext:
@@ -2966,12 +2980,11 @@ class OpenAIServingChat(OpenAIServingBase):
 
             # Handle tool calls
             tool_calls = None
-            effective_tools = self._effective_tools(request)
             if self._tool_call_parsing_active(request):
                 history_tool_calls_cnt = self._get_history_tool_calls_cnt(request)
                 tool_calls, text, finish_reason = self._process_tool_calls(
                     text,
-                    effective_tools,
+                    self._all_tools(request),
                     finish_reason,
                     self._effective_tool_choice(request),
                     history_tool_calls_cnt,
@@ -3596,7 +3609,9 @@ class OpenAIServingChat(OpenAIServingBase):
         With flush=True (the terminal delta), the parser also drains text it
         held back waiting for a marker that can no longer arrive.
         """
-        effective_tools = self._effective_tools(request)
+        # The output parser must see names outside the allowed subset so the
+        # allowlist check can reject them before emitting their arguments.
+        output_tools = self._all_tools(request)
         if index not in parser_dict:
             effective_tool_choice = self._effective_tool_choice(request)
             is_required = effective_tool_choice == "required" or isinstance(
@@ -3611,7 +3626,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 use_native_parser = False
                 if self.tool_call_parser:
                     probe = FunctionCallParser(
-                        tools=effective_tools,
+                        tools=output_tools,
                         tool_call_parser=self.tool_call_parser,
                         tokenizer=self.tokenizer_manager.tokenizer,
                         constrained_output=True,
@@ -3627,7 +3642,7 @@ class OpenAIServingChat(OpenAIServingBase):
                     parser_dict[index] = JsonArrayParser()
             else:
                 parser_dict[index] = FunctionCallParser(
-                    tools=effective_tools,
+                    tools=output_tools,
                     tool_call_parser=self.tool_call_parser,
                     tokenizer=self.tokenizer_manager.tokenizer,
                 )
@@ -3636,7 +3651,7 @@ class OpenAIServingChat(OpenAIServingBase):
 
         # Handle both FunctionCallParser and JsonArrayParser
         if isinstance(parser, JsonArrayParser):
-            result = parser.parse_streaming_increment(delta, effective_tools)
+            result = parser.parse_streaming_increment(delta, output_tools)
             normal_text, calls = result.normal_text, result.calls
         else:
             normal_text, calls = parser.parse_stream_chunk(delta)

@@ -115,7 +115,8 @@ def _normalize(values):
     reasoning = values.get("reasoning")
     reasoning = dict(reasoning) if isinstance(reasoning, dict) else None
     out = dict(values)
-    changed = False
+    changed = "dsv41_reasoning_off_requested" in out
+    out.pop("dsv41_reasoning_off_requested", None)
 
     # (6) Every streaming request gets both usage flags forced on, regardless
     # of what the client sent -- see the module docstring, point 6.
@@ -135,17 +136,14 @@ def _normalize(values):
                 holder.pop(key)
                 changed = True
 
-    # (1) OpenRouter's off-switch. The flat OpenAI field still wins if both are
-    # present, which is upstream's existing precedence (protocol.py:1029-1030).
+    # Preserve upstream's nested effort precedence during request validation.
+    # The serving layer applies this off-switch only for the dsv41 encoder.
     if reasoning is not None and ("enabled" in reasoning or "enable" in reasoning):
         enabled = reasoning.get("enabled")
         if enabled is None:
             enabled = reasoning.get("enable")
-        if _is_false(enabled):
-            reasoning.pop("effort", None)
-            reasoning.pop("reasoning_effort", None)
-            if out.get("reasoning_effort") is None:
-                out["reasoning_effort"] = "none"
+        if _is_false(enabled) and out.get("reasoning_effort") is None:
+            out["dsv41_reasoning_off_requested"] = True
             changed = True
 
     # The typed request field carries integer budgets to the custom encoder and

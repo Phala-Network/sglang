@@ -181,6 +181,8 @@ class TestHiCacheAsyncAckSync(unittest.TestCase):
         )
         cache.pp_rank = 0
         cache.pp_size = 1
+        cache.page_size = 1
+        cache._transfer_page_size = 1
         cache.work_list = []
         cache.enable_storage_metrics = False
         cache.storage_metrics_collector = None
@@ -194,6 +196,7 @@ class TestHiCacheAsyncAckSync(unittest.TestCase):
         cache._drain_async_work = MagicMock()
         cache._async_ready_counts_eligible = MagicMock(return_value=True)
         cache.cache_controller = SimpleNamespace(
+            page_size=1,
             ack_write_queue=[
                 SimpleNamespace(
                     finish_event=SimpleNamespace(query=MagicMock(return_value=ready))

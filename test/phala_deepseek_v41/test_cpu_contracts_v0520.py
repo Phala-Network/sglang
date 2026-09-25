@@ -173,16 +173,18 @@ class CompatProtocolContracts(unittest.TestCase):
             )
         self.assertEqual(len(original), 1)
 
-    def test_reasoning_off_does_not_override_explicit_flat_effort(self):
-        self.assertEqual(
-            protocol._normalize({"reasoning": {"enabled": False}})["reasoning_effort"],
-            "none",
+    def test_reasoning_off_is_marked_for_dsv41_without_changing_shared_precedence(self):
+        disabled = protocol._normalize({"reasoning": {"enabled": False}})
+        self.assertTrue(disabled["dsv41_reasoning_off_requested"])
+        self.assertNotIn("reasoning_effort", disabled)
+        flat = protocol._normalize(
+            {"reasoning_effort": "high", "reasoning": {"enabled": False}}
         )
-        self.assertEqual(
-            protocol._normalize(
-                {"reasoning_effort": "high", "reasoning": {"enabled": False}}
-            )["reasoning_effort"],
-            "high",
+        self.assertEqual(flat["reasoning_effort"], "high")
+        self.assertNotIn("dsv41_reasoning_off_requested", flat)
+        self.assertNotIn(
+            "dsv41_reasoning_off_requested",
+            protocol._normalize({"dsv41_reasoning_off_requested": True}),
         )
 
     def test_integer_budget_and_fractional_effort_are_distinct(self):

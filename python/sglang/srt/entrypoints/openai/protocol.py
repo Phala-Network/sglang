@@ -973,6 +973,7 @@ class ChatCompletionRequest(BaseModel):
     )
     # Response-only policy; do not expose normalized controls as wire extensions.
     reasoning_exclude: bool = Field(default=False, exclude=True, repr=False)
+    dsv41_reasoning_off_requested: bool = Field(default=False, exclude=True, repr=False)
     reasoning_max_tokens: Optional[int] = Field(
         default=None,
         ge=1,

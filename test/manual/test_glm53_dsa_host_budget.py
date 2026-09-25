@@ -287,7 +287,7 @@ def fixture(world_size=1, rank=0, transport=None):
 
 
 def load_small_dsa(f):
-    # Use captured exact-r3 MLA (unchanged by candidate), not another checkout.
+    # Execute the candidate MLA constructor with lightweight device doubles.
     old = SOURCE / "mem_cache/pool_host/mla.py"
     shared = dict(
         torch=f.torch,
@@ -296,6 +296,7 @@ def load_small_dsa(f):
             (len(refs),), f.torch.uint64
         ),
         HiSparseHostPoolMixin=type("Mixin", (), {}),
+        MLATokenToKVPoolFP4=type("FP4Device", (), {}),
         ALLOC_MEMORY_FUNCS=f.common.ALLOC_MEMORY_FUNCS,
         _WRITE_BACK_STAGING_PAGE_CHUNK=64,
         _is_cuda=True,
@@ -319,6 +320,7 @@ def load_small_dsa(f):
             threading=threading,
             DSATokenToKVPool=dsa_device_class,
             get_allocator_from_storage=f.common.get_allocator_from_storage,
+            _cuda_host_unregister=f.common._cuda_host_unregister,
             active_host_allocation_budget=f.budget.active_host_allocation_budget,
             host_slot_metadata_bytes=f.budget.host_slot_metadata_bytes,
             host_memory_budget_bytes=f.base.host_memory_budget_bytes,
@@ -537,6 +539,8 @@ class CandidateTests(unittest.TestCase):
                 drafts = []
                 for _ in range(mtp):
                     draft = NS(
+                        store_dtype=f.torch.uint8,
+                        kv_cache_dim=6,
                         data_ptrs=Tensor((1,), f.torch.uint64),
                         kv_buffer=[Tensor((8, 1, 6))],
                         index_k_with_scale_buffer=[Tensor((8, 8))],

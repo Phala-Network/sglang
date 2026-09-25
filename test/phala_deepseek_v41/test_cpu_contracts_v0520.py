@@ -5,7 +5,9 @@ import asyncio
 import contextvars
 import importlib.util
 import os
+import sys
 import threading
+import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,7 +24,17 @@ def load(name, relative=None):
     )
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    packages = {}
+    for package, package_path in (
+        ("sglang", ROOT / "python/sglang"),
+        ("sglang.srt", ROOT / "python/sglang/srt"),
+        ("sglang.srt.phala_compat", ROOT / "python/sglang/srt/phala_compat"),
+    ):
+        namespace = types.ModuleType(package)
+        namespace.__path__ = [str(package_path)]
+        packages[package] = namespace
+    with patch.dict(sys.modules, {name: module, **packages}):
+        spec.loader.exec_module(module)
     return module
 
 

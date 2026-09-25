@@ -20,7 +20,10 @@ from sglang.srt.mem_cache.memory_pool import (
     MLATokenToKVPool,
     MLATokenToKVPoolFP4,
 )
-from sglang.srt.mem_cache.pool_host.common import alloc_with_host_register
+from sglang.srt.mem_cache.pool_host.common import (
+    _CUDA_HOST_REGISTERED_RANGES_ATTR,
+    alloc_with_host_register,
+)
 from sglang.srt.mem_cache.pool_host.mla import MLATokenToKVPoolHost
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
@@ -187,7 +190,11 @@ class _PackedRowGeometryFixtures:
     @staticmethod
     def _alloc_unpinned(dims, dtype, device, pin_memory, allocator, **kwargs):
         # Host rows are allocated without pinning so no CUDA context is needed.
-        return alloc_with_host_register(dims, dtype, device, False, allocator, **kwargs)
+        buffer = alloc_with_host_register(
+            dims, dtype, device, False, allocator, **kwargs
+        )
+        setattr(buffer, _CUDA_HOST_REGISTERED_RANGES_ATTR, [])
+        return buffer
 
 
 class TestHybridMambaStackHostRowWidth(_PackedRowGeometryFixtures, CustomTestCase):

@@ -1,4 +1,5 @@
 import unittest
+from enum import IntEnum
 from types import SimpleNamespace
 from unittest import mock
 
@@ -14,6 +15,7 @@ from sglang.srt.mem_cache.pool_host import mha as mha_pool_host
 from sglang.srt.mem_cache.pool_host import mla as mla_pool_host
 from sglang.srt.mem_cache.pool_host.common import (
     ALLOC_MEMORY_FUNCS,
+    _CUDA_HOST_REGISTERED_RANGES_ATTR,
     _cuda_host_register,
     _cuda_host_unregister,
 )
@@ -65,7 +67,39 @@ class _FakeCudart:
         return "injected error"
 
 
+class _TypedStatus(IntEnum):
+    OK = 0
+    FAILED = 713
+
+
+class _TypedCudart(_FakeCudart):
+    def cudaHostRegister(self, ptr: int, size: int, flags: int) -> _TypedStatus:
+        return _TypedStatus.FAILED
+
+    def cudaHostUnregister(self, ptr: int) -> _TypedStatus:
+        return _TypedStatus.FAILED
+
+    def cudaGetErrorString(self, status: _TypedStatus) -> str:
+        if not isinstance(status, _TypedStatus):
+            raise TypeError("CUDA error status must retain its enum type")
+        return "typed CUDA error"
+
+
 class TestHiCacheHostRegister(unittest.TestCase):
+    def test_error_text_receives_cuda_status_enum(self):
+        buffer = _FakeBuffer(0x10000000, 17)
+        cudart = _TypedCudart()
+        with mock.patch.object(torch.cuda, "cudart", return_value=cudart):
+            with self.assertRaisesRegex(RuntimeError, "typed CUDA error"):
+                _cuda_host_register(buffer)
+
+            setattr(
+                buffer, _CUDA_HOST_REGISTERED_RANGES_ATTR, [(buffer.data_ptr(), 17)]
+            )
+            with mock.patch("sglang.srt.mem_cache.pool_host.common.logger") as logger:
+                _cuda_host_unregister(buffer)
+                logger.warning.assert_called_once()
+
     def test_dsa_page_layouts_with_draft_use_page_registration_granularity(self):
         target_buffers = [torch.empty(1, dtype=torch.uint8) for _ in range(3)]
         draft_buffer = torch.empty(1, dtype=torch.uint8)

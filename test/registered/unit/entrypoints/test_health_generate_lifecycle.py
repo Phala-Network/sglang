@@ -8,7 +8,6 @@ import types
 import uuid
 from contextlib import aclosing
 
-
 SOURCE = (
     pathlib.Path(__file__).resolve().parents[4]
     / "python/sglang/srt/entrypoints/http_server.py"

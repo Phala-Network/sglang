@@ -8945,7 +8945,7 @@ class TestChunkedWriteThroughBackupIntegration(_InsertWalkSuite):
 
         self.assertFalse(cache.tree_core.is_root(req.last_node))
         self.assertTrue(cache.tree_core.is_backuped(req.last_node))
-        cache.dec_lock_ref(req.last_node)
+        cache._dec_req_lock(req)
         cache.sanity_check()
 
     def test_subpage_chunk_stays_at_root_without_backup(self):
@@ -8957,7 +8957,7 @@ class TestChunkedWriteThroughBackupIntegration(_InsertWalkSuite):
 
         self.assertTrue(cache.tree_core.is_root(req.last_node))
         self.assertEqual(cache.ongoing_write_through, {})
-        cache.dec_lock_ref(req.last_node)
+        cache._dec_req_lock(req)
         cache.sanity_check()
 
 

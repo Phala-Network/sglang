@@ -15,9 +15,11 @@ Covers:
 
 import asyncio
 import unittest
+from http import HTTPStatus
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import msgspec
+import fastapi
 
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase, maybe_stub_sgl_kernel
@@ -941,6 +943,32 @@ class TestBackgroundAbortRequestOwnership(CustomTestCase):
             [call.args[0] for call in tm.abort_request.call_args_list],
             obj.rid[: obj.batch_size],
         )
+
+
+class TestAbortStatusMapping(CustomTestCase):
+    def test_non_streaming_too_many_requests_abort_is_http_429(self):
+        """Governor admission rejection must not become a successful 200 response."""
+        from types import SimpleNamespace
+
+        tm = TokenizerManager.__new__(TokenizerManager)
+        tm.rid_to_state = {"rid": object()}
+        tm.enable_lora = False
+        state = SimpleNamespace(obj=SimpleNamespace(rid="rid"))
+        out = {
+            "meta_info": {
+                "finish_reason": {
+                    "type": "abort",
+                    "status_code": HTTPStatus.TOO_MANY_REQUESTS,
+                    "message": "Governor waiting limit",
+                }
+            }
+        }
+
+        with self.assertRaises(fastapi.HTTPException) as raised:
+            asyncio.run(tm._handle_abort_finish_reason(out, state, False))
+
+        self.assertEqual(raised.exception.status_code, HTTPStatus.TOO_MANY_REQUESTS)
+        self.assertNotIn("rid", tm.rid_to_state)
 
 
 if __name__ == "__main__":

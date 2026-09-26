@@ -1846,6 +1846,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         if finish_reason.get("type") == "abort" and finish_reason.get(
             "status_code"
         ) in (
+            HTTPStatus.TOO_MANY_REQUESTS,
             HTTPStatus.SERVICE_UNAVAILABLE,
             HTTPStatus.INTERNAL_SERVER_ERROR,
         ):

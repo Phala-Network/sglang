@@ -16,6 +16,8 @@ from openai.types.responses import (
 )
 from openai.types.responses.response_function_tool_call import ResponseFunctionToolCall
 from openai_harmony import Conversation, Message, Role, ToolNamespaceConfig
+from utils import StreamFixture, engine_chunk, event_payloads, make_serving
+
 from sglang.srt.entrypoints.context import (
     HarmonyContext,
     SimpleContext,
@@ -41,7 +43,6 @@ from sglang.srt.sampling.sampling_params import (
 from sglang.srt.server_args import ServerArgs
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
-from utils import StreamFixture, engine_chunk, event_payloads, make_serving
 
 register_cpu_ci(est_time=10, suite="base-a-test-cpu")
 

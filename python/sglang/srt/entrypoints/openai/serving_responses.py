@@ -646,6 +646,28 @@ class OpenAIServingResponses(OpenAIServingChat):
                     await result_generator.aclose()
                     raise
 
+                if first_result is not None:
+                    if self.use_harmony:
+                        finish_reason = first_result.finish_reason
+                    else:
+                        first_output = first_result.last_output
+                        finish_reason = (
+                            first_output.get("meta_info", {}).get("finish_reason")
+                            if isinstance(first_output, dict)
+                            else None
+                        )
+                    if (
+                        isinstance(finish_reason, dict)
+                        and finish_reason.get("type") == "abort"
+                    ):
+                        status_code = finish_reason.get("status_code")
+                        if isinstance(status_code, int) and 400 <= status_code <= 599:
+                            await result_generator.aclose()
+                            return self.create_error_response(
+                                finish_reason.get("message", "Generation aborted"),
+                                status_code=status_code,
+                            )
+
                 async def replay_generation():
                     if first_result is not None:
                         yield first_result

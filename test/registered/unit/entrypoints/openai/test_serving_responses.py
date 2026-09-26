@@ -1382,7 +1382,7 @@ def response_serving():
 async def create_response_result(serving, request):
     result = await serving.create_responses(request)
     if request.stream:
-        payloads = event_payloads([event async for event in result])
+        payloads = event_payloads([event async for event in result.body_iterator])
         assert payloads[0]["type"] == "response.created"
         assert payloads[-1]["type"] == "response.completed"
         return ResponsesResponse.model_validate(payloads[-1]["response"])
@@ -1415,8 +1415,9 @@ def test_admission_rejection_precedes_responses_stream_headers(
     }
 
 
-def test_responses_stream_replays_first_generation_result(response_serving):
-    serving = response_serving(enabled=False, harmony=False)
+@pytest.mark.parametrize("harmony", [False, True])
+def test_responses_stream_replays_first_generation_result(response_serving, harmony):
+    serving = response_serving(enabled=False, harmony=harmony)
     request = ResponsesRequest(model="x", input="hi", stream=True)
 
     async def run():
@@ -1431,6 +1432,32 @@ def test_responses_stream_replays_first_generation_result(response_serving):
     assert payloads[-1]["type"] == "response.completed"
     response = ResponsesResponse.model_validate(payloads[-1]["response"])
     assert response.output[0].content[0].text == "ok"
+
+
+@pytest.mark.parametrize("harmony", [False, True])
+def test_responses_stream_abort_output_precedes_headers(response_serving, harmony):
+    serving = response_serving(enabled=False, harmony=harmony)
+
+    async def reject(*args, **kwargs):
+        chunk = engine_chunk("", completion_tokens=0, finish=True)
+        chunk["meta_info"]["finish_reason"] = {
+            "type": "abort",
+            "status_code": 429,
+            "message": "Governor admission rejected",
+        }
+        if harmony:
+            chunk["output_ids"] = []
+        yield chunk
+
+    serving.tokenizer_manager.generate_request = reject
+    request = ResponsesRequest(model="x", input="hi", stream=True)
+    result = asyncio.run(serving.create_responses(request))
+
+    assert result.status_code == 429
+    assert result.media_type != "text/event-stream"
+    assert (
+        orjson.loads(result.body)["error"]["message"] == "Governor admission rejected"
+    )
 
 
 def assert_response_error(response, param, message=STORE_DISABLED_MESSAGE, status=400):
@@ -1633,11 +1660,11 @@ def test_active_stream_cancel_and_final_history(response_serving):
     async def run():
         request = ResponsesRequest(model="x", input="hi", background=True, stream=True)
         stream = await serving.create_responses(request)
-        assert "response.created" in await anext(stream)
+        assert "response.created" in await anext(stream.body_iterator)
         assert not serving.background_tasks
         assert (await serving.cancel_responses(request.request_id)).status_code == 404
         serving.tokenizer_manager.abort_request.assert_not_called()
-        events = [event async for event in stream]
+        events = [event async for event in stream.body_iterator]
         assert event_payloads(events)[-1]["type"] == "response.completed"
         assert serving.response_store[request.request_id].status == "completed"
         assert len(serving.msg_store[request.request_id]) == 2

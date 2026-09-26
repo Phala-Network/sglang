@@ -628,11 +628,36 @@ class OpenAIServingResponses(OpenAIServingChat):
                 return response
 
             if request.stream:
+                try:
+                    first_result = await await_response_or_disconnect(
+                        result_generator.__anext__(), raw_request
+                    )
+                except StopAsyncIteration:
+                    first_result = None
+                except HTTPException as exc:
+                    await result_generator.aclose()
+                    return self.create_error_response(
+                        exc.detail, status_code=exc.status_code
+                    )
+                except ValueError as exc:
+                    await result_generator.aclose()
+                    return self.create_error_response(str(exc))
+                except BaseException:
+                    await result_generator.aclose()
+                    raise
+
+                async def replay_generation():
+                    if first_result is not None:
+                        yield first_result
+                    async for result in result_generator:
+                        yield result
+
+                replayed_results = replay_generation()
                 if self.use_harmony:
                     events = self.responses_stream_generator(
                         request,
                         sampling_params,
-                        result_generator,
+                        replayed_results,
                         context,
                         model_name,
                         tokenizer,
@@ -643,7 +668,7 @@ class OpenAIServingResponses(OpenAIServingChat):
                     events = self.responses_stream_generator_non_harmony(
                         request,
                         sampling_params,
-                        result_generator,
+                        replayed_results,
                         model_name,
                         tokenizer,
                         request_metadata,

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import orjson
 import pytest
+from fastapi import HTTPException
 from openai.types.responses import (
     ResponseOutputMessage,
     ResponseOutputText,
@@ -15,8 +16,6 @@ from openai.types.responses import (
 )
 from openai.types.responses.response_function_tool_call import ResponseFunctionToolCall
 from openai_harmony import Conversation, Message, Role, ToolNamespaceConfig
-from utils import StreamFixture, engine_chunk, event_payloads, make_serving
-
 from sglang.srt.entrypoints.context import (
     HarmonyContext,
     SimpleContext,
@@ -42,6 +41,7 @@ from sglang.srt.sampling.sampling_params import (
 from sglang.srt.server_args import ServerArgs
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
+from utils import StreamFixture, engine_chunk, event_payloads, make_serving
 
 register_cpu_ci(est_time=10, suite="base-a-test-cpu")
 
@@ -1386,6 +1386,50 @@ async def create_response_result(serving, request):
         assert payloads[-1]["type"] == "response.completed"
         return ResponsesResponse.model_validate(payloads[-1]["response"])
     return result
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_admission_rejection_precedes_responses_stream_headers(
+    response_serving, stream
+):
+    serving = response_serving(enabled=False)
+
+    async def reject(*args, **kwargs):
+        raise HTTPException(status_code=429, detail="Governor admission rejected")
+        yield
+
+    serving.tokenizer_manager.generate_request = reject
+    request = ResponsesRequest(model="x", input="hi", stream=stream)
+    result = asyncio.run(serving.create_responses(request))
+
+    assert result.status_code == 429
+    assert result.media_type != "text/event-stream"
+    assert orjson.loads(result.body) == {
+        "error": {
+            "message": "Governor admission rejected",
+            "type": "invalid_request_error",
+            "param": None,
+            "code": 429,
+        }
+    }
+
+
+def test_responses_stream_replays_first_generation_result(response_serving):
+    serving = response_serving(enabled=False, harmony=False)
+    request = ResponsesRequest(model="x", input="hi", stream=True)
+
+    async def run():
+        result = await serving.create_responses(request)
+        try:
+            return event_payloads([event async for event in result.body_iterator])
+        finally:
+            await result._close_generators()
+
+    payloads = asyncio.run(run())
+    assert payloads[0]["type"] == "response.created"
+    assert payloads[-1]["type"] == "response.completed"
+    response = ResponsesResponse.model_validate(payloads[-1]["response"])
+    assert response.output[0].content[0].text == "ok"
 
 
 def assert_response_error(response, param, message=STORE_DISABLED_MESSAGE, status=400):

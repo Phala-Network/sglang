@@ -5032,7 +5032,7 @@ class Scheduler(
         # readback reflects values changed via /set_internal_state, not startup.
         ret = get_context().resolved_server_args_dict()
         if self.governor is not None:
-            ret["pig_governor"] = self.governor.core.snapshot(time.monotonic())
+            ret["pig_governor"] = self.governor.policy_snapshot(time.monotonic())
         ret["world_size"] = compute_world_size(
             enable_dp_attention=get_parallel().enable_dp_attention,
             dp_size=get_parallel().dp_size,
@@ -5100,7 +5100,7 @@ class Scheduler(
 
             try:
                 execute(
-                    self.governor.core,
+                    self.governor,
                     "patch",
                     time.monotonic(),
                     server_args_dict["pig_governor"],

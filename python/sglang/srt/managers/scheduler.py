@@ -467,10 +467,6 @@ class Scheduler(
         # Parse args
         self.server_args = server_args
         self.governor = None
-        if os.environ.get("PIG_GOVERNOR_ENABLE") == "1":
-            from pig_governor.sglang import create
-
-            self.governor = create(server_args)
         self.nccl_port = port_args.nccl_port
         self.schedule_policy = get_schedule().schedule_policy
         self.enable_priority_scheduling = get_schedule().enable_priority_scheduling
@@ -566,6 +562,14 @@ class Scheduler(
 
         # Init tokenizer
         self.init_tokenizer()
+
+        # Governor requires the resolved model type. Initialize it only after
+        # init_tokenizer has populated self.is_generation, while keeping the
+        # explicit generation-only contract enforced by the adapter.
+        if os.environ.get("PIG_GOVERNOR_ENABLE") == "1":
+            from pig_governor.sglang import create
+
+            self.governor = create(server_args, is_generation=self.is_generation)
 
         # Init moe config and GEMM config (FP8 GEMM, etc.)
         self.init_moe_gemm_config()

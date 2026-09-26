@@ -5184,7 +5184,12 @@ class Scheduler(
         if self.governor is not None:
             now = time.monotonic()
             ret["pig_governor"] = self.governor.policy_snapshot(now)
-            ret["pig_governor_admission"] = self.governor.admission_snapshot()
+            waiting_count = len(self.waiting_queue) + len(self.grammar_manager)
+            if self.chunked_req is not None:
+                waiting_count += 1
+            ret["pig_governor_admission"] = self.governor.admission_snapshot(
+                waiting_count=waiting_count
+            )
             ret["pig_governor_profile"] = self.governor.profile_snapshot(now)
         ret["world_size"] = compute_world_size(
             enable_dp_attention=get_parallel().enable_dp_attention,

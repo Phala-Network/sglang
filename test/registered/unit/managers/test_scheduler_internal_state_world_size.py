@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import maybe_stub_sgl_kernel
@@ -53,7 +54,9 @@ class TestComputeWorldSize(unittest.TestCase):
 
 
 class TestSchedulerInternalStateWorldSize(unittest.TestCase):
-    def _get_internal_state(self, shape: dict) -> dict:
+    def _get_internal_state(
+        self, shape: dict, *, waiting=None, grammar=0, chunked=False
+    ) -> dict:
         scheduler = Scheduler.__new__(Scheduler)
         scheduler.metrics_reporter = SimpleNamespace(
             last_gen_throughput=1.0,
@@ -78,6 +81,15 @@ class TestSchedulerInternalStateWorldSize(unittest.TestCase):
             is_dspark=lambda: False,
         )
         scheduler.draft_worker = None
+        scheduler.governor = None
+        if waiting is not None:
+            scheduler.governor = MagicMock()
+            scheduler.governor.policy_snapshot.return_value = {}
+            scheduler.governor.profile_snapshot.return_value = {}
+            scheduler.governor.admission_snapshot.side_effect = lambda **kw: kw
+            scheduler.waiting_queue = [object()] * waiting
+            scheduler.grammar_manager = [object()] * grammar
+            scheduler.chunked_req = object() if chunked else None
 
         with get_context().override_server_args(**shape):
             output = scheduler.get_internal_state(recv_req=GetInternalStateReq())
@@ -101,6 +113,15 @@ class TestSchedulerInternalStateWorldSize(unittest.TestCase):
         self.assertNotEqual(
             internal_state["world_size"], shape["tp_size"] * shape["pp_size"]
         )
+
+    def test_governor_admission_reports_live_native_waiting_owners(self):
+        shape = _shape(tp_size=1, pp_size=1, dp_size=1, enable_dp_attention=False)
+
+        idle = self._get_internal_state(shape, waiting=0)
+        queued = self._get_internal_state(shape, waiting=2, grammar=1, chunked=True)
+
+        self.assertEqual(idle["pig_governor_admission"]["waiting_count"], 0)
+        self.assertEqual(queued["pig_governor_admission"]["waiting_count"], 4)
 
 
 if __name__ == "__main__":

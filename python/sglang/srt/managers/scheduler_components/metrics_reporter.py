@@ -192,6 +192,7 @@ class SchedulerMetricsReporter:
             self.metrics_collector_context.enable_kv_cache_events
         )
         self._init_metrics(self.tp_rank, self.pp_rank, self.dp_rank)
+        self._init_governor_metrics()
         self._install_device_timer_on_runners()
         # Keep log history after the existing async result copy so reporting does
         # not synchronize the model stream once per generated token.
@@ -202,6 +203,48 @@ class SchedulerMetricsReporter:
         # Windowed rate for waiting-queue load estimation only; the exported
         # cache_hit_rate stats keep their per-report semantics.
         self.recent_cache_hit_rate = 0.0
+
+    def _init_governor_metrics(self) -> None:
+        self._governor_metrics = None
+        if not self.current_scheduler_metrics_enabled:
+            return
+        labels = {
+            name: value
+            for name, value in self.metrics_collector.labels.items()
+            if name not in {"reason", "window"}
+        }
+        try:
+            from pig_governor.metrics import GovernorMetrics
+        except ModuleNotFoundError as error:
+            if error.name not in {"pig_governor", "pig_governor.metrics"}:
+                raise
+            from prometheus_client import Gauge
+
+            for name, value in (
+                ("available", 0),
+                ("enabled", int(getattr(self.scheduler, "governor", None) is not None)),
+            ):
+                Gauge(
+                    "pig_governor_" + name,
+                    "Native Governor telemetry availability or admission enablement.",
+                    tuple(labels),
+                    multiprocess_mode="mostrecent",
+                ).labels(**labels).set(value)
+            return
+        self._governor_metrics = GovernorMetrics(labels)
+        self._publish_governor_metrics(time.monotonic())
+
+    def _publish_governor_metrics(self, now: float) -> None:
+        if self._governor_metrics is None:
+            return
+        governor = getattr(self.scheduler, "governor", None)
+        waiting_count = None
+        if governor is not None:
+            waiting_count = len(self.scheduler.waiting_queue) + len(
+                self.scheduler.grammar_manager
+            )
+            waiting_count += int(self.scheduler.chunked_req is not None)
+        self._governor_metrics.publish(governor, now=now, waiting_count=waiting_count)
 
     def _current_gen_throughput(self, now: float) -> float:
         """last_gen_throughput, decayed to 0 once decode-stats stop arriving.
@@ -1331,6 +1374,8 @@ class SchedulerMetricsReporter:
         accounting.sample(now_wall_ns, is_idle)
         if not accounting.should_record(now_wall_ns):
             return
+
+        self._publish_governor_metrics(now_wall_ns / 1e9)
 
         now_process_cpu_ns = time.process_time_ns()
         elapsed_process_cpu_ns = now_process_cpu_ns - accounting.start_process_cpu_ns

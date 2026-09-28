@@ -2155,6 +2155,12 @@ class OpenAIServingChat(OpenAIServingBase):
                 v4_reasoning_effort = (
                     effort_source if effort_source in accepted_efforts else None
                 )
+                messages = encoding_dsv4.attach_response_format_to_control_message(
+                    messages,
+                    request.response_format.model_dump(by_alias=True)
+                    if request.response_format is not None
+                    else None,
+                )
                 if request.task is not None:
                     encoding_dsv4.attach_task_to_last_user_message(
                         messages, request.task

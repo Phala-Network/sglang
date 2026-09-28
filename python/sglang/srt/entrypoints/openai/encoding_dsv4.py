@@ -255,6 +255,66 @@ def attach_task_to_last_user_message(messages: List[Dict[str, Any]], task: str) 
     messages[idx]["task"] = task
 
 
+def attach_response_format_to_control_message(
+    messages: List[Dict[str, Any]], response_format: Optional[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Attach an OpenAI response format to the single DSV4 control message.
+
+    DSV4 renders message-level response formats only for system/developer
+    messages.  The serving adapter therefore maps the request-level format to
+    the first system, first developer, or a new empty system message.  The
+    input is copied so request/history objects are never mutated.
+    """
+    result = copy.deepcopy(messages)
+    if not response_format:
+        return result
+
+    format_type = response_format.get("type")
+    if format_type in (None, "text"):
+        return result
+    if format_type == "json_schema":
+        wrapper = response_format.get("json_schema") or {}
+        candidate = wrapper.get("schema", wrapper.get("schema_"))
+        if candidate is None:
+            raise ValueError("json_schema response_format requires a schema")
+    elif format_type == "json_object":
+        candidate = {"type": "object"}
+    else:
+        # structural_tag and future response-format types retain their
+        # existing serving behavior; this bridge only owns JSON formats.
+        return result
+
+    selected = next(
+        (i for i, message in enumerate(result) if message.get("role") == "system"),
+        None,
+    )
+    if selected is None:
+        selected = next(
+            (
+                i
+                for i, message in enumerate(result)
+                if message.get("role") == "developer"
+            ),
+            None,
+        )
+    if selected is None:
+        result.insert(0, {"role": "system", "content": ""})
+        selected = 0
+
+    for index, message in enumerate(result):
+        if "response_format" not in message:
+            continue
+        if index != selected:
+            raise ValueError(
+                "response_format must appear only on the selected DSV4 control message"
+            )
+        if message["response_format"] != candidate:
+            raise ValueError("conflicting response_format on DSV4 control message")
+
+    result[selected]["response_format"] = candidate
+    return result
+
+
 # ============================================================
 # Message Rendering
 # ============================================================

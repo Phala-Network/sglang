@@ -30,7 +30,6 @@ from sglang.srt.beam_search.output import (
     decode_beam_search_output,
     is_beam_search_batch,
 )
-from sglang.srt.constants import HEALTH_CHECK_RID_PREFIX
 from sglang.srt.environ import envs
 from sglang.srt.managers.io_struct import (
     BatchEmbeddingOutput,
@@ -517,10 +516,6 @@ class DetokenizerManager(MultiHttpWorkerDetokenizerMixin):
     def handle_configure_logging_req(self, recv_req: ConfigureLoggingReq):
         if recv_req.log_level is not None:
             logging.getLogger().setLevel(recv_req.log_level.upper())
-
-
-def is_health_check_request(rid: Optional[str]) -> bool:
-    return isinstance(rid, str) and rid.startswith(HEALTH_CHECK_RID_PREFIX)
 
 
 class LimitedCapacityDict(OrderedDict):

@@ -981,6 +981,8 @@ class GenerateReqInput:
 
 
 class TokenizedGenerateReqInput(BaseReq, kw_only=True):
+    # Set only by TokenizerManager's internal health call, never from HTTP data.
+    is_internal_health_check: bool = False
     input_text: Optional[Union[str, List[Union[str, List[str]]]]]
     # The input token ids
     input_ids: Optional[array]  # Optional[array[int]]
@@ -1337,6 +1339,7 @@ class EmbeddingReqInput:
 
 
 class TokenizedEmbeddingReqInput(BaseReq, kw_only=True):
+    is_internal_health_check: bool = False
     input_text: Optional[Union[str, List[Union[str, List[str]]]]]
     # The input token ids
     input_ids: Optional[array]  # array[int]
@@ -2051,6 +2054,7 @@ class SlowDownReqOutput(BaseReq, kw_only=True):
 
 
 class AbortReq(BaseReq, kw_only=True):
+    is_internal_health_check: bool = False
     # Whether to abort all requests
     abort_all: bool = False
     # The finished reason data (from BaseFinishReason.to_json())

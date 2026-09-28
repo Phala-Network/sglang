@@ -278,7 +278,7 @@ from sglang.srt.managers.scheduler_pp_mixin import SchedulerPPMixin
 from sglang.srt.managers.utils import (
     EmbeddingBatchResult,
     GenerationBatchResult,
-    is_health_check_generate_req,
+    is_internal_health_check_req,
     validate_input_length,
 )
 from sglang.srt.mem_cache import kv_cache_builder
@@ -2127,7 +2127,7 @@ class Scheduler(
                 vmm_errors = self._materialize_cuda_vmm_inputs(recv_req)
 
             # Skip health check when server is busy — ongoing requests already carry health info.
-            if is_health_check_generate_req(recv_req) and not self.is_fully_idle(
+            if is_internal_health_check_req(recv_req) and not self.is_fully_idle(
                 for_health_check=True
             ):
                 self.return_health_check_ipcs.append(
@@ -2818,6 +2818,7 @@ class Scheduler(
                 extra_key=recv_req.extra_key,
                 cache_salt=recv_req.cache_salt,
                 http_worker_ipc=recv_req.http_worker_ipc,
+                is_internal_health_check=recv_req.is_internal_health_check,
                 dllm_config=self.dllm_config,
                 time_stats=recv_req.time_stats,
                 multi_item_delimiter_indices=recv_req.multi_item_delimiter_indices,
@@ -3300,7 +3301,10 @@ class Scheduler(
         if self.chunked_req is not None:
             waiting_count += 1
         decision = self.governor.admit_request(
-            req, time.monotonic(), waiting_count=waiting_count
+            req,
+            time.monotonic(),
+            waiting_count=waiting_count,
+            is_health_check=req.is_internal_health_check,
         )
         if decision["allowed"]:
             return False
@@ -3500,6 +3504,7 @@ class Scheduler(
             dimensions=recv_req.dimensions,
             lora_id=recv_req.lora_id,
             http_worker_ipc=recv_req.http_worker_ipc,
+            is_internal_health_check=recv_req.is_internal_health_check,
             time_stats=recv_req.time_stats,
             return_pooled_hidden_states=recv_req.return_pooled_hidden_states,
             multi_item_delimiter_indices=recv_req.multi_item_delimiter_indices,
@@ -4807,7 +4812,8 @@ class Scheduler(
         is_prefill = mode.is_extend_without_speculative()
         if not (is_prefill or mode.is_decode() or mode.is_target_verify()):
             return
-        if all(is_health_check_generate_req(req) for req in batch.reqs):
+        if any(is_internal_health_check_req(req) for req in batch.reqs):
+            self._prev_step = None
             return
         prev = self._prev_step
         self._prev_step = (batch.forward_iter, batch.launch_ts, is_prefill)
@@ -6107,6 +6113,7 @@ def _make_abort_req(
         on_abort_emitted(req)
     return AbortReq(
         rid=req.rid,
+        is_internal_health_check=req.is_internal_health_check,
         finished_reason=finished_reason,
         weight_versions=compute_weight_version_spans(
             req.weight_version_events,

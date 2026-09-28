@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union
 import msgspec
 import torch
 
-from sglang.srt.constants import HEALTH_CHECK_RID_PREFIX
 from sglang.srt.eplb.expert_distribution import ExpertDistributionMetrics
 from sglang.srt.layers.logits_processor import (
     LogitsProcessorOutput,
@@ -376,9 +375,8 @@ class EmbeddingBatchResult:
         self.copy_done.record()
 
 
-def is_health_check_generate_req(recv_req):
-    rid = getattr(recv_req, "rid", None)
-    return rid is not None and rid.startswith(HEALTH_CHECK_RID_PREFIX)
+def is_internal_health_check_req(recv_req):
+    return getattr(recv_req, "is_internal_health_check", False) is True
 
 
 class MsgpackDecodeError(ValueError):

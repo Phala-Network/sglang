@@ -978,6 +978,7 @@ class Req(ReqDllmMixin):
         multi_item_delimiter_indices: Optional[List[int]] = None,
         session_id: Optional[str] = None,
         cache_salt: Optional[str] = None,
+        is_internal_health_check: bool = False,
     ):
         # Input and output info
         self.rid = rid
@@ -1024,6 +1025,7 @@ class Req(ReqDllmMixin):
 
         # For multi-http worker
         self.http_worker_ipc = http_worker_ipc
+        self.is_internal_health_check = is_internal_health_check
 
         # Require reasoning for the request
         self.require_reasoning = require_reasoning

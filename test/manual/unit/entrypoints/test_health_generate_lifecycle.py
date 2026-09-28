@@ -76,11 +76,13 @@ class _Manager:
         self.cancel_started = asyncio.Event()
         self.allow_cancel = asyncio.Event()
         self.child_task = None
+        self.internal_health_checks = []
 
     def abort_request(self, rid):
         self.abort_calls.append(rid)
 
-    async def generate_request(self, request_input, request):
+    async def generate_request(self, request_input, request, *, internal_health_check=False):
+        self.internal_health_checks.append(internal_health_check)
         self.rid_to_state[request_input.rid] = object()
         self.child_task = asyncio.current_task()
         self.started.set()
@@ -179,6 +181,7 @@ def test_success_retrieves_expected_disconnect_and_cleans_rid():
         assert manager.rid_to_state == {}
         assert not errors
         assert logger.debug_calls
+        assert manager.internal_health_checks == [True]
 
     asyncio.run(run())
 

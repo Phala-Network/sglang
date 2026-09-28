@@ -30,7 +30,8 @@ class HealthTaskTests(unittest.IsolatedAsyncioTestCase):
             abort_request=Mock(),
         )
 
-        async def generate(obj, request):
+        async def generate(obj, request, *, internal_health_check=False):
+            self.assertIs(internal_health_check, True)
             self.child = asyncio.current_task()
             self.manager.rid_to_state[obj.rid] = object()
             try:

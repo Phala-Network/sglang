@@ -60,7 +60,6 @@ from sglang.srt.beam_search.output import (
     try_build_beam_search_out_dict,
 )
 from sglang.srt.configs.model_config import ModelConfig
-from sglang.srt.constants import HEALTH_CHECK_RID_PREFIX
 from sglang.srt.disaggregation.encoder.receiver import create_mm_receiver
 from sglang.srt.disaggregation.utils import DisaggregationMode
 from sglang.srt.entrypoints.request_disconnect import response_disconnect_watched
@@ -116,7 +115,7 @@ from sglang.srt.managers.tokenizer_control_mixin import TokenizerControlMixin
 from sglang.srt.managers.tokenizer_manager_score_mixin import TokenizerManagerScoreMixin
 from sglang.srt.managers.utils import (
     compute_num_reserved_tokens,
-    is_health_check_generate_req,
+    is_internal_health_check_req,
 )
 from sglang.srt.model_executor.forward_batch_info import (
     get_server_return_hidden_states_mode,
@@ -248,6 +247,7 @@ class ReqState:
 
     dispatched: bool = False
     abort_sent: bool = False
+    is_internal_health_check: bool = False
     # Delayed disconnects belong to the creating API request, not a reused RID.
     request_owner: Optional[Union[GenerateReqInput, EmbeddingReqInput]] = None
 
@@ -852,8 +852,15 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         self,
         obj: Union[GenerateReqInput, EmbeddingReqInput],
         request: Optional[fastapi.Request] = None,
+        *,
+        internal_health_check: bool = False,
     ):
         self.auto_create_handle_loop()
+
+        if type(internal_health_check) is not bool:
+            raise ValueError("Invalid internal health marker")
+        # Overwrite any attribute supplied by an external request object.
+        obj._internal_health_check = internal_health_check
 
         # Normalize the request
         obj.normalize_batch_and_arguments()
@@ -1528,6 +1535,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 self.fake_bootstrap_room_counter += 1
 
             tokenized_obj = TokenizedGenerateReqInput(
+                is_internal_health_check=getattr(obj, "_internal_health_check", False),
                 input_text=input_text,
                 input_ids=input_ids_arr,
                 mm_inputs=mm_inputs,
@@ -1580,6 +1588,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 )
 
             tokenized_obj = TokenizedEmbeddingReqInput(
+                is_internal_health_check=getattr(obj, "_internal_health_check", False),
                 input_text=input_text,
                 input_ids=input_ids_arr,
                 mm_inputs=mm_inputs,
@@ -2432,9 +2441,6 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         for i, rid in enumerate(recv_obj.rids):
             state = self.rid_to_state.get(rid, None)
             if state is None:
-                # Known race: /health_generate pops its rid as soon as ANY message bumps last_receive_tstamp.
-                if rid.startswith(HEALTH_CHECK_RID_PREFIX):
-                    continue
                 logger.warning(
                     "Received output for rid=<redacted> but the state was deleted in TokenizerManager."
                 )
@@ -3439,8 +3445,6 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         pass
 
     def _handle_abort_req(self, recv_obj: AbortReq):
-        if is_health_check_generate_req(recv_obj):
-            return
         # Two scheduler messages can race in handle_loop for the same rid: a
         # batch output that finishes it normally (deletes rid_to_state[rid])
         # and this abort echo. If the finish wins, the rid is already gone and
@@ -3451,6 +3455,8 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             logger.info(
                 "Abort request for rid=<redacted> not found in rid_to_state; likely already finished/removed."
             )
+            return
+        if state.is_internal_health_check and is_internal_health_check_req(recv_obj):
             return
         state.finished = True
         state.time_stats.set_finished_time()
@@ -3707,6 +3713,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             time_stats = APIServerReqTimeStats(disagg_mode=self.disaggregation_mode)
             state = ReqState([], False, asyncio.Event(), sub_obj, time_stats)
             state.request_owner = obj
+            state.is_internal_health_check = getattr(obj, "_internal_health_check", False)
             self.rid_to_state[rid] = state
             if self.enable_trace:
                 time_stats.init_trace_ctx(rid, bootstrap_room, external_trace_header)

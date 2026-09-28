@@ -714,7 +714,9 @@ async def health_generate(request: Request) -> Response:
     async def gen():
         try:
             async with aclosing(
-                _global_state.tokenizer_manager.generate_request(gri, request)
+                _global_state.tokenizer_manager.generate_request(
+                    gri, request, internal_health_check=True
+                )
             ) as responses:
                 async for _ in responses:
                     break

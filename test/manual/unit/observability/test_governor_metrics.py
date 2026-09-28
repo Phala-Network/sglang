@@ -5,10 +5,10 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from prometheus_client import CollectorRegistry, Gauge
-
 from pig_governor import Governor
 from pig_governor.sglang import SglangGovernor
+from prometheus_client import CollectorRegistry, Gauge
+
 from sglang.srt.managers.scheduler_components.metrics_reporter import (
     SchedulerMetricsReporter,
 )
@@ -96,6 +96,7 @@ class GovernorMetricsHookTests(unittest.TestCase):
 
     def test_real_native_rejection_advances_exported_counter(self):
         from array import array
+
         from sglang.test.test_utils import maybe_stub_sgl_kernel
 
         maybe_stub_sgl_kernel()

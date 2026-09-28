@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-
 _ENCODER_PATH = (
     Path(__file__).parents[5]
     / "python"

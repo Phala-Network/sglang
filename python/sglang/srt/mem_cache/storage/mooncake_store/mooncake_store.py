@@ -861,6 +861,10 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
         if self.mem_pool_host.kv_buffer is None:
             # Logical anchor: no physical KV object exists in Mooncake, so the
             # usable prefix is determined entirely by required sidecar objects.
+            required = set(self.registered_pools) - {PoolName.KV}
+            supplied = {transfer.name for transfer in pool_transfers or []}
+            if not required or not required.issubset(supplied):
+                return PoolTransferResult(0, {}, [])
             kv_pages = len(keys)
         else:
             kv_pages = self.batch_exists(keys, extra_info)
@@ -882,7 +886,9 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
             ex = self._batch_exist(component_keys)
             if key_multiplier > 0:
                 page_exists = [
-                    all(
+                    len(ex[i * key_multiplier : (i + 1) * key_multiplier])
+                    == key_multiplier
+                    and all(
                         r == 1
                         for r in ex[i * key_multiplier : (i + 1) * key_multiplier]
                     )

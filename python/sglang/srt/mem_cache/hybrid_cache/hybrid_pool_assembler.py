@@ -28,7 +28,7 @@ from sglang.srt.mem_cache.pool_host.mha import (
 )
 from sglang.srt.mem_cache.pool_host.mla import MLATokenToKVPoolHost
 from sglang.srt.mem_cache.unified_cache.component_type import ComponentType
-from sglang.srt.runtime_context import get_memory, get_parallel, get_serving
+from sglang.srt.runtime_context import get_memory, get_model, get_parallel, get_serving
 
 if TYPE_CHECKING:
     import torch
@@ -656,6 +656,40 @@ def _dsv4_low_ratio_entries(
     return entries
 
 
+def deepseek_v4_storage_schema(kvcache, host_pool_group):
+    """Stable physical schema; capacities and P/D process roles are excluded."""
+    parallel = get_parallel()
+    model = get_model()
+    return {
+        "version": 1,
+        # Served model identity is already part of the backend namespace.
+        # Local checkpoint mount paths and P/D roles must not split that namespace.
+        "revision": model.revision,
+        "layout": str(getattr(kvcache, "kv_layout", "v4")),
+        "unified": bool(getattr(kvcache, "_unified_kv", False)),
+        "uniform_fp8": bool(getattr(kvcache, "uniform_fp8", False)),
+        "layers": [
+            [item.compress_ratio, item.compress_layer_id]
+            for item in kvcache.layer_mapping[kvcache.start_layer : kvcache.end_layer]
+        ],
+        "layer_range": [kvcache.start_layer, kvcache.end_layer],
+        "topology": [parallel.attn_tp_size, parallel.attn_cp_size, parallel.pp_size],
+        "cp_rank": parallel.attn_cp_rank,
+        "pools": [
+            [
+                str(entry.name),
+                entry.host_pool.page_size,
+                entry.host_pool.layout,
+                entry.host_pool.layer_num,
+                str(entry.host_pool.dtype),
+                getattr(entry.host_pool, "item_bytes", None),
+                getattr(entry.host_pool, "state_page_bytes", None),
+            ]
+            for entry in host_pool_group.entries
+        ],
+    }
+
+
 def build_deepseek_v4_hicache_stack(
     *,
     params: CacheInitParams,
@@ -906,6 +940,9 @@ def build_deepseek_v4_hicache_stack(
     )
 
     host_pool_group = HostPoolGroup(entries)
+    host_pool_group.storage_schema = deepseek_v4_storage_schema(
+        kvcache, host_pool_group
+    )
     cache_controller = HybridCacheController(
         params.token_to_kv_pool_allocator,
         host_pool_group,
@@ -1574,6 +1611,39 @@ def _delegate_c128_host_evict(cache, n: int) -> int:
     return cache.evict_host(n * 128, ComponentType.FULL)
 
 
+def deepseek_v4_sidecar_specs(host_pool_group, *, independent_c128=False):
+    """The shared prefill/decode storage component contract."""
+    sources = [
+        (PoolName.DEEPSEEK_V4_C1, PoolName.KV),
+        (PoolName.DEEPSEEK_V4_C1_INDEXER, PoolName.KV),
+        (PoolName.DEEPSEEK_V4_C1_INDEXER_SCALE, PoolName.KV),
+        (PoolName.DEEPSEEK_V4_C2, PoolName.KV),
+        (PoolName.DEEPSEEK_V4_C2_INDEXER, PoolName.KV),
+        (PoolName.DEEPSEEK_V4_C2_INDEXER_SCALE, PoolName.KV),
+        (PoolName.DEEPSEEK_V4_C4, PoolName.KV),
+        (PoolName.DEEPSEEK_V4_C4_INDEXER, PoolName.KV),
+        (PoolName.DEEPSEEK_V4_C4_INDEXER_SCALE, PoolName.KV),
+        (PoolName.DEEPSEEK_V4_C4_STATE, PoolName.SWA),
+        (PoolName.DEEPSEEK_V4_C4_INDEXER_STATE, PoolName.SWA),
+        (PoolName.DEEPSEEK_V4_C128_STATE, PoolName.SWA),
+    ]
+    if not independent_c128:
+        sources.append((PoolName.DEEPSEEK_V4_C128, PoolName.KV))
+    return [
+        SidecarPoolSpec(
+            pool_name=name,
+            indices_from_pool=source,
+            hit_policy=(
+                PoolHitPolicy.TRAILING_PAGES
+                if source == PoolName.SWA
+                else PoolHitPolicy.ALL_PAGES
+            ),
+        )
+        for name, source in sources
+        if name in host_pool_group.entry_map
+    ]
+
+
 class _DeepSeekV4Strategy(StackStrategy):
     def matches(self, kvcache, components):
         from sglang.srt.mem_cache.deepseek_v4_memory_pool import DeepSeekV4TokenToKVPool
@@ -1631,35 +1701,9 @@ class _DeepSeekV4Strategy(StackStrategy):
         )
         # NPU drives C128 as an independent tree component, so adding a KV-derived
         # sidecar would duplicate transfers. Add that sidecar only on GPU.
-        _sidecar_srcs = [
-            (PoolName.DEEPSEEK_V4_C1, PoolName.KV),
-            (PoolName.DEEPSEEK_V4_C1_INDEXER, PoolName.KV),
-            (PoolName.DEEPSEEK_V4_C1_INDEXER_SCALE, PoolName.KV),
-            (PoolName.DEEPSEEK_V4_C2, PoolName.KV),
-            (PoolName.DEEPSEEK_V4_C2_INDEXER, PoolName.KV),
-            (PoolName.DEEPSEEK_V4_C2_INDEXER_SCALE, PoolName.KV),
-            (PoolName.DEEPSEEK_V4_C4, PoolName.KV),
-            (PoolName.DEEPSEEK_V4_C4_INDEXER, PoolName.KV),
-            (PoolName.DEEPSEEK_V4_C4_INDEXER_SCALE, PoolName.KV),
-            (PoolName.DEEPSEEK_V4_C4_STATE, PoolName.SWA),
-            (PoolName.DEEPSEEK_V4_C4_INDEXER_STATE, PoolName.SWA),
-            (PoolName.DEEPSEEK_V4_C128_STATE, PoolName.SWA),
-        ]
-        if ComponentType.C128 not in cache.components:
-            _sidecar_srcs.append((PoolName.DEEPSEEK_V4_C128, PoolName.KV))
-        sidecars = [
-            SidecarPoolSpec(
-                pool_name=name,
-                indices_from_pool=src,
-                hit_policy=(
-                    PoolHitPolicy.TRAILING_PAGES
-                    if src == PoolName.SWA
-                    else PoolHitPolicy.ALL_PAGES
-                ),
-            )
-            for name, src in _sidecar_srcs
-            if name in host_pool_group.entry_map
-        ]
+        sidecars = deepseek_v4_sidecar_specs(
+            host_pool_group, independent_c128=ComponentType.C128 in cache.components
+        )
         component_host_pools = {
             ComponentType.FULL: host_pool_group.get_pool(PoolName.KV),
         }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -43,6 +44,10 @@ if TYPE_CHECKING:
 from sglang.srt.mem_cache.utils import get_storage_hash_str
 
 logger = logging.getLogger(__name__)
+
+
+class CacheWriteSubmissionError(RuntimeError):
+    """A failed D2H submission whose host allocations were safely rolled back."""
 
 
 class StorageOperation(BaseStorageOperation):
@@ -173,6 +178,11 @@ class HybridCacheController(BaseHiCacheController):
         storage_backend_extra_config: Optional[dict] = None,
         host_pools: Optional[list[PoolEntry]] = None,
     ):
+        schema = getattr(self.mem_pool_host, "storage_schema", None)
+        if schema is not None:
+            storage_backend_extra_config = self._storage_config_with_schema(
+                storage_backend_extra_config, schema
+            )
         super().attach_storage_backend(
             storage_backend=storage_backend,
             prefetch_threshold=prefetch_threshold,
@@ -182,6 +192,18 @@ class HybridCacheController(BaseHiCacheController):
 
         for entry in host_pools or []:
             self.storage_backend.register_mem_host_pool_v2(entry.host_pool, entry.name)
+
+    @staticmethod
+    def _storage_config_with_schema(config, schema):
+        config = dict(config or {})
+        # Include the caller tag as data, avoiding ambiguous concatenation and
+        # keeping the original config reusable on detach/reattach.
+        identity = [config.get("extra_backend_tag"), schema]
+        digest = hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        config["extra_backend_tag"] = "dsv4-v1-" + digest
+        return config
 
     def register_host_pool_entry(self, entry: PoolEntry) -> None:
         if not isinstance(self.mem_pool_host, HostPoolGroup):
@@ -328,28 +350,47 @@ class HybridCacheController(BaseHiCacheController):
         node_id: int = -1,
         extra_pools: Optional[list[PoolTransfer]] = None,
     ) -> Optional[torch.Tensor]:
+        # Scheduler callers submit immediately; none batch into this queue.
+        # Enforce that invariant before taking ownership so exception rollback
+        # cannot accidentally discard an earlier caller's merged operation.
+        assert not self.write_queue, "Hybrid write requires an empty submission queue"
         host_indices = self.mem_pool_host.alloc(len(device_indices))
         if host_indices is None:
             return None
-        pool_transfers = self.mem_pool_host.resolve_host_transfers(
-            extra_pools,
-            primary_device_indices=device_indices,
-            primary_host_indices=host_indices,
-        )
+        try:
+            pool_transfers = self.mem_pool_host.resolve_host_transfers(
+                extra_pools,
+                primary_device_indices=device_indices,
+                primary_host_indices=host_indices,
+            )
+        except Exception:
+            self.mem_pool_host.free(host_indices)
+            raise CacheWriteSubmissionError("Host transfer allocation failed") from None
         if pool_transfers is None and extra_pools:
             self.mem_pool_host.free(host_indices)
             return None
 
-        self.write_queue.append(
-            CacheOperation(
-                host_indices,
-                device_indices,
-                node_id,
-                priority,
-                pool_transfers=pool_transfers or None,
-            )
+        operation = CacheOperation(
+            host_indices,
+            device_indices,
+            node_id,
+            priority,
+            pool_transfers=pool_transfers or None,
         )
-        self.start_writing()
+        self.write_queue.append(operation)
+        try:
+            self.start_writing()
+        except Exception:
+            # Some components may already have enqueued D2H work. Complete it
+            # before rolling back host allocations, even without a finish event.
+            self.l2_transfer_engine.device_to_host_stream.synchronize()
+            if operation in self.write_queue:
+                self.write_queue.remove(operation)
+            self.mem_pool_host.release_transfers(pool_transfers)
+            self.mem_pool_host.free(host_indices)
+            for transfer in pool_transfers or []:
+                transfer.host_indices = None
+            raise CacheWriteSubmissionError("D2H transfer submission failed") from None
         return host_indices
 
     def _move_op_indices(
@@ -793,7 +834,13 @@ class HybridCacheController(BaseHiCacheController):
                 operation = self.backup_queue.get(block=True, timeout=1)
                 if operation is None:
                     continue
-                self._page_backup(operation)
+                try:
+                    self._page_backup(operation)
+                except Exception:
+                    # A failed backend attempt must still release its waiter.
+                    # Do not log exception payloads that may include tokens/keys.
+                    operation.backup_failed = True
+                    logger.warning("Hybrid storage backup attempt failed")
                 self.ack_backup_queue.put(operation)
             except Empty:
                 continue

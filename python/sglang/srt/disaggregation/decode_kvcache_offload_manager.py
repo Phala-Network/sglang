@@ -14,8 +14,16 @@ from sglang.srt.environ import envs
 from sglang.srt.managers.cache_controller import HiCacheController
 from sglang.srt.mem_cache.allocator import BaseTokenToKVPoolAllocator
 from sglang.srt.mem_cache.base_prefix_cache import BasePrefixCache
+from sglang.srt.mem_cache.cache_init_params import CacheInitParams
+from sglang.srt.mem_cache.deepseek_v4_memory_pool import DeepSeekV4TokenToKVPool
+from sglang.srt.mem_cache.hicache_storage import PoolHitPolicy, PoolName, PoolTransfer
+from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
+    CacheWriteSubmissionError,
+)
 from sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler import (
+    build_deepseek_v4_hicache_stack,
     build_kv_host_pool,
+    deepseek_v4_sidecar_specs,
 )
 from sglang.srt.mem_cache.memory_pool import (
     MHATokenToKVPool,
@@ -44,6 +52,9 @@ class DecodeKVCacheOffloadManager:
         token_to_kv_pool_allocator: BaseTokenToKVPoolAllocator,
         tp_group: torch.distributed.ProcessGroup,
         tree_cache: BasePrefixCache,
+        attn_cp_group=None,
+        attn_tp_group=None,
+        pp_group=None,
     ) -> None:
         self.req_to_token_pool = req_to_token_pool
         self.token_to_kv_pool_allocator = token_to_kv_pool_allocator
@@ -58,17 +69,25 @@ class DecodeKVCacheOffloadManager:
                 self.page_size, (env_stride // self.page_size) * self.page_size
             )
         kv_cache = self.token_to_kv_pool_allocator.get_kvcache()
-        if not isinstance(kv_cache, (MHATokenToKVPool, MLATokenToKVPool)):
+        self.is_dsv4 = isinstance(kv_cache, DeepSeekV4TokenToKVPool)
+        self.sidecar_specs = []
+        if not isinstance(
+            kv_cache, (MHATokenToKVPool, MLATokenToKVPool, DeepSeekV4TokenToKVPool)
+        ):
             raise ValueError("Unsupported KV cache type for decode offload")
         use_mla = isinstance(kv_cache, MLATokenToKVPool)
-        self.decode_host_mem_pool = build_kv_host_pool(
-            kv_pool=kv_cache,
-            page_size=self.page_size,
-            use_mla=use_mla,
-            # Host rows must have the device pool's row geometry; a packed DSA
-            # row is wider than the width the MLA host pool assumes without
-            # the override.
-            override_kv_cache_dim=kv_cache.kv_cache_dim if use_mla else None,
+        self.decode_host_mem_pool = (
+            None
+            if self.is_dsv4
+            else build_kv_host_pool(
+                kv_pool=kv_cache,
+                page_size=self.page_size,
+                use_mla=use_mla,
+                # Host rows must have the device pool's row geometry; a packed DSA
+                # row is wider than the width the MLA host pool assumes without
+                # the override.
+                override_kv_cache_dim=kv_cache.kv_cache_dim if use_mla else None,
+            )
         )
 
         self.tp_group = tp_group
@@ -85,20 +104,64 @@ class DecodeKVCacheOffloadManager:
                     f"Invalid hicache storage backend extra config JSON: {e}"
                 )
 
-        self.cache_controller = HiCacheController(
-            token_to_kv_pool_allocator=self.token_to_kv_pool_allocator,
-            mem_pool_host=self.decode_host_mem_pool,
-            page_size=self.page_size,
-            tp_group=tp_group,
-            io_backend=get_memory().hicache_io_backend,
+        controller_kwargs = dict(
             load_cache_event=threading.Event(),
             storage_backend=get_memory().hicache_storage_backend,
             model_name=get_serving().served_model_name,
             storage_backend_extra_config=hicache_storage_backend_extra_config,
         )
+        if self.is_dsv4:
+            # The existing P-side storage contract uses one key per global page.
+            # Independent NPU C128 coordinates require a different descriptor.
+            if self.page_size % 128 or kv_cache.swa_page_size != self.page_size:
+                raise ValueError(
+                    "DSV4 decode offload requires matching full/SWA page sizes "
+                    "and complete 128-token compression groups"
+                )
+            if (
+                getattr(token_to_kv_pool_allocator, "c128_attn_allocator", None)
+                is not None
+            ):
+                raise ValueError(
+                    "DSV4 decode offload does not support NPU independent C128 allocation"
+                )
+            window = kv_cache.sliding_window
+            if not getattr(kv_cache, "_unified_kv", False) and (
+                window is None or self.offload_stride > window
+            ):
+                raise ValueError(
+                    "DSV4 decode offload stride must fit the live SWA window"
+                )
+            params = CacheInitParams(
+                disable=True,
+                req_to_token_pool=req_to_token_pool,
+                token_to_kv_pool_allocator=token_to_kv_pool_allocator,
+                page_size=self.page_size,
+                tp_cache_group=tp_group,
+                attn_cp_cache_group=attn_cp_group,
+                attn_tp_cache_group=attn_tp_group,
+                pp_cache_group=pp_group,
+            )
+            self.decode_host_mem_pool, self.cache_controller = (
+                build_deepseek_v4_hicache_stack(
+                    params=params, kvcache=kv_cache, **controller_kwargs
+                )
+            )
+            self.sidecar_specs = deepseek_v4_sidecar_specs(self.decode_host_mem_pool)
+        else:
+            self.cache_controller = HiCacheController(
+                token_to_kv_pool_allocator=self.token_to_kv_pool_allocator,
+                mem_pool_host=self.decode_host_mem_pool,
+                page_size=self.page_size,
+                tp_group=tp_group,
+                io_backend=get_memory().hicache_io_backend,
+                **controller_kwargs,
+            )
 
         self.ongoing_offload = {}
         self.ongoing_backup = {}
+        self.offload_extra_pools = {}
+        self.backup_extra_pools = {}
         # Keyed by Req identity (rids can be reused while a D2H copy is still
         # in flight); weak keys so a dropped Req is never pinned here.
         self.offloaded_state: WeakKeyDict[Req, OffloadedState] = WeakKeyDict()
@@ -106,7 +169,14 @@ class DecodeKVCacheOffloadManager:
         logger.info("Enable offload kv cache for decode side")
 
     def release_host_resources(self) -> None:
+        if getattr(self, "_host_resources_released", False):
+            return
+        if self.is_dsv4:
+            # Shutdown must not unregister buffers under a D2H or backend IO.
+            self.cache_controller.l2_transfer_engine.device_to_host_stream.synchronize()
+            self.cache_controller.detach_storage_backend()
         self.decode_host_mem_pool.destroy()
+        self._host_resources_released = True
 
     def _mark_offload_started(self, req: Req):
         self.offload_inflight[req] = self.offload_inflight.get(req, 0) + 1
@@ -131,7 +201,7 @@ class DecodeKVCacheOffloadManager:
         if self.cache_controller is None or self.decode_host_mem_pool is None:
             return False
 
-        if req.kv.req_pool_idx == -1 or len(req.output_ids) == 0:
+        if req.kv.req_pool_idx in (None, -1) or len(req.output_ids) == 0:
             return False
 
         token_indices = self.req_to_token_pool.req_to_token[req.kv.req_pool_idx]
@@ -165,6 +235,13 @@ class DecodeKVCacheOffloadManager:
         end = start + incremental_aligned_len
         incremental_tokens = all_tokens[start:end]
         incremental_indices = token_indices[start:end]
+        extra_pools = (
+            self._dsv4_device_transfers(incremental_indices) if self.is_dsv4 else None
+        )
+        if self.is_dsv4 and not self._all_ranks_ready(extra_pools is not None):
+            # An evicted/unmapped SWA page must never be advertised as a full
+            # DSV4 hit. Leave the hash/length frontier unchanged for a retry.
+            return False
 
         # Prefill-aligned GPU slots are freed at request finish in
         # _release_finished_req, NOT here. The decoding request
@@ -175,15 +252,34 @@ class DecodeKVCacheOffloadManager:
         # Asynchronously offload incremental KV cache from device to host
         self.request_counter += 1
         ack_id = self.request_counter
-        host_indices = self.cache_controller.write(
-            device_indices=incremental_indices.long(),
-            node_id=ack_id,
-        )
+        host_indices = None
+        try:
+            host_indices = self.cache_controller.write(
+                device_indices=incremental_indices.long(),
+                node_id=ack_id,
+                **({"extra_pools": extra_pools} if self.is_dsv4 else {}),
+            )
+        except CacheWriteSubmissionError:
+            if not self.is_dsv4:
+                raise
+            logger.warning("DSV4 D2H submission failed; host allocations rolled back")
+        if self.is_dsv4 and not self._all_ranks_ready(host_indices is not None):
+            if host_indices is not None:
+                # A peer could not allocate/submit. Cancel this rank's completed
+                # snapshot so all ranks keep the same submitted/hash frontier.
+                ack = self.cache_controller.ack_write_queue.pop()
+                assert ack.node_ids == [ack_id]
+                ack.finish_event.synchronize()
+                self.decode_host_mem_pool.release_transfers(extra_pools)
+                self.decode_host_mem_pool.free(host_indices)
+            return False
         if host_indices is None:
             logger.error("Not enough host memory for request <redacted>")
             return False
 
         self._mark_offload_started(req)
+        if extra_pools:
+            self.offload_extra_pools[ack_id] = extra_pools
         self.ongoing_offload[ack_id] = (
             req,
             host_indices,
@@ -191,7 +287,52 @@ class DecodeKVCacheOffloadManager:
             time.time(),
         )
         state.inc_len += incremental_aligned_len
+        if self.is_dsv4:
+            # Chunk-cache SWA eviction is independent of this manager. Complete
+            # the snapshot before returning control to the scheduler, which may
+            # recycle SWA pages on its next batch. Storage remains asynchronous.
+            self.cache_controller.ack_write_queue[-1].finish_event.synchronize()
         return True
+
+    def _all_ranks_ready(self, ready):
+        if self.tp_world_size == 1:
+            return ready
+        status = torch.tensor(int(ready), dtype=torch.int)
+        torch.distributed.all_reduce(
+            status, op=torch.distributed.ReduceOp.MIN, group=self.tp_group
+        )
+        return bool(status.item())
+
+    def _dsv4_device_transfers(self, full_indices):
+        transfers = []
+        if PoolName.SWA in self.decode_host_mem_pool.entry_map:
+            kv_cache = self.token_to_kv_pool_allocator.get_kvcache()
+            swa_indices = kv_cache.translate_loc_from_full_to_swa(full_indices).long()
+            rows = swa_indices.reshape(-1, self.page_size)
+            offsets = torch.arange(self.page_size, device=swa_indices.device)
+            if (
+                not bool((swa_indices > 0).all())
+                or swa_indices.unique().numel() != swa_indices.numel()
+                or bool((rows[:, 0] % self.page_size != 0).any())
+                or not torch.equal(rows, rows[:, :1] + offsets)
+            ):
+                return None
+            transfers.append(
+                PoolTransfer(
+                    name=PoolName.SWA,
+                    device_indices=swa_indices,
+                    hit_policy=PoolHitPolicy.TRAILING_PAGES,
+                )
+            )
+        transfers.extend(
+            PoolTransfer(
+                name=spec.pool_name,
+                indices_from_pool=spec.indices_from_pool,
+                hit_policy=spec.hit_policy,
+            )
+            for spec in self.sidecar_specs
+        )
+        return transfers
 
     def check_offload_progress(self):
         """Check the progress of offload from device to host and backup from host to storage."""
@@ -219,12 +360,15 @@ class DecodeKVCacheOffloadManager:
             ack = self.cache_controller.ack_write_queue.pop(0)
             ack.finish_event.synchronize()
             for ack_id in ack.node_ids:
+                pending = self.ongoing_offload.pop(ack_id, None)
+                if pending is None:
+                    continue  # Duplicate/stale completion owns no allocations.
                 (
                     req,
                     host_indices,
                     incremental_tokens,
                     start_time,
-                ) = self.ongoing_offload.pop(ack_id)
+                ) = pending
 
                 self._mark_offload_finished(req)
                 prior_hash = (
@@ -233,7 +377,12 @@ class DecodeKVCacheOffloadManager:
                     else None
                 )
                 last_hash = self._trigger_backup(
-                    req, host_indices, incremental_tokens, start_time, prior_hash
+                    req,
+                    host_indices,
+                    incremental_tokens,
+                    start_time,
+                    prior_hash,
+                    self.offload_extra_pools.pop(ack_id, None),
                 )
                 if req in self.offloaded_state:
                     self.offloaded_state[req].last_hash = last_hash
@@ -264,25 +413,69 @@ class DecodeKVCacheOffloadManager:
         for _ in range(finish_count):
             storage_operation = self.cache_controller.ack_backup_queue.get()
             ack_id = storage_operation.id
-            req_id, host_indices, start_time = self.ongoing_backup.pop(ack_id)
+            pending = self.ongoing_backup.pop(ack_id, None)
+            if pending is None:
+                continue
+            req_id, host_indices, start_time = pending
+            extra_pools = self.backup_extra_pools.pop(ack_id, None)
+            if self.is_dsv4 and not self._dsv4_backup_complete(storage_operation):
+                # Cache writes are best effort. Complete-pool lookup on P stops
+                # at the missing page; later chunks cannot bridge this gap.
+                logger.warning(
+                    "Incomplete DSV4 storage backup; releasing failed host snapshot"
+                )
 
             # Release host memory
             self.decode_host_mem_pool.free(host_indices)
+            if extra_pools:
+                self.decode_host_mem_pool.release_transfers(extra_pools)
 
             logger.debug(
                 "Finished backup request <redacted>, free host memory, len:<redacted>, cost time:<redacted> seconds."
             )
 
+    def _dsv4_backup_complete(self, operation):
+        cc = self.cache_controller
+        complete = not getattr(operation, "backup_failed", False) and (
+            cc.backup_skip or operation.completed_tokens == len(operation.token_ids)
+        )
+        hits = operation.pool_storage_result.extra_pool_hit_pages
+        for transfer in operation.pool_transfers or []:
+            if cc.should_backup(transfer):
+                complete = complete and hits.get(transfer.name, 0) == len(
+                    operation.hash_value
+                )
+        return complete
+
     def _trigger_backup(
-        self, req, host_indices, incremental_tokens, start_time, prior_hash
+        self,
+        req,
+        host_indices,
+        incremental_tokens,
+        start_time,
+        prior_hash,
+        extra_pools=None,
     ):
         """Trigger async backup from host to storage."""
         page_hashes = self._compute_prefix_hash(req, incremental_tokens, prior_hash)
-        ack_id = self.cache_controller.write_storage(
-            host_indices,
-            incremental_tokens,
-            hash_value=page_hashes,
-        )
+        for transfer in extra_pools or []:
+            transfer.keys = page_hashes
+        try:
+            ack_id = self.cache_controller.write_storage(
+                host_indices,
+                incremental_tokens,
+                hash_value=page_hashes,
+                **({"extra_pools": extra_pools} if extra_pools else {}),
+            )
+        except Exception:
+            if not self.is_dsv4:
+                raise
+            self.decode_host_mem_pool.release_transfers(extra_pools)
+            self.decode_host_mem_pool.free(host_indices)
+            logger.warning("DSV4 storage enqueue failed; releasing host snapshot")
+            return page_hashes[-1] if page_hashes else prior_hash
+        if extra_pools:
+            self.backup_extra_pools[ack_id] = extra_pools
         self.ongoing_backup[ack_id] = (req.rid, host_indices, start_time)
         return page_hashes[-1] if len(page_hashes) > 0 else prior_hash
 

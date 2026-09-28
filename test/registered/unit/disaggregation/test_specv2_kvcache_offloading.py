@@ -112,6 +112,9 @@ def _make_manager(pool_size: int, page_size: int = 1):
     manager.offloaded_state = WeakKeyDict()
     manager.ongoing_offload = {}
     manager.ongoing_backup = {}
+    manager.is_dsv4 = False
+    manager.offload_extra_pools = {}
+    manager.backup_extra_pools = {}
     manager.offload_inflight = WeakKeyDict()
 
     return manager, freed_indices

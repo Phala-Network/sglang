@@ -289,6 +289,7 @@ class TestDSV4PoolAssembly(CustomTestCase):
         controller = object()
         with (
             patch.object(assembler, "get_memory", return_value=memory),
+            patch.object(assembler, "deepseek_v4_storage_schema", return_value={}),
             patch.object(
                 assembler, "_deepseek_v4_num_host_pages", return_value=(2, 0, 0)
             ),

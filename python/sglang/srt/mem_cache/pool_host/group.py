@@ -121,11 +121,15 @@ class HostPoolGroup:
             entry = self.entry_map.get(transfer.name)
             if entry is None:
                 continue
-            indices = self.alloc(
-                len(transfer.device_indices),
-                pool=transfer.name,
-                reclaim=entry.host_evict_fn,
-            )
+            try:
+                indices = self.alloc(
+                    len(transfer.device_indices),
+                    pool=transfer.name,
+                    reclaim=entry.host_evict_fn,
+                )
+            except Exception:
+                rollback()
+                raise
             if indices is None:
                 rollback()
                 return None

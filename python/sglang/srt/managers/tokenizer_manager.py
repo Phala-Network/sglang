@@ -2060,8 +2060,14 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 *(self._tokenize_one_request(obj) for obj in objs)
             )
 
-            # Cache the common prefix for parallel sampling
-            for i in range(batch_size):
+            is_disaggregated = self.disaggregation_mode in (
+                DisaggregationMode.PREFILL,
+                DisaggregationMode.DECODE,
+            )
+            # A PD room owns one transfer. A synthetic warmup would consume
+            # that transfer before the actual choice requests use it.
+            warmup_batch_size = 0 if is_disaggregated else batch_size
+            for i in range(warmup_batch_size):
                 tmp_obj = copy.copy(objs[i])
                 tokenized_obj = copy.copy(tokenized_objs[i])
                 # Ensure independent mm_items so wrap_shm_features won't mutate the original
@@ -2084,9 +2090,24 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
 
             # Expand requests, assign new rids for them, and send them
             for i in range(batch_size):
-                for _ in range(obj.parallel_sample_num):
+                for sample_idx in range(obj.parallel_sample_num):
                     tmp_obj = copy.copy(objs[i])
                     tokenized_obj = copy.copy(tokenized_objs[i])
+                    if is_disaggregated:
+                        # Normalized inputs are sample-major. Use the router's
+                        # actual room IDs (which need not be adjacent), together
+                        # with the corresponding endpoint and transfer hints.
+                        choice = obj[i + sample_idx * batch_size]
+                        for field in (
+                            "bootstrap_host",
+                            "bootstrap_port",
+                            "bootstrap_room",
+                            "bootstrap_pair_key",
+                            "decode_tp_size",
+                        ):
+                            value = getattr(choice, field)
+                            setattr(tmp_obj, field, value)
+                            setattr(tokenized_obj, field, value)
                     # Ensure independent mm_items so wrap_shm_features won't mutate the original
                     if hasattr(tokenized_obj, "mm_inputs") and tokenized_obj.mm_inputs:
                         tokenized_obj.mm_inputs = copy.copy(tokenized_obj.mm_inputs)

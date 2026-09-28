@@ -15,7 +15,9 @@ Covers:
 
 import asyncio
 import unittest
+from contextlib import aclosing
 from http import HTTPStatus
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import fastapi
@@ -26,6 +28,7 @@ from sglang.test.test_utils import CustomTestCase, maybe_stub_sgl_kernel
 
 maybe_stub_sgl_kernel()
 
+from sglang.srt.disaggregation.utils import DisaggregationMode  # noqa: E402
 from sglang.srt.managers.io_struct import (  # noqa: E402
     AbortReq,
     BatchStrOutput,
@@ -802,6 +805,120 @@ class TestGenerateRequestCleanupOnDispatchFailure(CustomTestCase):
             asyncio.run(drive())
 
         self.assertFalse(tm.rid_to_state)
+
+
+class TestParallelSamplingPDRooms(CustomTestCase):
+    def _drive(self, mode, batch_size, n, *, fail_after=None):
+        tm = _make_tokenizer_manager(self)
+        tm.disaggregation_mode = mode
+        tm.server_args.tokenizer_worker_num = 1
+        tm._dispatch_to_scheduler = Mock()
+        count = batch_size * n
+        # Deliberately nonadjacent: choices must use the router's actual IDs.
+        rooms = [7919, 104729, 15485863, 32452843][:count]
+        fields = {
+            "bootstrap_room": rooms,
+            "bootstrap_host": [f"host-{i}" for i in range(count)],
+            "bootstrap_port": [12000 + i for i in range(count)],
+            "bootstrap_pair_key": [f"pair-{i}" for i in range(count)],
+            "decode_tp_size": [i + 1 for i in range(count)],
+        }
+        obj = GenerateReqInput(
+            text=[f"prompt-{i}" for i in range(batch_size)],
+            sampling_params={"n": n, "max_new_tokens": 1024},
+            **fields,
+        )
+        obj.normalize_batch_and_arguments()
+        tm._init_req_state(obj)
+        tm._should_use_batch_tokenization = Mock(return_value=False)
+        sent = []
+        tracked = set(obj.rid)
+
+        async def tokenize(item):
+            return SimpleNamespace(
+                rid=item.rid,
+                input_text=item.text,
+                input_ids=[1, 2],
+                mm_inputs=None,
+                stream=False,
+                sampling_params=SimpleNamespace(max_new_tokens=1024),
+                **{field: getattr(item, field) for field in fields},
+            )
+
+        async def send(item):
+            sent.append(item)
+            if fail_after is not None and len(sent) == fail_after:
+                raise RuntimeError("fixture send failure")
+            tm.rid_to_state[item.rid].dispatched = True
+
+        async def wait(item, request):
+            yield {"rid": item.rid}
+
+        tm._tokenize_one_request = tokenize
+        tm._send_one_request = send
+        tm._wait_one_response = wait
+
+        async def drive():
+            async with aclosing(
+                tm._handle_batch_request(obj, request_rids=tracked)
+            ) as generator:
+                return await generator.__anext__()
+
+        if fail_after is not None:
+            with self.assertRaisesRegex(RuntimeError, "fixture send failure"):
+                asyncio.run(drive())
+            self.assertTrue({item.rid for item in sent}.issubset(tracked))
+            self.assertTrue({item.rid for item in sent}.issubset(tm.rid_to_state))
+            tm._release_req_states_on_failure(tracked)
+            tm._release_req_states_on_failure(tracked)
+            aborts = [call.args[0] for call in tm._dispatch_to_scheduler.call_args_list]
+            self.assertEqual([type(item) for item in aborts], [AbortReq])
+            self.assertEqual(aborts[0].rid, sent[0].rid)
+            self.assertTrue(tm.rid_to_state[sent[0].rid].abort_sent)
+            self.assertNotIn(sent[1].rid, tm.rid_to_state)
+            self.assertEqual(set(tm.rid_to_state), {sent[0].rid})
+            return
+
+        outputs = asyncio.run(drive())
+        self.assertEqual(len(outputs), count)
+        self.assertEqual(len({item.rid for item in sent}), len(sent))
+        self.assertTrue({item.rid for item in sent}.issubset(tracked))
+        if mode == DisaggregationMode.NULL and n > 1:
+            self.assertEqual(len(sent), batch_size + count)
+            self.assertEqual(
+                [item.sampling_params.max_new_tokens for item in sent[:batch_size]],
+                [0] * batch_size,
+            )
+            return
+
+        self.assertEqual(len(sent), count)
+        self.assertTrue(
+            all(item.sampling_params.max_new_tokens == 1024 for item in sent)
+        )
+        order = [
+            i + sample * batch_size
+            for i in range(batch_size)
+            for sample in range(n)
+        ]
+        for item, index in zip(sent, order):
+            for field, values in fields.items():
+                self.assertEqual(getattr(item, field), values[index])
+            self.assertEqual(item.input_text, f"prompt-{index % batch_size}")
+
+    def test_pd_choices_keep_normalized_bootstrap_associations(self):
+        for mode in (DisaggregationMode.PREFILL, DisaggregationMode.DECODE):
+            for batch_size in (1, 2):
+                for n in (1, 2):
+                    with self.subTest(mode=mode, batch_size=batch_size, n=n):
+                        self._drive(mode, batch_size, n)
+
+    def test_non_pd_parallel_sampling_keeps_prefix_warmup(self):
+        self._drive(DisaggregationMode.NULL, 2, 2)
+
+    def test_pd_dispatch_failure_keeps_children_tracked_for_abort(self):
+        for mode in (DisaggregationMode.PREFILL, DisaggregationMode.DECODE):
+            with self.subTest(mode=mode):
+                self._drive(mode, 1, 2, fail_after=2)
 
 
 class TestWaitOneResponseAfterStateFreed(CustomTestCase):

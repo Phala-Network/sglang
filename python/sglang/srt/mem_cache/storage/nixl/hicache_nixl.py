@@ -402,7 +402,9 @@ class HiCacheNixl(HiCacheStorage):
             self._bounce_get = self._alloc_registered(
                 page_numel, mem_pool_host.dtype, pin_memory, "bounce_get"
             )
-            self._bounce_page_bytes = self._bounce_set.stride(0) * self._bounce_set.element_size()
+            self._bounce_page_bytes = (
+                self._bounce_set.stride(0) * self._bounce_set.element_size()
+            )
 
         logger.info(
             f"HiCacheNixl: pre-registered host regions for "
@@ -560,7 +562,7 @@ class HiCacheNixl(HiCacheStorage):
         if for_write:
             for i, page_offset in enumerate(page_offsets):
                 src = host_pool.get_data_page(page_offset, flat=True)
-                bounce[i, :src.numel()].copy_(src)
+                bounce[i, : src.numel()].copy_(src)
 
         host_buffers = self._get_bounce_slot_buffers(
             bounce, ctx.bounce_page_bytes, len(page_offsets)
@@ -741,7 +743,7 @@ class HiCacheNixl(HiCacheStorage):
                     src = self.mem_pool_host.get_data_page(
                         host_indices[i * page_size], flat=True
                     )
-                    bounce[i, :src.numel()].copy_(src)
+                    bounce[i, : src.numel()].copy_(src)
 
         host_buffers = self._bounce_slot_buffers(bounce, page_num)
         key_list = [self._get_suffixed_key(key) for key in keys]
@@ -799,7 +801,8 @@ class HiCacheNixl(HiCacheStorage):
             if not results[i]:
                 break
             self.mem_pool_host.set_from_flat_data_page(
-                host_indices[i * page_size], self._bounce_get[i, :self._bounce_page_numel]
+                host_indices[i * page_size],
+                self._bounce_get[i, : self._bounce_page_numel],
             )
         return results
 
@@ -982,7 +985,7 @@ class HiCacheNixl(HiCacheStorage):
                     if not ok:
                         break
                     host_pool.set_from_flat_data_page(
-                        page_offset, data_page[:ctx.bounce_page_numel]
+                        page_offset, data_page[: ctx.bounce_page_numel]
                     )
             results[transfer.name] = page_results
         return results

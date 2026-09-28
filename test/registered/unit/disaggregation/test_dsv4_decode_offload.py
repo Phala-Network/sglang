@@ -17,7 +17,7 @@ from sglang.srt.mem_cache.deepseek_v4_memory_pool import (
     DeepSeekV4LayerItem,
     DeepSeekV4TokenToKVPool,
 )
-from sglang.srt.mem_cache.hicache_storage import PoolName
+from sglang.srt.mem_cache.hicache_storage import PoolHitPolicy, PoolName
 from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
     HybridCacheController,
 )
@@ -150,6 +150,18 @@ def finish_storage(manager, *, missing=None):
     manager.cache_controller.ack_backup_queue.put(operation)
     manager._check_backup_progress(1)
     return operation
+
+
+def logical_store(manager):
+    store = object.__new__(MooncakeStore)
+    store.mem_pool_host = manager.decode_host_mem_pool.anchor_entry.host_pool
+    store.registered_pools = {
+        e.name: e.host_pool for e in manager.decode_host_mem_pool.entries
+    }
+    store.is_mla_backend = True
+    store.mla_suffix = ""
+    store.config_prefix = "schema"
+    return store
 
 
 class TestDSV4DecodeOffload(unittest.TestCase):
@@ -604,6 +616,43 @@ class TestDSV4DecodeOffload(unittest.TestCase):
             0 if "h1" in key and "deepseek_v4_c4" in key else 1 for key in keys
         ]
         self.assertEqual(store.batch_exists_v2(["h1", "h2"], transfers).kv_hit_pages, 0)
+
+    def test_missing_c128_object_prevents_restoring_across_later_complete_pages(self):
+        manager, _ = make_manager()
+        store = logical_store(manager)
+        transfers = manager._dsv4_device_transfers(torch.arange(PAGE, PAGE * 4))
+        c128 = next(t for t in transfers if t.name == PoolName.DEEPSEEK_V4_C128)
+        missing_keys, _ = store._get_hybrid_page_component_keys(["h2"], c128)
+        missing = set(store._tag_keys(missing_keys))
+        store._batch_exist = lambda keys: [int(key not in missing) for key in keys]
+
+        result = store.batch_exists_v2(["h1", "h2", "h3"], transfers)
+        self.assertEqual(result.kv_hit_pages, 1)
+        self.assertEqual(result.restorable_prefix_pages, [1])
+        self.assertEqual(result.extra_pool_hit_pages[PoolName.DEEPSEEK_V4_C128], 1)
+        # Every h3 object is present, but it must not bridge the C128 h2 gap.
+        self.assertEqual(store.batch_exists_v2(["h2", "h3"], transfers).kv_hit_pages, 0)
+
+    def test_trailing_state_gap_resumes_only_after_complete_required_window(self):
+        manager, _ = make_manager()
+        store = logical_store(manager)
+        transfers = manager._dsv4_device_transfers(torch.arange(PAGE, PAGE * 5))
+        for transfer in transfers:
+            if transfer.hit_policy == PoolHitPolicy.TRAILING_PAGES:
+                transfer.keys = ["window-page-1", "window-page-2"]
+        state = next(t for t in transfers if t.name == PoolName.DEEPSEEK_V4_C4_STATE)
+        missing_keys, _ = store._get_hybrid_page_component_keys(["h2"], state)
+        missing = set(store._tag_keys(missing_keys))
+        store._batch_exist = lambda keys: [int(key not in missing) for key in keys]
+
+        # At h3, the required two-page state window still includes missing h2.
+        before = store.batch_exists_v2(["h1", "h2", "h3"], transfers)
+        self.assertEqual(before.kv_hit_pages, 1)
+        self.assertEqual(before.restorable_prefix_pages, [1])
+        # h4 has a complete h3/h4 window for SWA and both C4 state sidecars.
+        after = store.batch_exists_v2(["h1", "h2", "h3", "h4"], transfers)
+        self.assertEqual(after.kv_hit_pages, 4)
+        self.assertEqual(after.restorable_prefix_pages, [1, 4])
 
 
 if __name__ == "__main__":

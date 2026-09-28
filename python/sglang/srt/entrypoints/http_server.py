@@ -1823,6 +1823,27 @@ async def openai_v1_chat_completions(
     request: ChatCompletionRequest, raw_request: Request
 ):
     """OpenAI-compatible chat completion endpoint."""
+    # Reject an unknown base model before it reaches the scheduler.  The
+    # OpenAI handler accepts the model field for LoRA's ``base:adapter``
+    # notation, but the base must still be the one model advertised by this
+    # server.  Without this check an invalid model name was silently treated
+    # as a normal generation request and returned HTTP 200.
+    served_model = (
+        raw_request.app.state.openai_serving_chat.tokenizer_manager.served_model_name
+    )
+    requested_base = request.model.split(":", 1)[0].strip()
+    if requested_base != served_model:
+        return ORJSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "message": f"The model '{request.model}' does not exist",
+                    "type": "invalid_request_error",
+                    "param": "model",
+                    "code": "model_not_found",
+                }
+            },
+        )
     return await raw_request.app.state.openai_serving_chat.handle_request(
         request, raw_request
     )

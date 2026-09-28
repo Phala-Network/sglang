@@ -6,6 +6,8 @@ Upstream repository: https://github.com/lightseekorg/smg
 Archive VCS commit: 7455eaee1da5212ae5e0fd33d80a903029d2f981 (protocols/).
 License: Apache-2.0, declared by the original crate manifest; the standard license text is included as LICENSE. Original authors and .cargo_vcs_info.json are retained.
 
+Metadata formatting: a terminal newline is added to .cargo_vcs_info.json for repository lint; its JSON values are unchanged.
+
 Only source change: ChatCompletionRequest gains Option<bool> include_reasoning with skip_serializing_if=Option::is_none. Explicit false is serialized. Upstream unknown-field behavior otherwise stays unchanged. The gateway workspace patch selects this deterministic in-tree crate; do not patch Cargo cache files.
 
 The upstream archive contains a Cargo.lock; retained for provenance, not used as the gateway workspace lock. The committed gateway Cargo.lock freezes release resolution; tests/include_reasoning_forwarding/Cargo.lock freezes the focused CPU harness. Use --locked in both locations.

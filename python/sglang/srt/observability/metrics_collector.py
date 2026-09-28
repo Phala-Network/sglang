@@ -257,6 +257,8 @@ class _GpuMemorySampler:
     def __init__(self, labels: Mapping[str, Any], gauge_cls, interval_seconds: float):
         self.interval_seconds = interval_seconds
         self._next_sample_time = 0.0
+        self._window_start_time: Optional[float] = None
+        self._min_observed_gb = math.nan
 
         labelnames = labels.keys()
         self.free_memory_gb = gauge_cls(
@@ -265,6 +267,16 @@ class _GpuMemorySampler:
                 "Latest successful driver-reported free device memory sample in "
                 "GiB (bytes / 2**30). This is current sampled memory, not "
                 "startup memory."
+            ),
+            labelnames=labelnames,
+            multiprocess_mode="mostrecent",
+        )
+        self.min_observed_gb = gauge_cls(
+            name="sglang:gpu_free_memory_min_observed_gb",
+            documentation=(
+                "Minimum of successful free-memory samples observed in the "
+                "current sampling interval. This is an observed sample minimum, "
+                "not an instantaneous or absolute device minimum."
             ),
             labelnames=labelnames,
             multiprocess_mode="mostrecent",
@@ -299,6 +311,7 @@ class _GpuMemorySampler:
 
         metric_labels = dict(labels)
         self._free_memory = self.free_memory_gb.labels(**metric_labels)
+        self._min_observed = self.min_observed_gb.labels(**metric_labels)
         self._sample_timestamp = self.sample_timestamp_seconds.labels(**metric_labels)
         self._sample_valid = self.sample_valid.labels(**metric_labels)
         self._sample_interval = self.sample_interval_seconds.labels(**metric_labels)
@@ -308,11 +321,26 @@ class _GpuMemorySampler:
 
     def _publish_invalid(self, timestamp_seconds: float) -> None:
         self._free_memory.set(math.nan)
+        self._min_observed.set(math.nan)
         self._sample_timestamp.set(timestamp_seconds)
         self._sample_valid.set(0.0)
+        self._window_start_time = None
+        self._min_observed_gb = math.nan
 
-    def _publish_success(self, free_memory_gb: float, timestamp_seconds: float) -> None:
+    def _publish_success(
+        self, free_memory_gb: float, now: float, timestamp_seconds: float
+    ) -> None:
+        if (
+            self._window_start_time is None
+            or now - self._window_start_time >= self.interval_seconds
+        ):
+            self._window_start_time = now
+            self._min_observed_gb = free_memory_gb
+        else:
+            self._min_observed_gb = min(self._min_observed_gb, free_memory_gb)
+
         self._free_memory.set(free_memory_gb)
+        self._min_observed.set(self._min_observed_gb)
         self._sample_timestamp.set(timestamp_seconds)
         self._sample_valid.set(1.0)
 
@@ -323,14 +351,6 @@ class _GpuMemorySampler:
 
         self._next_sample_time = now + self.interval_seconds
         timestamp_seconds = time.time()
-        if not current_platform.is_cuda_alike():
-            self._publish_invalid(timestamp_seconds)
-            logger.debug(
-                "Skipping GPU memory sample on unsupported platform %s",
-                current_platform.device_name,
-            )
-            return False
-
         try:
             free_bytes, total_bytes = current_platform.get_available_memory(device_id)
             free_bytes = float(free_bytes)
@@ -352,6 +372,7 @@ class _GpuMemorySampler:
 
         self._publish_success(
             free_memory_gb=free_bytes / _GPU_MEMORY_BYTES_PER_GIB,
+            now=now,
             timestamp_seconds=timestamp_seconds,
         )
         return True

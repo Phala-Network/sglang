@@ -192,7 +192,6 @@ class TestEnableMetrics(CustomTestCase):
             "sglang:graph_memory_usage_gb",
             "sglang:startup_available_gpu_memory_gb",
             "sglang:gpu_free_memory_gb",
-            "sglang:gpu_free_memory_min_observed_gb",
             "sglang:gpu_free_memory_sample_timestamp_seconds",
             "sglang:gpu_free_memory_sample_valid",
             "sglang:gpu_free_memory_sample_interval_seconds",
@@ -247,10 +246,6 @@ class TestEnableMetrics(CustomTestCase):
                 {"model_name": _MODEL_NAME},
             ),
             ("sglang:gpu_free_memory_gb", {"model_name": _MODEL_NAME}),
-            (
-                "sglang:gpu_free_memory_min_observed_gb",
-                {"model_name": _MODEL_NAME},
-            ),
             (
                 "sglang:gpu_free_memory_sample_timestamp_seconds",
                 {"model_name": _MODEL_NAME},

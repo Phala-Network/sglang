@@ -53,6 +53,7 @@ jobs:
           python test/manual/phala/test_dsv41_shared_protocol_cpu.py
           python test/manual/phala/test_initial_stream_error_cpu.py
           python test/manual/phala/test_framework_log_privacy_cpu.py
+          python test/manual/phala/test_governor_metrics_startup_cpu.py
           python test/manual/phala/test_health_task_cleanup_cpu.py
           python test/manual/phala/test_hugetlb_shared_accounting_cpu.py
           python test/manual/test_glm53_dsa_host_budget.py

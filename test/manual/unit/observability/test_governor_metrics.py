@@ -58,6 +58,20 @@ class GovernorMetricsHookTests(unittest.TestCase):
         self.reporter._publish_governor_metrics(0.2)
         self.assertEqual(self.value("waiting_requests"), 0)
 
+    def test_initial_publication_accepts_scheduler_before_grammar_manager(self):
+        self.reporter.scheduler = SimpleNamespace(
+            governor=self.governor,
+            waiting_queue=[],
+            chunked_req=None,
+        )
+        self.initialize()
+        self.assertEqual(self.value("waiting_requests"), 0)
+
+        self.reporter.scheduler.grammar_manager = [object()]
+        self.reporter.scheduler.waiting_queue = [object(), object()]
+        self.reporter._publish_governor_metrics(0.1)
+        self.assertEqual(self.value("waiting_requests"), 3)
+
     def test_active_and_idle_time_accounting_publish_without_batch_logs(self):
         self.initialize()
         self.reporter.enable_metrics = True

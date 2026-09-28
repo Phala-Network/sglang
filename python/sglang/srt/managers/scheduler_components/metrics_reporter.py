@@ -240,10 +240,15 @@ class SchedulerMetricsReporter:
         governor = getattr(self.scheduler, "governor", None)
         waiting_count = None
         if governor is not None:
-            waiting_count = len(self.scheduler.waiting_queue) + len(
-                self.scheduler.grammar_manager
+            # The reporter is initialized before Scheduler creates its grammar
+            # manager. Treat that startup window as an empty grammar queue;
+            # later publications use the live manager length as before.
+            waiting_count = len(getattr(self.scheduler, "waiting_queue", ())) + len(
+                getattr(self.scheduler, "grammar_manager", ())
             )
-            waiting_count += int(self.scheduler.chunked_req is not None)
+            waiting_count += int(
+                getattr(self.scheduler, "chunked_req", None) is not None
+            )
         self._governor_metrics.publish(governor, now=now, waiting_count=waiting_count)
 
     def _current_gen_throughput(self, now: float) -> float:

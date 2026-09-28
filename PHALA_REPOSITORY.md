@@ -1,19 +1,50 @@
-# Phala SGLang source
+# Phala repository workflow
 
-This repository owns the complete downstream engine source. Develop shared serving fixes here, with model-specific behavior guarded by model or topology. Governor owns its controller/adapter/minimal hooks; TAIL owns transport and attestation. The separate serving-patches repository is an optional generated export, not another manually maintained source or release gate.
+## Ownership
 
-## Branches and integration
+This repository owns the complete downstream engine source on official v0.5.20
+baseline `94602c9c2b7cbdb8efd5c52802dac6a1c180089e`. General serving repairs work
+independently of Governor; model-specific behavior stays scoped to its model or
+topology. Governor owns its controller/adapter/hooks; TAIL owns attestation and
+transport.
 
-`main` currently retains the upstream-derived source baseline plus Phala repository administration. It is **not** a claim that all downstream model fixes or Governor integration have been accepted. The common v0.5.20 serving input ends at `codex/serving-v0520-0020-allowed-output-r1`; the frozen Governor composition input is `codex/serving-v0520-qwen38-governor-derived-r2`. Remaining model/input branches retain distinct work pending shared-source integration and affected tests. They are not separate mandatory PR pipelines.
+Develop real source and synchronize the ordered
+[serving patch export](https://github.com/Phala-Network/sglang-serving-patches)
+through the existing export/replay process. Avoid a second hand-edited
+implementation or a full patch system per model. Deployment configuration
+consumes fixed complete engine and component identities.
 
-The administrator consolidates shared changes and publishes complete source identities. Contributors hand off exact commits, tests, failures and compatibility constraints. Do not create one permanent branch/PR/profile workflow for every patch. A source commit, passing source tests, published image and accepted target deployment are separate states.
+## Main and release tags
 
-Obsolete intermediate branches are removed only when their commits remain reachable from a retained branch or tag. Minimal historical tips are preserved under `archive/20260920/`; older release tags are unchanged. The branch-to-commit-to-retained-ref map is [the cleanup manifest](repository-archive-20260920.json). Restore a removed branch at its recorded SHA if historical work needs continuation; archive tags do not imply a successful release.
+`main` integrates downstream serving/model changes and Governor hooks; it is not
+an upstream-only baseline. Integrate verified work from focused branches. Keep
+long-term maintenance branches only for real compatibility needs.
 
-## CI and releases
+Create immutable version tags from verified commits in `main` history. Record
+engine commit, component versions, build inputs, image digest, validation scope
+and limitations. Do not move published tags or overwrite image versions. Source
+completion, image publication and deployment acceptance are distinct states.
 
-This fork does not run upstream hardware matrices, PR-label/state bots, upstream package publishing or scheduled fleet maintenance. Their inherited workflow files were removed from `main`; original versions remain in Git history. The temporary GHCR token broker is retired. No credentials or temporary token transfer are part of the new repository workflow.
+Images belong to `ghcr.io/phala-network/sglang` and identify the complete engine
+revision. Build and validate selected artifacts through the authorized release
+process; repository cleanup does not initiate model deployment.
 
-Full source lint remains explicitly available through `workflow_dispatch`, with read-only repository permissions and a bounded execution time. It is not a per-patch PR gate. Its historical failures remain failures until fixed and revalidated. No old Actions results/logs are deleted to manufacture a green history. Run affected unit/regression checks for changed code; use authorized hardware for actual runtime checks. GPU/model/attestation qualification is not replaced by lint.
+## Checks and contributions
 
-Published engine images belong to `ghcr.io/phala-network/sglang` and must identify the complete source commit. Release only after applicable image checks; no automatic release or deployment is triggered by repository cleanup. Before deployment, consult the [component version register](https://github.com/Phala-Network/phala-models-compose/blob/main/production/COMPONENT_VERSIONS.md) and recheck current version/digest and target compatibility.
+[Phala source checks](.github/workflows/phala-source-check.yml) run source lint
+and selected CPU regressions on pull requests or manual dispatch.
+[Full lint](.github/workflows/lint.yml) is manual. Existing failures stay visible
+until corrected. Use declared dependencies and tests relevant to changed code;
+source checks do not replace GPU, native ABI or model acceptance.
+
+Preserve upstream layout, licensing, tests and attribution for reviewable
+upgrades. Keep root docs focused on entrypoints and Phala details under
+`docs/phala`. Do not introduce a separate approval chain per patch or inherit
+unrelated upstream hardware publishing/maintenance workflows.
+
+## Historical work
+
+Old branch names and completed migrations are historical inputs, not current
+integration state. See [historical records](docs/phala/HISTORY.md). Remove obsolete
+branches only after checking active consumers and retaining commits through
+appropriate refs. Archive tags preserve evidence, not acceptance.

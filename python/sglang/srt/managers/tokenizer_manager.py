@@ -3713,7 +3713,9 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             time_stats = APIServerReqTimeStats(disagg_mode=self.disaggregation_mode)
             state = ReqState([], False, asyncio.Event(), sub_obj, time_stats)
             state.request_owner = obj
-            state.is_internal_health_check = getattr(obj, "_internal_health_check", False)
+            state.is_internal_health_check = getattr(
+                obj, "_internal_health_check", False
+            )
             self.rid_to_state[rid] = state
             if self.enable_trace:
                 time_stats.init_trace_ctx(rid, bootstrap_room, external_trace_header)

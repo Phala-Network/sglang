@@ -81,7 +81,9 @@ class _Manager:
     def abort_request(self, rid):
         self.abort_calls.append(rid)
 
-    async def generate_request(self, request_input, request, *, internal_health_check=False):
+    async def generate_request(
+        self, request_input, request, *, internal_health_check=False
+    ):
         self.internal_health_checks.append(internal_health_check)
         self.rid_to_state[request_input.rid] = object()
         self.child_task = asyncio.current_task()

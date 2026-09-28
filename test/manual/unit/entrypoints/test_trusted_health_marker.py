@@ -6,18 +6,27 @@ import pathlib
 import types
 import unittest
 
-
 ROOT = pathlib.Path(__file__).resolve().parents[4]
 MANAGERS = ROOT / "python/sglang/srt/managers"
 
 
 def _load_method(path, class_name, method_name, namespace):
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    owner = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
-    method = next(node for node in owner.body if getattr(node, "name", None) == method_name)
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == class_name
+    )
+    method = next(
+        node for node in owner.body if getattr(node, "name", None) == method_name
+    )
     method.decorator_list = []
-    future = ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0)
-    module = ast.fix_missing_locations(ast.Module(body=[future, method], type_ignores=[]))
+    future = ast.ImportFrom(
+        module="__future__", names=[ast.alias(name="annotations")], level=0
+    )
+    module = ast.fix_missing_locations(
+        ast.Module(body=[future, method], type_ignores=[])
+    )
     exec(compile(module, str(path), "exec"), namespace)
     return namespace[method_name]
 
@@ -25,8 +34,12 @@ def _load_method(path, class_name, method_name, namespace):
 def _load_function(path, name, namespace):
     tree = ast.parse(path.read_text(encoding="utf-8"))
     function = next(node for node in tree.body if getattr(node, "name", None) == name)
-    future = ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0)
-    module = ast.fix_missing_locations(ast.Module(body=[future, function], type_ignores=[]))
+    future = ast.ImportFrom(
+        module="__future__", names=[ast.alias(name="annotations")], level=0
+    )
+    module = ast.fix_missing_locations(
+        ast.Module(body=[future, function], type_ignores=[])
+    )
     exec(compile(module, str(path), "exec"), namespace)
     return namespace[name]
 
@@ -110,7 +123,9 @@ class TrustedHealthMarkerTests(unittest.TestCase):
             sampling_params_class = Sample
             tokenizer = None
             model_config = types.SimpleNamespace(vocab_size=100)
-            rid_to_state = {"HEALTH_CHECK_forged": types.SimpleNamespace(time_stats=Clock())}
+            rid_to_state = {
+                "HEALTH_CHECK_forged": types.SimpleNamespace(time_stats=Clock())
+            }
 
         create = _load_method(
             MANAGERS / "tokenizer_manager.py",
@@ -120,9 +135,15 @@ class TrustedHealthMarkerTests(unittest.TestCase):
                 "GenerateReqInput": _Generate,
                 "EmbeddingReqInput": _Embedding,
                 "SessionParams": object,
-                "TokenizedGenerateReqInput": lambda **kwargs: types.SimpleNamespace(**kwargs),
-                "TokenizedEmbeddingReqInput": lambda **kwargs: types.SimpleNamespace(**kwargs),
-                "get_disagg": lambda: types.SimpleNamespace(disaggregation_transfer_backend="none"),
+                "TokenizedGenerateReqInput": lambda **kwargs: types.SimpleNamespace(
+                    **kwargs
+                ),
+                "TokenizedEmbeddingReqInput": lambda **kwargs: types.SimpleNamespace(
+                    **kwargs
+                ),
+                "get_disagg": lambda: types.SimpleNamespace(
+                    disaggregation_transfer_backend="none"
+                ),
                 "array": __import__("array").array,
             },
         )
@@ -136,7 +157,9 @@ class TrustedHealthMarkerTests(unittest.TestCase):
             self.assertTrue(create(Manager(), obj, None, [0]).is_internal_health_check)
 
     def test_busy_skip_and_step_classification_ignore_forged_rid(self):
-        classify = _load_function(MANAGERS / "utils.py", "is_internal_health_check_req", {})
+        classify = _load_function(
+            MANAGERS / "utils.py", "is_internal_health_check_req", {}
+        )
         calls = []
 
         class Scheduler:
@@ -162,21 +185,34 @@ class TrustedHealthMarkerTests(unittest.TestCase):
                 "is_internal_health_check_req": classify,
             },
         )
-        forged = types.SimpleNamespace(rid="HEALTH_CHECK_forged", is_internal_health_check=False)
-        trusted = types.SimpleNamespace(rid="ordinary", is_internal_health_check=True, http_worker_ipc="health-ipc")
+        forged = types.SimpleNamespace(
+            rid="HEALTH_CHECK_forged", is_internal_health_check=False
+        )
+        trusted = types.SimpleNamespace(
+            rid="ordinary", is_internal_health_check=True, http_worker_ipc="health-ipc"
+        )
         process(scheduler, [forged, trusted])
         self.assertEqual(calls, ["HEALTH_CHECK_forged"])
         self.assertEqual(scheduler.return_health_check_ipcs, ["health-ipc"])
 
     def test_governor_handoff_and_abort_echo_preserve_trust(self):
-        classify = _load_function(MANAGERS / "utils.py", "is_internal_health_check_req", {})
+        classify = _load_function(
+            MANAGERS / "utils.py", "is_internal_health_check_req", {}
+        )
         admission_calls = []
         governor = types.SimpleNamespace(
-            admit_request=lambda *args, **kwargs: admission_calls.append(kwargs) or {"allowed": True}
+            admit_request=lambda *args, **kwargs: (
+                admission_calls.append(kwargs) or {"allowed": True}
+            )
         )
-        scheduler = types.SimpleNamespace(governor=governor, waiting_queue=[], grammar_manager=[], chunked_req=None)
+        scheduler = types.SimpleNamespace(
+            governor=governor, waiting_queue=[], grammar_manager=[], chunked_req=None
+        )
         admit = _load_method(
-            MANAGERS / "scheduler.py", "Scheduler", "_abort_on_governor_admission", {"time": __import__("time")}
+            MANAGERS / "scheduler.py",
+            "Scheduler",
+            "_abort_on_governor_admission",
+            {"time": __import__("time")},
         )
         req = types.SimpleNamespace(is_internal_health_check=True)
         self.assertFalse(admit(scheduler, req))
@@ -206,7 +242,9 @@ class TrustedHealthMarkerTests(unittest.TestCase):
         self.assertFalse(classify(make_abort(req)))
 
     def test_abort_echo_requires_tokenizer_owned_health_state(self):
-        classify = _load_function(MANAGERS / "utils.py", "is_internal_health_check_req", {})
+        classify = _load_function(
+            MANAGERS / "utils.py", "is_internal_health_check_req", {}
+        )
         handle = _load_method(
             MANAGERS / "tokenizer_manager.py",
             "TokenizerManager",
@@ -256,7 +294,9 @@ class TrustedHealthMarkerTests(unittest.TestCase):
         self.assertIs(manager.rid_to_state[abort.rid], internal)
 
     def test_only_trusted_health_suppresses_step_counters(self):
-        classify = _load_function(MANAGERS / "utils.py", "is_internal_health_check_req", {})
+        classify = _load_function(
+            MANAGERS / "utils.py", "is_internal_health_check_req", {}
+        )
         record = _load_method(
             MANAGERS / "scheduler.py",
             "Scheduler",
@@ -272,7 +312,9 @@ class TrustedHealthMarkerTests(unittest.TestCase):
             forward_mode=mode, forward_iter=1, launch_ts=1.0, after_idle_gap=False
         )
         scheduler = types.SimpleNamespace(_prev_step=None)
-        batch.reqs = [types.SimpleNamespace(rid="ordinary", is_internal_health_check=True)]
+        batch.reqs = [
+            types.SimpleNamespace(rid="ordinary", is_internal_health_check=True)
+        ]
         record(scheduler, batch, None)
         self.assertIsNone(scheduler._prev_step)
         scheduler._prev_step = (0, 0.5, True)
@@ -282,7 +324,11 @@ class TrustedHealthMarkerTests(unittest.TestCase):
         ]
         record(scheduler, batch, None)
         self.assertIsNone(scheduler._prev_step)
-        batch.reqs = [types.SimpleNamespace(rid="HEALTH_CHECK_forged", is_internal_health_check=False)]
+        batch.reqs = [
+            types.SimpleNamespace(
+                rid="HEALTH_CHECK_forged", is_internal_health_check=False
+            )
+        ]
         record(scheduler, batch, None)
         self.assertEqual(scheduler._prev_step, (1, 1.0, True))
 

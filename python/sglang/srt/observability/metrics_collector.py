@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import math
 import os
 import time
 from collections import Counter
@@ -29,6 +30,7 @@ from sglang.srt.observability.scheduler_stage_metrics import (
     SCHEDULER_STAGE_CATEGORIES,
 )
 from sglang.srt.observability.utils import exponential_buckets, generate_buckets
+from sglang.srt.platforms import current_platform
 from sglang.srt.runtime_context import (
     exports_expert_balancedness_to_prometheus,
     get_context,
@@ -49,6 +51,9 @@ if TYPE_CHECKING:
 SGLANG_TEST_REQUEST_TIME_STATS = get_bool_env_var("SGLANG_TEST_REQUEST_TIME_STATS")
 
 logger = logging.getLogger(__name__)
+
+_GPU_MEMORY_BYTES_PER_GIB = float(1 << 30)
+_GPU_MEMORY_SAMPLE_INTERVAL_SECONDS = 1.0
 
 
 @dataclass
@@ -244,6 +249,133 @@ class SchedulerMetricsCollectorContext:
     current_scheduler_metrics_enabled: bool
     enable_kv_cache_events: bool
     collector: Optional[SchedulerMetricsCollector]
+
+
+class _GpuMemorySampler:
+    """Sample driver-reported free memory without changing allocator state."""
+
+    def __init__(self, labels: Mapping[str, Any], gauge_cls, interval_seconds: float):
+        self.interval_seconds = interval_seconds
+        self._next_sample_time = 0.0
+        self._window_start_time: Optional[float] = None
+        self._min_observed_gb = math.nan
+
+        labelnames = labels.keys()
+        self.free_memory_gb = gauge_cls(
+            name="sglang:gpu_free_memory_gb",
+            documentation=(
+                "Latest successful driver-reported free device memory sample in "
+                "GiB (bytes / 2**30). This is current sampled memory, not "
+                "startup memory."
+            ),
+            labelnames=labelnames,
+            multiprocess_mode="mostrecent",
+        )
+        self.min_observed_gb = gauge_cls(
+            name="sglang:gpu_free_memory_min_observed_gb",
+            documentation=(
+                "Minimum of successful free-memory samples observed in the "
+                "current sampling interval. This is an observed sample minimum, "
+                "not an instantaneous or absolute device minimum."
+            ),
+            labelnames=labelnames,
+            multiprocess_mode="mostrecent",
+        )
+        self.sample_timestamp_seconds = gauge_cls(
+            name="sglang:gpu_free_memory_sample_timestamp_seconds",
+            documentation=(
+                "Unix timestamp when the latest free-memory query was attempted. "
+                "Use gpu_free_memory_sample_valid to distinguish a successful "
+                "sample from an invalid attempt."
+            ),
+            labelnames=labelnames,
+            multiprocess_mode="mostrecent",
+        )
+        self.sample_valid = gauge_cls(
+            name="sglang:gpu_free_memory_sample_valid",
+            documentation=(
+                "Whether the latest free-memory query succeeded (1) or was invalid (0)."
+            ),
+            labelnames=labelnames,
+            multiprocess_mode="mostrecent",
+        )
+        self.sample_interval_seconds = gauge_cls(
+            name="sglang:gpu_free_memory_sample_interval_seconds",
+            documentation=(
+                "Minimum seconds between free-memory queries. A query is attempted "
+                "on the first forward and when this interval has elapsed."
+            ),
+            labelnames=labelnames,
+            multiprocess_mode="mostrecent",
+        )
+
+        metric_labels = dict(labels)
+        self._free_memory = self.free_memory_gb.labels(**metric_labels)
+        self._min_observed = self.min_observed_gb.labels(**metric_labels)
+        self._sample_timestamp = self.sample_timestamp_seconds.labels(**metric_labels)
+        self._sample_valid = self.sample_valid.labels(**metric_labels)
+        self._sample_interval = self.sample_interval_seconds.labels(**metric_labels)
+
+        self._sample_interval.set(interval_seconds)
+        self._publish_invalid(timestamp_seconds=0.0)
+
+    def _publish_invalid(self, timestamp_seconds: float) -> None:
+        self._free_memory.set(math.nan)
+        self._min_observed.set(math.nan)
+        self._sample_timestamp.set(timestamp_seconds)
+        self._sample_valid.set(0.0)
+        self._window_start_time = None
+        self._min_observed_gb = math.nan
+
+    def _publish_success(
+        self, free_memory_gb: float, now: float, timestamp_seconds: float
+    ) -> None:
+        if (
+            self._window_start_time is None
+            or now - self._window_start_time >= self.interval_seconds
+        ):
+            self._window_start_time = now
+            self._min_observed_gb = free_memory_gb
+        else:
+            self._min_observed_gb = min(self._min_observed_gb, free_memory_gb)
+
+        self._free_memory.set(free_memory_gb)
+        self._min_observed.set(self._min_observed_gb)
+        self._sample_timestamp.set(timestamp_seconds)
+        self._sample_valid.set(1.0)
+
+    def sample_if_due(self, device_id: int) -> bool:
+        now = time.monotonic()
+        if now < self._next_sample_time:
+            return False
+
+        self._next_sample_time = now + self.interval_seconds
+        timestamp_seconds = time.time()
+        try:
+            free_bytes, total_bytes = current_platform.get_available_memory(device_id)
+            free_bytes = float(free_bytes)
+            total_bytes = float(total_bytes)
+            if (
+                not math.isfinite(free_bytes)
+                or not math.isfinite(total_bytes)
+                or free_bytes < 0
+                or total_bytes <= 0
+                or free_bytes > total_bytes
+            ):
+                raise ValueError("platform returned invalid device memory")
+        except Exception:
+            # A transient driver/platform failure must be visible to scrapers;
+            # retaining the previous value as current would misstate headroom.
+            self._publish_invalid(timestamp_seconds)
+            logger.debug("Failed to sample current device memory for metrics")
+            return False
+
+        self._publish_success(
+            free_memory_gb=free_bytes / _GPU_MEMORY_BYTES_PER_GIB,
+            now=now,
+            timestamp_seconds=timestamp_seconds,
+        )
+        return True
 
 
 class SchedulerMetricsCollector(_StatLoggerDIMixin):
@@ -1096,6 +1228,11 @@ class SchedulerMetricsCollector(_StatLoggerDIMixin):
             labelnames=labels.keys(),
             multiprocess_mode="mostrecent",
         )
+        self._gpu_memory_sampler = _GpuMemorySampler(
+            labels=labels,
+            gauge_cls=Gauge,
+            interval_seconds=_GPU_MEMORY_SAMPLE_INTERVAL_SECONDS,
+        )
 
     @classmethod
     def init_new(
@@ -1161,6 +1298,10 @@ class SchedulerMetricsCollector(_StatLoggerDIMixin):
     def _log_gauge(self, gauge: Gauge, data: Union[int, float]) -> None:
         # Convenience function for logging a scalar to gauge.
         gauge.labels(**self.labels).set(data)
+
+    def sample_gpu_memory_if_due(self, device_id: int = 0) -> bool:
+        """Refresh sampled device memory when the configured interval elapses."""
+        return self._gpu_memory_sampler.sample_if_due(device_id)
 
     def _log_gauge_queue_count(self, gauge: Gauge, data: QueueCount) -> None:
         # Log a QueueCount to gauge: total under default labels, per-priority breakdown under priority="<int>".

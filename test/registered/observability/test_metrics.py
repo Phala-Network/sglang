@@ -191,6 +191,11 @@ class TestEnableMetrics(CustomTestCase):
             "sglang:kv_cache_memory_usage_gb",
             "sglang:graph_memory_usage_gb",
             "sglang:startup_available_gpu_memory_gb",
+            "sglang:gpu_free_memory_gb",
+            "sglang:gpu_free_memory_min_observed_gb",
+            "sglang:gpu_free_memory_sample_timestamp_seconds",
+            "sglang:gpu_free_memory_sample_valid",
+            "sglang:gpu_free_memory_sample_interval_seconds",
             "sglang:startup_time_seconds",
             "sglang:startup_cuda_graph_time_seconds",
             "sglang:scheduler_idle_seconds_total",
@@ -239,6 +244,23 @@ class TestEnableMetrics(CustomTestCase):
             ("sglang:kv_cache_memory_usage_gb", {"model_name": _MODEL_NAME}),
             (
                 "sglang:startup_available_gpu_memory_gb",
+                {"model_name": _MODEL_NAME},
+            ),
+            ("sglang:gpu_free_memory_gb", {"model_name": _MODEL_NAME}),
+            (
+                "sglang:gpu_free_memory_min_observed_gb",
+                {"model_name": _MODEL_NAME},
+            ),
+            (
+                "sglang:gpu_free_memory_sample_timestamp_seconds",
+                {"model_name": _MODEL_NAME},
+            ),
+            (
+                "sglang:gpu_free_memory_sample_valid",
+                {"model_name": _MODEL_NAME},
+            ),
+            (
+                "sglang:gpu_free_memory_sample_interval_seconds",
                 {"model_name": _MODEL_NAME},
             ),
             ("sglang:startup_time_seconds", {"phase": "load_weight"}),

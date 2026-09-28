@@ -213,6 +213,18 @@ class SchedulerMetricsReporter:
             self.last_gen_throughput = 0.0
         return self.last_gen_throughput
 
+    def _sample_gpu_memory_if_due(self) -> None:
+        if not self.current_scheduler_metrics_enabled or self.metrics_collector is None:
+            return
+
+        sample_gpu_memory_if_due = getattr(
+            self.metrics_collector, "sample_gpu_memory_if_due", None
+        )
+        if sample_gpu_memory_if_due is not None:
+            sample_gpu_memory_if_due(
+                getattr(getattr(self.scheduler, "ps", None), "gpu_id", 0)
+            )
+
     def _init_metrics(
         self,
         tp_rank: int,
@@ -658,6 +670,8 @@ class SchedulerMetricsReporter:
         ):
             return
 
+        self._sample_gpu_memory_if_due()
+
         now = time.perf_counter()
         gap_latency = now - self.last_prefill_stats_tic
         self.last_prefill_stats_tic = now
@@ -837,6 +851,8 @@ class SchedulerMetricsReporter:
         num_generated_tokens: int = 0,
     ):
         batch = running_batch or self.scheduler.running_batch
+
+        self._sample_gpu_memory_if_due()
 
         # Every-iteration work: realtime token counting + status logger
         if self.current_scheduler_metrics_enabled:

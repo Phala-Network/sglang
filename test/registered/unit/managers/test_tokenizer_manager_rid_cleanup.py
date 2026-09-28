@@ -896,9 +896,7 @@ class TestParallelSamplingPDRooms(CustomTestCase):
             all(item.sampling_params.max_new_tokens == 1024 for item in sent)
         )
         order = [
-            i + sample * batch_size
-            for i in range(batch_size)
-            for sample in range(n)
+            i + sample * batch_size for i in range(batch_size) for sample in range(n)
         ]
         for item, index in zip(sent, order):
             for field, values in fields.items():

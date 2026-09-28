@@ -1,0 +1,16 @@
+[package]
+name = "include-reasoning-forwarding-regression"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+openai-protocol = { path = "../../vendor/openai-protocol-1.0.0", features = ["axum"] }
+serde_json = "1.0"
+reqwest = { version = "0.12.8", default-features = false, features = ["blocking", "json"] }
+
+[[test]]
+name = "forwarding"
+path = "forwarding.rs"

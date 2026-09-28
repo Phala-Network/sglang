@@ -234,6 +234,9 @@ Cargo.lock
 !rust/Cargo.lock
 !rust/sglang-radix-tree/Cargo.lock
 !experimental/sgl-router/Cargo.lock
+!sgl-model-gateway/Cargo.lock
+!sgl-model-gateway/tests/include_reasoning_forwarding/Cargo.lock
+!sgl-model-gateway/vendor/openai-protocol-1.0.0/Cargo.lock
 
 # Generated vision test fixtures (regenerate with: python scripts/generate_vision_golden.py)
 sgl-model-gateway/tests/fixtures/golden/

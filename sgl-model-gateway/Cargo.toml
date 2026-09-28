@@ -1,6 +1,11 @@
 [workspace]
 members = ["bindings/python"]
-exclude = ["bindings/golang", "examples"]
+exclude = ["bindings/golang", "examples", "vendor/openai-protocol-1.0.0", "tests/include_reasoning_forwarding"]
+
+[patch.crates-io]
+# Keep the request type identical for all gateway consumers while preserving
+# SGLang's include_reasoning boolean through typed request forwarding.
+openai-protocol = { path = "vendor/openai-protocol-1.0.0" }
 
 [package]
 name = "sgl-model-gateway"

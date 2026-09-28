@@ -1,4 +1,5 @@
 """CPU checks for the native telemetry hook, with no model or GPU."""
+
 import builtins
 import unittest
 from types import SimpleNamespace
@@ -24,12 +25,20 @@ class GovernorMetricsHookTests(unittest.TestCase):
         self.reporter.current_scheduler_metrics_enabled = True
         self.reporter.metrics_collector = MagicMock(labels=self.labels)
         self.reporter.scheduler = SimpleNamespace(
-            governor=self.governor, waiting_queue=[], grammar_manager=[], chunked_req=None,
+            governor=self.governor,
+            waiting_queue=[],
+            grammar_manager=[],
+            chunked_req=None,
         )
 
     def initialize(self):
-        with patch("prometheus_client.REGISTRY", self.registry), \
-             patch("sglang.srt.managers.scheduler_components.metrics_reporter.time.monotonic", return_value=0):
+        with (
+            patch("prometheus_client.REGISTRY", self.registry),
+            patch(
+                "sglang.srt.managers.scheduler_components.metrics_reporter.time.monotonic",
+                return_value=0,
+            ),
+        ):
             self.reporter._init_governor_metrics()
 
     def value(self, name):
@@ -56,7 +65,10 @@ class GovernorMetricsHookTests(unittest.TestCase):
         self.reporter.scheduler_stage_metrics = MagicMock()
         self.reporter.scheduler_stage_metrics.drain.return_value = {}
         self.reporter.scheduler.waiting_queue = [object()]
-        with patch("sglang.srt.managers.scheduler_components.metrics_reporter.time.monotonic_ns", side_effect=[0, 10**9, 2 * 10**9]):
+        with patch(
+            "sglang.srt.managers.scheduler_components.metrics_reporter.time.monotonic_ns",
+            side_effect=[0, 10**9, 2 * 10**9],
+        ):
             self.reporter.record_scheduler_active()
             self.reporter.record_scheduler_active()
             self.assertEqual(self.value("waiting_requests"), 1)
@@ -74,7 +86,9 @@ class GovernorMetricsHookTests(unittest.TestCase):
 
     def test_reserved_extra_labels_do_not_break_legacy_scraping(self):
         self.reporter.metrics_collector.labels = {
-            **self.labels, "reason": "deployment-label", "window": "deployment-label",
+            **self.labels,
+            "reason": "deployment-label",
+            "window": "deployment-label",
         }
         self.initialize()
         self.assertEqual(self.value("available"), 1)
@@ -97,22 +111,38 @@ class GovernorMetricsHookTests(unittest.TestCase):
         scheduler.grammar_manager = []
         scheduler.chunked_req = None
         sent = []
-        scheduler.ipc_channels = SimpleNamespace(send_to_tokenizer=SimpleNamespace(
-            send_output=lambda abort, req: sent.append(abort),
-        ))
+        scheduler.ipc_channels = SimpleNamespace(
+            send_to_tokenizer=SimpleNamespace(
+                send_output=lambda abort, req: sent.append(abort),
+            )
+        )
         params = SamplingParams(max_new_tokens=1)
         params.normalize(None)
-        req = Req(rid="private-request", origin_input_text="", origin_input_ids=array("q", [1]),
-                  sampling_params=params)
+        req = Req(
+            rid="private-request",
+            origin_input_text="",
+            origin_input_ids=array("q", [1]),
+            sampling_params=params,
+        )
         req.time_stats.trace_ctx = SimpleNamespace(abort=lambda **kwargs: None)
-        with patch("sglang.srt.managers.scheduler.time.monotonic", return_value=0.1), \
-             patch("sglang.srt.managers.scheduler.get_serving", return_value=SimpleNamespace(weight_version="test")):
+        with (
+            patch("sglang.srt.managers.scheduler.time.monotonic", return_value=0.1),
+            patch(
+                "sglang.srt.managers.scheduler.get_serving",
+                return_value=SimpleNamespace(weight_version="test"),
+            ),
+        ):
             self.assertTrue(scheduler._abort_on_governor_admission(req))
         self.assertEqual(sent[0].finished_reason["status_code"], 429)
         self.reporter._publish_governor_metrics(0.2)
         self.assertEqual(self.value("admission_rejects_total"), 1)
-        self.assertEqual(self.registry.get_sample_value(
-            "pig_governor_admission_rejections_total", {**self.labels, "reason": "waiting_limit"}), 1)
+        self.assertEqual(
+            self.registry.get_sample_value(
+                "pig_governor_admission_rejections_total",
+                {**self.labels, "reason": "waiting_limit"},
+            ),
+            1,
+        )
         self.assertEqual(scheduler.waiting_queue, [])
 
     def test_missing_legacy_metrics_module_exports_explicit_unavailability(self):
@@ -123,9 +153,15 @@ class GovernorMetricsHookTests(unittest.TestCase):
                 raise ModuleNotFoundError("Legacy package", name=name)
             return original_import(name, *args, **kwargs)
 
-        with patch("builtins.__import__", side_effect=legacy_import), \
-             patch("prometheus_client.Gauge", side_effect=lambda *args, **kwargs: Gauge(
-                 *args, **kwargs, registry=self.registry)):
+        with (
+            patch("builtins.__import__", side_effect=legacy_import),
+            patch(
+                "prometheus_client.Gauge",
+                side_effect=lambda *args, **kwargs: Gauge(
+                    *args, **kwargs, registry=self.registry
+                ),
+            ),
+        ):
             self.reporter._init_governor_metrics()
         self.assertEqual(self.value("available"), 0)
         self.assertEqual(self.value("enabled"), 1)

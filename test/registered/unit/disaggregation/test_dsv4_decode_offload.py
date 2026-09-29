@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 from weakref import WeakKeyDictionary
 
 import torch
+
 from sglang.srt.disaggregation.decode_kvcache_offload_manager import (
     DecodeKVCacheOffloadManager,
 )
@@ -210,7 +211,10 @@ class TestDSV4DecodeOffload(unittest.TestCase):
                 ),
                 patch(
                     module + "build_deepseek_v4_hicache_stack",
-                    return_value=(fixture.decode_host_mem_pool, fixture.cache_controller),
+                    return_value=(
+                        fixture.decode_host_mem_pool,
+                        fixture.cache_controller,
+                    ),
                 ) as build,
             ):
                 manager = DecodeKVCacheOffloadManager(
@@ -241,7 +245,8 @@ class TestDSV4DecodeOffload(unittest.TestCase):
             )
             with (
                 patch(
-                    module + "get_schedule", return_value=SimpleNamespace(page_size=PAGE)
+                    module + "get_schedule",
+                    return_value=SimpleNamespace(page_size=PAGE),
                 ),
                 patch(
                     module + "get_memory",
@@ -257,7 +262,10 @@ class TestDSV4DecodeOffload(unittest.TestCase):
                 patch(module + "torch.distributed.get_world_size", return_value=1),
                 patch(
                     module + "build_deepseek_v4_hicache_stack",
-                    return_value=(fixture.decode_host_mem_pool, fixture.cache_controller),
+                    return_value=(
+                        fixture.decode_host_mem_pool,
+                        fixture.cache_controller,
+                    ),
                 ) as build,
             ):
                 manager = DecodeKVCacheOffloadManager(

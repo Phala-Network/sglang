@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from weakref import WeakKeyDictionary as WeakKeyDict
 
 import torch
+
 from sglang.srt.disaggregation.kv_events import OffloadedState
 from sglang.srt.environ import envs
 from sglang.srt.managers.cache_controller import HiCacheController
@@ -125,8 +126,7 @@ class DecodeKVCacheOffloadManager:
                 # page still occupies one page in the non-unified DSV4 pool.
                 window = max(
                     self.page_size,
-                    ((window + self.page_size - 1) // self.page_size)
-                    * self.page_size,
+                    ((window + self.page_size - 1) // self.page_size) * self.page_size,
                 )
             if not getattr(kv_cache, "_unified_kv", False) and (
                 window is None or self.offload_stride > window

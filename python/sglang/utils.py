@@ -132,7 +132,9 @@ def get_exception_diagnostic(max_frames: int = 8, max_chain: int = 4) -> dict:
     exceptions = []
     seen: set[int] = set()
     current = value
-    while current is not None and id(current) not in seen and len(exceptions) < max_chain:
+    while (
+        current is not None and id(current) not in seen and len(exceptions) < max_chain
+    ):
         seen.add(id(current))
         frames = [
             {

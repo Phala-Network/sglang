@@ -39,6 +39,7 @@ from sglang.srt.mem_cache.pool_host.mha import MHATokenToKVPoolHost
 from sglang.srt.mem_cache.storage_backend_config import (
     load_storage_backend_extra_config,
 )
+from sglang.srt.mem_cache.shared_cache_diagnostics import shared_cache_seed_capture
 
 if TYPE_CHECKING:
     from sglang.srt.mem_cache.allocator import BaseTokenToKVPoolAllocator
@@ -603,6 +604,9 @@ class HybridCacheController(BaseHiCacheController):
         hash_value: Optional[List[str]] = None,
         prefix_keys: Optional[List[str]] = None,
         extra_pools: Optional[list[PoolTransfer]] = None,
+        diagnostic_request_id: Optional[str] = None,
+        diagnostic_page_start: Optional[int] = None,
+        seed_selected: bool = False,
     ) -> int:
         operation = StorageOperation(
             host_indices,
@@ -611,6 +615,18 @@ class HybridCacheController(BaseHiCacheController):
             prefix_keys=prefix_keys,
             pool_transfers=extra_pools,
         )
+        operation.shared_cache_diag_request_id = diagnostic_request_id
+        operation.shared_cache_diag_page_start = diagnostic_page_start or 0
+        operation.shared_cache_seed_selected = False
+        if seed_selected and diagnostic_request_id is not None:
+            try:
+                operation.shared_cache_seed_selected = (
+                    shared_cache_seed_capture.bind_operation(
+                        diagnostic_request_id, operation.id
+                    )
+                )
+            except Exception:
+                shared_cache_seed_capture.fail_closed()
         self.backup_queue.put(operation)
         return operation.id
 
@@ -754,7 +770,23 @@ class HybridCacheController(BaseHiCacheController):
         if backup_transfers:
             self._resolve_sidecar_kv_derived_pool_transfers(operation)
             self._resolve_sidecar_nonkv_derived_pool_transfers(operation)
-            results = self.storage_backend.batch_set_v2(backup_transfers)
+            results = self.storage_backend.batch_set_v2(
+                backup_transfers,
+                HiCacheStorageExtraInfo(
+                    extra_info={
+                        "shared_cache_diag_request_id": getattr(
+                            operation, "shared_cache_diag_request_id", None
+                        ),
+                        "shared_cache_diag_operation_id": operation.id,
+                        "shared_cache_diag_page_start": getattr(
+                            operation, "shared_cache_diag_page_start", 0
+                        )
+                        + operation.storage_start // self.page_size,
+                        "shared_cache_diag_base_hashes": list(operation.hash_value),
+                        "shared_cache_diag_page_size": self.page_size,
+                    }
+                ),
+            )
             pool_hits = count_pool_hits(results)
             operation.pool_storage_result.update_extra_pool_hit_pages(pool_hits)
 

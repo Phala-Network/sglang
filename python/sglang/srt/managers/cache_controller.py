@@ -1204,7 +1204,20 @@ class HiCacheController:
 
         for start in range(0, len(page_hashes), STORAGE_BATCH_SIZE):
             batch_hashes = page_hashes[start : start + STORAGE_BATCH_SIZE]
-            extra_info = HiCacheStorageExtraInfo(prefix_keys=prefix_keys)
+            extra_info = HiCacheStorageExtraInfo(
+                prefix_keys=prefix_keys,
+                extra_info={
+                    "shared_cache_diag_request_id": getattr(
+                        operation, "shared_cache_diag_request_id", None
+                    ),
+                    "shared_cache_diag_operation_id": operation.id,
+                    "shared_cache_diag_page_start": (
+                        operation.storage_start // self.page_size + i // self.page_size
+                    ),
+                    "shared_cache_diag_base_hashes": list(operation.hash_value),
+                    "shared_cache_diag_page_size": self.page_size,
+                },
+            )
             hit_page_num = self.storage_backend.batch_exists(batch_hashes, extra_info)
             hash_value.extend(batch_hashes[:hit_page_num])
             storage_query_count += hit_page_num * self.page_size

@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import os
+import re
 import threading
 import time
+import uuid
 from typing import TYPE_CHECKING
 from weakref import WeakKeyDictionary as WeakKeyDict
 
@@ -29,7 +34,10 @@ from sglang.srt.mem_cache.memory_pool import (
     MLATokenToKVPool,
     ReqToTokenPool,
 )
-from sglang.srt.mem_cache.shared_cache_diagnostics import shared_cache_diagnostics
+from sglang.srt.mem_cache.shared_cache_diagnostics import (
+    shared_cache_diagnostics,
+    shared_cache_seed_capture,
+)
 from sglang.srt.mem_cache.storage_backend_config import (
     load_storage_backend_extra_config,
 )
@@ -162,7 +170,9 @@ class DecodeKVCacheOffloadManager:
             )
 
         self.ongoing_offload = {}
+        self.offload_page_starts = {}
         self.ongoing_backup = {}
+        self.shared_cache_d_worker_id = uuid.uuid4().hex
         self.offload_extra_pools = {}
         self.backup_extra_pools = {}
         # Keyed by Req identity (rids can be reused while a D2H copy is still
@@ -289,6 +299,7 @@ class DecodeKVCacheOffloadManager:
             incremental_tokens,
             time.time(),
         )
+        self.offload_page_starts[ack_id] = start // self.page_size
         state.inc_len += incremental_aligned_len
         if self.is_dsv4:
             # Chunk-cache SWA eviction is independent of this manager. Complete
@@ -386,6 +397,7 @@ class DecodeKVCacheOffloadManager:
                     start_time,
                     prior_hash,
                     self.offload_extra_pools.pop(ack_id, None),
+                    page_start=self.offload_page_starts.pop(ack_id, None),
                 )
                 if req in self.offloaded_state:
                     self.offloaded_state[req].last_hash = last_hash
@@ -424,6 +436,27 @@ class DecodeKVCacheOffloadManager:
             dsv4_complete = (
                 self._dsv4_backup_complete(storage_operation) if self.is_dsv4 else None
             )
+            if self.is_dsv4 and getattr(
+                storage_operation, "shared_cache_seed_selected", False
+            ):
+                try:
+                    seed_sealed = shared_cache_seed_capture.backup_ack(
+                        request_id=req_id,
+                        operation_id=ack_id,
+                        complete=dsv4_complete,
+                        tokens=storage_operation.completed_tokens,
+                        expected_tokens=len(storage_operation.token_ids),
+                    )
+                except Exception:
+                    shared_cache_seed_capture.fail_closed()
+                    seed_sealed = False
+                if seed_sealed and shared_cache_seed_capture.sealed_path:
+                    try:
+                        shared_cache_diagnostics.arm_from_manifest(
+                            shared_cache_seed_capture.sealed_path
+                        )
+                    except Exception:
+                        shared_cache_seed_capture.fail_closed()
             if self.is_dsv4:
                 shared_cache_diagnostics.record_backup(
                     phase="ack",
@@ -478,16 +511,30 @@ class DecodeKVCacheOffloadManager:
         start_time,
         prior_hash,
         extra_pools=None,
+        *,
+        page_start=None,
     ):
         """Trigger async backup from host to storage."""
         page_hashes = self._compute_prefix_hash(req, incremental_tokens, prior_hash)
         for transfer in extra_pools or []:
             transfer.keys = page_hashes
+        seed_selected = self.is_dsv4 and self._arm_seed_operation(
+            req, page_hashes, extra_pools, page_start
+        )
         try:
             ack_id = self.cache_controller.write_storage(
                 host_indices,
                 incremental_tokens,
                 hash_value=page_hashes,
+                **(
+                    {
+                        "diagnostic_request_id": req.rid,
+                        "diagnostic_page_start": page_start,
+                        "seed_selected": seed_selected,
+                    }
+                    if self.is_dsv4
+                    else {}
+                ),
                 **({"extra_pools": extra_pools} if extra_pools else {}),
             )
         except Exception:
@@ -518,6 +565,67 @@ class DecodeKVCacheOffloadManager:
                 ),
             )
         return page_hashes[-1] if len(page_hashes) > 0 else prior_hash
+
+    def _arm_seed_operation(self, req, page_hashes, extra_pools, page_start):
+        if not os.getenv("SGLANG_SHARED_CACHE_SEED_CAPTURE_CONFIG"):
+            return False
+        request_ref = getattr(req, "pd_diagnostic_request_ref", None)
+        if (
+            not isinstance(request_ref, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", request_ref)
+            or type(page_start) is not int
+            or page_start < 0
+            or not page_hashes
+        ):
+            return False
+        try:
+            cc = self.cache_controller
+            storage_config = cc.storage_config
+            if storage_config.tp_size != 1 or storage_config.pp_size != 1:
+                return False
+            store = cc.storage_backend
+            schema = self.decode_host_mem_pool.storage_schema
+            transfers = [
+                transfer for transfer in extra_pools or [] if cc.should_backup(transfer)
+            ]
+            if {str(item.name) for item in transfers} != {
+                str(name) for name in store.registered_pools
+            }:
+                return False
+            components = []
+            for transfer in transfers:
+                _, multiplier = store._get_hybrid_page_component_keys(
+                    page_hashes[:1], transfer
+                )
+                components.extend(
+                    f"{transfer.name}:{index}" for index in range(multiplier)
+                )
+            if not components or len(components) != len(set(components)):
+                return False
+            schema_id = hashlib.sha256(
+                json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            return shared_cache_seed_capture.arm(
+                {
+                    "request_ref": request_ref,
+                    "backend_tag": storage_config.extra_config["extra_backend_tag"],
+                    "model_revision": schema["revision"],
+                    "kv_schema": schema_id,
+                    "page_range": {
+                        "start": page_start,
+                        "end": page_start + len(page_hashes),
+                    },
+                    "required_components": sorted(components),
+                    "rank": storage_config.tp_rank,
+                },
+                actual_request_id=req.rid,
+                actual_store_instance_id=store.shared_cache_store_instance_id,
+                actual_d_worker_id=self.shared_cache_d_worker_id,
+                actual_tenant_id=store.config.tenant_id,
+            )
+        except Exception:
+            shared_cache_seed_capture.fail_closed()
+            return False
 
     def _compute_prefix_hash(self, req: Req, tokens, prior_hash=""):
         """Match prefill storage hashes."""

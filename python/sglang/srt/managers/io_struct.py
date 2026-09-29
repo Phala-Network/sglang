@@ -1680,6 +1680,19 @@ class ClearHiCacheReqOutput(BaseReq, kw_only=True):
     success: bool
 
 
+class SharedCacheClearMemoryReqInput(BaseReq, kw_only=True):
+    manifest_id: str
+    manifest_sha256: str
+    request_id: str
+
+
+class SharedCacheClearMemoryReqOutput(BaseReq, kw_only=True):
+    success: bool
+    reason: str = ""
+    unknown: bool = False
+    receipt: Optional[Dict[str, Any]] = None
+
+
 class FlushCacheReqInput(BaseReq, kw_only=True):
     timeout_s: Optional[float] = None
 

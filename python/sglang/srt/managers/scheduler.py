@@ -18,6 +18,7 @@ import faulthandler
 import logging
 import math
 import os
+import re
 import signal
 import sys
 import time
@@ -172,6 +173,8 @@ from sglang.srt.managers.io_struct import (
     SetInternalStateReq,
     SetInternalStateReqOutput,
     ShutdownReq,
+    SharedCacheClearMemoryReqInput,
+    SharedCacheClearMemoryReqOutput,
     SlowDownReqInput,
     SlowDownReqOutput,
     TokenizedEmbeddingReqInput,
@@ -185,6 +188,12 @@ from sglang.srt.managers.io_struct import (
     UpdateWeightVersionReqInput,
     UpdateWeightVersionReqOutput,
     sock_send,
+)
+from sglang.srt.managers.shared_cache_control import (
+    SharedCacheControlError,
+    clear_from_configured_artifacts,
+    validate_clear_selectors,
+    validate_single_decode_writer,
 )
 from sglang.srt.managers.load_snapshot import create_load_snapshot_writer
 from sglang.srt.managers.min_free_slots_delayer import (
@@ -1775,6 +1784,7 @@ class Scheduler(
                 (BatchTokenizedEmbeddingReqInput, self.handle_batch_embedding_request),
                 (FlushCacheReqInput, self.flush_wrapper.handle),
                 (ClearHiCacheReqInput, self.clear_hicache_storage_wrapped),
+                (SharedCacheClearMemoryReqInput, self.clear_shared_cache_memory),
                 (AttachHiCacheStorageReqInput, self.attach_hicache_storage_wrapped),
                 (DetachHiCacheStorageReqInput, self.detach_hicache_storage_wrapped),
                 (AbortReq, self.abort_request),
@@ -4895,6 +4905,45 @@ class Scheduler(
             logging.warning("Hierarchical cache is not enabled.")
             if_success = False
         return ClearHiCacheReqOutput(success=if_success)
+
+    def clear_shared_cache_memory(
+        self, recv_req: SharedCacheClearMemoryReqInput
+    ) -> SharedCacheClearMemoryReqOutput:
+        if getattr(self, "_shared_cache_clear_unknown", False):
+            return SharedCacheClearMemoryReqOutput(
+                success=False, reason="prior_clear_result_unknown", unknown=True
+            )
+        try:
+            validate_clear_selectors(
+                recv_req.manifest_id,
+                recv_req.manifest_sha256,
+                recv_req.request_id,
+            )
+            validate_single_decode_writer(self.server_args, self.disaggregation_mode)
+        except SharedCacheControlError as exc:
+            return SharedCacheClearMemoryReqOutput(
+                success=False, reason=exc.reason
+            )
+        try:
+            receipt = clear_from_configured_artifacts(
+                self,
+                manifest_id=recv_req.manifest_id,
+                manifest_sha256=recv_req.manifest_sha256,
+            )
+        except SharedCacheControlError as exc:
+            if exc.unknown:
+                self._shared_cache_clear_unknown = True
+            return SharedCacheClearMemoryReqOutput(
+                success=False, reason=exc.reason, unknown=exc.unknown
+            )
+        except Exception:
+            self._shared_cache_clear_unknown = True
+            logger.warning("Finite shared-cache clear outcome is unknown")
+            return SharedCacheClearMemoryReqOutput(
+                success=False, reason="clear_result_unknown", unknown=True
+            )
+        receipt["request_id"] = recv_req.request_id
+        return SharedCacheClearMemoryReqOutput(success=True, receipt=receipt)
 
     @scheduler_stage_method(SCHEDULER_STAGE_IDLE)
     def on_idle(self):

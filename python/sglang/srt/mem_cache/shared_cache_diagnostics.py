@@ -2,7 +2,9 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import re
+import stat
 import struct
 import threading
 import time
@@ -19,6 +21,10 @@ _MAX_KEYS_PER_EVENT = 256
 _MAX_REQUESTS = 1024
 _MAX_DURATION_MS = 300000
 _MAX_CAPTURE_FAILURES = 1024
+_SEED_MAX_KEYS = 256
+_SEED_MAX_BYTES = 16 * 1024 * 1024 * 1024
+_SEED_MAX_EVENTS = 1024
+_SEED_MAX_DURATION_MS = 120000
 
 
 def _swallow_capture_errors(method):
@@ -168,6 +174,71 @@ class SharedCacheDiagnostics:
         if not self.enabled:
             return None
         return self._key_id(value, tenant_id)
+
+    def arm_from_manifest(self, path):
+        """Load the sealed seed key allowlist once into the default-off collector."""
+        try:
+            document = _read_private_json(path, maximum=64 * 1024)
+            if document.get("schema") != "phala.shared-cache.seed-manifest.v1":
+                return False
+            keys = document.get("keys")
+            if not isinstance(keys, list) or not keys or len(keys) > _SEED_MAX_KEYS:
+                return False
+            salt = document.get("key_salt")
+            case_id = document.get("case_id")
+            epoch = document.get("epoch")
+            tenant_id = document.get("tenant_id")
+            if not salt or not case_id or not epoch or not tenant_id:
+                return False
+            unsigned = {
+                key: value for key, value in document.items() if key != "manifest_sha256"
+            }
+            calculated_digest = hashlib.sha256(
+                json.dumps(
+                    unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                ).encode()
+            ).hexdigest()
+            if document.get("manifest_sha256") != calculated_digest:
+                return False
+            calculated = {
+                _shared_cache_id(
+                    salt.encode(), b"phala.shared-cache-key.v1\0", case_id,
+                    epoch, tenant_id, key.get("key"),
+                )
+                for key in keys
+                if isinstance(key, dict) and isinstance(key.get("key"), str)
+            }
+            declared = {item.get("key_id") for item in keys if isinstance(item, dict)}
+            if len(calculated) != len(keys) or declared != calculated:
+                return False
+            with self._lock:
+                if self.enabled:
+                    return False
+                self._salt = salt.encode()
+                self._case_id = case_id
+                self._epoch = epoch
+                self._key_ids = declared
+                self._max_events = min(
+                    _MAX_EVENTS, max(1, int(document.get("max_events", 256)))
+                )
+                self._max_keys = min(_MAX_KEYS, max(1, len(keys)))
+                self._max_bytes = min(
+                    _MAX_BYTES,
+                    max(
+                        _TRUNCATION_RESERVE_BYTES,
+                        int(document.get("max_total_logical_bytes", _MAX_BYTES)),
+                    ),
+                )
+                self._max_requests = 1
+                self._max_duration_s = min(
+                    _MAX_DURATION_MS,
+                    max(1, int(document.get("max_duration_ms", 60000))),
+                ) / 1000
+                self._started_at = time.monotonic()
+                self.enabled = True
+            return True
+        except Exception:
+            return False
 
     def _request_id(self, value, tenant_id="default"):
         return self._stable_id(b"phala.shared-cache-request.v1\0", tenant_id, value)
@@ -442,6 +513,491 @@ class SharedCacheDiagnostics:
             }
         )
         self.flush_truncation()
+
+
+def _read_private_json(path, *, maximum):
+    metadata = os.lstat(path)
+    if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o600:
+        raise ValueError("private regular file required")
+    if metadata.st_size > maximum:
+        raise ValueError("private file too large")
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    fd = os.open(path, flags)
+    try:
+        opened = os.fstat(fd)
+        if (metadata.st_dev, metadata.st_ino) != (opened.st_dev, opened.st_ino):
+            raise ValueError("private file changed")
+        if hasattr(os, "getuid") and opened.st_uid != os.getuid():
+            raise ValueError("private file owner mismatch")
+        with os.fdopen(fd, "rb", closefd=False) as source:
+            raw = source.read(maximum + 1)
+    finally:
+        os.close(fd)
+    if len(raw) > maximum:
+        raise ValueError("private file too large")
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError("private object required")
+    return value
+
+
+def _shared_cache_id(salt, domain, case_id, epoch, tenant_id, value):
+    message = bytearray(domain)
+    for field in (case_id, epoch, tenant_id, value):
+        encoded = str(field).encode("utf-8")
+        message.extend(struct.pack(">I", len(encoded)))
+        message.extend(encoded)
+    return hmac.new(salt, message, hashlib.sha256).hexdigest()
+
+
+def _write_all(fd, payload):
+    view = memoryview(payload)
+    while view:
+        written = os.write(fd, view)
+        if written <= 0:
+            raise OSError("short write")
+        view = view[written:]
+
+
+class SharedCacheSeedCapture:
+    """One-request producer for exact D-writer keys and successful backup ACK."""
+
+    def __init__(self, *, log=logger):
+        self._log = log
+        self._lock = threading.Lock()
+        self._config = None
+        self._operation_id = None
+        self._entries = {}
+        self._events = 0
+        self._total_bytes = 0
+        self._failed = None
+        self._fd = None
+        self._provisional_path = None
+        self._sealed_path = None
+        self._started = None
+        self._sealed = False
+
+    def arm(
+        self,
+        selectors,
+        *,
+        actual_request_id,
+        actual_store_instance_id,
+        actual_d_worker_id,
+        actual_tenant_id,
+    ):
+        path = os.getenv("SGLANG_SHARED_CACHE_SEED_CAPTURE_CONFIG")
+        if not path:
+            return False
+        with self._lock:
+            if self._config is not None:
+                return False
+            try:
+                config = _read_private_json(path, maximum=64 * 1024)
+                if config.get("schema") != "phala.shared-cache.seed-config.v1":
+                    return False
+                if any(config.get(key) != value for key, value in selectors.items()):
+                    return False
+                if not isinstance(actual_request_id, str) or not 1 <= len(actual_request_id) <= 256:
+                    return False
+                if config.get("tenant_id") != actual_tenant_id:
+                    return False
+                request_ref = selectors.get("request_ref")
+                page_range = selectors.get("page_range")
+                rank = selectors.get("rank")
+                components = selectors.get("required_components")
+                if (
+                    not isinstance(request_ref, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", request_ref)
+                    or not isinstance(page_range, dict)
+                    or type(page_range.get("start")) is not int
+                    or type(page_range.get("end")) is not int
+                    or page_range["start"] < 0
+                    or page_range["end"] <= page_range["start"]
+                    or type(rank) is not int
+                    or rank != 0
+                    or not isinstance(components, list)
+                    or not components
+                    or components != sorted(set(components))
+                ):
+                    return False
+                if config.get("model_revision") is not None and not isinstance(
+                    config.get("model_revision"), str
+                ):
+                    return False
+                config["store_instance_id"] = actual_store_instance_id
+                config["d_worker_id"] = actual_d_worker_id
+                config["request_id"] = actual_request_id
+                config["page_range"] = page_range
+                config["rank"] = rank
+                if not all(
+                    isinstance(config.get(key), str) and config[key]
+                    for key in (
+                        "run_id", "case_id", "epoch", "request_id", "tenant_id",
+                        "backend_tag", "kv_schema", "d_worker_id",
+                        "store_instance_id", "key_salt", "output_dir",
+                    )
+                ):
+                    return False
+                max_keys = int(config.get("max_keys", 0))
+                max_bytes = int(config.get("max_logical_bytes", 0))
+                max_events = int(config.get("max_events", 0))
+                max_duration = int(config.get("max_duration_ms", 0))
+                max_artifact = int(config.get("max_artifact_bytes", 0))
+                required = config.get("required_components")
+                if not (
+                    1 <= max_keys <= _SEED_MAX_KEYS
+                    and 1 <= max_bytes <= _SEED_MAX_BYTES
+                    and 1 <= max_events <= _SEED_MAX_EVENTS
+                    and 1 <= max_duration <= _SEED_MAX_DURATION_MS
+                    and 1024 <= max_artifact <= 64 * 1024
+                    and isinstance(required, list)
+                    and required
+                    and len(required) <= 64
+                    and all(isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9._:-]{1,96}", x) for x in required)
+                ):
+                    return False
+                directory = config["output_dir"]
+                dir_stat = os.lstat(directory)
+                if not stat.S_ISDIR(dir_stat.st_mode) or stat.S_IMODE(dir_stat.st_mode) != 0o700:
+                    return False
+                if hasattr(os, "getuid") and dir_stat.st_uid != os.getuid():
+                    return False
+                seed_id = config.get("seed_id")
+                if not isinstance(seed_id, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", seed_id):
+                    return False
+                provisional = os.path.join(directory, f"{seed_id}.provisional.json")
+                sealed = os.path.join(directory, f"{seed_id}.seed.json")
+                if os.path.lexists(provisional) or os.path.lexists(sealed):
+                    return False
+                flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+                self._fd = os.open(provisional, flags, 0o600)
+                self._config = config
+                self._provisional_path = provisional
+                self._sealed_path = sealed
+                self._started = time.monotonic()
+                self._write_provisional_locked()
+                if self._failed:
+                    os.close(self._fd)
+                    self._fd = None
+                    self._config = None
+                    return False
+                return True
+            except Exception:
+                if self._fd is not None:
+                    os.close(self._fd)
+                    self._fd = None
+                self._config = None
+                return False
+
+    def bind_operation(self, request_id, operation_id):
+        with self._lock:
+            if self._sealed or self._config is None or request_id != self._config["request_id"]:
+                return False
+            if time.monotonic() - self._started > int(self._config["max_duration_ms"]) / 1000:
+                self._failed = "duration_exceeded"
+                return False
+            if self._operation_id is not None:
+                self._failed = "multiple_backup_operations"
+                return False
+            self._operation_id = int(operation_id)
+            self._write_provisional_locked()
+            return True
+
+    def fail_closed(self, reason="capture_hook_error"):
+        try:
+            with self._lock:
+                if not self._sealed and self._config is not None and self._failed is None:
+                    self._failed = reason
+                    self._write_provisional_locked()
+        except Exception:
+            return
+
+    def prepare_batch(self, context, *, pool, component_names, keys, sizes):
+        if not isinstance(context, dict):
+            return None
+        with self._lock:
+            if self._sealed or self._config is None or self._failed:
+                return None
+            request_id = context.get(
+                "request_id", context.get("shared_cache_diag_request_id")
+            )
+            operation_id = context.get(
+                "operation_id", context.get("shared_cache_diag_operation_id")
+            )
+            if (
+                request_id != self._config["request_id"]
+                or operation_id != self._operation_id
+            ):
+                return None
+            if self._operation_id is None:
+                self._failed = "operation_not_bound"
+                return None
+            if time.monotonic() - self._started > int(self._config["max_duration_ms"]) / 1000:
+                self._failed = "duration_exceeded"
+                return None
+            if len(keys) != len(sizes) or len(keys) != len(component_names):
+                self._failed = "batch_shape_mismatch"
+                return None
+            if self._events >= int(self._config["max_events"]):
+                self._failed = "event_budget_exceeded"
+                return None
+            pending = []
+            pending_key_ids = set()
+            start = int(context.get("page_start", 0))
+            for index, (key, size, component) in enumerate(zip(keys, sizes, component_names)):
+                if not isinstance(key, str) or not key or len(key.encode()) > 4096:
+                    self._failed = "invalid_key"
+                    return None
+                size = self._size_bytes(size)
+                if size <= 0:
+                    self._failed = "invalid_size"
+                    return None
+                key_id = self._key_id(key)
+                if key_id in self._entries or key_id in pending_key_ids:
+                    self._failed = "duplicate_key"
+                    return None
+                if component not in self._config["required_components"]:
+                    self._failed = "unexpected_component"
+                    return None
+                if len(self._entries) + len(pending) >= int(self._config["max_keys"]):
+                    self._failed = "key_budget_exceeded"
+                    return None
+                if self._total_bytes + sum(item["logical_bytes"] for item in pending) + size > int(self._config["max_logical_bytes"]):
+                    self._failed = "byte_budget_exceeded"
+                    return None
+                page_indexes = context.get("page_indexes")
+                page_index = (
+                    page_indexes[index]
+                    if isinstance(page_indexes, list) and index < len(page_indexes)
+                    else start + index // max(1, int(context.get("key_multiplier", 1)))
+                )
+                page_range = self._config["page_range"]
+                if not page_range["start"] <= page_index < page_range["end"]:
+                    self._failed = "page_outside_selected_range"
+                    return None
+                pending.append(
+                    {
+                        "key_id": key_id,
+                        "key": key,
+                        "rank": 0,
+                        "component": component,
+                        "page_index": page_index,
+                        "logical_bytes": size,
+                        "native_result": None,
+                        "already_present": None,
+                    }
+                )
+                pending_key_ids.add(key_id)
+            for entry in pending:
+                self._entries[entry["key_id"]] = entry
+            self._events += 1
+            self._write_provisional_locked()
+            return [entry["key_id"] for entry in pending]
+
+    def complete_batch(self, token, *, exists, results):
+        if token is None:
+            return
+        with self._lock:
+            if self._sealed:
+                return
+            if len(token) != len(exists) or len(token) != len(results):
+                self._failed = "result_shape_mismatch"
+                return
+            for key_id, existed, result in zip(token, exists, results):
+                entry = self._entries.get(key_id)
+                if entry is None:
+                    self._failed = "prepared_key_lost"
+                    return
+                entry["already_present"] = existed == 1
+                entry["native_result"] = int(result)
+                if existed == 1 or int(result) != 0:
+                    self._failed = "put_not_new_success"
+            self._total_bytes = sum(item["logical_bytes"] for item in self._entries.values())
+            self._write_provisional_locked()
+
+    def backup_ack(self, *, request_id, operation_id, complete, tokens, expected_tokens):
+        with self._lock:
+            if self._sealed or self._config is None or request_id != self._config["request_id"]:
+                return False
+            if time.monotonic() - self._started > int(self._config["max_duration_ms"]) / 1000:
+                self._failed = self._failed or "duration_exceeded"
+                self._write_provisional_locked()
+                return False
+            if operation_id != self._operation_id or not complete or tokens != expected_tokens:
+                self._failed = self._failed or "backup_incomplete"
+                self._write_provisional_locked()
+                return False
+            if self._failed:
+                return False
+            components = {item["component"] for item in self._entries.values()}
+            if components != set(self._config["required_components"]):
+                self._failed = "missing_component"
+                self._write_provisional_locked()
+                return False
+            page_components = {
+                (item["page_index"], item["component"])
+                for item in self._entries.values()
+            }
+            page_range = self._config["page_range"]
+            expected_page_components = {
+                (page_index, component)
+                for page_index in range(page_range["start"], page_range["end"])
+                for component in self._config["required_components"]
+            }
+            if page_components != expected_page_components:
+                self._failed = "incomplete_page_components"
+                self._write_provisional_locked()
+                return False
+            if not self._entries or any(
+                item["native_result"] != 0 or item["already_present"] is not False
+                for item in self._entries.values()
+            ):
+                self._failed = "put_incomplete"
+                self._write_provisional_locked()
+                return False
+            document = self._producer_document_locked()
+            return self._atomic_seal_locked(document)
+
+    def _key_id(self, key):
+        config = self._config
+        return _shared_cache_id(
+            config["key_salt"].encode(),
+            b"phala.shared-cache-key.v1\0",
+            config["case_id"], config["epoch"], config["tenant_id"], key,
+        )
+
+    @property
+    def sealed_path(self):
+        return self._sealed_path
+
+    @staticmethod
+    def _size_bytes(size):
+        if isinstance(size, (list, tuple)):
+            return sum(int(part) for part in size)
+        return int(size)
+
+    def _producer_document_locked(self):
+        config = self._config
+        entries = sorted(self._entries.values(), key=lambda item: (item["rank"], item["component"], item["page_index"], item["key_id"]))
+        doc = {
+            "schema": "phala.shared-cache.seed-manifest.v1",
+            "run_id": config["run_id"],
+            "seed_id": config["seed_id"],
+            "case_id": config["case_id"],
+            "epoch": config["epoch"],
+            "tenant_id": config["tenant_id"],
+            "backend_tag": config["backend_tag"],
+            "model_revision": config["model_revision"],
+            "kv_schema": config["kv_schema"],
+            "d_worker_id": config["d_worker_id"],
+            "store_instance_id": config["store_instance_id"],
+            "request_id": config["request_id"],
+            "request_ref": config["request_ref"],
+            "operation_id": self._operation_id,
+            "rank": config["rank"],
+            "page_range": config["page_range"],
+            "key_salt": config["key_salt"],
+            "required_components": config["required_components"],
+            "max_snapshots": config.get("max_snapshots", 4),
+            "max_duration_ms": config.get("snapshot_max_duration_ms", 120000),
+            "max_response_bytes": config.get("max_response_bytes", 1048576),
+            "max_total_logical_bytes": config["max_logical_bytes"],
+            "key_count": len(entries),
+            "logical_bytes": self._total_bytes,
+            "keys": [
+                {
+                    "key_id": item["key_id"],
+                    "key": item["key"],
+                    "rank": item["rank"],
+                    "component": item["component"],
+                    "page_index": item["page_index"],
+                    "logical_bytes": item["logical_bytes"],
+                }
+                for item in entries
+            ],
+            "put_results": [
+                {
+                    "key_id": item["key_id"],
+                    "native_result": item["native_result"],
+                    "already_present": item["already_present"],
+                }
+                for item in entries
+            ],
+            "backup_ack": {"operation_id": self._operation_id, "complete": True},
+        }
+        canonical = json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        doc["manifest_sha256"] = __import__("hashlib").sha256(canonical).hexdigest()
+        return doc
+
+    def _write_provisional_locked(self):
+        if self._fd is None:
+            return
+        doc = {
+            "schema": "phala.shared-cache.seed-provisional.v1",
+            "request_id": self._config["request_id"],
+            "operation_id": self._operation_id,
+            "failed": self._failed,
+            "events": self._events,
+            "entries": list(self._entries.values()),
+        }
+        raw = json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        if len(raw) > int(self._config["max_artifact_bytes"]):
+            self._failed = "artifact_budget_exceeded"
+            return
+        try:
+            os.lseek(self._fd, 0, os.SEEK_SET)
+            os.ftruncate(self._fd, 0)
+            _write_all(self._fd, raw)
+            os.fsync(self._fd)
+        except OSError:
+            self._failed = "artifact_write_failed"
+
+    def _atomic_seal_locked(self, document):
+        raw = json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        if len(raw) > int(self._config["max_artifact_bytes"]):
+            self._failed = "artifact_budget_exceeded"
+            self._write_provisional_locked()
+            return False
+        temp_path = self._sealed_path + ".tmp"
+        if os.path.lexists(temp_path) or os.path.lexists(self._sealed_path):
+            self._failed = "artifact_exists"
+            self._write_provisional_locked()
+            return False
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(temp_path, flags, 0o600)
+        try:
+            _write_all(fd, raw)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        try:
+            os.link(temp_path, self._sealed_path, follow_symlinks=False)
+            os.unlink(temp_path)
+            dir_fd = os.open(self._config["output_dir"], os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except Exception:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+            self._failed = "seal_failed"
+            self._write_provisional_locked()
+            return False
+        os.close(self._fd)
+        self._fd = None
+        self._sealed = True
+        return True
+
+
+shared_cache_seed_capture = SharedCacheSeedCapture()
 
 
 shared_cache_diagnostics = SharedCacheDiagnostics(

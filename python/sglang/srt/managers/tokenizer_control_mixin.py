@@ -60,6 +60,8 @@ from sglang.srt.managers.io_struct import (
     ScaleElasticEPReqOutput,
     SendWeightsToRemoteInstanceReqInput,
     SendWeightsToRemoteInstanceReqOutput,
+    SharedCacheClearMemoryReqInput,
+    SharedCacheClearMemoryReqOutput,
     SetInternalStateReq,
     SetInternalStateReqOutput,
     SlowDownReqInput,
@@ -76,6 +78,11 @@ from sglang.srt.managers.io_struct import (
     UpdateWeightVersionReqOutput,
 )
 from sglang.srt.managers.load_snapshot import LoadSnapshot
+from sglang.srt.managers.shared_cache_control import (
+    SharedCacheControlError,
+    validate_clear_selectors,
+    validate_single_decode_writer,
+)
 from sglang.srt.runtime_context import (
     get_lora,
     get_parallel,
@@ -120,6 +127,7 @@ _COMMUNICATOR_SPECS = [
     ("remove_external_corpus", RemoveExternalCorpusReqOutput),
     ("list_external_corpora", ListExternalCorporaReqOutput),
     ("clear_hicache_storage", ClearHiCacheReqOutput),
+    ("clear_shared_cache_memory", SharedCacheClearMemoryReqOutput),
     ("attach_hicache_storage", AttachHiCacheStorageReqOutput),
     ("detach_hicache_storage", DetachHiCacheStorageReqOutput),
     ("profile", ProfileReqOutput),
@@ -317,6 +325,33 @@ class TokenizerControlMixin:
         return (await self.clear_hicache_storage_communicator(ClearHiCacheReqInput()))[
             0
         ]
+
+    async def clear_shared_cache_memory(
+        self: TokenizerManager,
+        manifest_id: str,
+        manifest_sha256: str,
+        request_id: str,
+    ) -> SharedCacheClearMemoryReqOutput:
+        try:
+            validate_clear_selectors(manifest_id, manifest_sha256, request_id)
+            validate_single_decode_writer(
+                self.server_args, getattr(self, "disaggregation_mode", None)
+            )
+        except SharedCacheControlError as exc:
+            return SharedCacheClearMemoryReqOutput(success=False, reason=exc.reason)
+        self.auto_create_handle_loop()
+        results = await self.clear_shared_cache_memory_communicator(
+            SharedCacheClearMemoryReqInput(
+                manifest_id=manifest_id,
+                manifest_sha256=manifest_sha256,
+                request_id=request_id,
+            )
+        )
+        if len(results) != 1:
+            return SharedCacheClearMemoryReqOutput(
+                success=False, reason="unsupported_topology", unknown=True
+            )
+        return results[0]
 
     async def attach_hicache_storage(
         self: TokenizerManager,

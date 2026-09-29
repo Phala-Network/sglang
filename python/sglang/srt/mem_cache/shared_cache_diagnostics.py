@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import re
 import stat
@@ -61,6 +62,7 @@ class SharedCacheDiagnostics:
         keys_per_event=32,
         max_requests=32,
         max_duration_ms=60000,
+        reader_manifest=None,
         log=logger,
     ):
         safe_label = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
@@ -108,6 +110,12 @@ class SharedCacheDiagnostics:
         self._dropped_bytes = 0
         self._dropped_requests = 0
         self._capture_failures = 0
+        # Fixed at process startup; never taken from a request or reread from env.
+        self._reader_manifest = reader_manifest
+        self._reader_attempted = False
+        self._reader_lock = threading.Lock()
+        self._reader_identity = None
+        self._seed_source_request_ref = None
 
     @property
     def capture_failures(self):
@@ -175,10 +183,44 @@ class SharedCacheDiagnostics:
             return None
         return self._key_id(value, tenant_id)
 
-    def arm_from_manifest(self, path):
+    def arm_from_manifest(self, path, *, reader_identity=None):
         """Load the sealed seed key allowlist once into the default-off collector."""
         try:
             document = _read_private_json(path, maximum=64 * 1024)
+            if reader_identity is not None:
+                if document.get("schema") != "phala.shared-cache.seed-manifest.v2":
+                    return False
+                if not re.fullmatch(
+                    r"[0-9a-f]{64}", str(document.get("request_ref", ""))
+                ):
+                    return False
+                if any(
+                    not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", str(document.get(k, "")))
+                    for k in ("case_id", "epoch")
+                ):
+                    return False
+                if (
+                    not isinstance(document.get("key_salt"), str)
+                    or not 1 <= len(document["key_salt"].encode()) <= 256
+                ):
+                    return False
+                if any(document.get(k) != v for k, v in reader_identity.items()):
+                    return False
+                duration = document.get("max_duration_ms")
+                if (
+                    type(duration) is not int
+                    or not 1 <= duration <= _SEED_MAX_DURATION_MS
+                ):
+                    return False
+                # Older sealed v2 producers have no absolute expiry. When present,
+                # an expiry is an additional bound, never a replacement window.
+                expiry = document.get("expires_at")
+                if expiry is not None and (
+                    type(expiry) not in (int, float)
+                    or not math.isfinite(expiry)
+                    or not time.time() < expiry
+                ):
+                    return False
             if document.get("schema") not in (
                 "phala.shared-cache.seed-manifest.v1",
                 "phala.shared-cache.seed-manifest.v2",
@@ -243,6 +285,13 @@ class SharedCacheDiagnostics:
                     ),
                 )
                 self._max_requests = 1
+                if reader_identity is not None:
+                    self._max_requests = 32
+                    self._max_keys = min(_MAX_KEYS, len(keys) * 32 * 4)
+                    self._max_bytes = min(_MAX_BYTES, 1048576)
+                    self._max_events = min(_MAX_EVENTS, 1024)
+                    self._reader_identity = dict(reader_identity)
+                    self._seed_source_request_ref = document["request_ref"]
                 self._max_duration_s = (
                     min(
                         _MAX_DURATION_MS,
@@ -251,10 +300,105 @@ class SharedCacheDiagnostics:
                     / 1000
                 )
                 self._started_at = time.monotonic()
+                if reader_identity is not None and expiry is not None:
+                    self._max_duration_s = min(
+                        self._max_duration_s, max(0, expiry - time.time())
+                    )
                 self.enabled = True
             return True
         except Exception:
             return False
+
+    def reader_context(self, operation, controller):
+        """One-shot late arm at actual queued hybrid prefetch, before any GET.
+
+        The returned context belongs to this operation, including after cancellation;
+        no process/thread-local current-request state crosses the IO queues.
+        """
+        if not self._reader_manifest:
+            return None
+        try:
+            handle = operation.handle
+            if type(getattr(handle, "bootstrap_room", None)) is not int:
+                return None
+            trusted_ref = _trusted_reader_ref(
+                getattr(handle, "pd_diagnostic_request_ref", None)
+            )
+            if not trusted_ref:
+                return None
+            with self._reader_lock:
+                if not self._reader_attempted:
+                    self._reader_attempted = True
+                    store = controller.storage_backend
+                    config = controller.storage_config
+                    schema = controller.mem_pool_host.storage_schema
+                    if config.tp_size != 1 or config.pp_size != 1:
+                        return None
+                    transfers = operation.pool_transfers or []
+                    if {str(x.name) for x in transfers} != {
+                        str(name) for name in store.registered_pools
+                    }:
+                        return None
+                    components = []
+                    for transfer in transfers:
+                        _, multiplier = store._get_hybrid_page_component_keys(
+                            operation.hash_value[:1], transfer
+                        )
+                        components.extend(
+                            f"{transfer.name}:{i}" for i in range(multiplier)
+                        )
+                    identity = {
+                        "backend_tag": config.extra_config["extra_backend_tag"],
+                        "model_revision": schema["revision"],
+                        "kv_schema": hashlib.sha256(
+                            json.dumps(
+                                schema, sort_keys=True, separators=(",", ":")
+                            ).encode()
+                        ).hexdigest(),
+                        "required_components": sorted(components),
+                        "tenant_id": store.config.tenant_id,
+                        "rank": config.tp_rank,
+                    }
+                    if not self.arm_from_manifest(
+                        self._reader_manifest, reader_identity=identity
+                    ):
+                        return None
+                    self.record_schema(schema)
+                    self._emit(
+                        {
+                            "event": "reader_capture_armed",
+                            "kv_schema": identity["kv_schema"],
+                            "storage_schema": schema,
+                            "seed_source_request_ref": self._seed_source_request_ref,
+                            "max_duration_ms": int(self._max_duration_s * 1000),
+                            "max_requests": self._max_requests,
+                            "allowlist_keys": len(self._key_ids),
+                            "max_key_observations": self._max_keys,
+                            "max_events": self._max_events,
+                            "max_log_bytes": self._max_bytes,
+                        }
+                    )
+                if self._reader_identity is None or not self._capture_open():
+                    return None
+                tenant = controller.storage_backend.config.tenant_id
+                request_ref = self._register_request(handle.rid, tenant)
+                if request_ref is None:
+                    self.flush_truncation()
+                    return None
+                return {
+                    "request_id": request_ref,
+                    **trusted_ref,
+                    "attempt_id": self._operation_id(
+                        f"{handle.rid}:{handle.attempt_id}", tenant
+                    ),
+                    "operation_id": self._operation_id(operation.id, tenant),
+                    "room": handle.bootstrap_room,
+                    "kv_schema": self._reader_identity["kv_schema"],
+                    "seed_source_request_ref": self._seed_source_request_ref,
+                }
+        except Exception:
+            self.record_capture_failure()
+            return None
 
     def _request_id(self, value, tenant_id="default"):
         return self._stable_id(b"phala.shared-cache-request.v1\0", tenant_id, value)
@@ -350,8 +494,12 @@ class SharedCacheDiagnostics:
         results,
         exist_results=None,
         tenant_id="default",
+        reader_context=None,
+        reader_cancelled=False,
     ):
         if not self._capture_open():
+            return
+        if not is_set and self._reader_identity is not None and not reader_context:
             return
         limit = min(len(keys), self._keys_per_event)
         components = []
@@ -390,6 +538,7 @@ class SharedCacheDiagnostics:
             else:
                 component["read_bytes"] = max(0, result)
                 component["short_read"] = 0 < result < size
+                component["read_complete"] = result == size and size > 0
             components.append(component)
         truncated = len(keys) > limit or self._keys_hashed >= self._max_keys
         truncated = truncated or filtered_keys > 0
@@ -401,6 +550,11 @@ class SharedCacheDiagnostics:
                     "components": components,
                     "filtered_keys": filtered_keys,
                     "truncated": truncated,
+                    **(
+                        dict(reader_context, reader_cancelled=bool(reader_cancelled))
+                        if not is_set and reader_context
+                        else {}
+                    ),
                 },
                 key_count=len(components),
             )
@@ -448,6 +602,7 @@ class SharedCacheDiagnostics:
         completed_tokens,
         accepted,
         tenant_id="default",
+        reader_context=None,
     ):
         if not self._capture_open():
             return
@@ -462,6 +617,7 @@ class SharedCacheDiagnostics:
                 "requested_tokens": int(requested_tokens),
                 "completed_tokens": int(completed_tokens),
                 "accepted": bool(accepted),
+                **(reader_context or {}),
             }
         )
         self.flush_truncation()
@@ -510,6 +666,7 @@ class SharedCacheDiagnostics:
         sender_mode,
         completed,
         tenant_id="default",
+        reader_request_ref=None,
     ):
         if not self._capture_open():
             return
@@ -521,6 +678,7 @@ class SharedCacheDiagnostics:
             {
                 "event": "c128_transfer",
                 "request_id": request_ref,
+                **_trusted_reader_ref(reader_request_ref),
                 "room": int(room),
                 "index_count": int(index_count),
                 "online": bool(online),
@@ -529,6 +687,15 @@ class SharedCacheDiagnostics:
             }
         )
         self.flush_truncation()
+
+
+def _trusted_reader_ref(value):
+    # The scheduler only copies this from the existing authenticated PD field.
+    return (
+        {"reader_request_ref": value}
+        if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
+        else {}
+    )
 
 
 def _read_private_json(path, *, maximum):
@@ -1434,4 +1601,5 @@ shared_cache_diagnostics = SharedCacheDiagnostics(
     keys_per_event=envs.SGLANG_MOONCAKE_SHARED_CACHE_DIAGNOSTICS_KEYS_PER_EVENT.get(),
     max_requests=envs.SGLANG_MOONCAKE_SHARED_CACHE_DIAGNOSTICS_MAX_REQUESTS.get(),
     max_duration_ms=envs.SGLANG_MOONCAKE_SHARED_CACHE_DIAGNOSTICS_MAX_DURATION_MS.get(),
+    reader_manifest=os.getenv("SGLANG_SHARED_CACHE_READER_MANIFEST"),
 )

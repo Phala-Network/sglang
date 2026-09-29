@@ -1031,6 +1031,10 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
                 io_results = self._get_batch_zero_copy_impl(
                     key_strs, ptr_list, element_size_list
                 )
+            reader_info = (
+                (getattr(extra_info, "extra_info", None) or {}) if not is_set else {}
+            )
+            reader_cancelled = reader_info.get("shared_cache_reader_cancelled")
             shared_cache_diagnostics.record_io(
                 is_set=is_set,
                 pool=transfer.name,
@@ -1038,6 +1042,8 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
                 sizes=element_size_list,
                 results=io_results,
                 exist_results=exist_result if is_set else None,
+                reader_context=reader_info.get("shared_cache_reader_context"),
+                reader_cancelled=reader_cancelled() if reader_cancelled else False,
                 tenant_id=getattr(
                     getattr(self, "config", None), "tenant_id", DEFAULT_TENANT_ID
                 ),
@@ -1045,15 +1051,17 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
             page_io_results = io_results
             if not is_set:
                 page_io_results = [
-                    1
-                    if index < len(element_size_list)
-                    and result
-                    == (
-                        sum(int(size) for size in element_size_list[index])
-                        if isinstance(element_size_list[index], (list, tuple))
-                        else int(element_size_list[index])
+                    (
+                        1
+                        if index < len(element_size_list)
+                        and result
+                        == (
+                            sum(int(size) for size in element_size_list[index])
+                            if isinstance(element_size_list[index], (list, tuple))
+                            else int(element_size_list[index])
+                        )
+                        else -1
                     )
-                    else -1
                     for index, result in enumerate(io_results)
                 ]
             results[transfer.name] = self._batch_postprocess(

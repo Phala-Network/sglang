@@ -36,7 +36,10 @@ from sglang.srt.mem_cache.hicache_storage import (
 from sglang.srt.mem_cache.l2_transfer import L2Transfer
 from sglang.srt.mem_cache.pool_host import HostPoolGroup, PoolEntry
 from sglang.srt.mem_cache.pool_host.mha import MHATokenToKVPoolHost
-from sglang.srt.mem_cache.shared_cache_diagnostics import shared_cache_seed_capture
+from sglang.srt.mem_cache.shared_cache_diagnostics import (
+    shared_cache_diagnostics,
+    shared_cache_seed_capture,
+)
 from sglang.srt.mem_cache.storage_backend_config import (
     load_storage_backend_extra_config,
 )
@@ -700,6 +703,24 @@ class HybridCacheController(BaseHiCacheController):
                 )
         return host_indices, device_indices, resolved_pool_transfers
 
+    def _prefetch_extra_info(self, operation, prefix_keys=None):
+        if not hasattr(operation, "shared_cache_reader_context"):
+            operation.shared_cache_reader_context = (
+                shared_cache_diagnostics.reader_context(operation, self)
+            )
+        context = operation.shared_cache_reader_context
+        return HiCacheStorageExtraInfo(
+            prefix_keys=prefix_keys,
+            extra_info=(
+                {
+                    "shared_cache_reader_context": context,
+                    "shared_cache_reader_cancelled": operation.is_terminated,
+                }
+                if context
+                else None
+            ),
+        )
+
     def _page_transfer(self, operation: PrefetchOperation) -> bool:
         # KV pools and KV-derived pools first — determines actual completed page count
         kv_completed_pages = super()._page_transfer(operation)
@@ -735,7 +756,9 @@ class HybridCacheController(BaseHiCacheController):
             )
             self._sync_trailing_keys(transfers_nonkv, sidecar_hashes, sidecar_hit_pages)
             self._resolve_sidecar_nonkv_derived_pool_transfers(operation)
-            results = self.storage_backend.batch_get_v2(transfers_nonkv)
+            results = self.storage_backend.batch_get_v2(
+                transfers_nonkv, self._prefetch_extra_info(operation)
+            )
             pool_hits = count_pool_hits(results)
         # Emit PrefetchAck to prefetch_sync_queue, even the operation has been canceled by the
         # scheduler thread.  The prefetch sync thread expects the same number of PrefetchAck objects

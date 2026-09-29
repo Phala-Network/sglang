@@ -982,7 +982,9 @@ class Req(ReqDllmMixin):
     ):
         # Input and output info
         self.rid = rid
-        self.cache_request_handle = CacheRequestHandle(rid=rid, attempt_id=0)
+        self.cache_request_handle = CacheRequestHandle(
+            rid=rid, attempt_id=0, bootstrap_room=bootstrap_room
+        )
         self.origin_input_ids = origin_input_ids
         self.origin_input_ids_unpadded = (
             origin_input_ids_unpadded

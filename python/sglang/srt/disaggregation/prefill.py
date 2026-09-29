@@ -1529,6 +1529,7 @@ class SchedulerDisaggregationPrefillMixin:
                 return
             shared_cache_diagnostics.record_c128_transfer(
                 request_id=req.rid,
+                reader_request_ref=getattr(req, "pd_diagnostic_request_ref", None),
                 room=transfer["room"],
                 index_count=transfer["index_count"],
                 online=transfer["online"],

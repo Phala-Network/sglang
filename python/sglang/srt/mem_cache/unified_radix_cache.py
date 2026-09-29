@@ -2260,6 +2260,7 @@ class UnifiedRadixCache(BasePrefixCache):
         ):
             shared_cache_diagnostics.record_prefetch(
                 request_id=request.rid,
+                reader_context=getattr(operation, "shared_cache_reader_context", None),
                 requested_tokens=len(prefetch_key),
                 completed_tokens=completed_tokens,
                 accepted=False,
@@ -2278,6 +2279,7 @@ class UnifiedRadixCache(BasePrefixCache):
 
         shared_cache_diagnostics.record_prefetch(
             request_id=request.rid,
+            reader_context=getattr(operation, "shared_cache_reader_context", None),
             requested_tokens=len(prefetch_key),
             completed_tokens=completed_tokens,
             accepted=True,

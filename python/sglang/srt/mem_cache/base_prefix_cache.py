@@ -45,6 +45,10 @@ if TYPE_CHECKING:
 class CacheRequestHandle:
     rid: str
     attempt_id: int
+    bootstrap_room: Optional[int] = dataclasses.field(default=None, compare=False)
+    pd_diagnostic_request_ref: Optional[str] = dataclasses.field(
+        default=None, compare=False
+    )
 
 
 class CacheRequestOutcome(Enum):

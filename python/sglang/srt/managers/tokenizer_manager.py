@@ -861,6 +861,9 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             raise ValueError("Invalid internal health marker")
         # Overwrite any attribute supplied by an external request object.
         obj._internal_health_check = internal_health_check
+        from sglang.srt.disaggregation.mooncake.pd_transfer_diagnostics import bind_pd_ingress
+
+        bind_pd_ingress(obj, request, self.disaggregation_mode)
 
         # Normalize the request
         obj.normalize_batch_and_arguments()
@@ -1552,6 +1555,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 bootstrap_host=obj.bootstrap_host,
                 bootstrap_port=obj.bootstrap_port,
                 bootstrap_room=bootstrap_room,
+                pd_diagnostic_request_ref=getattr(obj, "_pd_diagnostic_request_ref", None),
                 lora_id=obj.lora_id,
                 input_embeds=input_embeds,
                 positional_embed_overrides=obj.positional_embed_overrides,

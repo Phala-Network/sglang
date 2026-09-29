@@ -729,6 +729,12 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
             bootstrap_addr=_bootstrap_addr(req),
             bootstrap_room=req.bootstrap_room,
         )
+        from sglang.srt.disaggregation.mooncake.pd_transfer_diagnostics import pd_batch_diagnostics
+
+        pd_batch_diagnostics.bind_worker(
+            req.rid, req.bootstrap_room, "decode", self.tp_rank,
+            getattr(req, "pd_diagnostic_request_ref", None),
+        )
 
         decode_req = DecodeRequest(
             req=req, kv_receiver=kv_receiver, is_rebootstrap=is_rebootstrap

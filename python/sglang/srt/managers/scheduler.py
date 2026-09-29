@@ -2920,6 +2920,7 @@ class Scheduler(
             return
 
         self._maybe_namespace_elastic_radix_cache(req)
+        req.pd_diagnostic_request_ref = recv_req.pd_diagnostic_request_ref
 
         if mm_input_error is not None:
             req.set_finish_with_abort(

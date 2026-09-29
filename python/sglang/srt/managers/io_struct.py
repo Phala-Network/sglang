@@ -888,6 +888,7 @@ class GenerateReqInput:
         # This avoids subtle bugs where different call sites get divergent objects.
         cache = self.__dict__.setdefault("_sub_obj_cache", {})
         if i in cache:
+            cache[i]._pd_diagnostic_request_ref = getattr(self, "_pd_diagnostic_request_ref", None)
             return cache[i]
         sub = GenerateReqInput(
             rid=self.rid[i],
@@ -977,10 +978,13 @@ class GenerateReqInput:
             ),
         )
         cache[i] = sub
+        sub._pd_diagnostic_request_ref = getattr(self, "_pd_diagnostic_request_ref", None)
         return sub
 
 
 class TokenizedGenerateReqInput(BaseReq, kw_only=True):
+    # Server-derived allowlisted HMAC, never copied from public JSON fields.
+    pd_diagnostic_request_ref: Optional[str] = None
     # Set only by TokenizerManager's internal health call, never from HTTP data.
     is_internal_health_check: bool = False
     input_text: Optional[Union[str, List[Union[str, List[str]]]]]

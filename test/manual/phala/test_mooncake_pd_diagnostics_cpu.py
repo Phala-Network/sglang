@@ -25,6 +25,7 @@ def load_manager(namespace):
     )
     names = {
         "_transfer_data",
+        "_transfer_native_batch",
         "_log_pd_transfer_result",
         "_send_kvcache_generic",
         "send_kvcache_slice",

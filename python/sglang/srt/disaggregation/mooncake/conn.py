@@ -657,8 +657,9 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
         src_addrs, dst_addrs, lengths = zip(*transfer_blocks)
         diagnostic = envs.SGLANG_MOONCAKE_PD_TRANSFER_DIAGNOSTICS.get()
         try:
-            ret = self.engine.batch_transfer_sync(
-                mooncake_session_id, list(src_addrs), list(dst_addrs), list(lengths)
+            ret = self._transfer_native_batch(
+                mooncake_session_id, list(src_addrs), list(dst_addrs), list(lengths),
+                diagnostic_room, diagnostic_kind,
             )
         except Exception:
             if diagnostic:
@@ -671,6 +672,21 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                 mooncake_session_id, lengths, ret, diagnostic_room, diagnostic_kind
             )
         return ret
+
+    def _transfer_native_batch(self, peer, sources, destinations, lengths, room, kind):
+        from sglang.srt.disaggregation.mooncake.pd_transfer_diagnostics import pd_batch_diagnostics
+
+        if pd_batch_diagnostics.active_room(room):
+            record = self.engine.batch_transfer_sync_diagnostic(
+                peer, sources, destinations, lengths
+            )
+            if record is not None:
+                pd_batch_diagnostics.record_native(
+                    room, kind, lengths, record, self.kv_args.engine_rank
+                )
+                return record["result"]
+            pd_batch_diagnostics.native_unavailable(room)
+        return self.engine.batch_transfer_sync(peer, sources, destinations, lengths)
 
     def _log_pd_transfer_result(self, peer, lengths, result, room, kind):
         # Only bounded, non-content fields. No addresses, raw session ID or exception.
@@ -1309,8 +1325,9 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             length_list = [heads_bytes_per_token_to_send] * total_slices
             diagnostic = envs.SGLANG_MOONCAKE_PD_TRANSFER_DIAGNOSTICS.get()
             try:
-                ret = self.engine.batch_transfer_sync(
-                    mooncake_session_id, src_addr_list, dst_addr_list, length_list
+                ret = self._transfer_native_batch(
+                    mooncake_session_id, src_addr_list, dst_addr_list, length_list,
+                    diagnostic_room, "kv",
                 )
             except Exception:
                 if diagnostic:

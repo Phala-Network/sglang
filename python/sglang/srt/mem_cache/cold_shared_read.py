@@ -60,7 +60,9 @@ class ColdSharedReadTrace:
     def operation_begin(self):
         with self._lock:
             if self._terminal is not None:
-                raise RuntimeError("cold shared-read operation issued after request terminal")
+                raise RuntimeError(
+                    "cold shared-read operation issued after request terminal"
+                )
             self._operations += 1
 
     def operation_end(self):
@@ -94,7 +96,12 @@ class ColdSharedReadTrace:
             self._maybe_end_locked()
 
     def _maybe_end_locked(self):
-        if self._ended or self._terminal is None or self._operations or self._get_inflight:
+        if (
+            self._ended
+            or self._terminal is None
+            or self._operations
+            or self._get_inflight
+        ):
             return
         with _lock:
             unattributed = _unattributed_get_calls - self._unattributed_start

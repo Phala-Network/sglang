@@ -1029,8 +1029,10 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
                     shared_cache_seed_capture.fail_closed()
             else:
                 reader_info = (
-                    getattr(extra_info, "extra_info", None) or {}
-                ) if extra_info else {}
+                    (getattr(extra_info, "extra_info", None) or {})
+                    if extra_info
+                    else {}
+                )
                 io_results = self._get_batch_zero_copy_impl(
                     key_strs,
                     ptr_list,
@@ -1214,7 +1216,9 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
             buffer_sizes,
             (getattr(extra_info, "extra_info", None) or {}).get(
                 "cold_shared_read_trace"
-            ) if extra_info else None,
+            )
+            if extra_info
+            else None,
         )
         end_time = time.perf_counter()
 
@@ -1523,9 +1527,7 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
                     key_strs, buffer_ptrs, buffer_sizes
                 )
             else:
-                results = self.store.batch_get_into(
-                    key_strs, buffer_ptrs, buffer_sizes
-                )
+                results = self.store.batch_get_into(key_strs, buffer_ptrs, buffer_sizes)
         except Exception:
             if cold_shared_read_trace is not None:
                 cold_shared_read_trace.get_end(error=True)

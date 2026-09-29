@@ -89,7 +89,9 @@ class ColdSharedReadInstalledTest(unittest.TestCase):
     def test_scheduler_and_radix_guards(self):
         trace = ColdSharedReadTrace("rid", "fresh", None, 0)
         handle = CacheRequestHandle("rid", 0, cold_shared_read_trace=trace)
-        retry = types.SimpleNamespace(cancelled=[], cancel=lambda rid: retry.cancelled.append(rid))
+        retry = types.SimpleNamespace(
+            cancelled=[], cancel=lambda rid: retry.cancelled.append(rid)
+        )
         cache = types.SimpleNamespace(
             enable_storage=True,
             cache_controller=object(),
@@ -103,7 +105,9 @@ class ColdSharedReadInstalledTest(unittest.TestCase):
             cold_shared_read_bypass=True,
             init_next_round_input=lambda tree, cow_mamba: calls.append("local_match"),
         )
-        scheduler = types.SimpleNamespace(enable_hicache_storage=True, tree_cache=object())
+        scheduler = types.SimpleNamespace(
+            enable_hicache_storage=True, tree_cache=object()
+        )
         Scheduler._prefetch_kvcache(scheduler, request)
         self.assertEqual(calls, ["local_match"])
         trace.terminal("finished")
@@ -120,17 +124,13 @@ class ColdSharedReadInstalledTest(unittest.TestCase):
             cached_tokens_storage=0,
             cached_tokens=0,
         )
-        details = SchedulerOutputStreamer.get_cached_tokens_details(
-            streamer, request
-        )
+        details = SchedulerOutputStreamer.get_cached_tokens_details(streamer, request)
         self.assertEqual(
             {name: details[name] for name in ("device", "host", "storage")},
             {"device": 0, "host": 0, "storage": 0},
         )
         request.cached_tokens_host = 8
-        details = SchedulerOutputStreamer.get_cached_tokens_details(
-            streamer, request
-        )
+        details = SchedulerOutputStreamer.get_cached_tokens_details(streamer, request)
         self.assertEqual(details["host"], 8)
         request.cold_shared_read_bypass = False
         request.cached_tokens_host = 0

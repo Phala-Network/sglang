@@ -4,7 +4,6 @@ import pathlib
 import threading
 import unittest
 
-
 SOURCE = (
     pathlib.Path(__file__).resolve().parents[1]
     / "srt"
@@ -17,7 +16,9 @@ spec.loader.exec_module(module)
 
 
 def events(records):
-    return [json.loads(line.split("cold_shared_read ", 1)[1]) for line in records.output]
+    return [
+        json.loads(line.split("cold_shared_read ", 1)[1]) for line in records.output
+    ]
 
 
 class ColdSharedReadTest(unittest.TestCase):

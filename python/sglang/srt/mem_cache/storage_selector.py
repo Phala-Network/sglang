@@ -72,7 +72,9 @@ class EffectiveStorageSelector:
             "backend_namespace": self.backend_namespace,
             "rank": dict(self.rank),
             "components": [dict(item) for item in self.components],
-            "registered_components": [dict(item) for item in self.registered_components],
+            "registered_components": [
+                dict(item) for item in self.registered_components
+            ],
             "required_components": list(self.required_components),
             "model_revision": self.model_revision,
             "draft_swa": None if self.draft_swa is None else dict(self.draft_swa),
@@ -91,10 +93,18 @@ def build_effective_storage_selector(
         (spec for spec in sidecar_pool_specs if spec.pool_name == PoolName.DRAFT_SWA),
         None,
     )
-    if controller is None or not hasattr(controller, "tp_rank") or not hasattr(controller, "pp_rank"):
-        raise RuntimeError("effective shared selector requires controller TP/PP rank identity")
+    if (
+        controller is None
+        or not hasattr(controller, "tp_rank")
+        or not hasattr(controller, "pp_rank")
+    ):
+        raise RuntimeError(
+            "effective shared selector requires controller TP/PP rank identity"
+        )
     if not hasattr(controller, "get_attn_cp_rank_and_size"):
-        raise RuntimeError("effective shared selector requires controller attention-CP identity")
+        raise RuntimeError(
+            "effective shared selector requires controller attention-CP identity"
+        )
     rank = {
         "tp_rank": int(controller.tp_rank),
         "pp_rank": int(controller.pp_rank),
@@ -123,8 +133,7 @@ def build_effective_storage_selector(
     components = tuple(
         pool_descriptor(entry.name, entry)
         for entry in host_pool_group.entries
-        if entry.name != PoolName.DRAFT_SWA
-        and not str(entry.name).startswith("draft")
+        if entry.name != PoolName.DRAFT_SWA and not str(entry.name).startswith("draft")
     )
     encoded = json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()
     # These identities are derived from the constructed host entries and the
@@ -134,8 +143,10 @@ def build_effective_storage_selector(
         for entry in host_pool_group.entries
         if entry.name != PoolName.DRAFT_SWA
         and not str(entry.name).startswith("draft")
-        and (str(entry.name) == str(PoolName.SWA)
-             or str(entry.name).startswith("deepseek_v4_"))
+        and (
+            str(entry.name) == str(PoolName.SWA)
+            or str(entry.name).startswith("deepseek_v4_")
+        )
     )
     registered_components = tuple(
         {"pool": name, "component_count": 1} for name in component_names
@@ -172,6 +183,3 @@ def build_effective_storage_selector(
         model_revision=schema.get("revision"),
         draft_swa=draft_desc,
     )
-
-
-

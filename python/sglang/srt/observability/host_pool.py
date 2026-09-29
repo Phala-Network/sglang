@@ -311,6 +311,7 @@ def _scheduler_rank(scheduler, rank):
         value = getattr(process_state, rank, None)
     return _integer(value)
 
+
 def host_pool_observability(scheduler, *, role):
     """Return schema v1, scoped to this returned scheduler worker and snapshot."""
     started = time.time_ns() // 1_000_000
@@ -331,10 +332,18 @@ def host_pool_observability(scheduler, *, role):
             "tp_rank": _scheduler_rank(scheduler, "tp_rank"),
             "pp_rank": _scheduler_rank(scheduler, "pp_rank"),
             "dp_rank": _scheduler_rank(scheduler, "dp_rank"),
-            "tp_size": _integer(getattr(getattr(scheduler, "ps", None), "tp_size", None)),
-            "pp_size": _integer(getattr(getattr(scheduler, "ps", None), "pp_size", None)),
-            "dp_size": _integer(getattr(getattr(scheduler, "ps", None), "dp_size", None)),
-            "dp_disabled": _scheduler_rank(scheduler, "dp_rank") is None or _integer(getattr(getattr(scheduler, "ps", None), "dp_size", None)) in (None, 1),
+            "tp_size": _integer(
+                getattr(getattr(scheduler, "ps", None), "tp_size", None)
+            ),
+            "pp_size": _integer(
+                getattr(getattr(scheduler, "ps", None), "pp_size", None)
+            ),
+            "dp_size": _integer(
+                getattr(getattr(scheduler, "ps", None), "dp_size", None)
+            ),
+            "dp_disabled": _scheduler_rank(scheduler, "dp_rank") is None
+            or _integer(getattr(getattr(scheduler, "ps", None), "dp_size", None))
+            in (None, 1),
             "source": "scheduler.ps",
         },
         "capture_started_unix_ms": started,
@@ -588,7 +597,3 @@ def host_pool_observability(scheduler, *, role):
     report["seed_schema"] = _seed_schema(scheduler)
     report["capture_finished_unix_ms"] = time.time_ns() // 1_000_000
     return report
-
-
-
-

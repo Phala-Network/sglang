@@ -610,12 +610,23 @@ class UnifiedRadixCache(BasePrefixCache):
 
     def refresh_effective_storage_selector(self) -> None:
         """Publish read-only effective target schema after pool construction."""
-        if self.host_pool_group is None or not hasattr(self.host_pool_group, "storage_schema"):
-            self.effective_storage_selector = None; return
-        from sglang.srt.mem_cache.storage_selector import build_effective_storage_selector
+        if self.host_pool_group is None or not hasattr(
+            self.host_pool_group, "storage_schema"
+        ):
+            self.effective_storage_selector = None
+            return
+        from sglang.srt.mem_cache.storage_selector import (
+            build_effective_storage_selector,
+        )
+
         if self.cache_controller is None:
-            self.effective_storage_selector = None; return
-        self.effective_storage_selector = build_effective_storage_selector(host_pool_group=self.host_pool_group, sidecar_pool_specs=self.sidecar_pool_specs, controller=self.cache_controller)
+            self.effective_storage_selector = None
+            return
+        self.effective_storage_selector = build_effective_storage_selector(
+            host_pool_group=self.host_pool_group,
+            sidecar_pool_specs=self.sidecar_pool_specs,
+            controller=self.cache_controller,
+        )
 
     def release_host_resources(self) -> None:
         self._drain_pending_ready_counts()

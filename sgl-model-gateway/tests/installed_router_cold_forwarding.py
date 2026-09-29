@@ -144,15 +144,22 @@ def post(port, payload, headers=None):
 
 
 def wait_ready(port, process):
-    for _ in range(150):
+    deadline = time.monotonic() + 30
+    last_status = "router not listening"
+    while time.monotonic() < deadline:
         if process.poll() is not None:
             raise AssertionError(f"router exited early: {process.returncode}")
         try:
-            with urlopen(f"http://127.0.0.1:{port}/health", timeout=1):
+            with urlopen(f"http://127.0.0.1:{port}/readiness", timeout=1) as response:
+                readiness = json.load(response)
+                assert readiness["status"] == "ready", readiness
                 return
-        except (URLError, TimeoutError):
-            time.sleep(0.1)
-    raise AssertionError("router did not become ready")
+        except HTTPError as error:
+            last_status = f"HTTP {error.code}: {error.read().decode()[:500]}"
+        except (URLError, TimeoutError) as error:
+            last_status = str(error)
+        time.sleep(0.1)
+    raise AssertionError(f"router workers did not become ready: {last_status}")
 
 
 def check_forwarded(requests, suffix, expected_flag):
@@ -185,8 +192,8 @@ def run_mode(mode):
             prefill.url,
             decode.url if decode else prefill.url,
         ],
-        stdout=subprocess.DEVNULL,
-        stderr=stderr_log,
+        stdout=stderr_log,
+        stderr=subprocess.STDOUT,
         text=True,
     )
     try:

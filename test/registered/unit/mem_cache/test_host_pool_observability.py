@@ -67,6 +67,52 @@ def scheduler(primary=None, writeback=None):
     )
 
 
+def state_pool():
+    # Use the real unsupported free-list contract, not a mock returning zero.
+    path = MODULE_PATH.parents[1] / "mem_cache/memory_pool_host.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    owner = next(
+        n
+        for n in tree.body
+        if isinstance(n, ast.ClassDef) and n.name == "DeepSeekV4StateHostPool"
+    )
+    method = next(
+        n
+        for n in owner.body
+        if isinstance(n, ast.FunctionDef) and n.name == "available_size"
+    )
+    namespace = {}
+    exec(
+        compile(ast.Module(body=[method], type_ignores=[]), str(path), "exec"),
+        namespace,
+    )
+    cls = type(
+        "DeepSeekV4StateHostPool",
+        (DeepSeekV4PagedHostPool,),
+        {"available_size": namespace["available_size"]},
+    )
+    pool = cls(torch.zeros(16, dtype=torch.uint8))
+    pool.pool_name = "deepseek_v4_c4_state"
+    pool.swa_page_size = pool.page_size
+    pool.num_host_pages = pool.size // pool.page_size
+    return pool
+
+
+def state_worker(*, decode=False, reverse=False):
+    state = state_pool()
+    swa = DeepSeekV4PagedHostPool(torch.zeros(32, dtype=torch.uint8))
+    swa.num_host_pages = swa.size // swa.page_size
+    pools = {"swa": swa, "deepseek_v4_c4_state": state}
+    if reverse:
+        pools = dict(reversed(list(pools.items())))
+    g = group(**pools)
+    worker = scheduler(writeback=g) if decode else scheduler(primary=g)
+    owner = worker.decode_offload_manager if decode else worker.tree_cache
+    specs = [SimpleNamespace(pool_name="deepseek_v4_c4_state", indices_from_pool="swa")]
+    setattr(owner, "sidecar_specs" if decode else "sidecar_pool_specs", specs)
+    return worker, swa, state
+
+
 class TestHostPoolObservability(unittest.TestCase):
     def test_real_views_group_and_worker_alias_dedup(self):
         buffer = torch.arange(64, dtype=torch.float32)
@@ -244,6 +290,128 @@ class TestHostPoolObservability(unittest.TestCase):
         self.assertIn(
             "unsupported_pool_kind", report["groups"][0]["entries"][0]["issues"]
         )
+
+    def test_state_uses_actual_declared_swa_snapshot_in_both_roles(self):
+        for decode in (False, True):
+            for reverse in (False, True):
+                with self.subTest(decode=decode, reverse=reverse):
+                    worker, swa, state = state_worker(decode=decode, reverse=reverse)
+                    with self.assertRaisesRegex(NotImplementedError, "reuses SWA"):
+                        state.available_size()
+                    calls = []
+
+                    def changing_free():
+                        calls.append(True)
+                        return 24 if len(calls) == 1 else 0
+
+                    swa.available_size = changing_free
+                    report = observer.host_pool_observability(
+                        worker, role="decode" if decode else "prefill"
+                    )
+                    self.assertEqual(report["status"], "complete")
+                    self.assertEqual(len(calls), 1)
+                    self.assertEqual(report["unique_backing_bytes"], 48)
+                    entries = {e["name"]: e for e in report["groups"][0]["entries"]}
+                    sidecar = entries["deepseek_v4_c4_state"]
+                    self.assertEqual(sidecar["occupancy_source"], "swa")
+                    self.assertEqual(
+                        sidecar["occupancy_semantics"], "shared_transfer_indices"
+                    )
+                    self.assertEqual(sidecar["physical_slot_used"], 8)
+                    self.assertEqual(sidecar["physical_slot_free"], 24)
+                    self.assertEqual(
+                        sidecar["physical_slot_free"],
+                        entries["swa"]["physical_slot_free"],
+                    )
+                    self.assertEqual(sidecar["backing_status"], "observed")
+                    self.assertEqual(swa.free, 24)
+
+    def assert_state_unknown(self, worker):
+        report = observer.host_pool_observability(worker, role="prefill")
+        state = next(
+            e
+            for e in report["groups"][0]["entries"]
+            if e["name"] == "deepseek_v4_c4_state"
+        )
+        self.assertEqual(report["status"], "incomplete")
+        self.assertIsNone(report["unique_backing_bytes"])
+        self.assertIsNone(state["logical_free"])
+        self.assertIsNone(state["physical_slot_used"])
+        self.assertEqual(state["backing_status"], "observed")
+        self.assertEqual(state["observed_unique_backing_bytes"], 16)
+        return state
+
+    def test_state_missing_owner_or_declaration_stays_unknown(self):
+        for mode in (
+            "missing_owner",
+            "missing_declaration",
+            "wrong_owner",
+            "duplicate_declaration",
+            "duplicate_owner",
+        ):
+            with self.subTest(mode=mode):
+                worker, swa, state = state_worker()
+                cache = worker.tree_cache
+                if mode == "missing_owner":
+                    cache.host_pool_group.entries = cache.host_pool_group.entries[1:]
+                elif mode == "missing_declaration":
+                    cache.sidecar_pool_specs = []
+                elif mode == "wrong_owner":
+                    cache.sidecar_pool_specs[0].indices_from_pool = "kv"
+                elif mode == "duplicate_declaration":
+                    cache.sidecar_pool_specs *= 2
+                else:
+                    cache.host_pool_group.entries.append(
+                        cache.host_pool_group.entries[0]
+                    )
+                self.assertIn(
+                    "occupancy_owner_unavailable",
+                    self.assert_state_unknown(worker)["issues"],
+                )
+
+    def test_state_geometry_mismatch_does_not_infer_occupancy(self):
+        for target, field, value in (
+            ("state", "size", 16),
+            ("state", "logical_size", 16),
+            ("state", "page_size", 8),
+            ("state", "swa_page_size", 8),
+            ("state", "num_host_pages", 7),
+            ("swa", "num_host_pages", 7),
+            ("swa", "logical_size", 64),
+            ("swa", "free", 25),
+        ):
+            with self.subTest(target=target, field=field):
+                worker, swa, state = state_worker()
+                setattr(state if target == "state" else swa, field, value)
+                self.assertIn(
+                    "occupancy_owner_geometry_mismatch",
+                    self.assert_state_unknown(worker)["issues"],
+                )
+
+    def test_state_and_owner_busy_locks_are_nonblocking(self):
+        for busy in ("state", "swa"):
+            with self.subTest(busy=busy):
+                worker, swa, state = state_worker(reverse=True)
+                pool = state if busy == "state" else swa
+                pool.lock = threading.Lock()
+                with pool.lock:
+                    self.assert_state_unknown(worker)
+                # Failure never leaves another lock held.
+                self.assertTrue(swa.lock.acquire(blocking=False))
+                swa.lock.release()
+                self.assertTrue(state.lock.acquire(blocking=False))
+                state.lock.release()
+
+    def test_state_owner_snapshot_failure_is_not_free_zero(self):
+        worker, swa, state = state_worker()
+
+        def unavailable():
+            raise RuntimeError("private detail")
+
+        swa.available_size = unavailable
+        result = self.assert_state_unknown(worker)
+        self.assertIn("occupancy_owner_unavailable", result["issues"])
+        self.assertNotIn("private", json.dumps(result))
 
     def test_absent_and_existing_controller_path(self):
         self.assertEqual(

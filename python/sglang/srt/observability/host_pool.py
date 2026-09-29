@@ -86,6 +86,93 @@ def _groups(scheduler):
         yield "hisparse", sparse_pool
 
 
+def _capacity_snapshot(pool):
+    """One nonblocking capacity read; state sidecars have no free-list API."""
+    snapshot = dict(capacity=None, logical=None, free=None, geometry={}, issues=[])
+    lock = getattr(pool, "lock", None)
+    if lock is None or not lock.acquire(blocking=False):
+        snapshot["issues"].append("capacity_lock_unavailable")
+        return snapshot
+    try:
+        snapshot["capacity"] = _integer(getattr(pool, "size", None))
+        snapshot["logical"] = _integer(getattr(pool, "logical_size", None))
+        snapshot["geometry"] = {
+            field: _integer(getattr(pool, field, None))
+            for field in ("page_size", "num_host_pages", "swa_page_size")
+        }
+        if type(pool).__name__ != "DeepSeekV4StateHostPool":
+            snapshot["free"] = _integer(pool.available_size())
+    except Exception:
+        snapshot["issues"].append("capacity_unavailable")
+    finally:
+        lock.release()
+    return snapshot
+
+
+def _state_index_sources(scheduler, group_name, group):
+    """Read the actual transfer declarations, never infer ownership by name."""
+    if group_name == "hicache":
+        owner = getattr(scheduler, "tree_cache", None)
+        same_group = getattr(owner, "host_pool_group", None) is group
+        specs = getattr(owner, "sidecar_pool_specs", None)
+    elif group_name == "decode_writeback":
+        owner = getattr(scheduler, "decode_offload_manager", None)
+        same_group = getattr(owner, "decode_host_mem_pool", None) is group
+        specs = getattr(owner, "sidecar_specs", None)
+    else:
+        return {}
+    if (
+        not same_group
+        or not isinstance(specs, (list, tuple))
+        or len(specs) > MAX_ENTRIES
+    ):
+        return {}
+    sources = {}
+    for spec in specs:
+        name = getattr(spec, "pool_name", None)
+        name = getattr(name, "value", name)
+        source = getattr(spec, "indices_from_pool", None)
+        source = getattr(source, "value", source)
+        if isinstance(name, str):
+            sources[name] = source if name not in sources else None
+    return sources
+
+
+def _state_occupancy(name, snapshot, sources, named_pools, snapshots):
+    source = sources.get(name)
+    candidates = named_pools.get(source, []) if isinstance(source, str) else []
+    if source != "swa" or len(candidates) != 1:
+        return None, "occupancy_owner_unavailable"
+    owner = candidates[0]
+    observed = snapshots[id(owner)]
+    if type(owner).__name__ != "DeepSeekV4PagedHostPool" or observed["issues"]:
+        return None, "occupancy_owner_unavailable"
+    capacity, logical, free = (observed[key] for key in ("capacity", "logical", "free"))
+    geometry, own_geometry = observed["geometry"], snapshot["geometry"]
+    page, pages = geometry.get("page_size"), geometry.get("num_host_pages")
+    if (
+        snapshot["issues"]
+        or capacity is None
+        or logical is None
+        or free is None
+        or capacity != logical
+        or not 0 <= free <= logical
+        or page is None
+        or page <= 0
+        or pages is None
+        or pages <= 0
+        or capacity != page * pages
+        or snapshot["capacity"] != capacity
+        or snapshot["logical"] != logical
+        or own_geometry.get("page_size") != page
+        or own_geometry.get("swa_page_size") != page
+        or own_geometry.get("num_host_pages") != pages
+        or free % page != 0
+    ):
+        return None, "occupancy_owner_geometry_mismatch"
+    return free, None
+
+
 def _seed_schema(scheduler):
     """Read retained D startup selectors; never arm capture or manufacture keys."""
     result = {
@@ -265,6 +352,16 @@ def host_pool_observability(scheduler, *, role):
         else:
             complete = group_complete = False
             entries = []
+        # Reuse the same owner's snapshot for its entry and every sidecar,
+        # independent of entry order. Never reacquire an owner or nest locks.
+        snapshots = {}
+        for _, pool in entries:
+            if id(pool) not in snapshots:
+                snapshots[id(pool)] = _capacity_snapshot(pool)
+        named_pools = {}
+        for name, pool in entries:
+            named_pools.setdefault(name, []).append(pool)
+        sources = _state_index_sources(scheduler, group_name, group)
         group_result = {"name": group_name, "entries": []}
         group_intervals = []
         for name, pool in entries:
@@ -297,20 +394,19 @@ def host_pool_observability(scheduler, *, role):
             if type(pool).__name__ not in SUPPORTED_POOL_KINDS:
                 result["issues"].append("unsupported_pool_kind")
             intervals = []
-            capacity = logical = free = None
-            lock = getattr(pool, "lock", None)
-            acquired = lock is not None and lock.acquire(blocking=False)
-            if acquired:
-                try:
-                    capacity = _integer(getattr(pool, "size", None))
-                    logical = _integer(getattr(pool, "logical_size", None))
-                    free = _integer(pool.available_size())
-                except Exception:
-                    result["issues"].append("capacity_unavailable")
-                finally:
-                    lock.release()
-            else:
-                result["issues"].append("capacity_lock_unavailable")
+            snapshot = snapshots[id(pool)]
+            capacity, logical, free = (
+                snapshot[key] for key in ("capacity", "logical", "free")
+            )
+            result["issues"].extend(snapshot["issues"])
+            if type(pool).__name__ == "DeepSeekV4StateHostPool":
+                result["occupancy_source"] = sources.get(name)
+                result["occupancy_semantics"] = "shared_transfer_indices"
+                free, issue = _state_occupancy(
+                    name, snapshot, sources, named_pools, snapshots
+                )
+                if issue:
+                    result["issues"].append(issue)
             valid = (
                 capacity is not None
                 and logical is not None
@@ -330,6 +426,7 @@ def host_pool_observability(scheduler, *, role):
             result["capacity_status"] = "observed" if physical_known else "unknown"
             if not physical_known:
                 result["issues"].append("physical_occupancy_unknown")
+            backing_issue_start = len(result["issues"])
             for field in DATA_FIELDS:
                 value = getattr(pool, field, None)
                 if value is None:
@@ -396,6 +493,12 @@ def host_pool_observability(scheduler, *, role):
             # buffers are unknown, never an invented zero-byte allocation.
             if not result["tensors"] and type(pool).__name__ != "LogicalHostPool":
                 result["issues"].append("data_backing_unavailable")
+            result["backing_status"] = (
+                "observed"
+                if len(result["issues"]) == backing_issue_start
+                and type(pool).__name__ in SUPPORTED_POOL_KINDS
+                else "unknown"
+            )
             result["issues"] = sorted(set(result["issues"]))
             result["status"] = "complete" if not result["issues"] else "incomplete"
             result["observed_unique_backing_bytes"] = _union_bytes(intervals)

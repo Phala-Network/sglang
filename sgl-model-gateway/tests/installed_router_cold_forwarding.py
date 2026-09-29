@@ -63,22 +63,30 @@ class WorkerHandler(BaseHTTPRequestHandler):
         if self.path in ("/health", "/health_generate"):
             self.reply(200, {"status": "healthy"})
         elif self.path == "/model_info":
-            self.reply(200, {
-                "model_path": "mock-model-path",
-                "tokenizer_path": "mock-tokenizer-path",
-                "is_generation": True,
-                "preferred_sampling_params": {"temperature": 0.7},
-            })
+            self.reply(
+                200,
+                {
+                    "model_path": "mock-model-path",
+                    "tokenizer_path": "mock-tokenizer-path",
+                    "is_generation": True,
+                    "preferred_sampling_params": {"temperature": 0.7},
+                },
+            )
         elif self.path == "/server_info":
-            self.reply(200, {
-                "model_path": "mock-model-path",
-                "tokenizer_path": "mock-tokenizer-path",
-                "host": "127.0.0.1",
-                "port": self.server.server_port,
-                "dp_size": 1,
-                "tp_size": 1,
-                "internal_states": [{"waiting_queue_size": 0, "running_queue_size": 0}],
-            })
+            self.reply(
+                200,
+                {
+                    "model_path": "mock-model-path",
+                    "tokenizer_path": "mock-tokenizer-path",
+                    "host": "127.0.0.1",
+                    "port": self.server.server_port,
+                    "dp_size": 1,
+                    "tp_size": 1,
+                    "internal_states": [
+                        {"waiting_queue_size": 0, "running_queue_size": 0}
+                    ],
+                },
+            )
         else:
             self.reply(404, {"error": self.path})
 
@@ -90,10 +98,14 @@ class WorkerHandler(BaseHTTPRequestHandler):
         payload = json.loads(data)
         with self.server.lock:
             self.server.requests.append((payload, dict(self.headers)))
-        self.reply(200, {
-            "text": f"decode-from-{self.server.role}",
-            "meta_info": {"prompt_tokens": 1, "completion_tokens": 1},
-        }, {"x-worker-id": self.server.role})
+        self.reply(
+            200,
+            {
+                "text": f"decode-from-{self.server.role}",
+                "meta_info": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+            {"x-worker-id": self.server.role},
+        )
 
 
 LAUNCH = """
@@ -144,8 +156,11 @@ def wait_ready(port, process):
 
 
 def check_forwarded(requests, suffix, expected_flag):
-    matches = [(body, headers) for body, headers in requests
-               if body.get("rid") == f"cold-fixture-{suffix}"]
+    matches = [
+        (body, headers)
+        for body, headers in requests
+        if body.get("rid") == f"cold-fixture-{suffix}"
+    ]
     assert len(matches) == 1, (suffix, requests)
     body, headers = matches[0]
     assert body["extra_key"] == f"key-{suffix}", body
@@ -161,16 +176,27 @@ def run_mode(mode):
     port = free_port()
     stderr_log = tempfile.TemporaryFile(mode="w+t")
     process = subprocess.Popen(
-        [sys.executable, "-c", LAUNCH, mode, str(port), prefill.url,
-         decode.url if decode else prefill.url],
-        stdout=subprocess.DEVNULL, stderr=stderr_log, text=True,
+        [
+            sys.executable,
+            "-c",
+            LAUNCH,
+            mode,
+            str(port),
+            prefill.url,
+            decode.url if decode else prefill.url,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=stderr_log,
+        text=True,
     )
     try:
         wait_ready(port, process)
         for suffix, flag in (("true", True), ("false", False), ("omitted", None)):
             payload = {
-                "text": "cold forwarding fixture", "stream": False,
-                "rid": f"cold-fixture-{suffix}", "extra_key": f"key-{suffix}",
+                "text": "cold forwarding fixture",
+                "stream": False,
+                "rid": f"cold-fixture-{suffix}",
+                "extra_key": f"key-{suffix}",
             }
             if flag is not None:
                 payload["cold_shared_read_bypass"] = flag
@@ -185,9 +211,9 @@ def run_mode(mode):
             ] == expected_role, response_headers
 
         before = (len(prefill.snapshot()), len(decode.snapshot()) if decode else 0)
-        status, _, _ = post(port, {
-            "text": "invalid cold flag", "cold_shared_read_bypass": "true"
-        })
+        status, _, _ = post(
+            port, {"text": "invalid cold flag", "cold_shared_read_bypass": "true"}
+        )
         assert 400 <= status < 500, (mode, status)
         after = (len(prefill.snapshot()), len(decode.snapshot()) if decode else 0)
         assert after == before, (mode, before, after)
@@ -197,7 +223,9 @@ def run_mode(mode):
             assert len(requests) == 3, (mode, worker.role, requests)
             for suffix, flag in (("true", True), ("false", None), ("omitted", None)):
                 check_forwarded(requests, suffix, flag)
-        print(f"{mode}: installed launcher forwarded 3 valid requests; invalid type rejected")
+        print(
+            f"{mode}: installed launcher forwarded 3 valid requests; invalid type rejected"
+        )
     finally:
         process.terminate()
         try:

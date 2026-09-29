@@ -21,6 +21,16 @@ def _load_method(path, class_name, method_name, namespace):
         node for node in owner.body if getattr(node, "name", None) == method_name
     )
     method.decorator_list = []
+    method.body = [
+        node
+        for node in method.body
+        if not (
+            isinstance(node, ast.ImportFrom)
+            and node.module
+            == "sglang.srt.disaggregation.mooncake.pd_transfer_diagnostics"
+            and all(alias.name in namespace for alias in node.names)
+        )
+    ]
     future = ast.ImportFrom(
         module="__future__", names=[ast.alias(name="annotations")], level=0
     )
@@ -73,6 +83,8 @@ class TrustedHealthMarkerTests(unittest.TestCase):
         marker = []
 
         class Manager:
+            disaggregation_mode = None
+
             def auto_create_handle_loop(self):
                 pass
 
@@ -83,11 +95,21 @@ class TrustedHealthMarkerTests(unittest.TestCase):
                 marker.append(obj._internal_health_check)
                 raise StopProbe
 
+        bind_pd_ingress = _load_function(
+            ROOT
+            / "python/sglang/srt/disaggregation/mooncake/pd_transfer_diagnostics.py",
+            "bind_pd_ingress",
+            {},
+        )
         generate = _load_method(
             MANAGERS / "tokenizer_manager.py",
             "TokenizerManager",
             "generate_request",
-            {"GenerateReqInput": _Generate, "EmbeddingReqInput": _Embedding},
+            {
+                "GenerateReqInput": _Generate,
+                "EmbeddingReqInput": _Embedding,
+                "bind_pd_ingress": bind_pd_ingress,
+            },
         )
 
         async def probe(request_type, trusted):

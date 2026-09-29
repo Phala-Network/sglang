@@ -459,10 +459,28 @@ class TestSharedCacheDiagnostics(unittest.TestCase):
         for poll, expected_completed in (
             (KVPoll.Success, True),
             (KVPoll.Failed, False),
+            (KVPoll.Success, None),
         ):
             with self.subTest(poll=poll):
                 capture, log = self.make_capture()
-                request = SimpleNamespace(
+                request_type = SimpleNamespace
+                if expected_completed is None:
+
+                    class CleanupErrorRequest(SimpleNamespace):
+                        def __delattr__(self, name):
+                            super().__delattr__(name)
+                            if name == "_shared_cache_diag_c128":
+                                raise RuntimeError("diagnostic cleanup failed")
+
+                    request_type = CleanupErrorRequest
+                diag_metadata = {
+                    "index_count": 4,
+                    "online": False,
+                    "sender_mode": "MooncakeKVSender",
+                }
+                if expected_completed is not None:
+                    diag_metadata["room"] = 77
+                request = request_type(
                     rid="private-transfer-request",
                     pending_bootstrap=False,
                     finished_reason=None,
@@ -471,12 +489,7 @@ class TestSharedCacheDiagnostics(unittest.TestCase):
                     return_logprob=False,
                     disagg_kv_sender=MagicMock(),
                     time_stats=MagicMock(),
-                    _shared_cache_diag_c128={
-                        "room": 77,
-                        "index_count": 4,
-                        "online": False,
-                        "sender_mode": "MooncakeKVSender",
-                    },
+                    _shared_cache_diag_c128=diag_metadata,
                 )
                 scheduler = MagicMock()
                 scheduler.disagg_prefill_inflight_queue = [request]
@@ -502,11 +515,16 @@ class TestSharedCacheDiagnostics(unittest.TestCase):
                         scheduler
                     )
 
-                event = self.events(log)[0]
+                events = self.events(log)
                 self.assertEqual(done, [request])
-                self.assertEqual(event["event"], "c128_transfer")
-                self.assertEqual(event["index_count"], 4)
-                self.assertEqual(event["completed"], expected_completed)
+                if expected_completed is None:
+                    self.assertEqual(events, [])
+                    self.assertEqual(capture.capture_failures, 2)
+                else:
+                    event = events[0]
+                    self.assertEqual(event["event"], "c128_transfer")
+                    self.assertEqual(event["index_count"], 4)
+                    self.assertEqual(event["completed"], expected_completed)
                 self.assertFalse(hasattr(request, "_shared_cache_diag_c128"))
                 self.assertEqual(scheduler.disagg_prefill_inflight_queue, [])
 

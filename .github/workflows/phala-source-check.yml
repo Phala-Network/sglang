@@ -70,6 +70,7 @@ jobs:
           python -m pytest -q test/manual/unit/entrypoints/test_health_generate_lifecycle.py
           python test/manual/phala/test_shared_cache_seed_callsite_cpu.py
           python test/manual/phala/test_shared_cache_seed_two_operation_cpu.py
+          python test/manual/phala/test_shared_cache_reader_latearm_cpu.py -v
           python test/registered/unit/managers/test_clear_manifest_revision.py -v
       - name: Host-pool CPU backing regressions
         run: |

@@ -93,7 +93,7 @@ class ReaderLateArmTests(SeedCallsiteFixture):
             operation_ranges=[{"start": 2, "end": 3}, {"start": 3, "end": 4}],
         )
         self.write_config()
-        StorageOperation.next_id = -1
+        StorageOperation.next_id = 0
         self.submit(page_start=2, prior="first")
         self.submit(page_start=3, prior="second")
         self.ack()

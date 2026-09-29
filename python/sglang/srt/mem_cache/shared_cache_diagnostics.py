@@ -179,7 +179,14 @@ class SharedCacheDiagnostics:
         """Load the sealed seed key allowlist once into the default-off collector."""
         try:
             document = _read_private_json(path, maximum=64 * 1024)
-            if document.get("schema") != "phala.shared-cache.seed-manifest.v1":
+            if document.get("schema") not in (
+                "phala.shared-cache.seed-manifest.v1",
+                "phala.shared-cache.seed-manifest.v2",
+            ):
+                return False
+            if document["schema"].endswith(".v2") and not _multi_seed_evidence_valid(
+                document
+            ):
                 return False
             keys = document.get("keys")
             if not isinstance(keys, list) or not keys or len(keys) > _SEED_MAX_KEYS:
@@ -568,6 +575,142 @@ def _write_all(fd, payload):
         view = view[written:]
 
 
+def _seed_two_range_plan_valid(document):
+    ranges = document.get("operation_ranges")
+    union = document.get("page_range")
+    if not isinstance(ranges, list) or len(ranges) != 2:
+        return False
+    for value in [union, *ranges]:
+        if (
+            not isinstance(value, dict)
+            or set(value) != {"start", "end"}
+            or type(value["start"]) is not int
+            or type(value["end"]) is not int
+            or not 0 <= value["start"] < value["end"]
+        ):
+            return False
+    return (
+        union["start"] == ranges[0]["start"]
+        and ranges[0]["end"] == ranges[1]["start"]
+        and ranges[1]["end"] == union["end"]
+    )
+
+
+def _multi_seed_evidence_valid(document):
+    """Verify each real ACK and its exact key product before consuming v2."""
+    if not _seed_two_range_plan_valid(document):
+        return False
+    components = document.get("required_components")
+    keys = document.get("keys")
+    puts = document.get("put_results")
+    operations = document.get("operations")
+    if (
+        not isinstance(components, list)
+        or not components
+        or len(components) > 64
+        or not all(isinstance(value, str) for value in components)
+        or components != sorted(set(components))
+        or not isinstance(keys, list)
+        or not 1 <= len(keys) <= _SEED_MAX_KEYS
+        or not isinstance(puts, list)
+        or len(puts) != len(keys)
+        or not isinstance(operations, list)
+        or len(operations) != 2
+        or "operation_id" in document
+        or "backup_ack" in document
+        or "model_revision" not in document
+        or document["model_revision"] is not None
+        and not isinstance(document["model_revision"], str)
+    ):
+        return False
+    union = document["page_range"]
+    cardinality = (union["end"] - union["start"]) * len(components)
+    if cardinality > _SEED_MAX_KEYS or cardinality != len(keys):
+        return False
+    ids, key_ids, page_components = set(), set(), set()
+    for operation, expected_range in zip(operations, document["operation_ranges"]):
+        if not isinstance(operation, dict):
+            return False
+        expected_cardinality = (expected_range["end"] - expected_range["start"]) * len(
+            components
+        )
+        if expected_cardinality > len(keys):
+            return False
+        operation_id = operation.get("operation_id")
+        expected_tokens = operation.get("expected_tokens")
+        declared_keys = operation.get("key_ids")
+        if (
+            type(operation_id) is not int
+            or operation_id in ids
+            or operation.get("page_range") != expected_range
+            or type(expected_tokens) is not int
+            or expected_tokens <= 0
+            or type(operation.get("tokens")) is not int
+            or operation["tokens"] != expected_tokens
+            or operation.get("complete") is not True
+            or not isinstance(declared_keys, list)
+            or not all(isinstance(value, str) for value in declared_keys)
+            or declared_keys != sorted(set(declared_keys))
+        ):
+            return False
+        ids.add(operation_id)
+        owned_keys = []
+        owned_product = set()
+        for key in keys:
+            if not isinstance(key, dict):
+                return False
+            if type(key.get("operation_id")) is not int:
+                return False
+            if key.get("operation_id") != operation_id:
+                continue
+            key_id = key.get("key_id")
+            page, component = key.get("page_index"), key.get("component")
+            size = key.get("logical_bytes")
+            if (
+                not isinstance(key_id, str)
+                or key_id in key_ids
+                or type(page) is not int
+                or not expected_range["start"] <= page < expected_range["end"]
+                or component not in components
+                or (page, component) in page_components
+                or type(size) is not int
+                or size <= 0
+                or type(key.get("rank")) is not int
+                or key["rank"] != 0
+            ):
+                return False
+            key_ids.add(key_id)
+            page_components.add((page, component))
+            owned_keys.append(key_id)
+            owned_product.add((page, component))
+        if len(owned_keys) != expected_cardinality:
+            return False
+        if sorted(owned_keys) != declared_keys or owned_product != {
+            (page, component)
+            for page in range(expected_range["start"], expected_range["end"])
+            for component in components
+        }:
+            return False
+    if len(key_ids) != len(keys):
+        return False
+    put_ids = set()
+    for put in puts:
+        if not isinstance(put, dict):
+            return False
+        key_id = put.get("key_id")
+        if (
+            not isinstance(key_id, str)
+            or key_id not in key_ids
+            or key_id in put_ids
+            or type(put.get("native_result")) is not int
+            or put["native_result"] != 0
+            or put.get("already_present") is not False
+        ):
+            return False
+        put_ids.add(key_id)
+    return put_ids == key_ids
+
+
 class SharedCacheSeedCapture:
     """One-request producer for exact D-writer keys and successful backup ACK."""
 
@@ -576,6 +719,7 @@ class SharedCacheSeedCapture:
         self._lock = threading.Lock()
         self._config = None
         self._operation_id = None
+        self._operations = {}
         self._entries = {}
         self._events = 0
         self._total_bytes = 0
@@ -600,12 +744,49 @@ class SharedCacheSeedCapture:
             return False
         with self._lock:
             if self._config is not None:
-                return False
+                if (
+                    self._sealed
+                    or self._failed
+                    or self._config["schema"] != "phala.shared-cache.seed-config.v2"
+                    or actual_request_id != self._config["request_id"]
+                ):
+                    return False
+                if self._deadline_expired_locked():
+                    return False
+                if (
+                    actual_store_instance_id != self._config["store_instance_id"]
+                    or actual_d_worker_id != self._config["d_worker_id"]
+                    or actual_tenant_id != self._config["tenant_id"]
+                    or any(
+                        self._config.get(key) != value
+                        for key, value in selectors.items()
+                        if key != "page_range"
+                    )
+                ):
+                    self._failed = "operation_identity_mismatch"
+                    self._write_provisional_locked()
+                    return False
+                selected_range = selectors.get("page_range")
+                return selected_range in self._config["operation_ranges"]
             try:
                 config = _read_private_json(path, maximum=64 * 1024)
-                if config.get("schema") != "phala.shared-cache.seed-config.v1":
+                if config.get("schema") not in (
+                    "phala.shared-cache.seed-config.v1",
+                    "phala.shared-cache.seed-config.v2",
+                ):
                     return False
-                if any(config.get(key) != value for key, value in selectors.items()):
+                multi = config["schema"].endswith(".v2")
+                if any(
+                    config.get(key) != value
+                    for key, value in selectors.items()
+                    if not multi or key != "page_range"
+                ):
+                    return False
+                if multi and (
+                    not _seed_two_range_plan_valid(config)
+                    or selectors.get("page_range") != config["operation_ranges"][0]
+                    or "model_revision" not in config
+                ):
                     return False
                 if (
                     not isinstance(actual_request_id, str)
@@ -640,7 +821,8 @@ class SharedCacheSeedCapture:
                 config["store_instance_id"] = actual_store_instance_id
                 config["d_worker_id"] = actual_d_worker_id
                 config["request_id"] = actual_request_id
-                config["page_range"] = page_range
+                if not multi:
+                    config["page_range"] = page_range
                 config["rank"] = rank
                 if not all(
                     isinstance(config.get(key), str) and config[key]
@@ -678,6 +860,12 @@ class SharedCacheSeedCapture:
                         isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9._:-]{1,96}", x)
                         for x in required
                     )
+                ):
+                    return False
+                if multi and (
+                    (config["page_range"]["end"] - config["page_range"]["start"])
+                    * len(required)
+                    > max_keys
                 ):
                     return False
                 directory = config["output_dir"]
@@ -720,20 +908,55 @@ class SharedCacheSeedCapture:
                 self._config = None
                 return False
 
-    def bind_operation(self, request_id, operation_id):
+    def _deadline_expired_locked(self):
+        if (
+            time.monotonic() - self._started
+            > int(self._config["max_duration_ms"]) / 1000
+        ):
+            self._failed = self._failed or "duration_exceeded"
+            self._write_provisional_locked()
+            return True
+        return False
+
+    def bind_operation(
+        self, request_id, operation_id, *, page_range=None, expected_tokens=None
+    ):
         with self._lock:
             if (
                 self._sealed
+                or self._failed
                 or self._config is None
                 or request_id != self._config["request_id"]
             ):
                 return False
-            if (
-                time.monotonic() - self._started
-                > int(self._config["max_duration_ms"]) / 1000
-            ):
-                self._failed = "duration_exceeded"
+            if self._deadline_expired_locked():
                 return False
+            if self._config["schema"].endswith(".v2"):
+                if (
+                    type(operation_id) is not int
+                    or operation_id in self._operations
+                    or page_range not in self._config["operation_ranges"]
+                    or any(
+                        operation["page_range"] == page_range
+                        for operation in self._operations.values()
+                    )
+                    or len(self._operations) >= 2
+                    or type(expected_tokens) is not int
+                    or expected_tokens <= 0
+                ):
+                    self._failed = "invalid_or_duplicate_operation"
+                    self._write_provisional_locked()
+                    return False
+                self._operations[operation_id] = dict(
+                    operation_id=operation_id,
+                    page_range=dict(page_range),
+                    expected_tokens=expected_tokens,
+                    tokens=None,
+                    complete=False,
+                )
+                self._operation_id = operation_id
+                self._write_provisional_locked()
+                return not self._failed
             if self._operation_id is not None:
                 self._failed = "multiple_backup_operations"
                 return False
@@ -766,19 +989,20 @@ class SharedCacheSeedCapture:
             operation_id = context.get(
                 "operation_id", context.get("shared_cache_diag_operation_id")
             )
-            if (
-                request_id != self._config["request_id"]
-                or operation_id != self._operation_id
+            multi = self._config["schema"].endswith(".v2")
+            operation = self._operations.get(operation_id) if multi else None
+            if request_id != self._config["request_id"] or (
+                operation is None if multi else operation_id != self._operation_id
             ):
                 return None
             if self._operation_id is None:
                 self._failed = "operation_not_bound"
                 return None
-            if (
-                time.monotonic() - self._started
-                > int(self._config["max_duration_ms"]) / 1000
-            ):
-                self._failed = "duration_exceeded"
+            if self._deadline_expired_locked():
+                return None
+            if multi and operation["complete"]:
+                self._failed = "record_after_operation_ack"
+                self._write_provisional_locked()
                 return None
             if len(keys) != len(sizes) or len(keys) != len(component_names):
                 self._failed = "batch_shape_mismatch"
@@ -788,6 +1012,11 @@ class SharedCacheSeedCapture:
                 return None
             pending = []
             pending_key_ids = set()
+            accounted_bytes = (
+                sum(item["logical_bytes"] for item in self._entries.values())
+                if multi
+                else self._total_bytes
+            )
             start = int(context.get("page_start", 0))
             for index, (key, size, component) in enumerate(
                 zip(keys, sizes, component_names)
@@ -809,7 +1038,7 @@ class SharedCacheSeedCapture:
                 if len(self._entries) + len(pending) >= int(self._config["max_keys"]):
                     self._failed = "key_budget_exceeded"
                     return None
-                if self._total_bytes + sum(
+                if accounted_bytes + sum(
                     item["logical_bytes"] for item in pending
                 ) + size > int(self._config["max_logical_bytes"]):
                     self._failed = "byte_budget_exceeded"
@@ -820,9 +1049,17 @@ class SharedCacheSeedCapture:
                     if isinstance(page_indexes, list) and index < len(page_indexes)
                     else start + index // max(1, int(context.get("key_multiplier", 1)))
                 )
-                page_range = self._config["page_range"]
+                page_range = (
+                    operation["page_range"] if multi else self._config["page_range"]
+                )
                 if not page_range["start"] <= page_index < page_range["end"]:
                     self._failed = "page_outside_selected_range"
+                    return None
+                if multi and any(
+                    item["page_index"] == page_index and item["component"] == component
+                    for item in [*self._entries.values(), *pending]
+                ):
+                    self._failed = "duplicate_page_component"
                     return None
                 pending.append(
                     {
@@ -836,6 +1073,8 @@ class SharedCacheSeedCapture:
                         "already_present": None,
                     }
                 )
+                if multi:
+                    pending[-1]["operation_id"] = operation_id
                 pending_key_ids.add(key_id)
             for entry in pending:
                 self._entries[entry["key_id"]] = entry
@@ -847,7 +1086,9 @@ class SharedCacheSeedCapture:
         if token is None:
             return
         with self._lock:
-            if self._sealed:
+            if self._sealed or self._failed or self._config is None:
+                return
+            if self._deadline_expired_locked():
                 return
             if len(token) != len(exists) or len(token) != len(results):
                 self._failed = "result_shape_mismatch"
@@ -856,6 +1097,13 @@ class SharedCacheSeedCapture:
                 entry = self._entries.get(key_id)
                 if entry is None:
                     self._failed = "prepared_key_lost"
+                    return
+                if self._config["schema"].endswith(".v2") and (
+                    entry["native_result"] is not None
+                    or self._operations[entry["operation_id"]]["complete"]
+                ):
+                    self._failed = "duplicate_or_late_put_result"
+                    self._write_provisional_locked()
                     return
                 entry["already_present"] = existed == 1
                 entry["native_result"] = int(result)
@@ -876,6 +1124,13 @@ class SharedCacheSeedCapture:
                 or request_id != self._config["request_id"]
             ):
                 return False
+            if self._config["schema"].endswith(".v2"):
+                return self._backup_ack_v2_locked(
+                    operation_id=operation_id,
+                    complete=complete,
+                    tokens=tokens,
+                    expected_tokens=expected_tokens,
+                )
             if (
                 time.monotonic() - self._started
                 > int(self._config["max_duration_ms"]) / 1000
@@ -921,6 +1176,60 @@ class SharedCacheSeedCapture:
                 return False
             document = self._producer_document_locked()
             return self._atomic_seal_locked(document)
+
+    def _backup_ack_v2_locked(self, *, operation_id, complete, tokens, expected_tokens):
+        if self._failed or self._deadline_expired_locked():
+            return False
+        operation = self._operations.get(operation_id)
+        if (
+            type(operation_id) is not int
+            or operation is None
+            or operation["complete"]
+            or complete is not True
+            or type(tokens) is not int
+            or type(expected_tokens) is not int
+            or tokens != operation["expected_tokens"]
+            or expected_tokens != operation["expected_tokens"]
+        ):
+            self._failed = "backup_incomplete_or_duplicate"
+            self._write_provisional_locked()
+            return False
+        entries = [
+            item
+            for item in self._entries.values()
+            if item["operation_id"] == operation_id
+        ]
+        page_range = operation["page_range"]
+        product = {
+            (page, component)
+            for page in range(page_range["start"], page_range["end"])
+            for component in self._config["required_components"]
+        }
+        if (
+            len(entries) != len(product)
+            or {(item["page_index"], item["component"]) for item in entries} != product
+            or any(
+                item["native_result"] != 0 or item["already_present"] is not False
+                for item in entries
+            )
+        ):
+            self._failed = "operation_put_or_components_incomplete"
+            self._write_provisional_locked()
+            return False
+        operation.update(tokens=tokens, complete=True)
+        self._write_provisional_locked()
+        if len(self._operations) != 2 or not all(
+            item["complete"] for item in self._operations.values()
+        ):
+            return False
+        document = self._producer_document_locked()
+        if self._failed or not _multi_seed_evidence_valid(document):
+            self._failed = self._failed or "multi_operation_evidence_invalid"
+            self._write_provisional_locked()
+            return False
+        if self._deadline_expired_locked():
+            return False
+        return self._atomic_seal_locked(document)
 
     def _key_id(self, key):
         config = self._config
@@ -1000,6 +1309,26 @@ class SharedCacheSeedCapture:
             ],
             "backup_ack": {"operation_id": self._operation_id, "complete": True},
         }
+        if config["schema"].endswith(".v2"):
+            doc["schema"] = "phala.shared-cache.seed-manifest.v2"
+            doc.pop("operation_id")
+            doc.pop("backup_ack")
+            doc["operation_ranges"] = config["operation_ranges"]
+            doc["operations"] = [
+                dict(
+                    operation,
+                    key_ids=sorted(
+                        item["key_id"]
+                        for item in entries
+                        if item["operation_id"] == operation["operation_id"]
+                    ),
+                )
+                for page_range in config["operation_ranges"]
+                for operation in self._operations.values()
+                if operation["page_range"] == page_range
+            ]
+            for key, entry in zip(doc["keys"], entries):
+                key["operation_id"] = entry["operation_id"]
         canonical = json.dumps(
             doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False
         ).encode()
@@ -1017,6 +1346,11 @@ class SharedCacheSeedCapture:
             "events": self._events,
             "entries": list(self._entries.values()),
         }
+        if self._config["schema"].endswith(".v2"):
+            doc["schema"] = "phala.shared-cache.seed-provisional.v2"
+            doc.pop("operation_id")
+            doc["operation_ranges"] = self._config["operation_ranges"]
+            doc["operations"] = list(self._operations.values())
         raw = json.dumps(
             doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False
         ).encode()
@@ -1051,6 +1385,9 @@ class SharedCacheSeedCapture:
             os.fsync(fd)
         finally:
             os.close(fd)
+        if self._config["schema"].endswith(".v2") and self._deadline_expired_locked():
+            os.unlink(temp_path)
+            return False
         try:
             os.link(temp_path, self._sealed_path, follow_symlinks=False)
             os.unlink(temp_path)

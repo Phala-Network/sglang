@@ -622,7 +622,14 @@ class HybridCacheController(BaseHiCacheController):
             try:
                 operation.shared_cache_seed_selected = (
                     shared_cache_seed_capture.bind_operation(
-                        diagnostic_request_id, operation.id
+                        diagnostic_request_id,
+                        operation.id,
+                        page_range={
+                            "start": operation.shared_cache_diag_page_start,
+                            "end": operation.shared_cache_diag_page_start
+                            + len(operation.hash_value),
+                        },
+                        expected_tokens=len(operation.token_ids),
                     )
                 )
             except Exception:

@@ -163,7 +163,7 @@ class StorageHitQueryDiagnosticsTests(unittest.TestCase):
             )
 
 
-class SharedCacheSeedCallsiteTests(unittest.TestCase):
+class SeedCallsiteFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -339,6 +339,8 @@ class SharedCacheSeedCallsiteTests(unittest.TestCase):
     def ack(self):
         self.manager._check_backup_progress(1)
 
+
+class SharedCacheSeedCallsiteTests(SeedCallsiteFixture):
     def test_selects_exact_second_operation_and_binds_before_immediate_put(self):
         self.submit(page_start=7, prior="first")
         self.assertIsNone(self.capture._config)

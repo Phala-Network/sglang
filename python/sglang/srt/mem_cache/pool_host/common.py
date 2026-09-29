@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import math
 import mmap
@@ -16,6 +15,10 @@ from sglang.srt.mem_cache.pool_host.allocation_budget import (
 )
 from sglang.srt.mem_cache.storage.mmap import alloc_mmap
 from sglang.srt.mem_cache.storage.mmap.mmap_allocator import requested_hugepage_bytes
+from sglang.srt.mem_cache.storage_backend_config import (
+    StorageBackendConfigError,
+    load_storage_backend_extra_config,
+)
 from sglang.srt.runtime_context import get_memory
 
 logger = logging.getLogger(__name__)
@@ -128,10 +131,10 @@ def get_allocator_type() -> str:
         extra_config_str = get_memory().hicache_storage_backend_extra_config
         if extra_config_str:
             try:
-                config = json.loads(extra_config_str)
+                config = load_storage_backend_extra_config(extra_config_str)
                 if config.get("allocator") == "shm":
                     return "shm"
-            except Exception:
+            except StorageBackendConfigError:
                 pass
     return backend or "default"
 

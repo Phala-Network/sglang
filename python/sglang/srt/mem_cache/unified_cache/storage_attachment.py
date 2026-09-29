@@ -112,8 +112,8 @@ class StorageAttachment:
             )
             return (
                 False,
-                f"Failed to parse storage_backend_extra_config_json "
-                f"'{storage_backend_extra_config_json}': {e}",
+                "Failed to parse storage_backend_extra_config_json "
+                f"({type(e).__name__})",
             )
 
         try:
@@ -130,7 +130,10 @@ class StorageAttachment:
                 "Failed to attach storage backend '<redacted>': <redacted>",
                 exc_info=False,
             )
-            return False, f"Failed to attach storage backend '{storage_backend}': {e}"
+            return False, (
+                f"Failed to attach storage backend '{storage_backend}': "
+                f"{type(e).__name__}"
+            )
 
         self.apply_runtime_config(
             storage_backend=storage_backend,

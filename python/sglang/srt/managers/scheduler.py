@@ -357,7 +357,10 @@ from sglang.srt.utils.weight_versions import (
     compute_weight_version_spans,
     record_weight_version_events,
 )
-from sglang.utils import TypeBasedDispatcher, get_exception_traceback
+from sglang.utils import (
+    TypeBasedDispatcher,
+    get_exception_diagnostic,
+)
 
 if is_mps():
     CudaStreamContext = nullcontext
@@ -6081,8 +6084,7 @@ def run_scheduler_process(
         scheduler.run_event_loop()
 
     except Exception:
-        traceback = get_exception_traceback()
-        logger.error("Scheduler hit an exception: <redacted>")
+        logger.error("Scheduler hit an exception: %s", get_exception_diagnostic())
         parent_process.send_signal(signal.SIGQUIT)
         # Opt-in: SIGKILL the pgroup so sibling ranks don't spew thousands
         # of NCCL/TCPStore tracebacks before they finally die.

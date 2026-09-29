@@ -2,16 +2,13 @@ from __future__ import annotations
 
 import atexit
 import heapq
-import json
 import logging
-import os
 import queue
 import threading
 import time
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import torch
-
 from sglang.srt.disaggregation.kv_events import StorageMedium
 from sglang.srt.distributed.communication_tags import P2PTag
 from sglang.srt.managers.cache_controller import HiCacheController, PrefetchOperation
@@ -56,6 +53,9 @@ from sglang.srt.mem_cache.radix_cache import (
     RadixCache,
     RadixKey,
     TreeNode,
+)
+from sglang.srt.mem_cache.storage_backend_config import (
+    load_storage_backend_extra_config,
 )
 from sglang.srt.mem_cache.utils import (
     compute_node_hash_values,
@@ -451,7 +451,8 @@ class HiRadixCache(RadixCache):
             )
             return (
                 False,
-                f"Failed to parse storage_backend_extra_config_json '{storage_backend_extra_config_json}': {e}",
+                "Failed to parse storage_backend_extra_config_json "
+                f"({type(e).__name__})",
             )
 
         try:
@@ -467,7 +468,10 @@ class HiRadixCache(RadixCache):
                 "Failed to attach storage backend '<redacted>': <redacted>",
                 exc_info=False,
             )
-            return False, f"Failed to attach storage backend '{storage_backend}': {e}"
+            return False, (
+                f"Failed to attach storage backend '{storage_backend}': "
+                f"{type(e).__name__}"
+            )
 
         self._apply_storage_runtime_config(
             storage_backend=storage_backend,
@@ -721,35 +725,8 @@ class HiRadixCache(RadixCache):
         Returns:
             tuple: (extra_config_dict, prefetch_threshold, prefetch_timeout_config, hicache_storage_pass_prefix_keys)
         """
-        # Parse extra config if provided. Extra config can be a JSON string or a json/toml/yaml file path prefixed with "@".
-        extra_config = {}
-        if storage_backend_extra_config:
-            try:
-                if storage_backend_extra_config.startswith("@"):
-                    # Read config from a json/toml/yaml file
-                    path = storage_backend_extra_config[1:]
-                    ext = os.path.splitext(path)[1].lower()
-                    with open(path, "rb" if ext == ".toml" else "r") as f:
-                        if ext == ".json":
-                            extra_config = json.load(f)
-                        elif ext == ".toml":
-                            import tomllib
-
-                            extra_config = tomllib.load(f)
-                        elif ext in (".yaml", ".yml"):
-                            import yaml
-
-                            extra_config = yaml.safe_load(f)
-                        else:
-                            raise ValueError(
-                                f"Unsupported config file {path} (config format: {ext})"
-                            )
-                else:
-                    # read config from JSON string
-                    extra_config = json.loads(storage_backend_extra_config)
-            except Exception as e:
-                logger.error("Invalid backend extra config JSON: <redacted>")
-                raise e
+        # Parse the object here, then keep P-side prefetch option handling local.
+        extra_config = load_storage_backend_extra_config(storage_backend_extra_config)
 
         defaults = PrefetchTimeoutConfig()
         prefetch_threshold = extra_config.pop("prefetch_threshold", 256)  # tokens

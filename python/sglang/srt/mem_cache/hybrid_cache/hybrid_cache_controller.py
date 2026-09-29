@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import threading
 import time
 from dataclasses import replace
@@ -11,16 +10,13 @@ from queue import Empty, Queue
 from typing import TYPE_CHECKING, Any, Callable, List, Optional
 
 import torch
-
 from sglang.srt.managers.cache_controller import (
     CacheOperation,
+    LayerDoneCounter,
+    PrefetchAck,
 )
 from sglang.srt.managers.cache_controller import (
     HiCacheController as BaseHiCacheController,
-)
-from sglang.srt.managers.cache_controller import (
-    LayerDoneCounter,
-    PrefetchAck,
 )
 from sglang.srt.managers.cache_controller import (
     StorageOperation as BaseStorageOperation,
@@ -37,6 +33,9 @@ from sglang.srt.mem_cache.hicache_storage import (
 from sglang.srt.mem_cache.l2_transfer import L2Transfer
 from sglang.srt.mem_cache.pool_host import HostPoolGroup, PoolEntry
 from sglang.srt.mem_cache.pool_host.mha import MHATokenToKVPoolHost
+from sglang.srt.mem_cache.storage_backend_config import (
+    load_storage_backend_extra_config,
+)
 
 if TYPE_CHECKING:
     from sglang.srt.mem_cache.allocator import BaseTokenToKVPoolAllocator
@@ -218,28 +217,7 @@ class HybridCacheController(BaseHiCacheController):
     def parse_storage_backend_extra_config(
         storage_backend_extra_config: Optional[str],
     ) -> tuple[dict, int, float, float, bool]:
-        extra_config = {}
-        if storage_backend_extra_config:
-            if storage_backend_extra_config.startswith("@"):
-                path = storage_backend_extra_config[1:]
-                ext = os.path.splitext(path)[1].lower()
-                with open(path, "rb" if ext == ".toml" else "r") as f:
-                    if ext == ".json":
-                        extra_config = json.load(f)
-                    elif ext == ".toml":
-                        import tomllib
-
-                        extra_config = tomllib.load(f)
-                    elif ext in (".yaml", ".yml"):
-                        import yaml
-
-                        extra_config = yaml.safe_load(f)
-                    else:
-                        raise ValueError(
-                            f"Unsupported config file {path} (config format: {ext})"
-                        )
-            else:
-                extra_config = json.loads(storage_backend_extra_config)
+        extra_config = load_storage_backend_extra_config(storage_backend_extra_config)
 
         prefetch_threshold = extra_config.pop("prefetch_threshold", 256)
         prefetch_timeout_base = extra_config.pop("prefetch_timeout_base", 1)

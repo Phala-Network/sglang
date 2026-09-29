@@ -123,6 +123,36 @@ def get_exception_traceback():
     return err_str
 
 
+def get_exception_diagnostic(max_frames: int = 8, max_chain: int = 4) -> dict:
+    """Return bounded exception type/frame metadata without values or locals."""
+    _, value, _ = sys.exc_info()
+    if value is None:
+        return {"exceptions": []}
+
+    exceptions = []
+    seen: set[int] = set()
+    current = value
+    while current is not None and id(current) not in seen and len(exceptions) < max_chain:
+        seen.add(id(current))
+        frames = [
+            {
+                "file": os.path.basename(frame.filename),
+                "function": frame.name,
+                "line": frame.lineno,
+            }
+            for frame in traceback.extract_tb(current.__traceback__)[-max_frames:]
+        ]
+        exception_type = type(current)
+        exceptions.append(
+            {
+                "type": f"{exception_type.__module__}.{exception_type.__qualname__}",
+                "frames": frames,
+            }
+        )
+        current = current.__cause__ or current.__context__
+    return {"exceptions": exceptions}
+
+
 def is_same_type(values: list):
     """Return whether the elements in values are of the same type."""
     if len(values) <= 1:

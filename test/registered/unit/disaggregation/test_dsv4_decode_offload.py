@@ -1,14 +1,16 @@
 """CPU contract tests; GPU copies and remote Mooncake IO are separate gates."""
 
+import json
+import tempfile
 import threading
 import unittest
+from pathlib import Path
 from queue import Queue
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from weakref import WeakKeyDictionary
 
 import torch
-
 from sglang.srt.disaggregation.decode_kvcache_offload_manager import (
     DecodeKVCacheOffloadManager,
 )
@@ -165,6 +167,110 @@ def logical_store(manager):
 
 
 class TestDSV4DecodeOffload(unittest.TestCase):
+    def test_page_rounded_swa_window_accepts_256_and_rejects_512_stride(self):
+        """A 128-token SWA window occupies one 256-token storage page.
+
+        The startup regression used page=256/window=128 on NVIDIA's non-unified
+        DSV4 path.  The lifecycle guard may round that window to one page, but
+        a stride spanning two pages must still be rejected before the host
+        stack is built.
+        """
+        module = "sglang.srt.disaggregation.decode_kvcache_offload_manager."
+        fixture, _ = make_manager()
+        pool = object.__new__(DeepSeekV4TokenToKVPool)
+        pool.swa_page_size = 256
+        pool.sliding_window = 128
+        pool._unified_kv = False
+        allocator = SimpleNamespace(get_kvcache=lambda: pool, c128_attn_allocator=None)
+
+        def construct(stride):
+            with (
+                patch(
+                    module + "get_schedule", return_value=SimpleNamespace(page_size=256)
+                ),
+                patch(
+                    module + "get_memory",
+                    return_value=SimpleNamespace(
+                        hicache_storage_backend_extra_config=None,
+                        hicache_storage_backend="mooncake",
+                    ),
+                ),
+                patch(
+                    module + "get_serving",
+                    return_value=SimpleNamespace(served_model_name="model"),
+                ),
+                patch(module + "torch.distributed.get_world_size", return_value=1),
+                patch(
+                    module + "envs",
+                    SimpleNamespace(
+                        SGLANG_HICACHE_DECODE_OFFLOAD_STRIDE=SimpleNamespace(
+                            get=lambda: stride
+                        )
+                    ),
+                ),
+                patch(
+                    module + "build_deepseek_v4_hicache_stack",
+                    return_value=(fixture.decode_host_mem_pool, fixture.cache_controller),
+                ) as build,
+            ):
+                manager = DecodeKVCacheOffloadManager(
+                    None, allocator, None, SimpleNamespace()
+                )
+                return manager, build
+
+        manager, build = construct(None)
+        self.assertEqual(manager.offload_stride, 256)
+        self.assertTrue(build.called)
+
+        with self.assertRaisesRegex(ValueError, "fit the live SWA window"):
+            construct(512)
+
+    def test_constructor_loads_at_file_config_without_enabling_radix(self):
+        module = "sglang.srt.disaggregation.decode_kvcache_offload_manager."
+        fixture, _ = make_manager()
+        pool = object.__new__(DeepSeekV4TokenToKVPool)
+        pool.swa_page_size = PAGE
+        pool.sliding_window = PAGE * 4
+        pool._unified_kv = False
+        allocator = SimpleNamespace(get_kvcache=lambda: pool, c128_attn_allocator=None)
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "client-decode.json"
+            config_path.write_text(
+                json.dumps({"tenant": "fixture", "tag": "decode"}),
+                encoding="utf-8",
+            )
+            with (
+                patch(
+                    module + "get_schedule", return_value=SimpleNamespace(page_size=PAGE)
+                ),
+                patch(
+                    module + "get_memory",
+                    return_value=SimpleNamespace(
+                        hicache_storage_backend_extra_config=f"@{config_path}",
+                        hicache_storage_backend="mooncake",
+                    ),
+                ),
+                patch(
+                    module + "get_serving",
+                    return_value=SimpleNamespace(served_model_name="model"),
+                ),
+                patch(module + "torch.distributed.get_world_size", return_value=1),
+                patch(
+                    module + "build_deepseek_v4_hicache_stack",
+                    return_value=(fixture.decode_host_mem_pool, fixture.cache_controller),
+                ) as build,
+            ):
+                manager = DecodeKVCacheOffloadManager(
+                    None, allocator, None, SimpleNamespace()
+                )
+
+            self.assertTrue(manager.is_dsv4)
+            self.assertTrue(build.call_args.kwargs["params"].disable)
+            self.assertEqual(
+                build.call_args.kwargs["storage_backend_extra_config"],
+                {"tenant": "fixture", "tag": "decode"},
+            )
+
     def test_constructor_uses_hybrid_stack_without_radix_and_rejects_unsupported_geometry(
         self,
     ):

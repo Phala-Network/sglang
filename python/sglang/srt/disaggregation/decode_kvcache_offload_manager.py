@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import threading
 import time
@@ -8,7 +7,6 @@ from typing import TYPE_CHECKING
 from weakref import WeakKeyDictionary as WeakKeyDict
 
 import torch
-
 from sglang.srt.disaggregation.kv_events import OffloadedState
 from sglang.srt.environ import envs
 from sglang.srt.managers.cache_controller import HiCacheController
@@ -29,6 +27,9 @@ from sglang.srt.mem_cache.memory_pool import (
     MHATokenToKVPool,
     MLATokenToKVPool,
     ReqToTokenPool,
+)
+from sglang.srt.mem_cache.storage_backend_config import (
+    load_storage_backend_extra_config,
 )
 from sglang.srt.mem_cache.utils import storage_namespace_seed
 from sglang.srt.runtime_context import (
@@ -93,16 +94,9 @@ class DecodeKVCacheOffloadManager:
         self.tp_group = tp_group
         self.tp_world_size = torch.distributed.get_world_size(group=self.tp_group)
 
-        hicache_storage_backend_extra_config = {}
-        if get_memory().hicache_storage_backend_extra_config:
-            try:
-                hicache_storage_backend_extra_config = json.loads(
-                    get_memory().hicache_storage_backend_extra_config
-                )
-            except json.JSONDecodeError as e:
-                raise ValueError(
-                    f"Invalid hicache storage backend extra config JSON: {e}"
-                )
+        hicache_storage_backend_extra_config = load_storage_backend_extra_config(
+            get_memory().hicache_storage_backend_extra_config
+        )
 
         controller_kwargs = dict(
             load_cache_event=threading.Event(),
@@ -126,6 +120,14 @@ class DecodeKVCacheOffloadManager:
                     "DSV4 decode offload does not support NPU independent C128 allocation"
                 )
             window = kv_cache.sliding_window
+            if window is not None:
+                # SWA storage is page addressed. A model window smaller than one
+                # page still occupies one page in the non-unified DSV4 pool.
+                window = max(
+                    self.page_size,
+                    ((window + self.page_size - 1) // self.page_size)
+                    * self.page_size,
+                )
             if not getattr(kv_cache, "_unified_kv", False) and (
                 window is None or self.offload_stride > window
             ):

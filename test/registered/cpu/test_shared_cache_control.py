@@ -417,6 +417,47 @@ def test_clear_requires_actual_multitenant_master_evidence():
             )
 
 
+def test_master_evidence_timestamps_fail_closed_before_snapshot_or_clear():
+    invalid_fields = (
+        ({}, "sample_time_unix_ms"),
+        ({"sample_time_unix_ms": "1000"}, None),
+        ({"sample_time_unix_ms": True}, None),
+        ({}, "init_scan_completed_unix_ms"),
+        ({"init_scan_completed_unix_ms": "900"}, None),
+        ({"init_scan_completed_unix_ms": True}, None),
+    )
+
+    class NativeStore:
+        def __init__(self):
+            self.calls = []
+
+        def batch_replica_clear(self, *_args):
+            self.calls.append(True)
+            return []
+
+    for overrides, missing_field in invalid_fields:
+        scheduler, _, manifest, evidence = _clear_context()
+        native = NativeStore()
+        scheduler.decode_offload_manager.cache_controller.storage_backend.store = native
+        evidence.update(overrides)
+        if missing_field:
+            evidence.pop(missing_field)
+        with pytest.raises(SharedCacheControlError, match="master_evidence_invalid"):
+            execute_bounded_clear(
+                scheduler=scheduler,
+                native_store=native,
+                manifest=manifest,
+                snapshot_reader=lambda _sample_id: pytest.fail(
+                    "invalid timestamps must fail before native snapshots"
+                ),
+                master_evidence=evidence,
+                writer_id="writer-hash",
+                segment_id="segment-hash",
+                now_ms=lambda: 1000,
+            )
+        assert native.calls == []
+
+
 def test_fully_idle_scheduler_is_a_drained_state():
     controller = SimpleNamespace(
         ack_backup_queue=Queue(),

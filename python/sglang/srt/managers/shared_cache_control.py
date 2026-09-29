@@ -919,6 +919,8 @@ def execute_bounded_clear(
         raise SharedCacheControlError("unsupported_topology")
     if not isinstance(master_evidence, Mapping):
         raise SharedCacheControlError("master_evidence_missing")
+    init_scan_ms = master_evidence.get("init_scan_completed_unix_ms")
+    master_sample_ms = master_evidence.get("sample_time_unix_ms")
     if (
         master_evidence.get("case_id") != case_id
         or master_evidence.get("epoch") != epoch
@@ -935,14 +937,15 @@ def execute_bounded_clear(
         or master_evidence.get("store_instance_id") != manifest["original_store_instance_id"]
         or not isinstance(master_evidence.get("master_pid"), int)
         or isinstance(master_evidence.get("master_pid"), bool)
-        or not isinstance(master_evidence.get("init_scan_completed_unix_ms"), int)
-        or isinstance(master_evidence.get("init_scan_completed_unix_ms"), bool)
-        or isinstance(master_evidence.get("sample_time_unix_ms"), bool)
-        or master_evidence.get("init_scan_completed_unix_ms") > master_evidence.get("sample_time_unix_ms", 0)
+        or not isinstance(init_scan_ms, int)
+        or isinstance(init_scan_ms, bool)
+        or init_scan_ms <= 0
+        or not isinstance(master_sample_ms, int)
+        or isinstance(master_sample_ms, bool)
+        or master_sample_ms < init_scan_ms
         or master_evidence.get("bucket_eviction_policy") != "none"
         or master_evidence.get("disk_watermark_eviction") is not False
-        or not isinstance(master_evidence.get("sample_time_unix_ms"), int)
-        or now_ms() - master_evidence["sample_time_unix_ms"] > 30_000
+        or now_ms() - master_sample_ms > 30_000
     ):
         raise SharedCacheControlError("master_evidence_invalid")
     before_sample_id = uuid.uuid4().hex

@@ -277,7 +277,9 @@ class MooncakeTransferEngine:
             return method(session_id, buffers, peer_buffer_addresses, lengths)
         except Exception:
             return {
-                "result": -1, "batch_sequence": 0, "attempts": [],
+                "result": -1,
+                "batch_sequence": 0,
+                "attempts": [],
                 "diagnostics_truncated": True,
             }
 

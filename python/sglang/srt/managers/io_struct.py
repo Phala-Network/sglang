@@ -888,7 +888,9 @@ class GenerateReqInput:
         # This avoids subtle bugs where different call sites get divergent objects.
         cache = self.__dict__.setdefault("_sub_obj_cache", {})
         if i in cache:
-            cache[i]._pd_diagnostic_request_ref = getattr(self, "_pd_diagnostic_request_ref", None)
+            cache[i]._pd_diagnostic_request_ref = getattr(
+                self, "_pd_diagnostic_request_ref", None
+            )
             return cache[i]
         sub = GenerateReqInput(
             rid=self.rid[i],
@@ -978,7 +980,9 @@ class GenerateReqInput:
             ),
         )
         cache[i] = sub
-        sub._pd_diagnostic_request_ref = getattr(self, "_pd_diagnostic_request_ref", None)
+        sub._pd_diagnostic_request_ref = getattr(
+            self, "_pd_diagnostic_request_ref", None
+        )
         return sub
 
 

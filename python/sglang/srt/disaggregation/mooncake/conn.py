@@ -658,8 +658,12 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
         diagnostic = envs.SGLANG_MOONCAKE_PD_TRANSFER_DIAGNOSTICS.get()
         try:
             ret = self._transfer_native_batch(
-                mooncake_session_id, list(src_addrs), list(dst_addrs), list(lengths),
-                diagnostic_room, diagnostic_kind,
+                mooncake_session_id,
+                list(src_addrs),
+                list(dst_addrs),
+                list(lengths),
+                diagnostic_room,
+                diagnostic_kind,
             )
         except Exception:
             if diagnostic:
@@ -674,7 +678,9 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
         return ret
 
     def _transfer_native_batch(self, peer, sources, destinations, lengths, room, kind):
-        from sglang.srt.disaggregation.mooncake.pd_transfer_diagnostics import pd_batch_diagnostics
+        from sglang.srt.disaggregation.mooncake.pd_transfer_diagnostics import (
+            pd_batch_diagnostics,
+        )
 
         if pd_batch_diagnostics.active_room(room):
             record = self.engine.batch_transfer_sync_diagnostic(
@@ -1326,8 +1332,12 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             diagnostic = envs.SGLANG_MOONCAKE_PD_TRANSFER_DIAGNOSTICS.get()
             try:
                 ret = self._transfer_native_batch(
-                    mooncake_session_id, src_addr_list, dst_addr_list, length_list,
-                    diagnostic_room, "kv",
+                    mooncake_session_id,
+                    src_addr_list,
+                    dst_addr_list,
+                    length_list,
+                    diagnostic_room,
+                    "kv",
                 )
             except Exception:
                 if diagnostic:

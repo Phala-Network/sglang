@@ -359,10 +359,15 @@ class PrefillBootstrapQueue:
             pp_rank=self.pp_rank,
             req_has_disagg_prefill_dp_rank=req.disagg_prefill_dp_rank is not None,
         )
-        from sglang.srt.disaggregation.mooncake.pd_transfer_diagnostics import pd_batch_diagnostics
+        from sglang.srt.disaggregation.mooncake.pd_transfer_diagnostics import (
+            pd_batch_diagnostics,
+        )
 
         pd_batch_diagnostics.bind_worker(
-            req.rid, req.bootstrap_room, "prefill", self.tp_rank,
+            req.rid,
+            req.bootstrap_room,
+            "prefill",
+            self.tp_rank,
             getattr(req, "pd_diagnostic_request_ref", None),
         )
         self._process_req(req)

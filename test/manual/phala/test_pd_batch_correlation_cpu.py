@@ -5,16 +5,20 @@ import hashlib
 import hmac
 import json
 import os
+import pickle
 import struct
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import Mock, patch
 
-from sglang.srt.disaggregation.mooncake import pd_transfer_diagnostics as diagnostics
-from sglang.srt.managers.io_struct import GenerateReqInput
 from test_mooncake_pd_diagnostics_cpu import load_manager
+
+from sglang.srt.disaggregation.mooncake import pd_transfer_diagnostics as diagnostics
+from sglang.srt.managers.io_struct import GenerateReqInput, TokenizedGenerateReqInput
+from sglang.srt.sampling.sampling_params import SamplingParams
 
 
 def request_ref(value):
@@ -29,10 +33,18 @@ def request_ref(value):
 def native_record(*, transport="nvlink_intraNode", status="completed", size=17):
     return {
         "result": 0 if status == "completed" else -1,
-        "batch_sequence": 7, "diagnostics_truncated": False,
-        "attempts": [{"attempt": 0, "task_count": 1, "missing_transports": 0,
-                      "selected_transports": {transport: 1},
-                      "terminal_status": status, "transferred_bytes": size}],
+        "batch_sequence": 7,
+        "diagnostics_truncated": False,
+        "attempts": [
+            {
+                "attempt": 0,
+                "task_count": 1,
+                "missing_transports": 0,
+                "selected_transports": {transport: 1},
+                "terminal_status": status,
+                "transferred_bytes": size,
+            }
+        ],
     }
 
 
@@ -40,8 +52,12 @@ class PDBatchCorrelationTests(unittest.TestCase):
     def setUp(self):
         self.log = Mock()
         self.capture = diagnostics.PDBatchDiagnostics(
-            enabled=True, key_salt="offline-fixture-salt", case_id="case",
-            epoch="epoch", request_ids=request_ref("external-id"), log=self.log,
+            enabled=True,
+            key_salt="offline-fixture-salt",
+            case_id="case",
+            epoch="epoch",
+            request_ids=request_ref("external-id"),
+            log=self.log,
         )
         self.ref = request_ref("external-id")
 
@@ -70,14 +86,24 @@ class PDBatchCorrelationTests(unittest.TestCase):
         worker = [row for row in records if row["event"] == "pd_worker_bind"]
         self.assertEqual(len(ingress), 2)
         self.assertNotEqual(ingress[0]["room_id"], ingress[1]["room_id"])
-        self.assertEqual({row["room_id"] for row in ingress}, {row["room_id"] for row in worker})
+        self.assertEqual(
+            {row["room_id"] for row in ingress}, {row["room_id"] for row in worker}
+        )
         self.assertEqual(records[-1]["request_id"], self.ref)
         encoded = json.dumps(records)
-        for raw in ("external-id", "random-worker-rid", "choice-a", "choice-b", "offline-fixture-salt"):
+        for raw in (
+            "external-id",
+            "random-worker-rid",
+            "choice-a",
+            "choice-b",
+            "offline-fixture-salt",
+        ):
             self.assertNotIn(raw, encoded)
 
     def test_real_n2_normalization_keeps_server_ref_after_regenerated_rids(self):
-        obj = GenerateReqInput(input_ids=[1, 2], sampling_params={"n": 2}, bootstrap_room=[1234, 5678])
+        obj = GenerateReqInput(
+            input_ids=[1, 2], sampling_params={"n": 2}, bootstrap_room=[1234, 5678]
+        )
         obj._pd_diagnostic_request_ref = self.ref
         obj.normalize_batch_and_arguments()
         choices = [copy.copy(obj[i]) for i in range(2)]
@@ -89,15 +115,25 @@ class PDBatchCorrelationTests(unittest.TestCase):
         self.assertNotEqual([item.rid for item in choices], old)
         obj._pd_diagnostic_request_ref = None
         self.assertIsNone(obj[0]._pd_diagnostic_request_ref)
-        self.assertNotIn("pd_diagnostic_request_ref", GenerateReqInput.__dataclass_fields__)
+        self.assertNotIn(
+            "pd_diagnostic_request_ref", GenerateReqInput.__dataclass_fields__
+        )
 
-    def test_native_truth_rejects_tcp_partial_bytes_retry_fallback_and_missing_tasks(self):
+    def test_native_truth_rejects_tcp_partial_bytes_retry_fallback_and_missing_tasks(
+        self,
+    ):
         self.arm_worker()
-        for record in (native_record(transport="tcp"), native_record(size=16), native_record(status="failed")):
+        for record in (
+            native_record(transport="tcp"),
+            native_record(size=16),
+            native_record(status="failed"),
+        ):
             self.capture.record_native(1234, "kv", [17], record, 0)
             self.assertFalse(self.records()[-1]["all_attempts_nvlink_intra"])
         mixed = native_record()
-        mixed["attempts"].insert(0, native_record(transport="tcp", status="failed")["attempts"][0])
+        mixed["attempts"].insert(
+            0, native_record(transport="tcp", status="failed")["attempts"][0]
+        )
         self.capture.record_native(1234, "kv", [17], mixed, 0)
         self.assertTrue(self.records()[-1]["completed_with_exact_bytes"])
         self.assertFalse(self.records()[-1]["all_attempts_nvlink_intra"])
@@ -108,8 +144,42 @@ class PDBatchCorrelationTests(unittest.TestCase):
         self.capture.record_native(1234, "kv", [17], missing, 0)
         self.assertFalse(self.records()[-1]["all_attempts_nvlink_intra"])
 
+    def test_typed_ipc_carries_only_allowlisted_hmac_and_worker_requires_it(self):
+        item = TokenizedGenerateReqInput(
+            rid="internal",
+            input_text=None,
+            input_ids=None,
+            input_embeds=None,
+            mm_inputs=None,
+            token_type_ids=None,
+            sampling_params=SamplingParams(),
+            return_logprob=False,
+            logprob_start_len=-1,
+            top_logprobs_num=0,
+            token_ids_logprob=None,
+            stream=False,
+            bootstrap_room=1234,
+            pd_diagnostic_request_ref=self.ref,
+        )
+        restored = pickle.loads(pickle.dumps(item))
+        self.assertEqual(restored.pd_diagnostic_request_ref, self.ref)
+        self.capture.bind_worker(
+            restored.rid, restored.bootstrap_room, "decode", 0, None
+        )
+        self.assertIsNone(self.capture._started_at)
+        self.capture.bind_worker(
+            restored.rid,
+            restored.bootstrap_room,
+            "decode",
+            0,
+            restored.pd_diagnostic_request_ref,
+        )
+        self.assertTrue(self.capture.active_room(1234))
+
     def test_native_submission_is_once_and_capture_failure_never_resubmits(self):
-        manager = load_manager({"envs": NS(SGLANG_MOONCAKE_PD_TRANSFER_DIAGNOSTICS=NS(get=lambda: False))})
+        manager = load_manager(
+            {"envs": NS(SGLANG_MOONCAKE_PD_TRANSFER_DIAGNOSTICS=NS(get=lambda: False))}
+        )
         manager.kv_args = NS(engine_rank=0)
         manager.engine = NS(
             batch_transfer_sync=Mock(return_value=0),
@@ -117,24 +187,43 @@ class PDBatchCorrelationTests(unittest.TestCase):
         )
         self.arm_worker()
         with patch.object(diagnostics, "pd_batch_diagnostics", self.capture):
-            result = manager._transfer_data("private-endpoint", [(999, 777, 17)], diagnostic_room=1234)
+            result = manager._transfer_data(
+                "private-endpoint", [(999, 777, 17)], diagnostic_room=1234
+            )
             self.assertEqual(result, 0)
             manager.engine.batch_transfer_sync.assert_not_called()
             manager.engine.batch_transfer_sync_diagnostic.assert_called_once()
             self.log.info.side_effect = RuntimeError("private logger failure")
-            self.assertEqual(manager._transfer_data("private-endpoint", [(999, 777, 17)], diagnostic_room=1234), 0)
-            self.assertEqual(manager.engine.batch_transfer_sync_diagnostic.call_count, 2)
+            self.assertEqual(
+                manager._transfer_data(
+                    "private-endpoint", [(999, 777, 17)], diagnostic_room=1234
+                ),
+                0,
+            )
+            self.assertEqual(
+                manager.engine.batch_transfer_sync_diagnostic.call_count, 2
+            )
             manager.engine.batch_transfer_sync.assert_not_called()
         self.assertGreater(self.capture.capture_failures, 0)
 
-    def test_once_file_arm_is_private_and_does_not_start_for_mismatch_or_rearm_after_expiry(self):
+    def test_once_file_arm_is_private_and_does_not_start_for_mismatch_or_rearm_after_expiry(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "capture.json"
-            capture = diagnostics.PDBatchDiagnostics(config_path=str(path), log=self.log)
+            capture = diagnostics.PDBatchDiagnostics(
+                config_path=str(path), log=self.log
+            )
             self.assertIsNone(capture.external_request_ref("external-id"))
-            config = {"schema": "phala.pd-batch-capture.v1", "key_salt": "offline-fixture-salt",
-                      "case_id": "case", "epoch": "epoch", "tenant_id": "default",
-                      "request_ids": [self.ref], "max_duration_ms": 1}
+            config = {
+                "schema": "phala.pd-batch-capture.v1",
+                "key_salt": "offline-fixture-salt",
+                "case_id": "case",
+                "epoch": "epoch",
+                "tenant_id": "default",
+                "request_ids": [self.ref],
+                "max_duration_ms": 1,
+            }
             path.write_text(json.dumps(config), encoding="utf-8")
             os.chmod(path, 0o600)
             self.assertIsNone(capture.external_request_ref("wrong"))
@@ -165,10 +254,37 @@ class PDBatchCorrelationTests(unittest.TestCase):
             public.write_text("{}", encoding="utf-8")
             os.chmod(public, 0o644)
             for path in (link, oversized, public):
-                capture = diagnostics.PDBatchDiagnostics(config_path=str(path), log=self.log)
+                capture = diagnostics.PDBatchDiagnostics(
+                    config_path=str(path), log=self.log
+                )
                 self.assertIsNone(capture.external_request_ref("external-id"))
                 self.assertTrue(capture._load_attempted)
                 self.assertFalse(capture.enabled)
+
+    def test_config_owner_must_match_reader(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "capture.json"
+            path.write_text("{}", encoding="utf-8")
+            os.chmod(path, 0o600)
+            capture = diagnostics.PDBatchDiagnostics(
+                config_path=str(path), log=self.log
+            )
+            with patch.object(diagnostics.os, "geteuid", return_value=os.geteuid() + 1):
+                self.assertIsNone(capture.external_request_ref("external-id"))
+            self.assertTrue(capture._load_attempted)
+            self.assertFalse(capture.enabled)
+
+    def test_fifo_is_rejected_without_blocking_serving(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "capture.fifo"
+            os.mkfifo(path, 0o600)
+            capture = diagnostics.PDBatchDiagnostics(
+                config_path=str(path), log=self.log
+            )
+            started = time.monotonic()
+            self.assertIsNone(capture.external_request_ref("external-id"))
+            self.assertLess(time.monotonic() - started, 1)
+            self.assertTrue(capture._load_attempted)
 
     def test_bounds_and_reused_room_fail_closed(self):
         self.arm_worker()
@@ -177,8 +293,13 @@ class PDBatchCorrelationTests(unittest.TestCase):
         self.arm_worker()
         self.assertFalse(self.capture.active_room(1234))
         limited = diagnostics.PDBatchDiagnostics(
-            enabled=True, key_salt="offline-fixture-salt", case_id="case", epoch="epoch",
-            request_ids=self.ref, max_events=2, log=self.log,
+            enabled=True,
+            key_salt="offline-fixture-salt",
+            case_id="case",
+            epoch="epoch",
+            request_ids=self.ref,
+            max_events=2,
+            log=self.log,
         )
         limited.bind_worker("internal", 1, "prefill", 0, self.ref)
         self.assertFalse(limited.active_room(1))

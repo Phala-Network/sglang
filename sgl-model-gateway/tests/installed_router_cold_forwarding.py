@@ -166,7 +166,7 @@ def check_forwarded(requests, suffix, expected_flag):
     assert body["extra_key"] == f"key-{suffix}", body
     assert body.get("cold_shared_read_bypass") == expected_flag, body
     assert {key.lower(): value for key, value in headers.items()}[
-        "x-cold-test"
+        "x-correlation-id"
     ] == f"header-{suffix}", headers
 
 
@@ -201,7 +201,7 @@ def run_mode(mode):
             if flag is not None:
                 payload["cold_shared_read_bypass"] = flag
             status, response, response_headers = post(
-                port, payload, {"X-Cold-Test": f"header-{suffix}"}
+                port, payload, {"X-Correlation-Id": f"header-{suffix}"}
             )
             assert status == 200, (mode, suffix, status, response)
             expected_role = "decode" if mode == "pd" else "prefill"

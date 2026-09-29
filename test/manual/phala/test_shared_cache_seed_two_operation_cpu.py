@@ -325,6 +325,37 @@ class SharedCacheSeedMultiOperationTests(SeedCallsiteFixture):
         self.assertEqual(self.capture._failed, "byte_budget_exceeded")
         self.assertEqual(len(self.native_calls), 2)
 
+    def test_unknown_existence_and_coerced_native_results_are_not_success(self):
+        for existed, result in (
+            (-1, 0),
+            (None, 0),
+            (False, 0),
+            (0.0, 0),
+            ("0", 0),
+            (0, False),
+            (0, 0.5),
+            (0, "0"),
+            (0, None),
+        ):
+            with self.subTest(existed=existed, result=result):
+                case = SharedCacheSeedMultiOperationTests(
+                    "test_missing_second_operation_stays_provisional"
+                )
+                case.setUp()
+                try:
+                    case.exists = [existed, existed]
+                    case.results = [result, result]
+                    case.submit(page_start=2, prior="first")
+                    case.submit(page_start=3, prior="second")
+                    case.ack()
+                    case.ack()
+                    case.assert_unsealed()
+                    case.assertEqual(case.capture._failed, "put_not_new_success")
+                    case.assertEqual(len(case.operations), 2)
+                    case.assertEqual(len(case.native_calls), 4)
+                finally:
+                    case.doCleanups()
+
 
 if __name__ == "__main__":
     unittest.main()

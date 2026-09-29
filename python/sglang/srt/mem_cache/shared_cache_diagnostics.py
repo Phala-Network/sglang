@@ -1105,6 +1105,15 @@ class SharedCacheSeedCapture:
                     self._failed = "duplicate_or_late_put_result"
                     self._write_provisional_locked()
                     return
+                if self._config["schema"].endswith(".v2") and (
+                    type(existed) is not int
+                    or existed != 0
+                    or type(result) is not int
+                    or result != 0
+                ):
+                    self._failed = "put_not_new_success"
+                    self._write_provisional_locked()
+                    return
                 entry["already_present"] = existed == 1
                 entry["native_result"] = int(result)
                 if existed == 1 or int(result) != 0:

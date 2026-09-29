@@ -131,7 +131,12 @@ class ReaderLateArmTests(SeedCallsiteFixture):
         self.store._batch_postprocess = lambda values, **kwargs: [
             x == 1 for x in values
         ]
-        self.store._get_batch_zero_copy_impl = lambda keys, ptrs, sizes: list(sizes)
+
+        def native(keys, ptrs, sizes, trace=None):
+            self.assertIsNone(trace)
+            return list(sizes)
+
+        self.store._get_batch_zero_copy_impl = native
         base = load_methods(
             SRT / "managers/cache_controller.py",
             "HiCacheController",
@@ -281,7 +286,8 @@ class ReaderLateArmTests(SeedCallsiteFixture):
     def test_two_async_operations_keep_rooms_refs_keys_and_actual_schema(self):
         barrier = threading.Barrier(2)
 
-        def native(keys, ptrs, sizes):
+        def native(keys, ptrs, sizes, trace=None):
+            self.assertIsNone(trace)
             barrier.wait(timeout=5)
             return sizes
 
@@ -330,7 +336,8 @@ class ReaderLateArmTests(SeedCallsiteFixture):
     def test_short_failure_cancel_and_reused_rid_remain_distinct(self):
         op = self.operation()
 
-        def native(keys, ptrs, sizes):
+        def native(keys, ptrs, sizes, trace=None):
+            self.assertIsNone(trace)
             op.terminated = True
             return [3] if "pool_a" in keys[0] else [-1]
 
@@ -341,7 +348,12 @@ class ReaderLateArmTests(SeedCallsiteFixture):
         self.assertTrue(
             all(not c["read_complete"] for r in old for c in r["components"])
         )
-        self.store._get_batch_zero_copy_impl = lambda keys, ptrs, sizes: sizes
+
+        def native_after_cancel(keys, ptrs, sizes, trace=None):
+            self.assertIsNone(trace)
+            return sizes
+
+        self.store._get_batch_zero_copy_impl = native_after_cancel
         self.controller._page_transfer(self.operation(room=72, ident=8, attempt=1))
         new = self.events("get_components")[2:]
         self.assertTrue(all(not r["reader_cancelled"] for r in new))

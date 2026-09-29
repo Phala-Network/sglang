@@ -6193,7 +6193,9 @@ def run_scheduler_process(
 def _make_abort_req(
     req: Req, finished_reason: Optional[FinishReasonDict] = None
 ) -> AbortReq:
-    trace = getattr(req.cache_request_handle, "cold_shared_read_trace", None)
+    trace = getattr(
+        getattr(req, "cache_request_handle", None), "cold_shared_read_trace", None
+    )
     if trace is not None:
         trace.terminal("abort")
     if (

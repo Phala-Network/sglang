@@ -3,8 +3,11 @@
 import ast
 import concurrent.futures
 import hashlib
+import importlib.util
 import os
+import sys
 import threading
+import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -14,6 +17,22 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[3]
 SOURCE = ROOT / "python/sglang/srt/disaggregation/mooncake/conn.py"
+
+
+if importlib.util.find_spec("sglang") is None:
+    for package in (
+        "sglang",
+        "sglang.srt",
+        "sglang.srt.disaggregation",
+        "sglang.srt.disaggregation.mooncake",
+        "sglang.srt.mem_cache",
+    ):
+        source_package = types.ModuleType(package)
+        source_package.__path__ = [str(ROOT / "python" / package.replace(".", "/"))]
+        source_package.__spec__ = importlib.util.spec_from_loader(
+            package, loader=None, is_package=True
+        )
+        sys.modules[package] = source_package
 
 
 def load_manager(namespace):

@@ -94,8 +94,8 @@ class StorageOperation:
     def __init__(
         self, host_indices, token_ids, *, hash_value, prefix_keys, pool_transfers
     ):
-        StorageOperation.next_id += 1
         self.id = StorageOperation.next_id
+        StorageOperation.next_id += 1
         self.host_indices = host_indices
         self.token_ids = token_ids
         self.hash_value = hash_value
@@ -165,6 +165,7 @@ class StorageHitQueryDiagnosticsTests(unittest.TestCase):
 
 class SeedCallsiteFixture(unittest.TestCase):
     def setUp(self):
+        StorageOperation.next_id = 0
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name)
@@ -341,6 +342,39 @@ class SeedCallsiteFixture(unittest.TestCase):
 
 
 class SharedCacheSeedCallsiteTests(SeedCallsiteFixture):
+    def test_storage_operation_zero_counter_matches_actual_source(self):
+        path = SRT / "managers/cache_controller.py"
+        source = ast.parse(path.read_text(encoding="utf-8"))
+        owner = next(
+            node
+            for node in source.body
+            if isinstance(node, ast.ClassDef) and node.name == "StorageOperation"
+        )
+        module = ast.Module(
+            body=[
+                ast.ImportFrom(
+                    module="__future__",
+                    names=[ast.alias(name="annotations")],
+                    level=0,
+                ),
+                owner,
+            ],
+            type_ignores=[],
+        )
+        namespace = {}
+        exec(compile(ast.fix_missing_locations(module), str(path), "exec"), namespace)
+        actual = namespace["StorageOperation"]
+        actual_ids = [actual(None, []).id for _ in range(2)]
+        fixture_ids = [
+            StorageOperation(
+                None, [], hash_value=[], prefix_keys=None, pool_transfers=[]
+            ).id
+            for _ in range(2)
+        ]
+        self.assertEqual(actual_ids, [0, 1])
+        self.assertEqual(fixture_ids, actual_ids)
+        self.assertTrue(all(type(value) is int for value in actual_ids + fixture_ids))
+
     def test_selects_exact_second_operation_and_binds_before_immediate_put(self):
         self.submit(page_start=7, prior="first")
         self.assertIsNone(self.capture._config)

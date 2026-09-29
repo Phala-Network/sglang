@@ -40,6 +40,20 @@ class SharedCacheSeedMultiOperationTests(SeedCallsiteFixture):
         self.assertEqual(document["schema"], "phala.shared-cache.seed-manifest.v2")
         self.assertEqual(document["page_range"], {"start": 2, "end": 4})
         self.assertEqual(len(document["operations"]), 2)
+        self.assertEqual([operation.id for operation in self.operations], [0, 1])
+        self.assertEqual(
+            [operation["operation_id"] for operation in document["operations"]], [0, 1]
+        )
+        self.assertTrue(
+            all(
+                type(operation["operation_id"]) is int
+                for operation in document["operations"]
+            )
+        )
+        self.assertEqual({key["operation_id"] for key in document["keys"]}, {0, 1})
+        self.assertTrue(
+            all(type(key["operation_id"]) is int for key in document["keys"])
+        )
         self.assertNotIn("operation_id", document)
         self.assertNotIn("backup_ack", document)
         for operation, actual in zip(document["operations"], self.operations):

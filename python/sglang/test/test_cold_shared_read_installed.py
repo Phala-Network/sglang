@@ -8,6 +8,9 @@ from unittest.mock import patch
 
 from sglang.srt.managers.io_struct import GenerateReqInput
 from sglang.srt.managers.scheduler import Scheduler
+from sglang.srt.managers.scheduler_components.output_streamer import (
+    SchedulerOutputStreamer,
+)
 from sglang.srt.managers.tokenizer_manager import TokenizerManager
 from sglang.srt.mem_cache.base_prefix_cache import CacheRequestHandle
 from sglang.srt.mem_cache.cold_shared_read import ColdSharedReadTrace
@@ -104,6 +107,36 @@ class ColdSharedReadInstalledTest(unittest.TestCase):
         Scheduler._prefetch_kvcache(scheduler, request)
         self.assertEqual(calls, ["local_match"])
         trace.terminal("finished")
+
+    def test_explicit_opt_in_cold_cache_details(self):
+        streamer = types.SimpleNamespace(
+            enable_hicache_storage=lambda: True,
+            _get_storage_backend_type=lambda: "MooncakeStore",
+        )
+        request = types.SimpleNamespace(
+            cold_shared_read_bypass=True,
+            cached_tokens_device=0,
+            cached_tokens_host=0,
+            cached_tokens_storage=0,
+            cached_tokens=0,
+        )
+        details = SchedulerOutputStreamer.get_cached_tokens_details(
+            streamer, request
+        )
+        self.assertEqual(
+            {name: details[name] for name in ("device", "host", "storage")},
+            {"device": 0, "host": 0, "storage": 0},
+        )
+        request.cached_tokens_host = 8
+        details = SchedulerOutputStreamer.get_cached_tokens_details(
+            streamer, request
+        )
+        self.assertEqual(details["host"], 8)
+        request.cold_shared_read_bypass = False
+        request.cached_tokens_host = 0
+        self.assertIsNone(
+            SchedulerOutputStreamer.get_cached_tokens_details(streamer, request)
+        )
 
     def test_async_link_and_actual_mooncake_get_miss(self):
         trace = ColdSharedReadTrace("rid", "fresh", None, 0)

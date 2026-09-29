@@ -235,6 +235,24 @@ class ReaderLateArmTests(SeedCallsiteFixture):
         self.assertFalse(self.reader.enabled)
         self.assertEqual(self.events(), [])
 
+    def test_donor_before_seed_then_published_seed_arms_only_new_reader(self):
+        sealed_bytes = self.seed.read_bytes()
+        self.seed.unlink()
+        donor = self.operation("donor", 70, 6)
+        self.assertEqual(self.controller._page_transfer(donor), 1)
+        self.assertFalse(self.reader._reader_attempted)
+        self.assertFalse(self.reader.enabled)
+        self.seed.write_bytes(sealed_bytes)
+        self.seed.chmod(0o600)
+        self.controller._page_transfer(self.operation())
+        self.assertTrue(self.reader.enabled)
+        self.assertEqual(len(self.events("reader_capture_armed")), 1)
+        self.assertEqual(len(self.events("get_components")), 2)
+        # An old donor's later batch must not inherit the new reader's context.
+        self.controller._page_transfer(donor)
+        self.assertIsNone(donor.shared_cache_reader_context)
+        self.assertEqual(len(self.events("get_components")), 2)
+
     def test_expired_manifest_rejected(self):
         self.rewrite(expires_at=time.time() - 1)
         self.controller._page_transfer(self.operation())

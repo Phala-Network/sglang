@@ -328,6 +328,15 @@ class SharedCacheDiagnostics:
                 return None
             with self._reader_lock:
                 if not self._reader_attempted:
+                    # The donor may prefetch before D publishes the seed. Only
+                    # absence leaves the fixed-path arm opportunity pending.
+                    try:
+                        os.lstat(self._reader_manifest)
+                    except FileNotFoundError:
+                        return None
+                    except OSError:
+                        self._reader_attempted = True
+                        return None
                     self._reader_attempted = True
                     store = controller.storage_backend
                     config = controller.storage_config

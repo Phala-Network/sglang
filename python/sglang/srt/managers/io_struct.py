@@ -311,6 +311,7 @@ class GenerateReqInput:
     priority: Optional[int] = None
     # Extra cache key for caller-defined request classification.
     extra_key: Optional[Union[List[str], str]] = None
+    cold_shared_read_bypass: bool = False
 
     # Whether to disallow logging for this request (e.g. due to ZDR)
     no_logs: bool = False
@@ -388,6 +389,8 @@ class GenerateReqInput:
             ValueError: If inputs are not properly specified (e.g., none or all of
                        text, input_ids, input_embeds are provided)
         """
+        if type(self.cold_shared_read_bypass) is not bool:
+            raise ValueError("cold_shared_read_bypass must be a boolean")
         if self.data_parallel_rank is not None:
             import warnings
 
@@ -965,6 +968,7 @@ class GenerateReqInput:
             max_thinking_tokens=self.max_thinking_tokens,
             priority=self.priority,
             extra_key=self.extra_key[i] if self.extra_key is not None else None,
+            cold_shared_read_bypass=self.cold_shared_read_bypass,
             cache_salt=(self.cache_salt[i] if self.cache_salt is not None else None),
             no_logs=self.no_logs,
             custom_labels=self.custom_labels,
@@ -1063,6 +1067,7 @@ class TokenizedGenerateReqInput(BaseReq, kw_only=True):
 
     # Extra cache key for caller-defined request classification.
     extra_key: Optional[str] = None
+    cold_shared_read_bypass: bool = False
 
     # Whether to disallow logging for this request (e.g. due to ZDR)
     no_logs: bool = False

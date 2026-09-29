@@ -2172,6 +2172,8 @@ def _apply_stack_result(
     for sidecar in result.sidecars:
         cache.register_sidecar_pool(sidecar)
 
+    cache.refresh_effective_storage_selector()
+
     kvcache.register_layer_transfer_counter(result.cache_controller.layer_done_counter)
     if result.register_req_to_token_counter:
         params.req_to_token_pool.register_layer_transfer_counter(

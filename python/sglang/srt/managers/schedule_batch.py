@@ -1483,6 +1483,9 @@ class Req(ReqDllmMixin):
 
     def finished(self) -> bool:
         # Whether request reached finished condition
+        trace = getattr(self.cache_request_handle, "cold_shared_read_trace", None)
+        if self.finished_reason is not None and trace is not None:
+            trace.terminal(type(self.finished_reason).__name__)
         return self.finished_reason is not None
 
     def set_extend_range(self, start: int, end: int) -> None:

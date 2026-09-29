@@ -49,6 +49,9 @@ class CacheRequestHandle:
     pd_diagnostic_request_ref: Optional[str] = dataclasses.field(
         default=None, compare=False
     )
+    cold_shared_read_trace: Optional[Any] = dataclasses.field(
+        default=None, compare=False, repr=False
+    )
 
 
 class CacheRequestOutcome(Enum):

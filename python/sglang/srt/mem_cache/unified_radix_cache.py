@@ -269,6 +269,7 @@ class UnifiedRadixCache(BasePrefixCache):
         )
 
         self.sidecar_pool_specs: list[SidecarPoolSpec] = []
+        self.effective_storage_selector = None
 
         # Streaming session: embedded StreamingSession with self as inner.
         # Always on -- zero overhead when no streaming session is open (the
@@ -605,6 +606,16 @@ class UnifiedRadixCache(BasePrefixCache):
                 raise RuntimeError("HiCache controller is not attached.")
             self.cache_controller.register_host_pool_entry(entry)
         self.sidecar_pool_specs.append(spec)
+        self.refresh_effective_storage_selector()
+
+    def refresh_effective_storage_selector(self) -> None:
+        """Publish read-only effective target schema after pool construction."""
+        if self.host_pool_group is None or not hasattr(self.host_pool_group, "storage_schema"):
+            self.effective_storage_selector = None; return
+        from sglang.srt.mem_cache.storage_selector import build_effective_storage_selector
+        if self.cache_controller is None:
+            self.effective_storage_selector = None; return
+        self.effective_storage_selector = build_effective_storage_selector(host_pool_group=self.host_pool_group, sidecar_pool_specs=self.sidecar_pool_specs, controller=self.cache_controller)
 
     def release_host_resources(self) -> None:
         self._drain_pending_ready_counts()
@@ -2038,6 +2049,11 @@ class UnifiedRadixCache(BasePrefixCache):
         if not self.enable_storage or self.cache_controller is None:
             return
 
+        if request.cold_shared_read_trace is not None:
+            if self.storage_prefetch_retries is not None:
+                self.storage_prefetch_retries.cancel(request.rid)
+            return
+
         req_id = request.rid
         self.storage_prefetch_retries.cancel(req_id)
         buffer_mode = self.host_memory_mode == "buffer_only"
@@ -3015,6 +3031,12 @@ class UnifiedRadixCache(BasePrefixCache):
                                 else None
                             ),
                         )
+                    trace = getattr(operation, "cold_shared_read_trace", None)
+                    if trace is not None and not getattr(
+                        operation, "cold_shared_read_ended", False
+                    ):
+                        operation.cold_shared_read_ended = True
+                        trace.operation_end()
 
         def _drain_backup():
             drained = 0

@@ -597,7 +597,16 @@ class HybridCacheController(BaseHiCacheController):
             pool_transfers=extra_pools,
             assume_stored=assume_stored,
         )
-        self.prefetch_queue.put(operation)
+        trace = handle.cold_shared_read_trace
+        operation.cold_shared_read_trace = trace
+        if trace is not None:
+            trace.operation_begin()
+        try:
+            self.prefetch_queue.put(operation)
+        except Exception:
+            if trace is not None:
+                trace.operation_end()
+            raise
         return operation
 
     def write_storage(
@@ -709,16 +718,16 @@ class HybridCacheController(BaseHiCacheController):
                 shared_cache_diagnostics.reader_context(operation, self)
             )
         context = operation.shared_cache_reader_context
+        trace = getattr(operation, "cold_shared_read_trace", None)
+        extra = {"cold_shared_read_trace": trace} if trace is not None else {}
+        if context:
+            extra.update(
+                shared_cache_reader_context=context,
+                shared_cache_reader_cancelled=operation.is_terminated,
+            )
         return HiCacheStorageExtraInfo(
             prefix_keys=prefix_keys,
-            extra_info=(
-                {
-                    "shared_cache_reader_context": context,
-                    "shared_cache_reader_cancelled": operation.is_terminated,
-                }
-                if context
-                else None
-            ),
+            extra_info=extra or None,
         )
 
     def _page_transfer(self, operation: PrefetchOperation) -> bool:

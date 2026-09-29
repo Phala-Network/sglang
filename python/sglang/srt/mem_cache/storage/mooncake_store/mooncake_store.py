@@ -1028,8 +1028,14 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
                 except Exception:
                     shared_cache_seed_capture.fail_closed()
             else:
+                reader_info = (
+                    getattr(extra_info, "extra_info", None) or {}
+                ) if extra_info else {}
                 io_results = self._get_batch_zero_copy_impl(
-                    key_strs, ptr_list, element_size_list
+                    key_strs,
+                    ptr_list,
+                    element_size_list,
+                    reader_info.get("cold_shared_read_trace"),
                 )
             reader_info = (
                 (getattr(extra_info, "extra_info", None) or {}) if not is_set else {}
@@ -1203,7 +1209,12 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
 
         start_time = time.perf_counter()
         get_results = self._get_batch_zero_copy_impl(
-            key_strs, buffer_ptrs, buffer_sizes
+            key_strs,
+            buffer_ptrs,
+            buffer_sizes,
+            (getattr(extra_info, "extra_info", None) or {}).get(
+                "cold_shared_read_trace"
+            ) if extra_info else None,
         )
         end_time = time.perf_counter()
 
@@ -1494,13 +1505,34 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
             return self.store.batch_put_from(key_strs, buffer_ptrs, buffer_sizes)
 
     def _get_batch_zero_copy_impl(
-        self, key_strs: List[str], buffer_ptrs: List[Any], buffer_sizes: List[Any]
+        self,
+        key_strs: List[str],
+        buffer_ptrs: List[Any],
+        buffer_sizes: List[Any],
+        cold_shared_read_trace=None,
     ) -> List[int]:
-        if self._uses_multi_buffer(buffer_ptrs):
-            return self.store.batch_get_into_multi_buffers(
-                key_strs, buffer_ptrs, buffer_sizes
-            )
-        return self.store.batch_get_into(key_strs, buffer_ptrs, buffer_sizes)
+        from sglang.srt.mem_cache.cold_shared_read import record_unattributed_get
+
+        if cold_shared_read_trace is None:
+            record_unattributed_get()
+        else:
+            cold_shared_read_trace.get_begin(len(key_strs))
+        try:
+            if self._uses_multi_buffer(buffer_ptrs):
+                results = self.store.batch_get_into_multi_buffers(
+                    key_strs, buffer_ptrs, buffer_sizes
+                )
+            else:
+                results = self.store.batch_get_into(
+                    key_strs, buffer_ptrs, buffer_sizes
+                )
+        except Exception:
+            if cold_shared_read_trace is not None:
+                cold_shared_read_trace.get_end(error=True)
+            raise
+        if cold_shared_read_trace is not None:
+            cold_shared_read_trace.get_end(results)
+        return results
 
     def _batch_exist(self, key_strs: List[str]) -> List[int]:
         return self.store.batch_is_exist(key_strs)

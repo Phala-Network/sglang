@@ -213,6 +213,7 @@ from sglang.srt.managers.schedule_batch import (
     ScheduleBatch,
     retract_all,
 )
+from sglang.srt.mem_cache.cold_shared_read import ColdSharedReadTrace
 from sglang.srt.managers.schedule_policy import (
     AddReqResult,
     PrefillAdder,
@@ -2930,6 +2931,17 @@ class Scheduler(
             return
 
         self._maybe_namespace_elastic_radix_cache(req)
+        if recv_req.cold_shared_read_bypass:
+            trace = ColdSharedReadTrace(
+                req.rid,
+                req.extra_key,
+                req.cache_salt,
+                self.ps.tp_rank,
+            )
+            req.cold_shared_read_bypass = True
+            req.cache_request_handle = dataclasses.replace(
+                req.cache_request_handle, cold_shared_read_trace=trace
+            )
         req.pd_diagnostic_request_ref = recv_req.pd_diagnostic_request_ref
         req.cache_request_handle = dataclasses.replace(
             req.cache_request_handle,
@@ -3156,6 +3168,8 @@ class Scheduler(
     def _prefetch_kvcache(self, req: Req, storage_hit_end: Optional[int] = None):
         if self.enable_hicache_storage:
             req.init_next_round_input(self.tree_cache, cow_mamba=False)
+            if getattr(req, "cold_shared_read_bypass", False):
+                return
             tree_cache = self.tree_cache
             buffer_mode = get_memory().hicache_host_memory_mode == "buffer_only"
             last_host_node = req.last_host_node
@@ -3406,6 +3420,9 @@ class Scheduler(
 
     def _release_aborted_request(self, req: Req) -> None:
         """Drop the cache-side state an aborted request left behind."""
+        trace = getattr(req.cache_request_handle, "cold_shared_read_trace", None)
+        if trace is not None:
+            trace.terminal("abort")
         self.tree_cache.finish(req.cache_request_handle, CacheRequestOutcome.ABORT)
 
     def _abort_on_queued_limit(self, recv_req: Req) -> bool:
@@ -5245,6 +5262,9 @@ class Scheduler(
         # Resolved config (pristine server_args + post-publish overrides) so a
         # readback reflects values changed via /set_internal_state, not startup.
         ret = get_context().resolved_server_args_dict()
+        selector = getattr(self.tree_cache, "effective_storage_selector", None)
+        if selector is not None:
+            ret["effective_storage_selector"] = selector.as_dict()
         if self.governor is not None:
             now = time.monotonic()
             ret["pig_governor"] = self.governor.policy_snapshot(now)
@@ -6173,6 +6193,9 @@ def run_scheduler_process(
 def _make_abort_req(
     req: Req, finished_reason: Optional[FinishReasonDict] = None
 ) -> AbortReq:
+    trace = getattr(req.cache_request_handle, "cold_shared_read_trace", None)
+    if trace is not None:
+        trace.terminal("abort")
     if (
         getattr(req, "governor_progress", None) is not None
         or getattr(req, "governor_reservation", None) is not None

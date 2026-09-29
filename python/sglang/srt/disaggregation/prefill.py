@@ -73,6 +73,7 @@ from sglang.srt.mem_cache.common import (
 )
 from sglang.srt.mem_cache.deepseek_v4_memory_pool import DeepSeekV4TokenToKVPool
 from sglang.srt.mem_cache.memory_pool import HybridLinearKVPool
+from sglang.srt.mem_cache.shared_cache_diagnostics import shared_cache_diagnostics
 from sglang.srt.observability.req_time_stats import set_schedule_time_batch
 from sglang.srt.observability.scheduler_stage_metrics import (
     SCHEDULER_STAGE_GET_NEXT_BATCH,
@@ -93,6 +94,14 @@ if TYPE_CHECKING:
     from sglang.srt.mem_cache.memory_pool import KVCache
 
 logger = logging.getLogger(__name__)
+
+
+def _record_shared_cache_diagnostic_failure() -> None:
+    try:
+        shared_cache_diagnostics.record_capture_failure()
+    except Exception:
+        pass
+
 
 _is_npu = is_npu()
 
@@ -717,6 +726,28 @@ class SchedulerDisaggregationPrefillMixin:
 
         if copy_done is not None:
             copy_done.synchronize()
+        try:
+            capture_enabled = shared_cache_diagnostics.enabled
+        except Exception:
+            _record_shared_cache_diagnostic_failure()
+            capture_enabled = False
+        if capture_enabled:
+            for req in batch.reqs:
+                try:
+                    extend_range = req.extend_range
+                    if extend_range is None:
+                        continue
+                    h_tokens = len(req.prefix_indices) + req.host_hit_length
+                    shared_cache_diagnostics.record_prefill_forward(
+                        request_id=req.rid,
+                        h_tokens=h_tokens,
+                        n_tokens=len(req.origin_input_ids),
+                        forward_start=extend_range.start,
+                        forward_end=extend_range.end,
+                        tail_complete=req.inflight_middle_chunks <= 0,
+                    )
+                except Exception:
+                    _record_shared_cache_diagnostic_failure()
         auxiliary_output_starts = (
             self.batch_result_processor.snapshot_auxiliary_output_starts(batch, result)
         )
@@ -988,6 +1019,7 @@ class SchedulerDisaggregationPrefillMixin:
                 # todo: set Transferring correctly in backend
                 undone_reqs.append(req)
             elif poll == KVPoll.Success:  # transfer done
+                self._record_c128_transfer_completion(req, completed=True)
                 if not isinstance(req.finished_reason, FINISH_ABORT):
                     req.finished_reason = FINISH_LENGTH(length=0)
                 release_kv_cache(req, self.tree_cache)  # unlock the tree
@@ -999,6 +1031,7 @@ class SchedulerDisaggregationPrefillMixin:
                 done_reqs.append(req)
                 req.time_stats.set_prefill_kv_transfer_finish_time()
             elif poll == KVPoll.Failed:
+                self._record_c128_transfer_completion(req, completed=False)
                 self.handle_inflight_transfer_failure(req)
                 done_reqs.append(req)
             else:
@@ -1294,6 +1327,7 @@ class SchedulerDisaggregationPrefillMixin:
             return
 
         state_indices: Optional[List] = None
+        state_types = []
         if last_chunk:
             self.disagg_metadata_buffers.set_buf(req)
 
@@ -1402,6 +1436,35 @@ class SchedulerDisaggregationPrefillMixin:
             state_indices = [
                 payloads[st]() if st in payloads else None for st in state_types
             ]
+            try:
+                if (
+                    shared_cache_diagnostics.enabled
+                    and StateType.DSV4_REQUEST_STATE in state_types
+                ):
+                    c128_indices = state_indices[
+                        state_types.index(StateType.DSV4_REQUEST_STATE)
+                    ]
+                    kv_cache = self.token_to_kv_pool_allocator.get_kvcache()
+                    c128_pool = next(
+                        (
+                            pool
+                            for pool in kv_cache.compress_state_pools
+                            if pool is not None
+                            and pool.request_scoped
+                            and pool.ratio == 128
+                        ),
+                        None,
+                    )
+                    req._shared_cache_diag_c128 = {
+                        "room": req.bootstrap_room,
+                        "index_count": (
+                            0 if c128_indices is None else len(c128_indices)
+                        ),
+                        "online": bool(c128_pool and c128_pool.online),
+                        "sender_mode": type(req.disagg_kv_sender).__name__,
+                    }
+            except Exception:
+                _record_shared_cache_diagnostic_failure()
 
         if self.enable_staging:
             # One sender.send per grid slot; the sender's cumulative page
@@ -1446,6 +1509,30 @@ class SchedulerDisaggregationPrefillMixin:
             self.disagg_prefill_pending_chunk_rids.discard(req.rid)
         else:
             self.disagg_prefill_pending_chunk_rids.add(req.rid)
+
+    @staticmethod
+    def _record_c128_transfer_completion(req: Req, *, completed: bool) -> None:
+        try:
+            transfer = getattr(req, "_shared_cache_diag_c128", None)
+            if transfer is None:
+                return
+            shared_cache_diagnostics.record_c128_transfer(
+                request_id=req.rid,
+                room=transfer["room"],
+                index_count=transfer["index_count"],
+                online=transfer["online"],
+                sender_mode=transfer["sender_mode"],
+                completed=completed,
+            )
+        except Exception:
+            _record_shared_cache_diagnostic_failure()
+        finally:
+            try:
+                delattr(req, "_shared_cache_diag_c128")
+            except AttributeError:
+                pass
+            except Exception:
+                _record_shared_cache_diagnostic_failure()
 
     def optimistic_release_and_requeue(self: Scheduler, req: Req) -> None:
         """Release KV cache and requeue an optimistic prefill request."""

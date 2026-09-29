@@ -20,6 +20,7 @@ from sglang.srt.mem_cache.memory_pool_host import (
 from sglang.srt.mem_cache.pool_host import HostPoolGroup, PoolEntry
 from sglang.srt.mem_cache.pool_host.allocation_budget import dsa_host_allocation_budget
 from sglang.srt.mem_cache.pool_host.common import get_allocator_type
+from sglang.srt.mem_cache.shared_cache_diagnostics import shared_cache_diagnostics
 from sglang.srt.mem_cache.pool_host.dsa import DSAIndexerPoolHost
 from sglang.srt.mem_cache.pool_host.mamba import MambaPoolHost
 from sglang.srt.mem_cache.pool_host.mha import (
@@ -660,7 +661,7 @@ def deepseek_v4_storage_schema(kvcache, host_pool_group):
     """Stable physical schema; capacities and P/D process roles are excluded."""
     parallel = get_parallel()
     model = get_model()
-    return {
+    schema = {
         "version": 1,
         # Served model identity is already part of the backend namespace.
         # Local checkpoint mount paths and P/D roles must not split that namespace.
@@ -688,6 +689,8 @@ def deepseek_v4_storage_schema(kvcache, host_pool_group):
             for entry in host_pool_group.entries
         ],
     }
+    shared_cache_diagnostics.record_schema(schema)
+    return schema
 
 
 def build_deepseek_v4_hicache_stack(

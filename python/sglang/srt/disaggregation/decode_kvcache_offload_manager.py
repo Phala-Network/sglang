@@ -29,6 +29,7 @@ from sglang.srt.mem_cache.memory_pool import (
     MLATokenToKVPool,
     ReqToTokenPool,
 )
+from sglang.srt.mem_cache.shared_cache_diagnostics import shared_cache_diagnostics
 from sglang.srt.mem_cache.storage_backend_config import (
     load_storage_backend_extra_config,
 )
@@ -420,7 +421,27 @@ class DecodeKVCacheOffloadManager:
                 continue
             req_id, host_indices, start_time = pending
             extra_pools = self.backup_extra_pools.pop(ack_id, None)
-            if self.is_dsv4 and not self._dsv4_backup_complete(storage_operation):
+            dsv4_complete = (
+                self._dsv4_backup_complete(storage_operation) if self.is_dsv4 else None
+            )
+            if self.is_dsv4:
+                shared_cache_diagnostics.record_backup(
+                    phase="ack",
+                    request_id=req_id,
+                    operation_id=ack_id,
+                    complete=dsv4_complete,
+                    tokens=storage_operation.completed_tokens,
+                    tenant_id=getattr(
+                        getattr(
+                            getattr(self.cache_controller, "storage_backend", None),
+                            "config",
+                            None,
+                        ),
+                        "tenant_id",
+                        "default",
+                    ),
+                )
+            if self.is_dsv4 and not dsv4_complete:
                 # Cache writes are best effort. Complete-pool lookup on P stops
                 # at the missing page; later chunks cannot bridge this gap.
                 logger.warning(
@@ -479,6 +500,23 @@ class DecodeKVCacheOffloadManager:
         if extra_pools:
             self.backup_extra_pools[ack_id] = extra_pools
         self.ongoing_backup[ack_id] = (req.rid, host_indices, start_time)
+        if self.is_dsv4:
+            shared_cache_diagnostics.record_backup(
+                phase="submitted",
+                request_id=req.rid,
+                operation_id=ack_id,
+                complete=False,
+                tokens=len(incremental_tokens),
+                tenant_id=getattr(
+                    getattr(
+                        getattr(self.cache_controller, "storage_backend", None),
+                        "config",
+                        None,
+                    ),
+                    "tenant_id",
+                    "default",
+                ),
+            )
         return page_hashes[-1] if len(page_hashes) > 0 else prior_hash
 
     def _compute_prefix_hash(self, req: Req, tokens, prior_hash=""):

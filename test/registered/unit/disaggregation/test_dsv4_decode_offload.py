@@ -30,6 +30,7 @@ from sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler import (
 )
 from sglang.srt.mem_cache.memory_pool_host import LogicalHostPool
 from sglang.srt.mem_cache.pool_host import HostPoolGroup, PoolEntry
+from sglang.srt.mem_cache.shared_cache_diagnostics import SharedCacheDiagnostics
 from sglang.srt.mem_cache.radix_cache import RadixKey
 from sglang.srt.mem_cache.storage.mooncake_store.mooncake_store import MooncakeStore
 from sglang.srt.mem_cache.utils import get_hash_str, get_storage_hash_str
@@ -464,6 +465,38 @@ class TestDSV4DecodeOffload(unittest.TestCase):
         self.assertEqual(
             manager.decode_host_mem_pool.available_size(PoolName.SWA), PAGE * 16
         )
+
+    def test_backup_diagnostics_correlate_submit_and_whole_group_ack(self):
+        capture_log = MagicMock()
+        diagnostics = SharedCacheDiagnostics(
+            enabled=True,
+            key_salt="shared-test-salt",
+            case_id="unit-case",
+            epoch="unit-epoch",
+            key_ids="0" * 64,
+            log=capture_log,
+        )
+        manager, _ = make_manager()
+        request = make_req(rid="private-request-id")
+
+        with patch(
+            "sglang.srt.disaggregation.decode_kvcache_offload_manager.shared_cache_diagnostics",
+            diagnostics,
+        ):
+            self.assertTrue(manager.offload_kv_cache(request))
+            manager._check_offload_progress(1)
+            operation = finish_storage(
+                manager, missing=PoolName.DEEPSEEK_V4_C4_INDEXER_SCALE
+            )
+
+        records = [call.args[1] for call in capture_log.info.call_args_list]
+        events = [json.loads(record) for record in records]
+        self.assertEqual(
+            [event["event"] for event in events], ["backup_submitted", "backup_ack"]
+        )
+        self.assertFalse(events[-1]["complete"])
+        self.assertEqual(events[-1]["tokens"], operation.completed_tokens)
+        self.assertNotIn("private-request-id", "\n".join(records))
 
     def test_unified_layout_has_no_swa_state_but_has_c128_and_fp4_scale(self):
         manager, _ = make_manager(unified=True)

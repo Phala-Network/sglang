@@ -23,6 +23,7 @@ from sglang.srt.mem_cache.hicache_storage import (
 )
 from sglang.srt.mem_cache.pool_host import HostKVCache, HostTensorAllocator
 from sglang.srt.mem_cache.pool_host.mla import MLATokenToKVPoolHost
+from sglang.srt.mem_cache.shared_cache_diagnostics import shared_cache_diagnostics
 from sglang.srt.observability.metrics_collector import StorageMetrics
 
 DEFAULT_LOCAL_BUFFER_SIZE = 16 * 1024 * 1024  # 16 MB
@@ -971,8 +972,33 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
                 io_results = self._get_batch_zero_copy_impl(
                     key_strs, ptr_list, element_size_list
                 )
+            shared_cache_diagnostics.record_io(
+                is_set=is_set,
+                pool=transfer.name,
+                keys=key_strs,
+                sizes=element_size_list,
+                results=io_results,
+                exist_results=exist_result if is_set else None,
+                tenant_id=getattr(
+                    getattr(self, "config", None), "tenant_id", DEFAULT_TENANT_ID
+                ),
+            )
+            page_io_results = io_results
+            if not is_set:
+                page_io_results = [
+                    1
+                    if index < len(element_size_list)
+                    and result
+                    == (
+                        sum(int(size) for size in element_size_list[index])
+                        if isinstance(element_size_list[index], (list, tuple))
+                        else int(element_size_list[index])
+                    )
+                    else -1
+                    for index, result in enumerate(io_results)
+                ]
             results[transfer.name] = self._batch_postprocess(
-                io_results, is_set_operate=is_set, key_multiplier=key_multiplier
+                page_io_results, is_set_operate=is_set, key_multiplier=key_multiplier
             )
         return results
 

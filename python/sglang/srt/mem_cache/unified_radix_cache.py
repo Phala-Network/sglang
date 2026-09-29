@@ -46,6 +46,7 @@ from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
 )
 from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool
 from sglang.srt.mem_cache.radix_cache import RadixKey
+from sglang.srt.mem_cache.shared_cache_diagnostics import shared_cache_diagnostics
 from sglang.srt.mem_cache.storage_prefetch import StoragePrefetchRetries
 from sglang.srt.mem_cache.swa_memory_pool import SWAKVPool
 from sglang.srt.mem_cache.unified_cache.cache_action import (
@@ -2257,8 +2258,39 @@ class UnifiedRadixCache(BasePrefixCache):
             anchor_lock_params,
             prefetch_key,
         ):
+            shared_cache_diagnostics.record_prefetch(
+                request_id=request.rid,
+                requested_tokens=len(prefetch_key),
+                completed_tokens=completed_tokens,
+                accepted=False,
+                tenant_id=getattr(
+                    getattr(
+                        getattr(self.cache_controller, "storage_backend", None),
+                        "config",
+                        None,
+                    ),
+                    "tenant_id",
+                    "default",
+                ),
+            )
             # Hybrid all-or-nothing check failed; result already discarded.
             return
+
+        shared_cache_diagnostics.record_prefetch(
+            request_id=request.rid,
+            requested_tokens=len(prefetch_key),
+            completed_tokens=completed_tokens,
+            accepted=True,
+            tenant_id=getattr(
+                getattr(
+                    getattr(self.cache_controller, "storage_backend", None),
+                    "config",
+                    None,
+                ),
+                "tenant_id",
+                "default",
+            ),
+        )
 
         allocated_tokens = len(host_indices)
         if completed_tokens < allocated_tokens:

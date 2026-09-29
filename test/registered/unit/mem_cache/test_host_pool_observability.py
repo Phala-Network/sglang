@@ -3,20 +3,30 @@
 import ast
 import importlib.util
 import json
+import sys
 import threading
+import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
 import torch
 
+ROOT = Path(__file__).resolve().parents[4]
+if importlib.util.find_spec("sglang") is None:
+    for package in ("sglang", "sglang.test", "sglang.test.ci"):
+        source_package = types.ModuleType(package)
+        source_package.__path__ = [str(ROOT / "python" / package.replace(".", "/"))]
+        source_package.__spec__ = importlib.util.spec_from_loader(
+            package, loader=None, is_package=True
+        )
+        sys.modules[package] = source_package
+
 from sglang.test.ci.ci_register import register_cpu_ci
 
 register_cpu_ci(est_time=2, suite="base-a-test-cpu")
 
-MODULE_PATH = (
-    Path(__file__).resolve().parents[4] / "python/sglang/srt/observability/host_pool.py"
-)
+MODULE_PATH = ROOT / "python/sglang/srt/observability/host_pool.py"
 spec = importlib.util.spec_from_file_location("host_pool_observability", MODULE_PATH)
 observer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(observer)

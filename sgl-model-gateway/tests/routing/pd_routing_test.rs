@@ -79,7 +79,7 @@ mod pd_routing_tests {
             let resp = app.clone().oneshot(req).await.unwrap();
             assert_eq!(resp.status(), StatusCode::OK, "case {suffix}");
             assert_eq!(
-                resp.headers().get("x-worker-id").unwrap(),
+                resp.headers().get("x-worker-id").unwrap().to_str().unwrap(),
                 format!("worker-{decode_port}"),
                 "decode response header must pass through"
             );

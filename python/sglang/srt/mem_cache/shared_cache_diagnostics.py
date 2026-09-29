@@ -191,7 +191,9 @@ class SharedCacheDiagnostics:
             if not salt or not case_id or not epoch or not tenant_id:
                 return False
             unsigned = {
-                key: value for key, value in document.items() if key != "manifest_sha256"
+                key: value
+                for key, value in document.items()
+                if key != "manifest_sha256"
             }
             calculated_digest = hashlib.sha256(
                 json.dumps(
@@ -202,8 +204,12 @@ class SharedCacheDiagnostics:
                 return False
             calculated = {
                 _shared_cache_id(
-                    salt.encode(), b"phala.shared-cache-key.v1\0", case_id,
-                    epoch, tenant_id, key.get("key"),
+                    salt.encode(),
+                    b"phala.shared-cache-key.v1\0",
+                    case_id,
+                    epoch,
+                    tenant_id,
+                    key.get("key"),
                 )
                 for key in keys
                 if isinstance(key, dict) and isinstance(key.get("key"), str)
@@ -230,10 +236,13 @@ class SharedCacheDiagnostics:
                     ),
                 )
                 self._max_requests = 1
-                self._max_duration_s = min(
-                    _MAX_DURATION_MS,
-                    max(1, int(document.get("max_duration_ms", 60000))),
-                ) / 1000
+                self._max_duration_s = (
+                    min(
+                        _MAX_DURATION_MS,
+                        max(1, int(document.get("max_duration_ms", 60000))),
+                    )
+                    / 1000
+                )
                 self._started_at = time.monotonic()
                 self.enabled = True
             return True
@@ -521,11 +530,7 @@ def _read_private_json(path, *, maximum):
         raise ValueError("private regular file required")
     if metadata.st_size > maximum:
         raise ValueError("private file too large")
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_NONBLOCK", 0)
-    )
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     fd = os.open(path, flags)
     try:
         opened = os.fstat(fd)
@@ -602,7 +607,10 @@ class SharedCacheSeedCapture:
                     return False
                 if any(config.get(key) != value for key, value in selectors.items()):
                     return False
-                if not isinstance(actual_request_id, str) or not 1 <= len(actual_request_id) <= 256:
+                if (
+                    not isinstance(actual_request_id, str)
+                    or not 1 <= len(actual_request_id) <= 256
+                ):
                     return False
                 if config.get("tenant_id") != actual_tenant_id:
                     return False
@@ -637,9 +645,17 @@ class SharedCacheSeedCapture:
                 if not all(
                     isinstance(config.get(key), str) and config[key]
                     for key in (
-                        "run_id", "case_id", "epoch", "request_id", "tenant_id",
-                        "backend_tag", "kv_schema", "d_worker_id",
-                        "store_instance_id", "key_salt", "output_dir",
+                        "run_id",
+                        "case_id",
+                        "epoch",
+                        "request_id",
+                        "tenant_id",
+                        "backend_tag",
+                        "kv_schema",
+                        "d_worker_id",
+                        "store_instance_id",
+                        "key_salt",
+                        "output_dir",
                     )
                 ):
                     return False
@@ -658,23 +674,33 @@ class SharedCacheSeedCapture:
                     and isinstance(required, list)
                     and required
                     and len(required) <= 64
-                    and all(isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9._:-]{1,96}", x) for x in required)
+                    and all(
+                        isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9._:-]{1,96}", x)
+                        for x in required
+                    )
                 ):
                     return False
                 directory = config["output_dir"]
                 dir_stat = os.lstat(directory)
-                if not stat.S_ISDIR(dir_stat.st_mode) or stat.S_IMODE(dir_stat.st_mode) != 0o700:
+                if (
+                    not stat.S_ISDIR(dir_stat.st_mode)
+                    or stat.S_IMODE(dir_stat.st_mode) != 0o700
+                ):
                     return False
                 if hasattr(os, "getuid") and dir_stat.st_uid != os.getuid():
                     return False
                 seed_id = config.get("seed_id")
-                if not isinstance(seed_id, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", seed_id):
+                if not isinstance(seed_id, str) or not re.fullmatch(
+                    r"[A-Za-z0-9._-]{1,64}", seed_id
+                ):
                     return False
                 provisional = os.path.join(directory, f"{seed_id}.provisional.json")
                 sealed = os.path.join(directory, f"{seed_id}.seed.json")
                 if os.path.lexists(provisional) or os.path.lexists(sealed):
                     return False
-                flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+                flags = (
+                    os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+                )
                 self._fd = os.open(provisional, flags, 0o600)
                 self._config = config
                 self._provisional_path = provisional
@@ -696,9 +722,16 @@ class SharedCacheSeedCapture:
 
     def bind_operation(self, request_id, operation_id):
         with self._lock:
-            if self._sealed or self._config is None or request_id != self._config["request_id"]:
+            if (
+                self._sealed
+                or self._config is None
+                or request_id != self._config["request_id"]
+            ):
                 return False
-            if time.monotonic() - self._started > int(self._config["max_duration_ms"]) / 1000:
+            if (
+                time.monotonic() - self._started
+                > int(self._config["max_duration_ms"]) / 1000
+            ):
                 self._failed = "duration_exceeded"
                 return False
             if self._operation_id is not None:
@@ -711,7 +744,11 @@ class SharedCacheSeedCapture:
     def fail_closed(self, reason="capture_hook_error"):
         try:
             with self._lock:
-                if not self._sealed and self._config is not None and self._failed is None:
+                if (
+                    not self._sealed
+                    and self._config is not None
+                    and self._failed is None
+                ):
                     self._failed = reason
                     self._write_provisional_locked()
         except Exception:
@@ -737,7 +774,10 @@ class SharedCacheSeedCapture:
             if self._operation_id is None:
                 self._failed = "operation_not_bound"
                 return None
-            if time.monotonic() - self._started > int(self._config["max_duration_ms"]) / 1000:
+            if (
+                time.monotonic() - self._started
+                > int(self._config["max_duration_ms"]) / 1000
+            ):
                 self._failed = "duration_exceeded"
                 return None
             if len(keys) != len(sizes) or len(keys) != len(component_names):
@@ -749,7 +789,9 @@ class SharedCacheSeedCapture:
             pending = []
             pending_key_ids = set()
             start = int(context.get("page_start", 0))
-            for index, (key, size, component) in enumerate(zip(keys, sizes, component_names)):
+            for index, (key, size, component) in enumerate(
+                zip(keys, sizes, component_names)
+            ):
                 if not isinstance(key, str) or not key or len(key.encode()) > 4096:
                     self._failed = "invalid_key"
                     return None
@@ -767,7 +809,9 @@ class SharedCacheSeedCapture:
                 if len(self._entries) + len(pending) >= int(self._config["max_keys"]):
                     self._failed = "key_budget_exceeded"
                     return None
-                if self._total_bytes + sum(item["logical_bytes"] for item in pending) + size > int(self._config["max_logical_bytes"]):
+                if self._total_bytes + sum(
+                    item["logical_bytes"] for item in pending
+                ) + size > int(self._config["max_logical_bytes"]):
                     self._failed = "byte_budget_exceeded"
                     return None
                 page_indexes = context.get("page_indexes")
@@ -817,18 +861,33 @@ class SharedCacheSeedCapture:
                 entry["native_result"] = int(result)
                 if existed == 1 or int(result) != 0:
                     self._failed = "put_not_new_success"
-            self._total_bytes = sum(item["logical_bytes"] for item in self._entries.values())
+            self._total_bytes = sum(
+                item["logical_bytes"] for item in self._entries.values()
+            )
             self._write_provisional_locked()
 
-    def backup_ack(self, *, request_id, operation_id, complete, tokens, expected_tokens):
+    def backup_ack(
+        self, *, request_id, operation_id, complete, tokens, expected_tokens
+    ):
         with self._lock:
-            if self._sealed or self._config is None or request_id != self._config["request_id"]:
+            if (
+                self._sealed
+                or self._config is None
+                or request_id != self._config["request_id"]
+            ):
                 return False
-            if time.monotonic() - self._started > int(self._config["max_duration_ms"]) / 1000:
+            if (
+                time.monotonic() - self._started
+                > int(self._config["max_duration_ms"]) / 1000
+            ):
                 self._failed = self._failed or "duration_exceeded"
                 self._write_provisional_locked()
                 return False
-            if operation_id != self._operation_id or not complete or tokens != expected_tokens:
+            if (
+                operation_id != self._operation_id
+                or not complete
+                or tokens != expected_tokens
+            ):
                 self._failed = self._failed or "backup_incomplete"
                 self._write_provisional_locked()
                 return False
@@ -868,7 +927,10 @@ class SharedCacheSeedCapture:
         return _shared_cache_id(
             config["key_salt"].encode(),
             b"phala.shared-cache-key.v1\0",
-            config["case_id"], config["epoch"], config["tenant_id"], key,
+            config["case_id"],
+            config["epoch"],
+            config["tenant_id"],
+            key,
         )
 
     @property
@@ -883,7 +945,15 @@ class SharedCacheSeedCapture:
 
     def _producer_document_locked(self):
         config = self._config
-        entries = sorted(self._entries.values(), key=lambda item: (item["rank"], item["component"], item["page_index"], item["key_id"]))
+        entries = sorted(
+            self._entries.values(),
+            key=lambda item: (
+                item["rank"],
+                item["component"],
+                item["page_index"],
+                item["key_id"],
+            ),
+        )
         doc = {
             "schema": "phala.shared-cache.seed-manifest.v1",
             "run_id": config["run_id"],
@@ -930,7 +1000,9 @@ class SharedCacheSeedCapture:
             ],
             "backup_ack": {"operation_id": self._operation_id, "complete": True},
         }
-        canonical = json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        canonical = json.dumps(
+            doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode()
         doc["manifest_sha256"] = __import__("hashlib").sha256(canonical).hexdigest()
         return doc
 
@@ -945,7 +1017,9 @@ class SharedCacheSeedCapture:
             "events": self._events,
             "entries": list(self._entries.values()),
         }
-        raw = json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        raw = json.dumps(
+            doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode()
         if len(raw) > int(self._config["max_artifact_bytes"]):
             self._failed = "artifact_budget_exceeded"
             return
@@ -958,7 +1032,9 @@ class SharedCacheSeedCapture:
             self._failed = "artifact_write_failed"
 
     def _atomic_seal_locked(self, document):
-        raw = json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        raw = json.dumps(
+            document, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode()
         if len(raw) > int(self._config["max_artifact_bytes"]):
             self._failed = "artifact_budget_exceeded"
             self._write_provisional_locked()

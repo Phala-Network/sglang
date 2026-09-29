@@ -1,20 +1,20 @@
 import asyncio
-from queue import Queue
 import hashlib
 import json
+from queue import Queue
 from types import SimpleNamespace
 
 import pytest
 
 from sglang.srt.managers.shared_cache_control import (
-    SharedCacheControlError,
     _PENDING_FIELDS,
+    SharedCacheControlError,
     _private_jsonl,
+    _stable_id,
+    clear_from_configured_artifacts,
     execute_bounded_clear,
     expected_identities,
     load_manifest,
-    clear_from_configured_artifacts,
-    _stable_id,
     parse_clear_selector_body,
     validate_clear_selectors,
     validate_owner_drain,
@@ -207,7 +207,7 @@ def test_owner_drain_jsonl_requires_complete_final_summary(tmp_path):
 
     valid = path.read_bytes()
     cases = (
-        (valid.rsplit(b"{\"bytes\"", 1)[0], "owner_drain_summary_missing"),
+        (valid.rsplit(b'{"bytes"', 1)[0], "owner_drain_summary_missing"),
         (valid[:-1], "owner_drain_file_incomplete"),
     )
     for payload, reason in cases:
@@ -332,7 +332,13 @@ def test_owner_drain_accepts_scan_before_init():
         records,
         manifest,
         evidence,
-        summary={"emitted": len(records), "dropped": 0, "rejected": 0, "bytes": 0, "complete": True},
+        summary={
+            "emitted": len(records),
+            "dropped": 0,
+            "rejected": 0,
+            "bytes": 0,
+            "complete": True,
+        },
         quiet_ms=250,
         now_ms=1000,
     )
@@ -342,12 +348,20 @@ def test_owner_drain_accepts_scan_before_init():
 def test_owner_drain_accepts_same_millisecond_samples_with_increasing_sequence():
     manifest, evidence, _, records = _owner_drain_fixture()
     records[2]["sample_time_unix_ms"] = records[1]["sample_time_unix_ms"]
-    records.append({**records[2], "owner_sample_sequence": 13, "sample_time_unix_ms": 1000})
+    records.append(
+        {**records[2], "owner_sample_sequence": 13, "sample_time_unix_ms": 1000}
+    )
     receipt = validate_owner_drain(
         records,
         manifest,
         evidence,
-        summary={"emitted": len(records), "dropped": 0, "rejected": 0, "bytes": 0, "complete": True},
+        summary={
+            "emitted": len(records),
+            "dropped": 0,
+            "rejected": 0,
+            "bytes": 0,
+            "complete": True,
+        },
         quiet_ms=250,
         now_ms=1000,
     )
@@ -612,7 +626,9 @@ def test_clear_selector_bounds_and_exact_decode_topology():
     )
     validate_single_decode_writer(topology, "decode")
     with pytest.raises(SharedCacheControlError, match="unsupported_topology"):
-        validate_single_decode_writer(SimpleNamespace(**{**topology.__dict__, "attn_cp_size": 2}), "decode")
+        validate_single_decode_writer(
+            SimpleNamespace(**{**topology.__dict__, "attn_cp_size": 2}), "decode"
+        )
     with pytest.raises(SharedCacheControlError, match="decode_writer_required"):
         validate_single_decode_writer(topology, "prefill")
 
@@ -686,10 +702,10 @@ def test_tokenizer_rejects_invalid_clear_before_ipc():
 
 def test_clear_uses_store_instance_identity_from_live_wrapper():
     scheduler, store, manifest, evidence = _clear_context()
-    scheduler.decode_offload_manager.cache_controller.storage_backend.shared_cache_store_instance_id = (
-        "other-store"
-    )
-    with pytest.raises(SharedCacheControlError, match="original_store_instance_mismatch"):
+    scheduler.decode_offload_manager.cache_controller.storage_backend.shared_cache_store_instance_id = "other-store"
+    with pytest.raises(
+        SharedCacheControlError, match="original_store_instance_mismatch"
+    ):
         execute_bounded_clear(
             scheduler=scheduler,
             native_store=store,
@@ -748,7 +764,9 @@ def test_original_writer_clear_handler_flow_and_stable_drain(tmp_path):
     )
     unsigned = dict(manifest)
     manifest["manifest_sha256"] = hashlib.sha256(
-        json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        json.dumps(
+            unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode()
     ).hexdigest()
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -758,7 +776,12 @@ def test_original_writer_clear_handler_flow_and_stable_drain(tmp_path):
     )
     writer_hash, segment_hash = expected_identities(manifest)
     ssd_owner_hash = _stable_id(
-        salt.encode(), b"phala.shared-cache-owner.v1\0", "case-1", "epoch-1", "default", owner_uuid
+        salt.encode(),
+        b"phala.shared-cache-owner.v1\0",
+        "case-1",
+        "epoch-1",
+        "default",
+        owner_uuid,
     )
     ssd_scope_hash = _stable_id(
         salt.encode(),

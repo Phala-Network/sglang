@@ -18,7 +18,6 @@ import faulthandler
 import logging
 import math
 import os
-import re
 import signal
 import sys
 import time
@@ -172,9 +171,9 @@ from sglang.srt.managers.io_struct import (
     SendWeightsToRemoteInstanceReqOutput,
     SetInternalStateReq,
     SetInternalStateReqOutput,
-    ShutdownReq,
     SharedCacheClearMemoryReqInput,
     SharedCacheClearMemoryReqOutput,
+    ShutdownReq,
     SlowDownReqInput,
     SlowDownReqOutput,
     TokenizedEmbeddingReqInput,
@@ -188,12 +187,6 @@ from sglang.srt.managers.io_struct import (
     UpdateWeightVersionReqInput,
     UpdateWeightVersionReqOutput,
     sock_send,
-)
-from sglang.srt.managers.shared_cache_control import (
-    SharedCacheControlError,
-    clear_from_configured_artifacts,
-    validate_clear_selectors,
-    validate_single_decode_writer,
 )
 from sglang.srt.managers.load_snapshot import create_load_snapshot_writer
 from sglang.srt.managers.min_free_slots_delayer import (
@@ -284,6 +277,12 @@ from sglang.srt.managers.scheduler_components.weight_updater import (
 )
 from sglang.srt.managers.scheduler_input_blocker import SchedulerInputBlocker
 from sglang.srt.managers.scheduler_pp_mixin import SchedulerPPMixin
+from sglang.srt.managers.shared_cache_control import (
+    SharedCacheControlError,
+    clear_from_configured_artifacts,
+    validate_clear_selectors,
+    validate_single_decode_writer,
+)
 from sglang.srt.managers.utils import (
     EmbeddingBatchResult,
     GenerationBatchResult,
@@ -4921,9 +4920,7 @@ class Scheduler(
             )
             validate_single_decode_writer(self.server_args, self.disaggregation_mode)
         except SharedCacheControlError as exc:
-            return SharedCacheClearMemoryReqOutput(
-                success=False, reason=exc.reason
-            )
+            return SharedCacheClearMemoryReqOutput(success=False, reason=exc.reason)
         try:
             receipt = clear_from_configured_artifacts(
                 self,

@@ -1176,7 +1176,9 @@ async def _read_shared_cache_clear_selectors(request: Request) -> dict[str, str]
             if content_length_value > max_body_bytes:
                 raise HTTPException(status_code=413, detail="request_body_too_large")
         except ValueError:
-            raise HTTPException(status_code=400, detail="invalid_content_length") from None
+            raise HTTPException(
+                status_code=400, detail="invalid_content_length"
+            ) from None
     body = bytearray()
     async for chunk in request.stream():
         if len(body) + len(chunk) > max_body_bytes:

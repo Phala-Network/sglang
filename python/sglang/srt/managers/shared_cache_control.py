@@ -13,7 +13,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Callable, Dict, Iterable, Mapping, Optional
 
 MAX_MANIFEST_BYTES = 64 * 1024
 MAX_KEYS = 256
@@ -88,7 +88,9 @@ def parse_clear_selector_body(body: bytes, *, maximum: int = 512) -> Dict[str, s
     return value
 
 
-def _stable_id(salt: bytes, domain: bytes, case_id: str, epoch: str, tenant: str, value: str) -> str:
+def _stable_id(
+    salt: bytes, domain: bytes, case_id: str, epoch: str, tenant: str, value: str
+) -> str:
     message = bytearray(domain)
     for field in (case_id, epoch, tenant, value):
         encoded = field.encode("utf-8")
@@ -113,14 +115,15 @@ def _private_json(path: str, *, maximum: int) -> Dict[str, Any]:
     file_path = Path(path)
     try:
         metadata = file_path.lstat()
-        if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o600:
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+        ):
             raise SharedCacheControlError("private_file_required")
         if metadata.st_size > maximum:
             raise SharedCacheControlError("file_too_large")
         flags = (
-            os.O_RDONLY
-            | getattr(os, "O_NOFOLLOW", 0)
-            | getattr(os, "O_NONBLOCK", 0)
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
         )
         fd = os.open(file_path, flags)
         try:
@@ -152,14 +155,15 @@ def _private_jsonl(path: str) -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
     file_path = Path(path)
     try:
         metadata = file_path.lstat()
-        if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o600:
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+        ):
             raise SharedCacheControlError("owner_drain_private_file_required")
         if metadata.st_size > MAX_OWNER_DRAIN_BYTES:
             raise SharedCacheControlError("owner_drain_file_too_large")
         flags = (
-            os.O_RDONLY
-            | getattr(os, "O_NOFOLLOW", 0)
-            | getattr(os, "O_NONBLOCK", 0)
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
         )
         fd = os.open(file_path, flags)
         try:
@@ -340,7 +344,10 @@ def validate_owner_drain(
     by_owner = {owner_id: [] for owner_id in expected_owners}
     for sample in records:
         if sample.get("schema") == "phala.shared-cache.native.v1":
-            if sample.get("case_id") != manifest["case_id"] or sample.get("epoch") != manifest["epoch"]:
+            if (
+                sample.get("case_id") != manifest["case_id"]
+                or sample.get("epoch") != manifest["epoch"]
+            ):
                 raise SharedCacheControlError("owner_drain_event_identity_mismatch")
             continue
         owner_id = sample.get("owner_id")
@@ -394,7 +401,10 @@ def validate_owner_drain(
                 not isinstance(group.get(field), int)
                 or isinstance(group.get(field), bool)
                 or group[field] < 0
-                for group, fields in ((active, active_fields), (pending, pending_fields))
+                for group, fields in (
+                    (active, active_fields),
+                    (pending, pending_fields),
+                )
                 for field in fields
             )
             or sample.get("available") is not True
@@ -437,14 +447,20 @@ def validate_owner_drain(
                 or run_start is None
                 or not all(
                     prior[group][field] == 0
-                    for group, fields in (("active", active_fields), ("pending", pending_fields))
+                    for group, fields in (
+                        ("active", active_fields),
+                        ("pending", pending_fields),
+                    )
                     for field in fields
                 )
                 or prior["activity_sequence"] != sample["activity_sequence"]
             ):
                 run_start = sample["sample_time_unix_ms"]
             prior = sample
-        if run_start is None or ordered[-1]["sample_time_unix_ms"] - run_start < quiet_ms:
+        if (
+            run_start is None
+            or ordered[-1]["sample_time_unix_ms"] - run_start < quiet_ms
+        ):
             raise SharedCacheControlError("owner_drain_quiet_window_missing")
         quiet_intervals.append((run_start, last_time))
         sample_counts[owner_id] = len(ordered)
@@ -467,21 +483,38 @@ def validate_owner_drain(
 
 
 def load_manifest(path: str, manifest_id: str, manifest_sha256: str) -> Dict[str, Any]:
-    if not _LABEL.fullmatch(manifest_id or "") or not _HEX.fullmatch(manifest_sha256 or ""):
+    if not _LABEL.fullmatch(manifest_id or "") or not _HEX.fullmatch(
+        manifest_sha256 or ""
+    ):
         raise SharedCacheControlError("invalid_manifest_selector")
     manifest = _private_json(path, maximum=MAX_MANIFEST_BYTES)
     expected = manifest.get("manifest_sha256")
-    unsigned = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
+    unsigned = {
+        key: value for key, value in manifest.items() if key != "manifest_sha256"
+    }
     calculated = hashlib.sha256(
-        json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        json.dumps(
+            unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode()
     ).hexdigest()
     if not hmac.compare_digest(str(expected or ""), calculated):
         raise SharedCacheControlError("manifest_hash_mismatch")
     if not hmac.compare_digest(calculated, manifest_sha256):
         raise SharedCacheControlError("manifest_hash_mismatch")
-    if manifest.get("manifest_id") != manifest_id or manifest.get("manifest_version") != 1:
+    if (
+        manifest.get("manifest_id") != manifest_id
+        or manifest.get("manifest_version") != 1
+    ):
         raise SharedCacheControlError("manifest_selector_mismatch")
-    for field in ("run_id", "case_id", "epoch", "tenant", "backend_tag", "model_revision", "kv_schema"):
+    for field in (
+        "run_id",
+        "case_id",
+        "epoch",
+        "tenant",
+        "backend_tag",
+        "model_revision",
+        "kv_schema",
+    ):
         if not _LABEL.fullmatch(str(manifest.get(field) or "")):
             raise SharedCacheControlError("invalid_manifest_metadata")
     if manifest.get("exact_nonempty_MEMORY_segment") in (None, ""):
@@ -510,7 +543,12 @@ def load_manifest(path: str, manifest_id: str, manifest_sha256: str) -> Dict[str
         key = item.get("key")
         size = item.get("logical_bytes")
         component = item.get("component")
-        if not isinstance(key, str) or not key or len(key.encode()) > 4096 or _FORBIDDEN_KEY.search(key):
+        if (
+            not isinstance(key, str)
+            or not key
+            or len(key.encode()) > 4096
+            or _FORBIDDEN_KEY.search(key)
+        ):
             raise SharedCacheControlError("invalid_key")
         if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
             raise SharedCacheControlError("invalid_logical_bytes")
@@ -533,19 +571,29 @@ def load_manifest(path: str, manifest_id: str, manifest_sha256: str) -> Dict[str
         if (
             not isinstance(replica_ids, list)
             or not replica_ids
-            or any(not isinstance(replica_id, int) or isinstance(replica_id, bool) for replica_id in replica_ids)
+            or any(
+                not isinstance(replica_id, int) or isinstance(replica_id, bool)
+                for replica_id in replica_ids
+            )
             or len(set(replica_ids)) != len(replica_ids)
         ):
             raise SharedCacheControlError("invalid_ssd_replica_ids")
         for identity_field in ("ssd_owner_uuid", "ssd_scope"):
-            if not isinstance(item.get(identity_field), str) or not item[identity_field]:
+            if (
+                not isinstance(item.get(identity_field), str)
+                or not item[identity_field]
+            ):
                 raise SharedCacheControlError("missing_ssd_identity")
         total += size
         if total > MAX_LOGICAL_BYTES:
             raise SharedCacheControlError("logical_bytes_too_large")
     if seen_components != set(components):
         raise SharedCacheControlError("incomplete_components")
-    for field in ("original_D_worker_id", "original_writer_client_id", "original_store_instance_id"):
+    for field in (
+        "original_D_worker_id",
+        "original_writer_client_id",
+        "original_store_instance_id",
+    ):
         if not isinstance(manifest.get(field), str) or not manifest[field]:
             raise SharedCacheControlError("missing_writer_identity")
     return manifest
@@ -555,9 +603,7 @@ def expected_identities(manifest: Mapping[str, Any]) -> tuple[str, str]:
     salt = manifest["key_salt"].encode()
     context = (manifest["case_id"], manifest["epoch"], manifest["tenant"])
     try:
-        writer_uuid = _canonical_native_uuid_pair(
-            manifest["original_writer_client_id"]
-        )
+        writer_uuid = _canonical_native_uuid_pair(manifest["original_writer_client_id"])
         owner_uuids = {
             item["ssd_owner_uuid"]: _canonical_native_uuid_pair(item["ssd_owner_uuid"])
             for item in manifest["keys"]
@@ -679,7 +725,9 @@ def _safe_admin_url(value: str) -> str:
         or port is None
     ):
         raise SharedCacheControlError("invalid_admin_url")
-    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, "/batch_query_keys", "", ""))
+    return urllib.parse.urlunsplit(
+        (parsed.scheme, parsed.netloc, "/batch_query_keys", "", "")
+    )
 
 
 def read_native_snapshot(
@@ -782,7 +830,9 @@ def validate_snapshot(
             if not isinstance(replica, dict):
                 raise SharedCacheControlError("invalid_replica_state")
             kind = replica.get("type")
-            if kind == "MEMORY" and expected_segment_id in replica.get("segment_ids", []):
+            if kind == "MEMORY" and expected_segment_id in replica.get(
+                "segment_ids", []
+            ):
                 memory_targets.append(replica)
             if kind == "LOCAL_DISK" and replica.get("id") in entry["ssd_replica_ids"]:
                 disk_targets.append(replica)
@@ -792,7 +842,11 @@ def validate_snapshot(
             if len(memory_targets) != 1:
                 raise SharedCacheControlError("memory_target_mismatch")
             memory = memory_targets[0]
-            if memory.get("status") != "COMPLETE" or memory.get("readable") is not True or memory.get("refcount") != 0:
+            if (
+                memory.get("status") != "COMPLETE"
+                or memory.get("readable") is not True
+                or memory.get("refcount") != 0
+            ):
                 raise SharedCacheControlError("memory_target_not_clearable")
         elif memory_targets:
             raise SharedCacheControlError("memory_target_survived_clear")
@@ -852,7 +906,9 @@ def scheduler_drain_snapshot(scheduler: Any) -> Dict[str, int]:
     return queues
 
 
-def require_stable_drain(scheduler: Any, *, quiet_ms: int, sample_ms: int = 50) -> Dict[str, int]:
+def require_stable_drain(
+    scheduler: Any, *, quiet_ms: int, sample_ms: int = 50
+) -> Dict[str, int]:
     if not 50 <= quiet_ms <= 5000:
         raise SharedCacheControlError("invalid_quiet_interval")
     deadline = time.monotonic() + quiet_ms / 1000
@@ -934,7 +990,8 @@ def execute_bounded_clear(
         )
         or master_evidence.get("backend_tag") != manifest["backend_tag"]
         or master_evidence.get("d_worker_id") != manifest["original_D_worker_id"]
-        or master_evidence.get("store_instance_id") != manifest["original_store_instance_id"]
+        or master_evidence.get("store_instance_id")
+        != manifest["original_store_instance_id"]
         or not isinstance(master_evidence.get("master_pid"), int)
         or isinstance(master_evidence.get("master_pid"), bool)
         or not isinstance(init_scan_ms, int)
@@ -980,11 +1037,15 @@ def execute_bounded_clear(
 
     def clear_once():
         try:
-            result_holder["result"] = native_store.batch_replica_clear(keys, memory_segment)
+            result_holder["result"] = native_store.batch_replica_clear(
+                keys, memory_segment
+            )
         except Exception:
             result_holder["error"] = True
 
-    clear_thread = threading.Thread(target=clear_once, name="shared-cache-clear", daemon=True)
+    clear_thread = threading.Thread(
+        target=clear_once, name="shared-cache-clear", daemon=True
+    )
     clear_thread.start()
     clear_thread.join(remaining / 1000)
     if clear_thread.is_alive():

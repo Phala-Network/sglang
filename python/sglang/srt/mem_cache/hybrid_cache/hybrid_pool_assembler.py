@@ -20,7 +20,6 @@ from sglang.srt.mem_cache.memory_pool_host import (
 from sglang.srt.mem_cache.pool_host import HostPoolGroup, PoolEntry
 from sglang.srt.mem_cache.pool_host.allocation_budget import dsa_host_allocation_budget
 from sglang.srt.mem_cache.pool_host.common import get_allocator_type
-from sglang.srt.mem_cache.shared_cache_diagnostics import shared_cache_diagnostics
 from sglang.srt.mem_cache.pool_host.dsa import DSAIndexerPoolHost
 from sglang.srt.mem_cache.pool_host.mamba import MambaPoolHost
 from sglang.srt.mem_cache.pool_host.mha import (
@@ -28,6 +27,7 @@ from sglang.srt.mem_cache.pool_host.mha import (
     get_mha_host_pool_cls,
 )
 from sglang.srt.mem_cache.pool_host.mla import MLATokenToKVPoolHost
+from sglang.srt.mem_cache.shared_cache_diagnostics import shared_cache_diagnostics
 from sglang.srt.mem_cache.unified_cache.component_type import ComponentType
 from sglang.srt.runtime_context import get_memory, get_model, get_parallel, get_serving
 

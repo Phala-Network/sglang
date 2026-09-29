@@ -965,9 +965,7 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
                 )
                 if diag_context:
                     diag_context = dict(diag_context)
-                    base_hashes = diag_context.get(
-                        "shared_cache_diag_base_hashes", []
-                    )
+                    base_hashes = diag_context.get("shared_cache_diag_base_hashes", [])
                     page_start = int(
                         diag_context.get("shared_cache_diag_page_start", 0)
                     )

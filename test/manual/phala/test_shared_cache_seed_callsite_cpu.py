@@ -13,7 +13,6 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import Mock, patch
 
-
 ROOT = Path(__file__).resolve().parents[3]
 SRT = ROOT / "python/sglang/srt"
 
@@ -114,6 +113,54 @@ def count_pool_hits(results):
         name: values.index(False) if False in values else len(values)
         for name, values in results.items()
     }
+
+
+class StorageHitQueryDiagnosticsTests(unittest.TestCase):
+    def test_real_query_uses_page_batch_offsets_and_stops_at_partial_hit(self):
+        calls = []
+        hashes = ["page-0", "page-1", "page-2", "page-3", "page-4"]
+        namespace = {
+            "STORAGE_BATCH_SIZE": 2,
+            "get_storage_hash_str": lambda *args, **kwargs: hashes,
+            "HiCacheStorageExtraInfo": NS,
+        }
+        controller = load_methods(
+            SRT / "managers/cache_controller.py",
+            "HiCacheController",
+            {"_storage_hit_query"},
+            namespace,
+        )
+        controller.page_size = 4
+
+        def exists(batch, extra_info):
+            calls.append((list(batch), extra_info))
+            return 2 if len(calls) == 1 else 1
+
+        controller.storage_backend = NS(batch_exists=exists)
+        operation = NS(
+            last_hash="prefix",
+            token_ids=list(range(20)),
+            prefix_keys=["prefix"],
+            storage_start=32,
+            id=17,
+            hash_value=[],
+            shared_cache_diag_request_id="rid",
+        )
+        hit_hashes, hit_tokens = controller._storage_hit_query(operation)
+        self.assertEqual(hit_hashes, hashes[:3])
+        self.assertEqual(hit_tokens, 12)
+        self.assertEqual(operation.all_hash_values, hashes)
+        self.assertEqual(len(calls), 2)
+        for index, (batch, extra_info) in enumerate(calls):
+            self.assertEqual(
+                extra_info.extra_info["shared_cache_diag_page_start"], 8 + index * 2
+            )
+            self.assertEqual(
+                extra_info.extra_info["shared_cache_diag_base_hashes"], batch
+            )
+            self.assertEqual(
+                extra_info.extra_info["shared_cache_diag_operation_id"], 17
+            )
 
 
 class SharedCacheSeedCallsiteTests(unittest.TestCase):

@@ -36,10 +36,10 @@ from sglang.srt.mem_cache.hicache_storage import (
 from sglang.srt.mem_cache.l2_transfer import L2Transfer
 from sglang.srt.mem_cache.pool_host import HostPoolGroup, PoolEntry
 from sglang.srt.mem_cache.pool_host.mha import MHATokenToKVPoolHost
+from sglang.srt.mem_cache.shared_cache_diagnostics import shared_cache_seed_capture
 from sglang.srt.mem_cache.storage_backend_config import (
     load_storage_backend_extra_config,
 )
-from sglang.srt.mem_cache.shared_cache_diagnostics import shared_cache_seed_capture
 
 if TYPE_CHECKING:
     from sglang.srt.mem_cache.allocator import BaseTokenToKVPoolAllocator

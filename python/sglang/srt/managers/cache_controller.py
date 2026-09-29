@@ -1212,9 +1212,9 @@ class HiCacheController:
                     ),
                     "shared_cache_diag_operation_id": operation.id,
                     "shared_cache_diag_page_start": (
-                        operation.storage_start // self.page_size + i // self.page_size
+                        operation.storage_start // self.page_size + start
                     ),
-                    "shared_cache_diag_base_hashes": list(operation.hash_value),
+                    "shared_cache_diag_base_hashes": list(batch_hashes),
                     "shared_cache_diag_page_size": self.page_size,
                 },
             )

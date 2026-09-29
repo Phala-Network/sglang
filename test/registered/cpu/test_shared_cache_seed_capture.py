@@ -1,8 +1,6 @@
 import time
 from unittest.mock import patch
 
-import pytest
-
 from sglang.srt.mem_cache.shared_cache_diagnostics import (
     SharedCacheSeedCapture,
     _write_all,

@@ -30,8 +30,8 @@ from sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler import (
 )
 from sglang.srt.mem_cache.memory_pool_host import LogicalHostPool
 from sglang.srt.mem_cache.pool_host import HostPoolGroup, PoolEntry
-from sglang.srt.mem_cache.shared_cache_diagnostics import SharedCacheDiagnostics
 from sglang.srt.mem_cache.radix_cache import RadixKey
+from sglang.srt.mem_cache.shared_cache_diagnostics import SharedCacheDiagnostics
 from sglang.srt.mem_cache.storage.mooncake_store.mooncake_store import MooncakeStore
 from sglang.srt.mem_cache.utils import get_hash_str, get_storage_hash_str
 from sglang.test.ci.ci_register import register_cpu_ci

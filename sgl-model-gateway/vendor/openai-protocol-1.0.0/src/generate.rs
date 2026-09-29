@@ -82,6 +82,10 @@ pub struct GenerateRequest {
     #[serde(default)]
     pub stream: bool,
 
+    /// Bypass shared cold-cache reads for this request in disaggregated serving.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub cold_shared_read_bypass: bool,
+
     /// Whether to log metrics for this request (e.g. health_generate calls do not log metrics)
     #[serde(default = "default_true")]
     pub log_metrics: bool,
@@ -167,6 +171,10 @@ pub struct GenerateRequest {
     /// Request ID for tracking (inherited from BaseReq in Python)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rid: Option<String>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl Normalizable for GenerateRequest {

@@ -310,6 +310,14 @@ async fn generate_handler(
     let config = config.read().await;
     let worker_id = format!("worker-{}", config.port);
 
+    if let Some(requests) = get_generate_captures()
+        .lock()
+        .unwrap()
+        .get_mut(&config.port)
+    {
+        requests.push(payload.clone());
+    }
+
     if should_fail(&config).await {
         return (
             fail_status_code(config.port),
@@ -477,6 +485,27 @@ async fn generate_handler(
         )
             .into_response()
     }
+}
+
+static GENERATE_CAPTURES: OnceLock<Mutex<HashMap<u16, Vec<serde_json::Value>>>> = OnceLock::new();
+
+fn get_generate_captures() -> &'static Mutex<HashMap<u16, Vec<serde_json::Value>>> {
+    GENERATE_CAPTURES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn capture_generate_requests(port: u16) {
+    get_generate_captures()
+        .lock()
+        .unwrap()
+        .insert(port, Vec::new());
+}
+
+pub fn take_generate_requests(port: u16) -> Vec<serde_json::Value> {
+    get_generate_captures()
+        .lock()
+        .unwrap()
+        .remove(&port)
+        .unwrap_or_default()
 }
 
 async fn chat_completions_handler(

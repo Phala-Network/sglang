@@ -2046,6 +2046,13 @@ class TokenizerMetricsCollector(_StatLoggerDIMixin):
             labelnames=[*labels.keys(), "is_streaming"],
             buckets=bucket_time_to_first_token,
         )
+        # TTFT by prompt size and by the part that had to be computed (cache misses).
+        self.histogram_time_to_first_token_by_size = Histogram(
+            name="sglang:time_to_first_token_by_size_seconds",
+            documentation="Time to first token by input and uncached token count.",
+            labelnames=[*labels.keys(), "input_tokens", "uncached_tokens"],
+            buckets=bucket_time_to_first_token,
+        )
 
         self.histogram_inter_token_latency = Histogram(
             name="sglang:inter_token_latency_seconds",
@@ -2156,6 +2163,22 @@ class TokenizerMetricsCollector(_StatLoggerDIMixin):
     ):
         self.histogram_time_to_first_token.labels(
             **labels, is_streaming="true" if stream else "false"
+        ).observe(value)
+
+    _SIZE_BUCKETS = ((4096, "<4K"), (8192, "4-8K"), (16384, "8-16K"), (32768, "16-32K"),
+                     (65536, "32-64K"), (131072, "64-128K"))
+
+    @classmethod
+    def _size_bucket(cls, n: int) -> str:
+        return next((name for bound, name in cls._SIZE_BUCKETS if n < bound), ">=128K")
+
+    def observe_time_to_first_token_by_size(
+        self, labels: Dict[str, str], value: float, prompt_tokens: int, cached_tokens: int
+    ):
+        self.histogram_time_to_first_token_by_size.labels(
+            **labels,
+            input_tokens=self._size_bucket(prompt_tokens),
+            uncached_tokens=self._size_bucket(prompt_tokens - cached_tokens),
         ).observe(value)
 
     def observe_inter_token_latency(

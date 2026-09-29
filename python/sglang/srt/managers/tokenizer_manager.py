@@ -3350,6 +3350,15 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     state.time_stats.get_first_token_latency(),
                     stream=getattr(state.obj, "stream", False),
                 )
+                prompt_tokens = getattr(recv_obj, "prompt_tokens", None)
+                if prompt_tokens:
+                    cached = getattr(recv_obj, "cached_tokens", None)
+                    self.metrics_collector.observe_time_to_first_token_by_size(
+                        labels,
+                        state.time_stats.get_first_token_latency(),
+                        prompt_tokens[i],
+                        cached[i] if cached else 0,
+                    )
         else:
             num_new_tokens = completion_tokens - state.last_completion_tokens
             self.metrics_collector.observe_inter_token_latency(

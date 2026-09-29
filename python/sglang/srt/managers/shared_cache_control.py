@@ -24,6 +24,11 @@ MAX_OWNER_DRAIN_EVENTS = 4096
 MAX_CONTROL_DURATION_MS = 120_000
 _CLEAR_QUIET_MS = 250
 _LABEL = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+# Keep general selectors bounded; these fields also carry producer identities.
+_BACKEND_TAG = re.compile(r"(?:[A-Za-z0-9._-]{1,64}|dsv4-v1-[0-9a-f]{64})")
+_COMPONENT = re.compile(
+    r"(?:[A-Za-z0-9._-]{1,64}|[A-Za-z0-9._-]{1,64}:(?:0|[1-9][0-9]*))"
+)
 _HEX = re.compile(r"^[0-9a-f]{64}$")
 _NATIVE_UUID_PAIR = re.compile(r"^([0-9]+)-([0-9]+)$")
 _FORBIDDEN_KEY = re.compile(r"[*?\[\]\x00-\x1f\x7f,]")
@@ -511,12 +516,19 @@ def load_manifest(path: str, manifest_id: str, manifest_sha256: str) -> Dict[str
         "case_id",
         "epoch",
         "tenant",
-        "backend_tag",
-        "model_revision",
         "kv_schema",
     ):
         if not _LABEL.fullmatch(str(manifest.get(field) or "")):
             raise SharedCacheControlError("invalid_manifest_metadata")
+    backend_tag = manifest.get("backend_tag")
+    if not isinstance(backend_tag, str) or not _BACKEND_TAG.fullmatch(backend_tag):
+        raise SharedCacheControlError("invalid_manifest_metadata")
+    revision = manifest.get("model_revision")
+    if "model_revision" not in manifest or (
+        revision is not None
+        and (not isinstance(revision, str) or not _LABEL.fullmatch(revision))
+    ):
+        raise SharedCacheControlError("invalid_manifest_metadata")
     if manifest.get("exact_nonempty_MEMORY_segment") in (None, ""):
         raise SharedCacheControlError("empty_memory_segment")
     raw_segment = manifest["exact_nonempty_MEMORY_segment"]
@@ -531,7 +543,10 @@ def load_manifest(path: str, manifest_id: str, manifest_sha256: str) -> Dict[str
         raise SharedCacheControlError("invalid_key_count")
     if not isinstance(components, list) or not components:
         raise SharedCacheControlError("invalid_component_set")
-    if any(not _LABEL.fullmatch(str(item)) for item in components):
+    if any(
+        not isinstance(item, str) or len(item) > 96 or not _COMPONENT.fullmatch(item)
+        for item in components
+    ):
         raise SharedCacheControlError("invalid_component_set")
     total = 0
     seen = set()
@@ -552,7 +567,12 @@ def load_manifest(path: str, manifest_id: str, manifest_sha256: str) -> Dict[str
             raise SharedCacheControlError("invalid_key")
         if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
             raise SharedCacheControlError("invalid_logical_bytes")
-        if not _LABEL.fullmatch(str(component or "")) or component not in components:
+        if (
+            not isinstance(component, str)
+            or len(component) > 96
+            or not _COMPONENT.fullmatch(component)
+            or component not in components
+        ):
             raise SharedCacheControlError("invalid_component")
         if item.get("rank") != 0:
             raise SharedCacheControlError("unsupported_topology")

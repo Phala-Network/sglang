@@ -235,6 +235,10 @@ class CommonKVManager(BaseKVManager):
         logger.debug(f"kv manager bind to {self.local_ip}:{self.rank_port}")
 
         self.request_status: Dict[int, KVPoll] = {}
+        # Status transitions are issued by sender, metadata and control
+        # threads. Keep the read/transition/write sequence atomic; the GIL does
+        # not make a multi-step dictionary update race-free.
+        self._status_lock = threading.Lock()
         self._socket_cache: Dict[str, zmq.Socket] = {}
         self._monitor_cache: Dict[str, zmq.Socket] = {}
         self._socket_send_locks: Dict[str, threading.Lock] = {}
@@ -395,27 +399,46 @@ class CommonKVManager(BaseKVManager):
         )
 
     def check_status(self, bootstrap_room: int) -> KVPoll:
-        return self.request_status[bootstrap_room]
+        with self._status_lock:
+            return self.request_status[bootstrap_room]
+
+    def has_status(self, bootstrap_room: int) -> bool:
+        with self._status_lock:
+            return bootstrap_room in self.request_status
+
+    def status_is(self, bootstrap_room: int, status: KVPoll) -> bool:
+        with self._status_lock:
+            return self.request_status.get(bootstrap_room) == status
+
+    def get_status(self, bootstrap_room: int) -> Optional[KVPoll]:
+        """Return one locked status snapshot for check-then-use callers."""
+        with self._status_lock:
+            return self.request_status.get(bootstrap_room)
+
+    def clear_status(self, bootstrap_room: int) -> None:
+        with self._status_lock:
+            self.request_status.pop(bootstrap_room, None)
 
     def update_status(self, bootstrap_room: int, status: KVPoll):
-        current = self.request_status.get(bootstrap_room)
-        if current is None:
-            # The room does not exist yet, or clear() already popped it. Only a
-            # request's opening status may create it: Bootstrapping normally, or
-            # WaitingForInput for a dummy CP rank (see CommonKVSender.__init__).
-            # Anything else would resurrect a concluded room and pollute a later
-            # request that reuses the same bootstrap_room.
-            if status in (KVPoll.Bootstrapping, KVPoll.WaitingForInput):
-                self.request_status[bootstrap_room] = status
-            return
-        if status == KVPoll.Failed:
-            self.request_status[bootstrap_room] = KVPoll.Failed
-            return
-        if current == KVPoll.Failed:
-            # Failed is terminal. It also sorts lowest, so the max() below would
-            # happily promote it back to Transferring or Success.
-            return
-        self.request_status[bootstrap_room] = max(current, status)
+        with self._status_lock:
+            current = self.request_status.get(bootstrap_room)
+            if current is None:
+                # The room does not exist yet, or clear() already popped it. Only a
+                # request's opening status may create it: Bootstrapping normally, or
+                # WaitingForInput for a dummy CP rank (see CommonKVSender.__init__).
+                # Anything else would resurrect a concluded room and pollute a later
+                # request that reuses the same bootstrap_room.
+                if status in (KVPoll.Bootstrapping, KVPoll.WaitingForInput):
+                    self.request_status[bootstrap_room] = status
+                return
+            if status == KVPoll.Failed:
+                self.request_status[bootstrap_room] = KVPoll.Failed
+                return
+            if current == KVPoll.Failed:
+                # Failed is terminal. It also sorts lowest, so the max() below would
+                # happily promote it back to Transferring or Success.
+                return
+            self.request_status[bootstrap_room] = max(current, status)
 
     def record_failure(self, bootstrap_room: int, failure_reason: str):
         with self.failure_lock:
@@ -521,7 +544,8 @@ class CommonKVManager(BaseKVManager):
         Runs more than once for a room when a staging chunk is deferred past the
         last one. ``targets`` defaults to the room's non-dummy decode endpoints.
         """
-        if bootstrap_room not in self.request_status:
+        room_status = self.get_status(bootstrap_room)
+        if room_status is None:
             # The sender already cleared this room. Concluding now would
             # re-create it in request_status and leave a failure record that a
             # request reusing this bootstrap_room would adopt as its own.
@@ -532,7 +556,7 @@ class CommonKVManager(BaseKVManager):
             if recorded is not None:
                 status = KVPoll.Failed
                 failure_reason = recorded
-            elif self.request_status.get(bootstrap_room) == KVPoll.Failed:
+            elif room_status == KVPoll.Failed:
                 status = KVPoll.Failed
                 failure_reason = (
                     failure_reason or "Room marked Failed before the transfer ended"
@@ -579,7 +603,8 @@ class CommonKVManager(BaseKVManager):
         failure_reason: Optional[str] = None,
     ) -> None:
         """Decode-side handling of one prefill rank's terminal status."""
-        if bootstrap_room not in self.request_status:
+        room_status = self.get_status(bootstrap_room)
+        if room_status is None:
             # The room concluded and was cleared. Recording a failure now would
             # leave an entry that a later request reusing this bootstrap_room
             # would pick up as its own root cause.
@@ -1413,10 +1438,8 @@ class CommonKVManager(BaseKVManager):
 
         affected_rooms = []
         for room in possible_affected_rooms:
-            if (
-                room in self.request_status
-                and self.check_status(room) != KVPoll.Success
-            ):
+            room_status = self.get_status(room)
+            if room_status is not None and room_status != KVPoll.Success:
                 self.record_failure(
                     room,
                     f"Lost connection with prefill instance (bootstrap_addr: {failed_bootstrap_addr})",
@@ -1590,7 +1613,7 @@ class CommonKVSender(BaseKVSender):
         return KVPoll.Failed
 
     def clear(self) -> None:
-        self.kv_mgr.request_status.pop(self.bootstrap_room, None)
+        self.kv_mgr.clear_status(self.bootstrap_room)
         if hasattr(self.kv_mgr, "req_to_decode_prefix_len"):
             self.kv_mgr.req_to_decode_prefix_len.pop(self.bootstrap_room, None)
         if hasattr(self.kv_mgr, "transfer_infos"):
@@ -1870,7 +1893,7 @@ class CommonKVReceiver(BaseKVReceiver):
         return KVPoll.Failed
 
     def clear(self) -> None:
-        self.kv_mgr.request_status.pop(self.bootstrap_room, None)
+        self.kv_mgr.clear_status(self.bootstrap_room)
         self.kv_mgr.required_prefill_response_num_table.pop(self.bootstrap_room, None)
         self.kv_mgr.prefill_response_tracker.pop(self.bootstrap_room, None)
         self.kv_mgr.addr_to_rooms_tracker[self.bootstrap_addr].discard(

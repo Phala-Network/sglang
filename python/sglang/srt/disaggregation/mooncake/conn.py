@@ -1865,10 +1865,8 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                     self._staging_outstanding[kv_chunk.room] += 1
                     kv_chunk.staging_counted = True
 
-                if (
-                    kv_chunk.room not in self.request_status
-                    or self.check_status(kv_chunk.room) == KVPoll.Failed
-                ):
+                room_status = self.get_status(kv_chunk.room)
+                if room_status is None or room_status == KVPoll.Failed:
                     logger.debug(
                         f"Skipping chunk for room {kv_chunk.room} because it has already failed or been aborted"
                     )
@@ -2145,13 +2143,11 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                 # chunk. A non-last Failed chunk keeps the room (more chunks may
                 # follow), not on the last chunk alone since an earlier deferred
                 # chunk may still need to transfer.
+                room_status = self.get_status(kv_chunk.room)
                 if self._staging_outstanding.get(kv_chunk.room, 0) <= 0 and (
-                    kv_chunk.room not in self.request_status
-                    or self.check_status(kv_chunk.room) == KVPoll.Success
-                    or (
-                        kv_chunk.is_last_chunk
-                        and self.check_status(kv_chunk.room) == KVPoll.Failed
-                    )
+                    room_status is None
+                    or room_status == KVPoll.Success
+                    or (kv_chunk.is_last_chunk and room_status == KVPoll.Failed)
                 ):
                     self._staging_outstanding.pop(kv_chunk.room, None)
                     if kv_chunk.room in self.transfer_infos:
@@ -2191,10 +2187,8 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                     room_to_be_aborted = int(waiting_req_bytes[1].decode("ascii"))
                     decode_ip = waiting_req_bytes[2].decode("ascii")
                     decode_port = int(waiting_req_bytes[3].decode("ascii"))
-                    room_active = (
-                        room_to_be_aborted in self.request_status
-                        and self.check_status(room_to_be_aborted) != KVPoll.Success
-                    )
+                    room_status = self.get_status(room_to_be_aborted)
+                    room_active = room_status is not None and room_status != KVPoll.Success
                     if self.enable_deferred_decode_kv_release:
                         # Mark Failed FIRST (stops add_transfer_request enqueuing
                         # new chunks), THEN register the ack target: registering
@@ -2380,10 +2374,8 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
         assert self.disaggregation_mode == DisaggregationMode.PREFILL
         assert not is_last_chunk or (is_last_chunk and aux_index is not None)
 
-        if (
-            bootstrap_room not in self.request_status
-            or self.check_status(bootstrap_room) == KVPoll.Failed
-        ):
+        room_status = self.get_status(bootstrap_room)
+        if room_status is None or room_status == KVPoll.Failed:
             logger.debug(
                 "Request with bootstrap_room=%s already failed", bootstrap_room
             )

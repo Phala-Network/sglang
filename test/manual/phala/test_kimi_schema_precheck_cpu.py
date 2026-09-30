@@ -12,6 +12,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import signal
 import unittest
 from enum import IntEnum
 from pathlib import Path
@@ -21,8 +22,6 @@ from unittest.mock import patch
 from jsonschema import Draft202012Validator, SchemaError
 
 INSTALLED = os.environ.get("PHALA_KIMI_INSTALLED") == "1"
-ROOT = Path(__file__).resolve().parents[3]
-SRT = ROOT / "python/sglang/srt"
 
 
 class ToolStrictLevel(IntEnum):
@@ -44,6 +43,7 @@ class ChatCompletionMessageGenericParam(NS):
 
 
 if INSTALLED:
+    signal.alarm(180)
     import sglang.srt.constrained.xgrammar_schema as guard
     import sglang.srt.entrypoints.openai.serving_chat as serving
     from sglang.srt.entrypoints.openai.protocol import ChatCompletionRequest
@@ -53,6 +53,8 @@ if INSTALLED:
     Serving = serving.OpenAIServingChat
     SRT = Path(serving.__file__).resolve().parents[2]
 else:
+    ROOT = Path(__file__).resolve().parents[3]
+    SRT = ROOT / "python/sglang/srt"
     spec = importlib.util.spec_from_file_location(
         "candidate_guard", SRT / "constrained/xgrammar_schema.py"
     )

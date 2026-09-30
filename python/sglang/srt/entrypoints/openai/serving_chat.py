@@ -96,7 +96,7 @@ from sglang.srt.entrypoints.openai.utils import (
     to_openai_style_logprobs,
 )
 from sglang.srt.entrypoints.request_headers import apply_header_overrides
-from sglang.srt.environ import envs
+from sglang.srt.environ import ToolStrictLevel, envs
 from sglang.srt.function_call.core_types import ToolCallItem
 from sglang.srt.function_call.function_call_parser import FunctionCallParser
 from sglang.srt.function_call.json_array_parser import JsonArrayParser
@@ -1558,8 +1558,18 @@ class OpenAIServingChat(OpenAIServingBase):
                 # a 400 instead of crashing into a 500.
                 normalize_json_schema_types(tool.function.parameters)
                 Draft202012Validator.check_schema(tool.function.parameters)
-                if self._grammar_backend == "xgrammar" and (
-                    has_xgrammar_unsupported_json_features(tool.function.parameters)
+                # Kimi's non-strict native tags constrain call framing, not
+                # the parameter JSON Schema. Keep schema capability checks for
+                # strict tools and server-enforced parameter constraints.
+                checks_parameter_schema = (
+                    self.tool_call_parser != "kimi_k3"
+                    or tool.function.strict
+                    or envs.SGLANG_TOOL_STRICT_LEVEL.get() >= ToolStrictLevel.PARAMETER
+                )
+                if (
+                    self._grammar_backend == "xgrammar"
+                    and checks_parameter_schema
+                    and has_xgrammar_unsupported_json_features(tool.function.parameters)
                 ):
                     return (
                         f"Tool {i} function has a 'parameters' schema containing "

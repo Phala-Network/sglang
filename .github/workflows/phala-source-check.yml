@@ -45,6 +45,7 @@ jobs:
           set -euo pipefail
           python test/manual/phala/test_muse_migration_cpu.py
           python test/manual/phala/test_xgrammar_adapter_cpu.py
+          python test/manual/phala/test_kimi_schema_precheck_cpu.py
           python test/manual/phala/test_nemotron_token_context_cpu.py
           python test/manual/phala/test_nemotron_termination_cpu.py
           python test/phala_deepseek_v41/test_cpu_contracts_v0520.py

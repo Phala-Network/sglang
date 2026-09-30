@@ -2593,16 +2593,23 @@ def _freeze_gc_after_server_warmup(server_args: ServerArgs):
     freeze_headers = {}
     if freeze_key:
         freeze_headers["Authorization"] = f"Bearer {freeze_key}"
-    try:
-        res = requests.post(
-            server_args.url() + "/freeze_gc",
-            headers=freeze_headers,
-            timeout=10,
-            verify=ssl_verify_of(server_args),
-        )
-        res.raise_for_status()
-    except requests.exceptions.RequestException:
-        logger.warning("post-warmup freeze_gc failed", exc_info=True)
+    # With --skip-server-warmup nothing has waited for the listener yet, and this
+    # thread starts before uvicorn accepts connections: retry until it does.
+    for _ in range(120):
+        try:
+            res = requests.post(
+                server_args.url() + "/freeze_gc",
+                headers=freeze_headers,
+                timeout=10,
+                verify=ssl_verify_of(server_args),
+            )
+            res.raise_for_status()
+            return
+        except requests.exceptions.ConnectionError:
+            time.sleep(1)
+        except requests.exceptions.RequestException:
+            break
+    logger.warning("post-warmup freeze_gc failed", exc_info=True)
 
 
 def _wait_and_warmup(

@@ -86,6 +86,7 @@ from sglang.srt.configs.model_config import (
     is_minimax_sparse,
 )
 from sglang.srt.constrained.grammar_manager import GrammarManager
+from sglang.srt.debug_utils.hot_reload import maybe_create_hot_reloader
 from sglang.srt.debug_utils.pr_fix_toggle import maybe_revert_pr_fix
 from sglang.srt.disaggregation import role_switch
 from sglang.srt.disaggregation.checksum import KvChecksumComputer
@@ -669,6 +670,9 @@ class Scheduler(
 
         # Init running status
         self.init_running_status()
+        self.hot_reloader = maybe_create_hot_reloader(
+            envs.SGLANG_DEBUG_HOT_RELOAD_SCRIPT.get()
+        )
 
         # Init chunked prefill
         self.init_chunked_prefill()
@@ -2209,6 +2213,8 @@ class Scheduler(
         The one place a new per-iteration input source belongs; the return
         value exists for the pipeline stages that relay requests onward.
         """
+        if self.hot_reloader is not None:
+            self.hot_reloader.poll(self)
         local_reqs = []
         # Avoid re-enqueuing timeout aborts while dispatch is stopped at a pause.
         if (

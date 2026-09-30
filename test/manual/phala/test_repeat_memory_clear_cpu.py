@@ -1,6 +1,8 @@
 """CPU source tests; native master/SSD behavior requires its own C++ tests."""
 
 import ast
+import asyncio
+from http import HTTPStatus
 import importlib.util
 import json
 from pathlib import Path
@@ -123,6 +125,79 @@ class Tests(unittest.TestCase):
         ):
             with self.assertRaises(m.SharedCacheControlError):
                 m.parse_memory_clear_body(body)
+
+    def test_native_exception_and_timeout_are_unknown(self):
+        obj, _ = scheduler()
+
+        def failure(keys):
+            raise RuntimeError("transport lost")
+
+        obj.decode_offload_manager.cache_controller.storage_backend.store.batch_memory_replica_clear = failure
+        with self.assertRaises(m.SharedCacheControlError) as exc:
+            self.invoke(obj, ["k"])
+        self.assertTrue(exc.exception.unknown)
+        obj, _ = scheduler()
+        fake = SimpleNamespace(
+            start=lambda: None, join=lambda timeout: None, is_alive=lambda: True
+        )
+        with (
+            patch.object(m.threading, "Thread", return_value=fake),
+            self.assertRaises(m.SharedCacheControlError) as exc,
+        ):
+            self.invoke(obj, ["k"])
+        self.assertTrue(exc.exception.unknown)
+
+    def test_actual_http_handler_auth_and_partial(self):
+        tree = ast.parse(
+            (ROOT / "python/sglang/srt/entrypoints/http_server.py").read_text(
+                encoding="utf-8"
+            )
+        )
+        method = next(
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.AsyncFunctionDef)
+            and n.name == "clear_shared_cache_memory"
+        )
+        method.decorator_list = []
+        calls = []
+
+        async def selectors(request):
+            return {"keys": ["k1", "k2"]}
+
+        async def clear(**kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                success=False,
+                reason="memory_clear_incomplete",
+                unknown=False,
+                receipt={"completed_keys": ["k1"], "remaining_keys": ["k2"]},
+            )
+
+        serving = SimpleNamespace(api_key=None, admin_api_key=None)
+        scope = {
+            "Request": object,
+            "HTTPStatus": HTTPStatus,
+            "get_serving": lambda: serving,
+            "ORJSONResponse": lambda content, status_code: SimpleNamespace(
+                content=content, status=status_code
+            ),
+            "_read_shared_cache_clear_selectors": selectors,
+            "_global_state": SimpleNamespace(
+                tokenizer_manager=SimpleNamespace(clear_shared_cache_memory=clear)
+            ),
+        }
+        exec(
+            compile(ast.Module(body=[method], type_ignores=[]), "http-handler", "exec"),
+            scope,
+        )
+        self.assertEqual(asyncio.run(scope[method.name](object())).status, 403)
+        self.assertEqual(calls, [])
+        serving.api_key = "offline-dummy"
+        response = asyncio.run(scope[method.name](object()))
+        self.assertEqual(response.status, 409)
+        self.assertEqual(calls, [{"keys": ["k1", "k2"]}])
+        self.assertEqual(response.content["receipt"]["completed_keys"], ["k1"])
 
     def test_actual_scheduler_handler_partial_and_unknown(self):
         tree = ast.parse(

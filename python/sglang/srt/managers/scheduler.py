@@ -278,8 +278,8 @@ from sglang.srt.managers.scheduler_components.weight_updater import (
 from sglang.srt.managers.scheduler_input_blocker import SchedulerInputBlocker
 from sglang.srt.managers.scheduler_pp_mixin import SchedulerPPMixin
 from sglang.srt.managers.shared_cache_control import (
-    clear_current_memory,
     SharedCacheControlError,
+    clear_current_memory,
     clear_from_configured_artifacts,
     validate_clear_selectors,
     validate_single_decode_writer,

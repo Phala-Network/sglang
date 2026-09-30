@@ -1164,65 +1164,6 @@ async def clear_hicache_storage_backend():
     )
 
 
-async def _read_shared_cache_clear_selectors(request: Request) -> dict:
-    max_body_bytes = 64 * 1024
-    await validate_json_request(request)
-    content_length = request.headers.get("content-length")
-    if content_length is not None:
-        try:
-            content_length_value = int(content_length)
-            if content_length_value < 0:
-                raise HTTPException(status_code=400, detail="invalid_content_length")
-            if content_length_value > max_body_bytes:
-                raise HTTPException(status_code=413, detail="request_body_too_large")
-        except ValueError:
-            raise HTTPException(
-                status_code=400, detail="invalid_content_length"
-            ) from None
-    body = bytearray()
-    async for chunk in request.stream():
-        if len(body) + len(chunk) > max_body_bytes:
-            raise HTTPException(status_code=413, detail="request_body_too_large")
-        body.extend(chunk)
-    from sglang.srt.managers.shared_cache_control import (
-        SharedCacheControlError,
-        parse_memory_clear_body,
-    )
-
-    try:
-        value = parse_memory_clear_body(bytes(body))
-    except SharedCacheControlError as exc:
-        status = 413 if exc.reason == "request_body_too_large" else 422
-        if exc.reason == "invalid_json":
-            status = 400
-        raise HTTPException(status_code=status, detail=exc.reason) from None
-    return value
-
-
-@app.api_route("/shared-cache/memory/clear", methods=["POST"])
-@auth_level(AuthLevel.ADMIN_OPTIONAL)
-async def clear_shared_cache_memory(request: Request):
-    """Clear bounded MEMORY keys through the original D writer store."""
-    if not (get_serving().api_key or get_serving().admin_api_key):
-        return ORJSONResponse(
-            {"success": False, "reason": "api_token_required"},
-            status_code=HTTPStatus.FORBIDDEN,
-        )
-    selectors = await _read_shared_cache_clear_selectors(request)
-    result = await _global_state.tokenizer_manager.clear_shared_cache_memory(
-        **selectors,
-    )
-    return ORJSONResponse(
-        {
-            "success": result.success,
-            "reason": result.reason,
-            "unknown": result.unknown,
-            "receipt": result.receipt,
-        },
-        status_code=HTTPStatus.OK if result.success else HTTPStatus.CONFLICT,
-    )
-
-
 # example usage:
 # curl -s -X PUT http://127.0.0.1:30000/hicache/storage-backend \
 #  -H 'Content-Type: application/json' \

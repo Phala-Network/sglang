@@ -650,15 +650,11 @@ class PrefillStagingStrategy:
         dst_staging_ptr: int,
         dst_staging_size: int,
         target_info,
-        diagnostic_room=None,
     ) -> int:
         """Execute staged transfer (gather + RDMA).
 
         Returns 0 on success, -1 to signal fallback to slice path.
         """
-        diagnostic_kwargs = (
-            {"diagnostic_room": diagnostic_room} if diagnostic_room is not None else {}
-        )
         try:
             return self.kv_manager.send_kvcache_staged(
                 session_id,
@@ -670,7 +666,6 @@ class PrefillStagingStrategy:
                 target_info.dst_kv_item_len,
                 target_info.dst_kv_layer_ids,
                 staging_buffer=self.staging_buffer,
-                **diagnostic_kwargs,
                 dst_slot_layer_ids=(
                     target_info.staging.slot_layer_ids
                     if target_info.staging is not None

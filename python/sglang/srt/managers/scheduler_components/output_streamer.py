@@ -90,16 +90,6 @@ class SchedulerOutputStreamer:
             - {"device": X, "host": Y} without storage breakdown
             - {"device": X, "host": Y, "storage": Z} with storage breakdown
         """
-        if getattr(req, "cold_shared_read_bypass", False):
-            details = {
-                "device": req.cached_tokens_device,
-                "host": req.cached_tokens_host,
-                "storage": req.cached_tokens_storage,
-            }
-            if self.enable_hicache_storage():
-                details["storage_backend"] = self._get_storage_backend_type()
-            return details
-
         if (
             req.cached_tokens_device > 0
             or req.cached_tokens_host > 0

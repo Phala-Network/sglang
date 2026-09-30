@@ -311,7 +311,6 @@ class GenerateReqInput:
     priority: Optional[int] = None
     # Extra cache key for caller-defined request classification.
     extra_key: Optional[Union[List[str], str]] = None
-    cold_shared_read_bypass: bool = False
 
     # Whether to disallow logging for this request (e.g. due to ZDR)
     no_logs: bool = False
@@ -389,8 +388,6 @@ class GenerateReqInput:
             ValueError: If inputs are not properly specified (e.g., none or all of
                        text, input_ids, input_embeds are provided)
         """
-        if type(self.cold_shared_read_bypass) is not bool:
-            raise ValueError("cold_shared_read_bypass must be a boolean")
         if self.data_parallel_rank is not None:
             import warnings
 
@@ -891,9 +888,6 @@ class GenerateReqInput:
         # This avoids subtle bugs where different call sites get divergent objects.
         cache = self.__dict__.setdefault("_sub_obj_cache", {})
         if i in cache:
-            cache[i]._pd_diagnostic_request_ref = getattr(
-                self, "_pd_diagnostic_request_ref", None
-            )
             return cache[i]
         sub = GenerateReqInput(
             rid=self.rid[i],
@@ -968,7 +962,6 @@ class GenerateReqInput:
             max_thinking_tokens=self.max_thinking_tokens,
             priority=self.priority,
             extra_key=self.extra_key[i] if self.extra_key is not None else None,
-            cold_shared_read_bypass=self.cold_shared_read_bypass,
             cache_salt=(self.cache_salt[i] if self.cache_salt is not None else None),
             no_logs=self.no_logs,
             custom_labels=self.custom_labels,
@@ -984,15 +977,10 @@ class GenerateReqInput:
             ),
         )
         cache[i] = sub
-        sub._pd_diagnostic_request_ref = getattr(
-            self, "_pd_diagnostic_request_ref", None
-        )
         return sub
 
 
 class TokenizedGenerateReqInput(BaseReq, kw_only=True):
-    # Server-derived allowlisted HMAC, never copied from public JSON fields.
-    pd_diagnostic_request_ref: Optional[str] = None
     # Set only by TokenizerManager's internal health call, never from HTTP data.
     is_internal_health_check: bool = False
     input_text: Optional[Union[str, List[Union[str, List[str]]]]]
@@ -1067,7 +1055,6 @@ class TokenizedGenerateReqInput(BaseReq, kw_only=True):
 
     # Extra cache key for caller-defined request classification.
     extra_key: Optional[str] = None
-    cold_shared_read_bypass: bool = False
 
     # Whether to disallow logging for this request (e.g. due to ZDR)
     no_logs: bool = False
@@ -1683,20 +1670,6 @@ class ClearHiCacheReqInput(BaseReq, kw_only=True):
 
 class ClearHiCacheReqOutput(BaseReq, kw_only=True):
     success: bool
-
-
-class SharedCacheClearMemoryReqInput(BaseReq, kw_only=True):
-    manifest_id: str = ""
-    manifest_sha256: str = ""
-    request_id: str = ""
-    keys: Optional[List[str]] = None
-
-
-class SharedCacheClearMemoryReqOutput(BaseReq, kw_only=True):
-    success: bool
-    reason: str = ""
-    unknown: bool = False
-    receipt: Optional[Dict[str, Any]] = None
 
 
 class FlushCacheReqInput(BaseReq, kw_only=True):

@@ -46,7 +46,6 @@ fn default_generate_request() -> GenerateRequest {
         token_ids_logprob: None,
         return_text_in_logprobs: false,
         stream: false,
-        cold_shared_read_bypass: false,
         log_metrics: true,
         return_hidden_states: false,
         modalities: None,

@@ -267,22 +267,6 @@ class MooncakeTransferEngine:
             )
         return ret
 
-    def batch_transfer_sync_diagnostic(
-        self, session_id, buffers, peer_buffer_addresses, lengths
-    ):
-        method = getattr(self.engine, "batch_transfer_sync_write_diagnostic", None)
-        if method is None:
-            return None
-        try:
-            return method(session_id, buffers, peer_buffer_addresses, lengths)
-        except Exception:
-            return {
-                "result": -1,
-                "batch_sequence": 0,
-                "attempts": [],
-                "diagnostics_truncated": True,
-            }
-
     def get_session_id(self):
         return self.session_id
 

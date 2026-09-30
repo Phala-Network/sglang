@@ -5,13 +5,9 @@ addresses nor tensor contents are serialized. This is not process RSS or a
 measurement of allocator overhead, metadata, registration, or OS ownership.
 """
 
-import hashlib
-import json
 import os
-import re
 import time
 from numbers import Integral
-from types import SimpleNamespace
 
 import torch
 
@@ -171,137 +167,6 @@ def _state_occupancy(name, snapshot, sources, named_pools, snapshots):
     ):
         return None, "occupancy_owner_geometry_mismatch"
     return free, None
-
-
-def _seed_schema(scheduler):
-    """Read retained D startup selectors; never arm capture or manufacture keys."""
-    result = {
-        "schema": "sglang.shared-cache-seed-schema.v1",
-        "status": "not_present",
-        "scope": "startup_selectors_not_backup_operation",
-        "page_range": None,
-        "page_range_status": "operation_dependent",
-    }
-    manager = getattr(scheduler, "decode_offload_manager", None)
-    if manager is None or not getattr(manager, "is_dsv4", False):
-        return result
-    try:
-        cc = manager.cache_controller
-        cfg = cc.storage_config
-        schema = manager.decode_host_mem_pool.storage_schema
-        expected = {
-            "version",
-            "revision",
-            "layout",
-            "unified",
-            "uniform_fp8",
-            "layers",
-            "layer_range",
-            "topology",
-            "cp_rank",
-            "pools",
-        }
-        if type(schema) is not dict or set(schema) != expected:
-            raise ValueError("unsupported schema")
-        if (
-            schema["version"] != 1
-            or type(schema["unified"]) is not bool
-            or type(schema["uniform_fp8"]) is not bool
-        ):
-            raise ValueError("invalid schema flags")
-        revision = schema["revision"]
-        if revision is not None and (
-            not isinstance(revision, str)
-            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,255}", revision)
-            or ".." in revision.split("/")
-        ):
-            raise ValueError("unsupported revision")
-        if not isinstance(schema["layout"], str) or not re.fullmatch(
-            r"[A-Za-z0-9._-]{1,64}", schema["layout"]
-        ):
-            raise ValueError("invalid layout")
-        for key, width in (("layer_range", 2), ("topology", 3)):
-            value = schema[key]
-            if (
-                type(value) is not list
-                or len(value) != width
-                or any(type(x) is not int or not 0 <= x <= 1_000_000 for x in value)
-            ):
-                raise ValueError("invalid geometry")
-        if type(schema["cp_rank"]) is not int or not 0 <= schema["cp_rank"] <= 1024:
-            raise ValueError("invalid rank")
-        layers = schema["layers"]
-        if type(layers) is not list or not 1 <= len(layers) <= 1024:
-            raise ValueError("invalid layers")
-        for layer in layers:
-            if (
-                type(layer) is not list
-                or len(layer) != 2
-                or any(type(x) is not int or not 0 <= x <= 1_000_000 for x in layer)
-            ):
-                raise ValueError("invalid layer mapping")
-        pools = schema["pools"]
-        if type(pools) is not list or not 1 <= len(pools) <= MAX_ENTRIES:
-            raise ValueError("invalid pools")
-        for pool in pools:
-            if type(pool) is not list or len(pool) != 7:
-                raise ValueError("invalid pool row")
-            for index in (0, 2, 4):
-                if not isinstance(pool[index], str) or not re.fullmatch(
-                    r"[A-Za-z0-9._-]{1,96}", pool[index]
-                ):
-                    raise ValueError("invalid pool label")
-            for index in (1, 3, 5, 6):
-                value = pool[index]
-                if value is None and index in (5, 6):
-                    continue
-                if type(value) is not int or not 0 <= value <= 2**63 - 1:
-                    raise ValueError("invalid pool geometry")
-        raw = json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()
-        if len(raw) > 64 * 1024:
-            raise ValueError("schema too large")
-        if cfg.tp_size != 1 or cfg.pp_size != 1 or cfg.tp_rank != 0:
-            raise ValueError("unsupported seed topology")
-        backend_tag = cfg.extra_config["extra_backend_tag"]
-        if not isinstance(backend_tag, str) or not re.fullmatch(
-            r"dsv4-v1-[0-9a-f]{64}", backend_tag
-        ):
-            raise ValueError("invalid derived tag")
-        store = cc.storage_backend
-        names = list(store.registered_pools)
-        if not 1 <= len(names) <= MAX_ENTRIES:
-            raise ValueError("invalid registered set")
-        components = []
-        registered = []
-        for name in names:
-            if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", str(name)):
-                raise ValueError("invalid component name")
-            transfer = SimpleNamespace(name=name)
-            if not cc.should_backup(transfer):
-                raise ValueError("registered pool not backed up")
-            # Source formatter only reads pool/type metadata and builds suffixes.
-            # An empty key list yields no object keys and performs no store I/O.
-            keys, multiplier = store._get_hybrid_page_component_keys([], transfer)
-            if keys or type(multiplier) is not int or not 1 <= multiplier <= 64:
-                raise ValueError("invalid component multiplier")
-            components.extend(f"{name}:{index}" for index in range(multiplier))
-            registered.append({"pool": str(name), "component_count": multiplier})
-        if len(components) > 64 or len(components) != len(set(components)):
-            raise ValueError("invalid component set")
-        result.update(
-            status="complete",
-            storage_schema=json.loads(raw),
-            kv_schema=hashlib.sha256(raw).hexdigest(),
-            model_revision=revision,
-            backend_tag=backend_tag,
-            registered_components=sorted(registered, key=lambda item: item["pool"]),
-            required_components=sorted(components),
-            rank=cfg.tp_rank,
-        )
-    except Exception:
-        # Do not include arbitrary values or exception text in a public readback.
-        result.update(status="incomplete", error="startup_schema_unavailable")
-    return result
 
 
 def _scheduler_rank(scheduler, rank):
@@ -594,6 +459,5 @@ def host_pool_observability(scheduler, *, role):
         and all(group["logical_capacity_sum"] is not None for group in report["groups"])
         else None
     )
-    report["seed_schema"] = _seed_schema(scheduler)
     report["capture_finished_unix_ms"] = time.time_ns() // 1_000_000
     return report

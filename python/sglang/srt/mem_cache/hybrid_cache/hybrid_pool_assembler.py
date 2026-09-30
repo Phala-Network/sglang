@@ -27,7 +27,6 @@ from sglang.srt.mem_cache.pool_host.mha import (
     get_mha_host_pool_cls,
 )
 from sglang.srt.mem_cache.pool_host.mla import MLATokenToKVPoolHost
-from sglang.srt.mem_cache.shared_cache_diagnostics import shared_cache_diagnostics
 from sglang.srt.mem_cache.unified_cache.component_type import ComponentType
 from sglang.srt.runtime_context import get_memory, get_model, get_parallel, get_serving
 
@@ -661,7 +660,7 @@ def deepseek_v4_storage_schema(kvcache, host_pool_group):
     """Stable physical schema; capacities and P/D process roles are excluded."""
     parallel = get_parallel()
     model = get_model()
-    schema = {
+    return {
         "version": 1,
         # Served model identity is already part of the backend namespace.
         # Local checkpoint mount paths and P/D roles must not split that namespace.
@@ -689,8 +688,6 @@ def deepseek_v4_storage_schema(kvcache, host_pool_group):
             for entry in host_pool_group.entries
         ],
     }
-    shared_cache_diagnostics.record_schema(schema)
-    return schema
 
 
 def build_deepseek_v4_hicache_stack(
@@ -2171,8 +2168,6 @@ def _apply_stack_result(
 
     for sidecar in result.sidecars:
         cache.register_sidecar_pool(sidecar)
-
-    cache.refresh_effective_storage_selector()
 
     kvcache.register_layer_transfer_counter(result.cache_controller.layer_done_counter)
     if result.register_req_to_token_counter:

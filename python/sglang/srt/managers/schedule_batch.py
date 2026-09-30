@@ -982,9 +982,7 @@ class Req(ReqDllmMixin):
     ):
         # Input and output info
         self.rid = rid
-        self.cache_request_handle = CacheRequestHandle(
-            rid=rid, attempt_id=0, bootstrap_room=bootstrap_room
-        )
+        self.cache_request_handle = CacheRequestHandle(rid=rid, attempt_id=0)
         self.origin_input_ids = origin_input_ids
         self.origin_input_ids_unpadded = (
             origin_input_ids_unpadded
@@ -1483,9 +1481,6 @@ class Req(ReqDllmMixin):
 
     def finished(self) -> bool:
         # Whether request reached finished condition
-        trace = getattr(self.cache_request_handle, "cold_shared_read_trace", None)
-        if self.finished_reason is not None and trace is not None:
-            trace.terminal(type(self.finished_reason).__name__)
         return self.finished_reason is not None
 
     def set_extend_range(self, start: int, end: int) -> None:

@@ -56,7 +56,6 @@ jobs:
           python test/manual/phala/test_governor_metrics_startup_cpu.py
           python test/manual/phala/test_health_task_cleanup_cpu.py
           python test/manual/unit/entrypoints/test_trusted_health_marker.py
-          python test/manual/phala/test_mooncake_pd_diagnostics_cpu.py
           python test/manual/phala/test_hugetlb_shared_accounting_cpu.py
           python test/manual/test_glm53_dsa_host_budget.py
           python test/manual/phala/test_srt_log_transform.py
@@ -66,19 +65,13 @@ jobs:
           python test/manual/unit/function_call/test_qwen_complete_call_cpu.py
           python test/manual/unit/entrypoints/openai/test_qwen_historical_source_semantics.py
           python test/manual/unit/model_executor/model_runner_components/test_marlin_breakable_source_contract.py
+          python test/manual/phala/test_pd_runtime_cleanup_cpu.py
           python test/manual/test_hicache_async_ack_sync.py
           python -m pytest -q test/manual/unit/entrypoints/test_health_generate_lifecycle.py
-          python test/manual/phala/test_shared_cache_seed_callsite_cpu.py
-          python test/manual/phala/test_shared_cache_seed_two_operation_cpu.py
-          python test/manual/phala/test_shared_cache_reader_latearm_cpu.py -v
-          python test/registered/unit/managers/test_clear_manifest_revision.py -v
-          python test/manual/phala/test_repeat_memory_clear_cpu.py -v
-          python test/manual/phala/test_prefill_forward_diagnostic_cpu.py -v
       - name: Host-pool CPU backing regressions
         run: |
           python -m pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
           python test/registered/unit/mem_cache/test_host_pool_observability.py -v
-          python test/registered/unit/mem_cache/test_seed_schema_observability.py -v
       # Native Rust/kernel checks and the complete upstream lint remain manual
       # in lint.yml. Real-tokenizer/template and torch GGUF tests additionally
       # run in the pinned local CPU environment; this is not GPU acceptance.

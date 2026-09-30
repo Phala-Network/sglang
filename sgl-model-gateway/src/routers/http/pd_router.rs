@@ -1875,26 +1875,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_pd_diagnostic_external_request_header_reaches_both_workers() {
-        let router = create_test_pd_router();
-        let mut headers = HeaderMap::new();
-        headers.insert("x-request-id", "offline-correlation-fixture".parse().unwrap());
-        headers.insert("x-override-rid", "untrusted-body-alias".parse().unwrap());
-        for endpoint in ["http://prefill/generate", "http://decode/generate"] {
-            let request = router.build_post_with_headers(
-                &router.client, endpoint, &json!({"bootstrap_room": [1234, 5678]}),
-                Some(&headers), false,
-            ).build().unwrap();
-            assert_eq!(request.headers()["x-request-id"], "offline-correlation-fixture");
-            assert!(!request.headers().contains_key("x-override-rid"));
-            let missing = router.build_post_with_headers(
-                &router.client, endpoint, &json!({"bootstrap_room": 1234}), None, false,
-            ).build().unwrap();
-            assert!(!missing.headers().contains_key("x-request-id"));
-        }
-    }
-
-    #[tokio::test]
     async fn test_empty_worker_lists() {
         let router = create_test_pd_router();
 

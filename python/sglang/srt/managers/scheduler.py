@@ -171,8 +171,6 @@ from sglang.srt.managers.io_struct import (
     SendWeightsToRemoteInstanceReqOutput,
     SetInternalStateReq,
     SetInternalStateReqOutput,
-    SharedCacheClearMemoryReqInput,
-    SharedCacheClearMemoryReqOutput,
     ShutdownReq,
     SlowDownReqInput,
     SlowDownReqOutput,
@@ -277,13 +275,6 @@ from sglang.srt.managers.scheduler_components.weight_updater import (
 )
 from sglang.srt.managers.scheduler_input_blocker import SchedulerInputBlocker
 from sglang.srt.managers.scheduler_pp_mixin import SchedulerPPMixin
-from sglang.srt.managers.shared_cache_control import (
-    SharedCacheControlError,
-    clear_current_memory,
-    clear_from_configured_artifacts,
-    validate_clear_selectors,
-    validate_single_decode_writer,
-)
 from sglang.srt.managers.utils import (
     EmbeddingBatchResult,
     GenerationBatchResult,
@@ -292,7 +283,6 @@ from sglang.srt.managers.utils import (
 )
 from sglang.srt.mem_cache import kv_cache_builder
 from sglang.srt.mem_cache.base_prefix_cache import CacheRequestOutcome
-from sglang.srt.mem_cache.cold_shared_read import ColdSharedReadTrace
 from sglang.srt.mem_cache.common import (
     maybe_cache_unfinished_req,
     release_kv_cache,
@@ -1786,7 +1776,6 @@ class Scheduler(
                 (BatchTokenizedEmbeddingReqInput, self.handle_batch_embedding_request),
                 (FlushCacheReqInput, self.flush_wrapper.handle),
                 (ClearHiCacheReqInput, self.clear_hicache_storage_wrapped),
-                (SharedCacheClearMemoryReqInput, self.clear_shared_cache_memory),
                 (AttachHiCacheStorageReqInput, self.attach_hicache_storage_wrapped),
                 (DetachHiCacheStorageReqInput, self.detach_hicache_storage_wrapped),
                 (AbortReq, self.abort_request),
@@ -2932,22 +2921,6 @@ class Scheduler(
             return
 
         self._maybe_namespace_elastic_radix_cache(req)
-        if recv_req.cold_shared_read_bypass:
-            trace = ColdSharedReadTrace(
-                req.rid,
-                req.extra_key,
-                req.cache_salt,
-                self.ps.tp_rank,
-            )
-            req.cold_shared_read_bypass = True
-            req.cache_request_handle = dataclasses.replace(
-                req.cache_request_handle, cold_shared_read_trace=trace
-            )
-        req.pd_diagnostic_request_ref = recv_req.pd_diagnostic_request_ref
-        req.cache_request_handle = dataclasses.replace(
-            req.cache_request_handle,
-            pd_diagnostic_request_ref=req.pd_diagnostic_request_ref,
-        )
 
         if mm_input_error is not None:
             req.set_finish_with_abort(
@@ -3169,8 +3142,6 @@ class Scheduler(
     def _prefetch_kvcache(self, req: Req, storage_hit_end: Optional[int] = None):
         if self.enable_hicache_storage:
             req.init_next_round_input(self.tree_cache, cow_mamba=False)
-            if getattr(req, "cold_shared_read_bypass", False):
-                return
             tree_cache = self.tree_cache
             buffer_mode = get_memory().hicache_host_memory_mode == "buffer_only"
             last_host_node = req.last_host_node
@@ -3421,9 +3392,6 @@ class Scheduler(
 
     def _release_aborted_request(self, req: Req) -> None:
         """Drop the cache-side state an aborted request left behind."""
-        trace = getattr(req.cache_request_handle, "cold_shared_read_trace", None)
-        if trace is not None:
-            trace.terminal("abort")
         self.tree_cache.finish(req.cache_request_handle, CacheRequestOutcome.ABORT)
 
     def _abort_on_queued_limit(self, recv_req: Req) -> bool:
@@ -4928,68 +4896,6 @@ class Scheduler(
             if_success = False
         return ClearHiCacheReqOutput(success=if_success)
 
-    def clear_shared_cache_memory(
-        self, recv_req: SharedCacheClearMemoryReqInput
-    ) -> SharedCacheClearMemoryReqOutput:
-        if getattr(self, "_shared_cache_clear_unknown", False):
-            return SharedCacheClearMemoryReqOutput(
-                success=False, reason="prior_clear_result_unknown", unknown=True
-            )
-        if recv_req.keys is not None:
-            try:
-                if (
-                    recv_req.manifest_id
-                    or recv_req.manifest_sha256
-                    or recv_req.request_id
-                ):
-                    raise SharedCacheControlError("invalid_selector_fields")
-                receipt = clear_current_memory(self, recv_req.keys)
-                return SharedCacheClearMemoryReqOutput(
-                    success=receipt["success"],
-                    receipt=receipt,
-                    reason="" if receipt["success"] else "memory_clear_incomplete",
-                )
-            except SharedCacheControlError as exc:
-                if exc.unknown:
-                    self._shared_cache_clear_unknown = True
-                return SharedCacheClearMemoryReqOutput(
-                    success=False, reason=exc.reason, unknown=exc.unknown
-                )
-            except Exception:
-                self._shared_cache_clear_unknown = True
-                return SharedCacheClearMemoryReqOutput(
-                    success=False, reason="clear_result_unknown", unknown=True
-                )
-        try:
-            validate_clear_selectors(
-                recv_req.manifest_id,
-                recv_req.manifest_sha256,
-                recv_req.request_id,
-            )
-            validate_single_decode_writer(self.server_args, self.disaggregation_mode)
-        except SharedCacheControlError as exc:
-            return SharedCacheClearMemoryReqOutput(success=False, reason=exc.reason)
-        try:
-            receipt = clear_from_configured_artifacts(
-                self,
-                manifest_id=recv_req.manifest_id,
-                manifest_sha256=recv_req.manifest_sha256,
-            )
-        except SharedCacheControlError as exc:
-            if exc.unknown:
-                self._shared_cache_clear_unknown = True
-            return SharedCacheClearMemoryReqOutput(
-                success=False, reason=exc.reason, unknown=exc.unknown
-            )
-        except Exception:
-            self._shared_cache_clear_unknown = True
-            logger.warning("Finite shared-cache clear outcome is unknown")
-            return SharedCacheClearMemoryReqOutput(
-                success=False, reason="clear_result_unknown", unknown=True
-            )
-        receipt["request_id"] = recv_req.request_id
-        return SharedCacheClearMemoryReqOutput(success=True, receipt=receipt)
-
     @scheduler_stage_method(SCHEDULER_STAGE_IDLE)
     def on_idle(self):
         """Idle housekeeping: guard, check, metrics, reset, sleep."""
@@ -5288,9 +5194,6 @@ class Scheduler(
         # Resolved config (pristine server_args + post-publish overrides) so a
         # readback reflects values changed via /set_internal_state, not startup.
         ret = get_context().resolved_server_args_dict()
-        selector = getattr(self.tree_cache, "effective_storage_selector", None)
-        if selector is not None:
-            ret["effective_storage_selector"] = selector.as_dict()
         if self.governor is not None:
             now = time.monotonic()
             ret["pig_governor"] = self.governor.policy_snapshot(now)
@@ -6219,11 +6122,6 @@ def run_scheduler_process(
 def _make_abort_req(
     req: Req, finished_reason: Optional[FinishReasonDict] = None
 ) -> AbortReq:
-    trace = getattr(
-        getattr(req, "cache_request_handle", None), "cold_shared_read_trace", None
-    )
-    if trace is not None:
-        trace.terminal("abort")
     if (
         getattr(req, "governor_progress", None) is not None
         or getattr(req, "governor_reservation", None) is not None

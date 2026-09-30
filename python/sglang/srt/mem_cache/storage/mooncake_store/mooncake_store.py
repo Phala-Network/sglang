@@ -23,10 +23,6 @@ from sglang.srt.mem_cache.hicache_storage import (
 )
 from sglang.srt.mem_cache.pool_host import HostKVCache, HostTensorAllocator
 from sglang.srt.mem_cache.pool_host.mla import MLATokenToKVPoolHost
-from sglang.srt.mem_cache.shared_cache_diagnostics import (
-    shared_cache_diagnostics,
-    shared_cache_seed_capture,
-)
 from sglang.srt.observability.metrics_collector import StorageMetrics
 
 DEFAULT_LOCAL_BUFFER_SIZE = 16 * 1024 * 1024  # 16 MB
@@ -282,7 +278,6 @@ class MooncakeBaseStore:
     def __init__(self):
         self.store = None
         self.config = None
-        self.shared_cache_store_instance_id = uuid.uuid4().hex
 
     def _import_mooncake_store(self):
         try:
@@ -931,12 +926,7 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
         final_pages = restorable[-1] if restorable else 0
         return PoolTransferResult(final_pages, hit_count, restorable)
 
-    def _batch_io_v2(
-        self,
-        transfers: List[PoolTransfer],
-        is_set: bool,
-        extra_info: Optional[HiCacheStorageExtraInfo] = None,
-    ):
+    def _batch_io_v2(self, transfers: List[PoolTransfer], is_set: bool):
         # Unified v2 I/O path: each PoolTransfer can expand to one or more
         # storage objects per logical page, but API still reports page-level result.
         results: dict = {}
@@ -960,50 +950,6 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
                 )
 
             if is_set:
-                diag_context = (
-                    getattr(extra_info, "extra_info", None) if extra_info else None
-                )
-                if diag_context:
-                    diag_context = dict(diag_context)
-                    base_hashes = diag_context.get("shared_cache_diag_base_hashes", [])
-                    page_start = int(
-                        diag_context.get("shared_cache_diag_page_start", 0)
-                    )
-                    page_index_by_hash = {
-                        value: page_start + index
-                        for index, value in enumerate(base_hashes)
-                    }
-                    component_indexes = [
-                        f"{transfer.name}:{index % key_multiplier}"
-                        for index in range(len(key_strs))
-                    ]
-                    transfer_keys = transfer.keys or []
-                    page_indexes = []
-                    for index in range(len(key_strs)):
-                        page_offset = index // max(1, key_multiplier)
-                        hash_value = (
-                            transfer_keys[page_offset]
-                            if page_offset < len(transfer_keys)
-                            else None
-                        )
-                        page_indexes.append(
-                            page_index_by_hash.get(hash_value, page_start + page_offset)
-                        )
-                    diag_context["page_indexes"] = page_indexes
-                    diag_context["key_multiplier"] = key_multiplier
-                    try:
-                        diag_token = shared_cache_seed_capture.prepare_batch(
-                            diag_context,
-                            pool=str(transfer.name),
-                            component_names=component_indexes,
-                            keys=key_strs,
-                            sizes=element_size_list,
-                        )
-                    except Exception:
-                        shared_cache_seed_capture.fail_closed()
-                        diag_token = None
-                else:
-                    diag_token = None
                 group_ids = (
                     self._expand_group_ids(tagged_keys, key_multiplier)
                     if self._can_use_group_semantics()
@@ -1021,41 +967,10 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
                     )
                     for i, res in zip(missing_idx, put_results):
                         io_results[i] = res
-                try:
-                    shared_cache_seed_capture.complete_batch(
-                        diag_token, exists=exist_result, results=io_results
-                    )
-                except Exception:
-                    shared_cache_seed_capture.fail_closed()
             else:
-                reader_info = (
-                    (getattr(extra_info, "extra_info", None) or {})
-                    if extra_info
-                    else {}
-                )
                 io_results = self._get_batch_zero_copy_impl(
-                    key_strs,
-                    ptr_list,
-                    element_size_list,
-                    reader_info.get("cold_shared_read_trace"),
+                    key_strs, ptr_list, element_size_list
                 )
-            reader_info = (
-                (getattr(extra_info, "extra_info", None) or {}) if not is_set else {}
-            )
-            reader_cancelled = reader_info.get("shared_cache_reader_cancelled")
-            shared_cache_diagnostics.record_io(
-                is_set=is_set,
-                pool=transfer.name,
-                keys=key_strs,
-                sizes=element_size_list,
-                results=io_results,
-                exist_results=exist_result if is_set else None,
-                reader_context=reader_info.get("shared_cache_reader_context"),
-                reader_cancelled=reader_cancelled() if reader_cancelled else False,
-                tenant_id=getattr(
-                    getattr(self, "config", None), "tenant_id", DEFAULT_TENANT_ID
-                ),
-            )
             page_io_results = io_results
             if not is_set:
                 page_io_results = [
@@ -1082,14 +997,14 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
         transfers: List[PoolTransfer],
         extra_info: Optional[HiCacheStorageExtraInfo] = None,
     ) -> dict:
-        return self._batch_io_v2(transfers, is_set=False, extra_info=extra_info)
+        return self._batch_io_v2(transfers, is_set=False)
 
     def batch_set_v2(
         self,
         transfers: List[PoolTransfer],
         extra_info: Optional[HiCacheStorageExtraInfo] = None,
     ) -> dict:
-        return self._batch_io_v2(transfers, is_set=True, extra_info=extra_info)
+        return self._batch_io_v2(transfers, is_set=True)
 
     def _get_mha_split_heads_buffer_meta(self, keys, indices):
         ptr_list, element_size_list = (
@@ -1211,14 +1126,7 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
 
         start_time = time.perf_counter()
         get_results = self._get_batch_zero_copy_impl(
-            key_strs,
-            buffer_ptrs,
-            buffer_sizes,
-            (getattr(extra_info, "extra_info", None) or {}).get(
-                "cold_shared_read_trace"
-            )
-            if extra_info
-            else None,
+            key_strs, buffer_ptrs, buffer_sizes
         )
         end_time = time.perf_counter()
 
@@ -1250,30 +1158,6 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
             if self._can_use_group_semantics()
             else None
         )
-        diag_context = getattr(extra_info, "extra_info", None) if extra_info else None
-        if diag_context:
-            diag_context = dict(diag_context)
-            page_start = int(diag_context.get("shared_cache_diag_page_start", 0))
-            diag_context["page_indexes"] = [
-                page_start + index // max(1, key_multiplier)
-                for index in range(len(key_strs))
-            ]
-            diag_context["key_multiplier"] = key_multiplier
-            try:
-                diag_token = shared_cache_seed_capture.prepare_batch(
-                    diag_context,
-                    pool="kv",
-                    component_names=[
-                        f"kv:{index % key_multiplier}" for index in range(len(key_strs))
-                    ],
-                    keys=key_strs,
-                    sizes=buffer_sizes,
-                )
-            except Exception:
-                shared_cache_seed_capture.fail_closed()
-                diag_token = None
-        else:
-            diag_token = None
         exist_result = self._batch_exist(key_strs)
 
         set_keys = []
@@ -1309,13 +1193,6 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
 
             for i in range(len(set_indices)):
                 set_results[set_indices[i]] = put_results[i]
-
-        try:
-            shared_cache_seed_capture.complete_batch(
-                diag_token, exists=exist_result, results=set_results
-            )
-        except Exception:
-            shared_cache_seed_capture.fail_closed()
 
         return self._batch_postprocess(set_results, is_set_operate=True)
 
@@ -1509,32 +1386,13 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
             return self.store.batch_put_from(key_strs, buffer_ptrs, buffer_sizes)
 
     def _get_batch_zero_copy_impl(
-        self,
-        key_strs: List[str],
-        buffer_ptrs: List[Any],
-        buffer_sizes: List[Any],
-        cold_shared_read_trace=None,
+        self, key_strs: List[str], buffer_ptrs: List[Any], buffer_sizes: List[Any]
     ) -> List[int]:
-        from sglang.srt.mem_cache.cold_shared_read import record_unattributed_get
-
-        if cold_shared_read_trace is None:
-            record_unattributed_get()
-        else:
-            cold_shared_read_trace.get_begin(len(key_strs))
-        try:
-            if self._uses_multi_buffer(buffer_ptrs):
-                results = self.store.batch_get_into_multi_buffers(
-                    key_strs, buffer_ptrs, buffer_sizes
-                )
-            else:
-                results = self.store.batch_get_into(key_strs, buffer_ptrs, buffer_sizes)
-        except Exception:
-            if cold_shared_read_trace is not None:
-                cold_shared_read_trace.get_end(error=True)
-            raise
-        if cold_shared_read_trace is not None:
-            cold_shared_read_trace.get_end(results)
-        return results
+        if self._uses_multi_buffer(buffer_ptrs):
+            return self.store.batch_get_into_multi_buffers(
+                key_strs, buffer_ptrs, buffer_sizes
+            )
+        return self.store.batch_get_into(key_strs, buffer_ptrs, buffer_sizes)
 
     def _batch_exist(self, key_strs: List[str]) -> List[int]:
         return self.store.batch_is_exist(key_strs)

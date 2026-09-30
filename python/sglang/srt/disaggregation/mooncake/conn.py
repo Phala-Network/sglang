@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import dataclasses
-import hashlib
 import logging
 import os
 import struct
@@ -466,7 +465,6 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             target_info.staging_base_ptr + c_offset,
             target_info.staging_total_size - c_offset,
             target_info,
-            diagnostic_room=req.room,
         )
         if ret == -1:
             # Doesn't fit the ring: fail this room (caller's ret != 0 path), do
@@ -522,7 +520,6 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
         dst_layer_ids: List[int],
         staging_buffer=None,
         dst_slot_layer_ids: Optional[List[int]] = None,
-        diagnostic_room: Optional[int] = None,
     ) -> int:
         """Transfer KV cache via staging buffers (gather -> bulk RDMA -> scatter on decode)."""
         from sglang.srt.disaggregation.common.staging_buffer import (
@@ -631,9 +628,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                 )
                 for src_idx, dst_idx in pairs
             ]
-        ret = self._transfer_data(
-            mooncake_session_id, transfer_blocks, diagnostic_room=diagnostic_room
-        )
+        ret = self._transfer_data(mooncake_session_id, transfer_blocks)
         if ret != 0:
             raise RuntimeError(
                 f"[Staging] Bulk RDMA transfer failed with ret={ret}. "
@@ -643,80 +638,13 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             )
         return ret
 
-    def _transfer_data(
-        self,
-        mooncake_session_id,
-        transfer_blocks,
-        *,
-        diagnostic_room=None,
-        diagnostic_kind="kv",
-    ):
+    def _transfer_data(self, mooncake_session_id, transfer_blocks):
         if not transfer_blocks:
             return 0
 
         src_addrs, dst_addrs, lengths = zip(*transfer_blocks)
-        diagnostic = envs.SGLANG_MOONCAKE_PD_TRANSFER_DIAGNOSTICS.get()
-        try:
-            ret = self._transfer_native_batch(
-                mooncake_session_id,
-                list(src_addrs),
-                list(dst_addrs),
-                list(lengths),
-                diagnostic_room,
-                diagnostic_kind,
-            )
-        except Exception:
-            if diagnostic:
-                self._log_pd_transfer_result(
-                    mooncake_session_id, lengths, None, diagnostic_room, diagnostic_kind
-                )
-            raise
-        if diagnostic:
-            self._log_pd_transfer_result(
-                mooncake_session_id, lengths, ret, diagnostic_room, diagnostic_kind
-            )
-        return ret
-
-    def _transfer_native_batch(self, peer, sources, destinations, lengths, room, kind):
-        from sglang.srt.disaggregation.mooncake.pd_transfer_diagnostics import (
-            pd_batch_diagnostics,
-        )
-
-        if pd_batch_diagnostics.active_room(room):
-            record = self.engine.batch_transfer_sync_diagnostic(
-                peer, sources, destinations, lengths
-            )
-            if record is not None:
-                pd_batch_diagnostics.record_native(
-                    room, kind, lengths, record, self.kv_args.engine_rank
-                )
-                return record["result"]
-            pd_batch_diagnostics.native_unavailable(room)
-        return self.engine.batch_transfer_sync(peer, sources, destinations, lengths)
-
-    def _log_pd_transfer_result(self, peer, lengths, result, room, kind):
-        # Only bounded, non-content fields. No addresses, raw session ID or exception.
-        # These are submitted bytes + synchronous completion, NOT a native byte field.
-        peer_id = hashlib.sha256(peer.encode("utf-8")).hexdigest()[:16]
-        room_id = (
-            hashlib.sha256(str(room).encode("ascii")).hexdigest()[:16]
-            if room is not None
-            else "none"
-        )
-        logger.info(
-            "PD_TRANSFER engine=pd pid=%d worker=%d rank=%d peer=%s room=%s "
-            "kind=%s batch_count=1 entry_count=%d submitted_bytes=%d "
-            "native_result=%s completed=%s",
-            os.getpid(),
-            threading.get_native_id(),
-            self.kv_args.engine_rank,
-            peer_id,
-            room_id,
-            kind,
-            len(lengths),
-            sum(lengths),
-            "exception" if result is None else result,
-            result == 0,
+        return self.engine.batch_transfer_sync(
+            mooncake_session_id, list(src_addrs), list(dst_addrs), list(lengths)
         )
 
     def _send_kvcache_generic(
@@ -734,8 +662,6 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
         dst_layer_ids: Optional[List[int]] = None,
         dst_device_data_indices: Optional[npt.NDArray[np.int32]] = None,
         dst_device_data_ptrs: Optional[set[int]] = None,
-        diagnostic_room: Optional[int] = None,
-        diagnostic_kind: Optional[str] = None,
     ) -> int:
         """
         Generic KV cache transfer supporting both MHA and MLA architectures.
@@ -850,26 +776,14 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
         # Worker function for processing a single layer
         def process_layer(src_ptr: int, dst_ptr: int, item_len: int) -> int:
             transfer_blocks = set_transfer_blocks(src_ptr, dst_ptr, item_len)
-            return self._transfer_data(
-                mooncake_session_id,
-                transfer_blocks,
-                diagnostic_room=diagnostic_room,
-                diagnostic_kind=diagnostic_kind
-                or ("state" if state_type is not None else "kv"),
-            )
+            return self._transfer_data(mooncake_session_id, transfer_blocks)
 
         # Worker function for processing all layers in a batch
         def process_layers(layers_params: List[Tuple[int, int, int]]) -> int:
             transfer_blocks = []
             for src_ptr, dst_ptr, item_len in layers_params:
                 transfer_blocks.extend(set_transfer_blocks(src_ptr, dst_ptr, item_len))
-            return self._transfer_data(
-                mooncake_session_id,
-                transfer_blocks,
-                diagnostic_room=diagnostic_room,
-                diagnostic_kind=diagnostic_kind
-                or ("state" if state_type is not None else "kv"),
-            )
+            return self._transfer_data(mooncake_session_id, transfer_blocks)
 
         if (
             self.enable_custom_mem_pool
@@ -917,13 +831,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                         dst_addr = dst_ptr + int(decode_index[0]) * item_len
                         length = item_len * len(prefill_index)
                         transfer_blocks.append((src_addr, dst_addr, length))
-                return self._transfer_data(
-                    mooncake_session_id,
-                    transfer_blocks,
-                    diagnostic_room=diagnostic_room,
-                    diagnostic_kind=diagnostic_kind
-                    or ("state" if state_type is not None else "kv"),
-                )
+                return self._transfer_data(mooncake_session_id, transfer_blocks)
 
             for start in range(
                 0,
@@ -1028,7 +936,6 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
         dst_device_kv_indices: Optional[npt.NDArray[np.int32]] = None,
         dst_kv_item_len: Optional[int] = None,
         dst_attn_tp_size: Optional[int] = None,
-        diagnostic_room: Optional[int] = None,
     ):
         self._validate_envelope_kv_layout(
             dst_kv_ptrs, dst_kv_item_len, dst_attn_tp_size
@@ -1052,7 +959,6 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             prefill_data_indices=prefill_kv_indices,
             dst_data_indices=dst_kv_indices,
             executor=executor,
-            diagnostic_room=diagnostic_room,
             # The unified pool registers ONE region holding every layer's K and
             # V inside each page envelope. The MHA branch would half-split that
             # single region into K and V halves and compute num_kv_layers = 0,
@@ -1082,7 +988,6 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
         executor: concurrent.futures.ThreadPoolExecutor,
         dst_layer_ids: List[int],
         pack_buffer=None,
-        diagnostic_room: Optional[int] = None,
     ) -> int:
         if num_kv_tokens is None:
             raise ValueError("PD DCP transfer requires num_kv_tokens")
@@ -1182,7 +1087,6 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             return self._transfer_data(
                 mooncake_session_id,
                 set_transfer_blocks(src_ptr, dst_ptr, token_item_len, groups),
-                diagnostic_room=diagnostic_room,
             )
 
         if self.enable_custom_mem_pool:
@@ -1195,9 +1099,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
         transfer_blocks = []
         for layer_params in layers_params:
             transfer_blocks.extend(set_transfer_blocks(*layer_params))
-        return self._transfer_data(
-            mooncake_session_id, transfer_blocks, diagnostic_room=diagnostic_room
-        )
+        return self._transfer_data(mooncake_session_id, transfer_blocks)
 
     def send_kvcache_slice(
         self,
@@ -1210,7 +1112,6 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
         dst_kv_item_len: int,
         executor: concurrent.futures.ThreadPoolExecutor,
         dst_layer_ids: Optional[List[int]] = None,
-        diagnostic_room: Optional[int] = None,
     ):
         """
         Sends KV cache slices from this Prefill rank to a target Decode rank,
@@ -1329,27 +1230,9 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             dst_addr_list = dst_slice_addrs.reshape(-1).tolist()
             total_slices = len(src_addr_list)
             length_list = [heads_bytes_per_token_to_send] * total_slices
-            diagnostic = envs.SGLANG_MOONCAKE_PD_TRANSFER_DIAGNOSTICS.get()
-            try:
-                ret = self._transfer_native_batch(
-                    mooncake_session_id,
-                    src_addr_list,
-                    dst_addr_list,
-                    length_list,
-                    diagnostic_room,
-                    "kv",
-                )
-            except Exception:
-                if diagnostic:
-                    self._log_pd_transfer_result(
-                        mooncake_session_id, length_list, None, diagnostic_room, "kv"
-                    )
-                raise
-            if diagnostic:
-                self._log_pd_transfer_result(
-                    mooncake_session_id, length_list, ret, diagnostic_room, "kv"
-                )
-            return ret
+            return self.engine.batch_transfer_sync(
+                mooncake_session_id, src_addr_list, dst_addr_list, length_list
+            )
 
         futures = [
             executor.submit(process_layer_tp_aware, src_layer_ptr, dst_layer_ptr)
@@ -1380,12 +1263,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             dst_addr = dst_aux_ptrs[i] + length * req.dst_aux_index
             transfer_blocks.append((src_addr, dst_addr, length))
 
-        return self._transfer_data(
-            req.mooncake_session_id,
-            transfer_blocks,
-            diagnostic_room=req.room,
-            diagnostic_kind="aux",
-        )
+        return self._transfer_data(req.mooncake_session_id, transfer_blocks)
 
     def send_aux_tcp(
         self,
@@ -1726,7 +1604,6 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                         prefill_data_indices=np.array(src_indices, dtype=np.int32),
                         dst_data_indices=np.array(dst_indices_local, dtype=np.int32),
                         executor=executor,
-                        diagnostic_room=req.room,
                         state_type=st,
                         # Two independent reasons to keep the flat layout.
                         # QSA's per-layer list must not be half-split into K/V;
@@ -1774,9 +1651,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                         prefill_data_indices=np.array(src_indices, dtype=np.int32),
                         dst_data_indices=np.array(dst_indices_local, dtype=np.int32),
                         executor=executor,
-                        diagnostic_room=req.room,
                         force_flat=True,
-                        diagnostic_kind="state",
                     )
                     or rc
                 )
@@ -1817,12 +1692,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
         except ValueError as exc:
             logger.error("<redacted>: <redacted>")
             return -1
-        return self._transfer_data(
-            req.mooncake_session_id,
-            transfer_blocks,
-            diagnostic_room=req.room,
-            diagnostic_kind="state",
-        )
+        return self._transfer_data(req.mooncake_session_id, transfer_blocks)
 
     def _send_mamba_state(
         self,
@@ -1852,12 +1722,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             dst_addr = dst_state_ptr + length * int(dst_mamba_index[0])
             transfer_blocks.append((src_addr, dst_addr, length))
 
-        return self._transfer_data(
-            req.mooncake_session_id,
-            transfer_blocks,
-            diagnostic_room=req.room,
-            diagnostic_kind="state",
-        )
+        return self._transfer_data(req.mooncake_session_id, transfer_blocks)
 
     def _send_mamba_state_slice(
         self,
@@ -1965,12 +1830,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                 )
                 transfer_blocks.append((src_addr, dst_addr, bytes_to_send))
 
-        return self._transfer_data(
-            req.mooncake_session_id,
-            transfer_blocks,
-            diagnostic_room=req.room,
-            diagnostic_kind="state",
-        )
+        return self._transfer_data(req.mooncake_session_id, transfer_blocks)
 
     def transfer_worker(
         self,
@@ -2136,7 +1996,6 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                                     target_rank_registration_info.dst_kv_layer_ids
                                 ),
                                 pack_buffer=pack_buffer,
-                                diagnostic_room=req.room,
                             )
                         elif (
                             self.is_mla_backend
@@ -2154,7 +2013,6 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                                 dst_device_kv_indices=chunked_dst_device_kv_indice,
                                 dst_kv_item_len=target_rank_registration_info.dst_kv_item_len,
                                 dst_attn_tp_size=target_rank_registration_info.dst_attn_tp_size,
-                                diagnostic_room=req.room,
                             )
                         elif (
                             self.enable_staging
@@ -2189,7 +2047,6 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                                 target_rank_registration_info.dst_kv_item_len,
                                 executor,
                                 target_rank_registration_info.dst_kv_layer_ids,
-                                diagnostic_room=req.room,
                             )
                         if ret != 0:
                             with self.session_lock:

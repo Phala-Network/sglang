@@ -36,10 +36,6 @@ from sglang.srt.mem_cache.hicache_storage import (
 from sglang.srt.mem_cache.l2_transfer import L2Transfer
 from sglang.srt.mem_cache.pool_host import HostPoolGroup, PoolEntry
 from sglang.srt.mem_cache.pool_host.mha import MHATokenToKVPoolHost
-from sglang.srt.mem_cache.shared_cache_diagnostics import (
-    shared_cache_diagnostics,
-    shared_cache_seed_capture,
-)
 from sglang.srt.mem_cache.storage_backend_config import (
     load_storage_backend_extra_config,
 )
@@ -597,16 +593,7 @@ class HybridCacheController(BaseHiCacheController):
             pool_transfers=extra_pools,
             assume_stored=assume_stored,
         )
-        trace = handle.cold_shared_read_trace
-        operation.cold_shared_read_trace = trace
-        if trace is not None:
-            trace.operation_begin()
-        try:
-            self.prefetch_queue.put(operation)
-        except Exception:
-            if trace is not None:
-                trace.operation_end()
-            raise
+        self.prefetch_queue.put(operation)
         return operation
 
     def write_storage(
@@ -616,9 +603,6 @@ class HybridCacheController(BaseHiCacheController):
         hash_value: Optional[List[str]] = None,
         prefix_keys: Optional[List[str]] = None,
         extra_pools: Optional[list[PoolTransfer]] = None,
-        diagnostic_request_id: Optional[str] = None,
-        diagnostic_page_start: Optional[int] = None,
-        seed_selected: bool = False,
     ) -> int:
         operation = StorageOperation(
             host_indices,
@@ -627,25 +611,6 @@ class HybridCacheController(BaseHiCacheController):
             prefix_keys=prefix_keys,
             pool_transfers=extra_pools,
         )
-        operation.shared_cache_diag_request_id = diagnostic_request_id
-        operation.shared_cache_diag_page_start = diagnostic_page_start or 0
-        operation.shared_cache_seed_selected = False
-        if seed_selected and diagnostic_request_id is not None:
-            try:
-                operation.shared_cache_seed_selected = (
-                    shared_cache_seed_capture.bind_operation(
-                        diagnostic_request_id,
-                        operation.id,
-                        page_range={
-                            "start": operation.shared_cache_diag_page_start,
-                            "end": operation.shared_cache_diag_page_start
-                            + len(operation.hash_value),
-                        },
-                        expected_tokens=len(operation.token_ids),
-                    )
-                )
-            except Exception:
-                shared_cache_seed_capture.fail_closed()
         self.backup_queue.put(operation)
         return operation.id
 
@@ -712,24 +677,6 @@ class HybridCacheController(BaseHiCacheController):
                 )
         return host_indices, device_indices, resolved_pool_transfers
 
-    def _prefetch_extra_info(self, operation, prefix_keys=None):
-        if not hasattr(operation, "shared_cache_reader_context"):
-            operation.shared_cache_reader_context = (
-                shared_cache_diagnostics.reader_context(operation, self)
-            )
-        context = operation.shared_cache_reader_context
-        trace = getattr(operation, "cold_shared_read_trace", None)
-        extra = {"cold_shared_read_trace": trace} if trace is not None else {}
-        if context:
-            extra.update(
-                shared_cache_reader_context=context,
-                shared_cache_reader_cancelled=operation.is_terminated,
-            )
-        return HiCacheStorageExtraInfo(
-            prefix_keys=prefix_keys,
-            extra_info=extra or None,
-        )
-
     def _page_transfer(self, operation: PrefetchOperation) -> bool:
         # KV pools and KV-derived pools first — determines actual completed page count
         kv_completed_pages = super()._page_transfer(operation)
@@ -765,9 +712,7 @@ class HybridCacheController(BaseHiCacheController):
             )
             self._sync_trailing_keys(transfers_nonkv, sidecar_hashes, sidecar_hit_pages)
             self._resolve_sidecar_nonkv_derived_pool_transfers(operation)
-            results = self.storage_backend.batch_get_v2(
-                transfers_nonkv, self._prefetch_extra_info(operation)
-            )
+            results = self.storage_backend.batch_get_v2(transfers_nonkv)
             pool_hits = count_pool_hits(results)
         # Emit PrefetchAck to prefetch_sync_queue, even the operation has been canceled by the
         # scheduler thread.  The prefetch sync thread expects the same number of PrefetchAck objects
@@ -809,23 +754,7 @@ class HybridCacheController(BaseHiCacheController):
         if backup_transfers:
             self._resolve_sidecar_kv_derived_pool_transfers(operation)
             self._resolve_sidecar_nonkv_derived_pool_transfers(operation)
-            results = self.storage_backend.batch_set_v2(
-                backup_transfers,
-                HiCacheStorageExtraInfo(
-                    extra_info={
-                        "shared_cache_diag_request_id": getattr(
-                            operation, "shared_cache_diag_request_id", None
-                        ),
-                        "shared_cache_diag_operation_id": operation.id,
-                        "shared_cache_diag_page_start": getattr(
-                            operation, "shared_cache_diag_page_start", 0
-                        )
-                        + operation.storage_start // self.page_size,
-                        "shared_cache_diag_base_hashes": list(operation.hash_value),
-                        "shared_cache_diag_page_size": self.page_size,
-                    }
-                ),
-            )
+            results = self.storage_backend.batch_set_v2(backup_transfers)
             pool_hits = count_pool_hits(results)
             operation.pool_storage_result.update_extra_pool_hit_pages(pool_hits)
 

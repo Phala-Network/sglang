@@ -12,121 +12,13 @@ use smg::config::RouterConfig;
 use tower::ServiceExt;
 
 use crate::common::{
-    mock_worker::{
-        capture_generate_requests, take_generate_requests, HealthStatus, MockWorkerConfig,
-        WorkerType,
-    },
+    mock_worker::{HealthStatus, MockWorkerConfig, WorkerType},
     AppTestContext, TestWorkerConfig,
 };
 
 #[cfg(test)]
 mod pd_routing_tests {
     use super::*;
-
-    #[tokio::test]
-    async fn test_native_generate_cold_bypass_reaches_both_pd_workers() {
-        let prefill_port = 19840;
-        let decode_port = 19841;
-        let config = RouterConfig::builder()
-            .prefill_decode_mode(
-                vec![(format!("http://127.0.0.1:{prefill_port}"), None)],
-                vec![format!("http://127.0.0.1:{decode_port}")],
-            )
-            .round_robin_policy()
-            .host("127.0.0.1")
-            .port(3804)
-            .max_payload_size(256 * 1024 * 1024)
-            .request_timeout_secs(30)
-            .worker_startup_timeout_secs(5)
-            .worker_startup_check_interval_secs(1)
-            .max_concurrent_requests(64)
-            .queue_timeout_secs(30)
-            .build_unchecked();
-        let ctx = AppTestContext::new_with_config(
-            config,
-            vec![
-                TestWorkerConfig::prefill(prefill_port),
-                TestWorkerConfig::decode(decode_port),
-            ],
-        )
-        .await;
-        let app = ctx.create_app().await;
-        capture_generate_requests(prefill_port);
-        capture_generate_requests(decode_port);
-
-        for (suffix, bypass) in [
-            ("true", Some(json!(true))),
-            ("false", Some(json!(false))),
-            ("omitted", None),
-        ] {
-            let rid = format!("cold-router-{suffix}");
-            let extra_key = format!("cold-key-{suffix}");
-            let mut payload = json!({
-                "text": "cold PD forwarding",
-                "stream": false,
-                "rid": rid,
-                "extra_key": extra_key,
-            });
-            if let Some(value) = bypass {
-                payload["cold_shared_read_bypass"] = value;
-            }
-            let req = Request::builder()
-                .method("POST")
-                .uri("/generate")
-                .header(CONTENT_TYPE, "application/json")
-                .body(Body::from(payload.to_string()))
-                .unwrap();
-            let resp = app.clone().oneshot(req).await.unwrap();
-            assert_eq!(resp.status(), StatusCode::OK, "case {suffix}");
-            assert_eq!(
-                resp.headers().get("x-worker-id").unwrap().to_str().unwrap(),
-                format!("worker-{decode_port}"),
-                "decode response header must pass through"
-            );
-            let body = http_body_util::BodyExt::collect(resp.into_body())
-                .await
-                .unwrap()
-                .to_bytes();
-            assert_eq!(
-                serde_json::from_slice::<serde_json::Value>(&body).unwrap()["text"],
-                "This is a mock response."
-            );
-        }
-
-        let req = Request::builder()
-            .method("POST")
-            .uri("/generate")
-            .header(CONTENT_TYPE, "application/json")
-            .body(Body::from(
-                json!({
-                    "text": "invalid cold flag",
-                    "cold_shared_read_bypass": "true",
-                })
-                .to_string(),
-            ))
-            .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
-        assert!(resp.status().is_client_error());
-
-        for port in [prefill_port, decode_port] {
-            let requests = take_generate_requests(port);
-            assert_eq!(
-                requests.len(),
-                3,
-                "worker {port} must see three valid posts"
-            );
-            for (index, suffix) in ["true", "false", "omitted"].iter().enumerate() {
-                assert_eq!(requests[index]["rid"], format!("cold-router-{suffix}"));
-                assert_eq!(requests[index]["extra_key"], format!("cold-key-{suffix}"));
-                if *suffix == "true" {
-                    assert_eq!(requests[index]["cold_shared_read_bypass"], true);
-                } else {
-                    assert!(requests[index].get("cold_shared_read_bypass").is_none());
-                }
-            }
-        }
-        ctx.shutdown().await;
-    }
 
     /// Test basic PD mode routing with prefill and decode workers
     #[tokio::test]

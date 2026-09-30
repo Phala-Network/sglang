@@ -63,6 +63,18 @@ def _align_required_tool_call_repetition(
         )
     repetition["separator"] = "\n"
     repetition["stop_after_first"] = not parallel_tool_calls
+    # A newline after the final call must not commit the matcher to another
+    # call. Keep the trained inter-call separator, but allow bounded terminal
+    # whitespace independently so EOS remains legal after a complete answer.
+    calls = repetition.copy()
+    repetition.clear()
+    repetition.update(
+        type="sequence",
+        elements=[
+            calls,
+            {"type": "regex", "pattern": r"[\x20\x09\x0A\x0D]{0,64}"},
+        ],
+    )
     return StructuralTag.model_validate(value)
 
 

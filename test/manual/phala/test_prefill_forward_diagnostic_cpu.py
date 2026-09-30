@@ -13,6 +13,47 @@ class StopAfterDiagnostic(Exception):
 
 
 class Tests(unittest.TestCase):
+    def test_ordinary_capture_duration_and_request_bounds(self):
+        source = ROOT / "python/sglang/srt/mem_cache/shared_cache_diagnostics.py"
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        nodes = []
+        for node in tree.body:
+            if isinstance(node, ast.ImportFrom) and node.module.startswith("sglang"):
+                continue
+            if isinstance(node, ast.ClassDef):
+                if node.name == "SharedCacheDiagnostics":
+                    nodes.append(node)
+                continue
+            if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name)
+                and not t.id.startswith("_")
+                and t.id != "logger"
+                for t in node.targets
+            ):
+                continue
+            nodes.append(node)
+        scope = {}
+        exec(
+            compile(ast.Module(body=nodes, type_ignores=[]), str(source), "exec"), scope
+        )
+        collector = scope["SharedCacheDiagnostics"]
+        self.assertFalse(collector().enabled)
+        capture = collector(
+            enabled=True,
+            key_salt="test-salt",
+            case_id="case",
+            epoch="epoch",
+            key_ids="0" * 64,
+            max_duration_ms=1000000,
+        )
+        self.assertEqual(capture._max_duration_s, 900)
+        self.assertEqual(capture._max_requests, 32)
+        self.assertEqual(scope["_SEED_MAX_DURATION_MS"], 120000)
+        for i in range(15):
+            self.assertIsNotNone(capture._register_request(str(i), "default"))
+        self.assertEqual(len(capture._requests), 15)
+        self.assertTrue(capture._capture_open())
+
     def test_actual_extend_boundary_after_host_load_and_chunking(self):
         source = ROOT / "python/sglang/srt/disaggregation/prefill.py"
         tree = ast.parse(source.read_text(encoding="utf-8"))

@@ -2188,7 +2188,9 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                     decode_ip = waiting_req_bytes[2].decode("ascii")
                     decode_port = int(waiting_req_bytes[3].decode("ascii"))
                     room_status = self.get_status(room_to_be_aborted)
-                    room_active = room_status is not None and room_status != KVPoll.Success
+                    room_active = (
+                        room_status is not None and room_status != KVPoll.Success
+                    )
                     if self.enable_deferred_decode_kv_release:
                         # Mark Failed FIRST (stops add_transfer_request enqueuing
                         # new chunks), THEN register the ack target: registering

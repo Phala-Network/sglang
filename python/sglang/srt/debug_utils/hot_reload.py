@@ -3,7 +3,8 @@
 With SGLANG_DEBUG_HOT_RELOAD_SCRIPT=/path/patch.py set, SIGUSR2 to a scheduler
 process runs that script at the start of its next loop iteration, with
 `scheduler` and `reload_function` in its globals. Send it to every scheduler
-process (`pkill -USR2 -f sglang::scheduler`): ranks reload independently.
+process (`pkill -USR2 -f '^sglang::scheduler'`; unanchored, it also
+matches a remote shell whose command line carries the pattern): ranks reload independently.
 """
 
 from __future__ import annotations

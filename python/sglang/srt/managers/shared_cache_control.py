@@ -1117,3 +1117,85 @@ def execute_bounded_clear(
         "owner_drain": owner_drain,
         "completed_at_unix_ms": now_ms(),
     }
+
+
+def validate_memory_clear_keys(keys):
+    if (
+        not isinstance(keys, list)
+        or not 1 <= len(keys) <= MAX_KEYS
+        or any(
+            not isinstance(key, str)
+            or not key
+            or len(key.encode()) > 4096
+            or _FORBIDDEN_KEY.search(key)
+            for key in keys
+        )
+        or len(set(keys)) != len(keys)
+    ):
+        raise SharedCacheControlError("invalid_memory_clear_keys")
+
+
+def parse_memory_clear_body(body: bytes):
+    if not isinstance(body, bytes) or len(body) > 64 * 1024:
+        raise SharedCacheControlError("request_body_too_large")
+    try:
+        value = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise SharedCacheControlError("invalid_json") from None
+    if isinstance(value, dict) and set(value) == {"keys"}:
+        validate_memory_clear_keys(value["keys"])
+        return value
+    # Preserve the old finite selector API and its original 512-byte bound.
+    return parse_clear_selector_body(body)
+
+
+def clear_current_memory(scheduler, keys):
+    """Original writer, current tenant, all MEMORY segments; no diagnostic gate."""
+    validate_memory_clear_keys(keys)
+    validate_single_decode_writer(scheduler.server_args, scheduler.disaggregation_mode)
+    backend = getattr(
+        getattr(
+            getattr(scheduler, "decode_offload_manager", None), "cache_controller", None
+        ),
+        "storage_backend",
+        None,
+    )
+    store = getattr(backend, "store", None)
+    clear = getattr(store, "batch_memory_replica_clear", None)
+    if not callable(clear):
+        raise SharedCacheControlError("native_memory_clear_unavailable")
+    tenant_id = getattr(getattr(backend, "config", None), "tenant_id", None)
+    if not isinstance(tenant_id, str) or not tenant_id:
+        raise SharedCacheControlError("store_tenant_missing")
+    drain = require_stable_drain(scheduler, quiet_ms=_CLEAR_QUIET_MS)
+    result = {}
+
+    def invoke():
+        try:
+            result["keys"] = clear(keys)
+        except Exception:
+            result["unknown"] = True
+
+    worker = threading.Thread(target=invoke, name="shared-memory-clear", daemon=True)
+    worker.start()
+    worker.join(30)
+    if worker.is_alive() or result.get("unknown"):
+        raise SharedCacheControlError("clear_result_unknown", unknown=True)
+    completed = result.get("keys")
+    if (
+        not isinstance(completed, list)
+        or any(not isinstance(k, str) for k in completed)
+        or len(completed) != len(set(completed))
+        or not set(completed).issubset(keys)
+    ):
+        raise SharedCacheControlError("invalid_native_clear_result", unknown=True)
+    if scheduler_drain_snapshot(scheduler) != drain:
+        raise SharedCacheControlError("scheduler_drain_changed", unknown=True)
+    return {
+        "success": set(completed) == set(keys),
+        "completed_keys": completed,
+        "remaining_keys": [key for key in keys if key not in completed],
+        "key_count": len(keys),
+        "tenant_id": tenant_id,
+        "scope": "MEMORY removed; local SSD metadata retained; SSD read not tested",
+    }

@@ -1164,8 +1164,8 @@ async def clear_hicache_storage_backend():
     )
 
 
-async def _read_shared_cache_clear_selectors(request: Request) -> dict[str, str]:
-    max_body_bytes = 512
+async def _read_shared_cache_clear_selectors(request: Request) -> dict:
+    max_body_bytes = 64 * 1024
     await validate_json_request(request)
     content_length = request.headers.get("content-length")
     if content_length is not None:
@@ -1186,11 +1186,11 @@ async def _read_shared_cache_clear_selectors(request: Request) -> dict[str, str]
         body.extend(chunk)
     from sglang.srt.managers.shared_cache_control import (
         SharedCacheControlError,
-        parse_clear_selector_body,
+        parse_memory_clear_body,
     )
 
     try:
-        value = parse_clear_selector_body(bytes(body), maximum=max_body_bytes)
+        value = parse_memory_clear_body(bytes(body))
     except SharedCacheControlError as exc:
         status = 413 if exc.reason == "request_body_too_large" else 422
         if exc.reason == "invalid_json":
@@ -1202,7 +1202,7 @@ async def _read_shared_cache_clear_selectors(request: Request) -> dict[str, str]
 @app.api_route("/shared-cache/memory/clear", methods=["POST"])
 @auth_level(AuthLevel.ADMIN_OPTIONAL)
 async def clear_shared_cache_memory(request: Request):
-    """Run the configured one-shot clear for the original D writer store."""
+    """Clear bounded MEMORY keys through the original D writer store."""
     if not (get_serving().api_key or get_serving().admin_api_key):
         return ORJSONResponse(
             {"success": False, "reason": "api_token_required"},
@@ -1210,9 +1210,7 @@ async def clear_shared_cache_memory(request: Request):
         )
     selectors = await _read_shared_cache_clear_selectors(request)
     result = await _global_state.tokenizer_manager.clear_shared_cache_memory(
-        manifest_id=selectors["manifest_id"],
-        manifest_sha256=selectors["manifest_sha256"],
-        request_id=selectors["request_id"],
+        **selectors,
     )
     return ORJSONResponse(
         {

@@ -278,6 +278,7 @@ from sglang.srt.managers.scheduler_components.weight_updater import (
 from sglang.srt.managers.scheduler_input_blocker import SchedulerInputBlocker
 from sglang.srt.managers.scheduler_pp_mixin import SchedulerPPMixin
 from sglang.srt.managers.shared_cache_control import (
+    clear_current_memory,
     SharedCacheControlError,
     clear_from_configured_artifacts,
     validate_clear_selectors,
@@ -4934,6 +4935,31 @@ class Scheduler(
             return SharedCacheClearMemoryReqOutput(
                 success=False, reason="prior_clear_result_unknown", unknown=True
             )
+        if recv_req.keys is not None:
+            try:
+                if (
+                    recv_req.manifest_id
+                    or recv_req.manifest_sha256
+                    or recv_req.request_id
+                ):
+                    raise SharedCacheControlError("invalid_selector_fields")
+                receipt = clear_current_memory(self, recv_req.keys)
+                return SharedCacheClearMemoryReqOutput(
+                    success=receipt["success"],
+                    receipt=receipt,
+                    reason="" if receipt["success"] else "memory_clear_incomplete",
+                )
+            except SharedCacheControlError as exc:
+                if exc.unknown:
+                    self._shared_cache_clear_unknown = True
+                return SharedCacheClearMemoryReqOutput(
+                    success=False, reason=exc.reason, unknown=exc.unknown
+                )
+            except Exception:
+                self._shared_cache_clear_unknown = True
+                return SharedCacheClearMemoryReqOutput(
+                    success=False, reason="clear_result_unknown", unknown=True
+                )
         try:
             validate_clear_selectors(
                 recv_req.manifest_id,

@@ -1686,9 +1686,10 @@ class ClearHiCacheReqOutput(BaseReq, kw_only=True):
 
 
 class SharedCacheClearMemoryReqInput(BaseReq, kw_only=True):
-    manifest_id: str
-    manifest_sha256: str
-    request_id: str
+    manifest_id: str = ""
+    manifest_sha256: str = ""
+    request_id: str = ""
+    keys: Optional[List[str]] = None
 
 
 class SharedCacheClearMemoryReqOutput(BaseReq, kw_only=True):

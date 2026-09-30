@@ -79,6 +79,7 @@ from sglang.srt.managers.io_struct import (
 )
 from sglang.srt.managers.load_snapshot import LoadSnapshot
 from sglang.srt.managers.shared_cache_control import (
+    validate_memory_clear_keys,
     SharedCacheControlError,
     validate_clear_selectors,
     validate_single_decode_writer,
@@ -328,12 +329,18 @@ class TokenizerControlMixin:
 
     async def clear_shared_cache_memory(
         self: TokenizerManager,
-        manifest_id: str,
-        manifest_sha256: str,
-        request_id: str,
+        manifest_id: str = "",
+        manifest_sha256: str = "",
+        request_id: str = "",
+        keys=None,
     ) -> SharedCacheClearMemoryReqOutput:
         try:
-            validate_clear_selectors(manifest_id, manifest_sha256, request_id)
+            if keys is not None:
+                if manifest_id or manifest_sha256 or request_id:
+                    raise SharedCacheControlError("invalid_selector_fields")
+                validate_memory_clear_keys(keys)
+            else:
+                validate_clear_selectors(manifest_id, manifest_sha256, request_id)
             validate_single_decode_writer(
                 self.server_args, getattr(self, "disaggregation_mode", None)
             )
@@ -345,6 +352,7 @@ class TokenizerControlMixin:
                 manifest_id=manifest_id,
                 manifest_sha256=manifest_sha256,
                 request_id=request_id,
+                keys=keys,
             )
         )
         if len(results) != 1:

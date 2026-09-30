@@ -41,7 +41,6 @@ def has_xgrammar_unsupported_json_features(schema: dict) -> bool:
         "multipleOf",
         "patternProperties",
         "propertyNames",
-        "uniqueItems",
     )
 
     def check_schema(obj) -> bool:
@@ -49,6 +48,10 @@ def has_xgrammar_unsupported_json_features(schema: dict) -> bool:
             return False
 
         if any(key in obj for key in unsupported_keywords):
+            return True
+        # False is the JSON Schema default: it adds no uniqueness constraint.
+        # Preserve fail-closed handling of true (and malformed non-booleans).
+        if "uniqueItems" in obj and obj["uniqueItems"] is not False:
             return True
         # Native XGrammar returns the pattern grammar before applying lengths;
         # it does not intersect the constraints, including in patched union1.

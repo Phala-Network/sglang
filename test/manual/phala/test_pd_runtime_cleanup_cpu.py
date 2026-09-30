@@ -39,7 +39,7 @@ class Tests(unittest.TestCase):
             r"cold_shared_read|SGLANG_MOONCAKE_PD_TRANSFER_DIAGNOSTICS|"
             r"SGLANG_PD_BATCH_DIAGNOSTICS|batch_memory_replica_clear|"
             r"batch_transfer_sync_diagnostic|diagnostic_snapshot|"
-            r"/shared-cache/(?:memory|snapshot)|SharedCacheClearMemory"
+            r"/shared-cache/(?:memory|snapshot)|SharedCacheClearMemory|host_pool_observability"
         )
         roots = [
             (SRT, "*.py"),

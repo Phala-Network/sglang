@@ -291,7 +291,6 @@ from sglang.srt.mem_cache.common import (
 from sglang.srt.model_executor.forward_batch_info import PPProxyTensors
 from sglang.srt.model_loader.utils import get_resolved_model_impl
 from sglang.srt.multiplex.multiplexing_mixin import SchedulerMultiplexMixin
-from sglang.srt.observability.host_pool import host_pool_observability
 from sglang.srt.observability.metrics_collector import SchedulerMetricsCollector
 from sglang.srt.observability.req_time_stats import (
     flush_trace_batch,
@@ -5223,18 +5222,6 @@ class Scheduler(
             target_graph_memory_usage=self.tp_worker.graph_memory_usage,
             draft_graph_memory_usage=draft_graph_memory_usage,
         )
-        try:
-            ret["host_pool_observability"] = host_pool_observability(
-                self, role=get_disagg().disaggregation_mode
-            )
-        except Exception:
-            # Observability must not fail server_info or expose exception text.
-            ret["host_pool_observability"] = {
-                "schema": "sglang.host-pool-observability.v1",
-                "status": "incomplete",
-                "error": "snapshot_unavailable",
-                "unique_backing_bytes": None,
-            }
         ret["startup_time"] = self.startup_time
         ret["effective_max_running_requests_per_dp"] = self.max_running_requests
 

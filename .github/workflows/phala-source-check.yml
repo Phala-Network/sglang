@@ -66,6 +66,7 @@ jobs:
           python test/manual/unit/entrypoints/openai/test_qwen_historical_source_semantics.py
           python test/manual/unit/model_executor/model_runner_components/test_marlin_breakable_source_contract.py
           python test/manual/phala/test_pd_runtime_cleanup_cpu.py
+          python test/manual/phala/test_pd_cache_backend_cpu.py
           python test/manual/test_hicache_async_ack_sync.py
           python -m pytest -q test/manual/unit/entrypoints/test_health_generate_lifecycle.py
       # Native Rust/kernel checks and the complete upstream lint remain manual

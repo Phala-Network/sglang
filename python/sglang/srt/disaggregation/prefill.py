@@ -748,10 +748,11 @@ class SchedulerDisaggregationPrefillMixin:
                     extend_range = req.extend_range
                     if extend_range is None:
                         continue
-                    h_tokens = len(req.prefix_indices) + req.host_hit_length
+                    # prefix_indices already includes materialized host hits here.
+                    # Record the actual forward boundary, not a second host sum.
                     shared_cache_diagnostics.record_prefill_forward(
                         request_id=req.rid,
-                        h_tokens=h_tokens,
+                        h_tokens=extend_range.start,
                         n_tokens=len(req.origin_input_ids),
                         forward_start=extend_range.start,
                         forward_end=extend_range.end,

@@ -73,6 +73,7 @@ jobs:
           python test/manual/phala/test_shared_cache_reader_latearm_cpu.py -v
           python test/registered/unit/managers/test_clear_manifest_revision.py -v
           python test/manual/phala/test_repeat_memory_clear_cpu.py -v
+          python test/manual/phala/test_prefill_forward_diagnostic_cpu.py -v
       - name: Host-pool CPU backing regressions
         run: |
           python -m pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu

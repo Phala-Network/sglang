@@ -408,8 +408,9 @@ class TestSharedCacheDiagnostics(unittest.TestCase):
         request = SimpleNamespace(
             rid="private-prefill-request",
             extend_range=SimpleNamespace(start=128, end=385),
-            prefix_indices=list(range(100)),
-            host_hit_length=28,
+            # Admission already appended these host hits to prefix_indices.
+            prefix_indices=list(range(128)),
+            host_hit_length=128,
             origin_input_ids=list(range(385)),
             inflight_middle_chunks=0,
         )

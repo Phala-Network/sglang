@@ -2,13 +2,13 @@
 
 import ast
 import asyncio
-from http import HTTPStatus
 import importlib.util
 import json
+import unittest
+from http import HTTPStatus
 from pathlib import Path
 from queue import Queue
 from types import SimpleNamespace
-import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]

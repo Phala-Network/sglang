@@ -13,6 +13,7 @@
 # ==============================================================================
 """Constrained decoding with llguidance backend."""
 
+import copy
 import json
 import logging
 from functools import cache, cached_property
@@ -43,6 +44,65 @@ from sglang.srt.utils.common import is_pin_memory_available
 
 logger = logging.getLogger(__name__)
 _LLGUIDANCE_LOG_LEVEL = get_int_env_var("LLGUIDANCE_LOG_LEVEL", 1)
+
+
+def _normalize_llguidance_schema_noops(schema):
+    """Remove JSON Schema assertions that are exact no-ops.
+
+    LLGuidance reports several valid, inapplicable JSON Schema keywords as
+    unsupported.  JSON Schema requires these keywords to be ignored in the
+    corresponding positions, so dropping only those no-ops preserves the
+    client's semantics while keeping effective unsupported constraints strict.
+    The request object is copied and never mutated; enum/const values are data,
+    not nested schemas, and are deliberately not traversed.
+    """
+    result = copy.deepcopy(schema)
+    seen = set()
+
+    def visit(obj):
+        if not isinstance(obj, dict) or id(obj) in seen:
+            return
+        seen.add(id(obj))
+
+        if obj.get("propertyNames") is True or obj.get("propertyNames") == {}:
+            obj.pop("propertyNames", None)
+        if obj.get("uniqueItems") is False:
+            obj.pop("uniqueItems", None)
+        else:
+            declared = obj.get("type")
+            if isinstance(declared, str):
+                types = {declared}
+            elif isinstance(declared, list):
+                types = {item for item in declared if isinstance(item, str)}
+            else:
+                types = set()
+            if "uniqueItems" in obj and types and "array" not in types:
+                obj.pop("uniqueItems", None)
+
+        # minContains/maxContains have no effect without contains, regardless
+        # of their numeric values.  With contains present they remain strict.
+        if "contains" not in obj:
+            obj.pop("minContains", None)
+            obj.pop("maxContains", None)
+
+        for key in (
+            "items", "additionalItems", "additionalProperties",
+            "unevaluatedItems", "unevaluatedProperties", "not", "if",
+            "then", "else", "contains", "propertyNames",
+        ):
+            visit(obj.get(key))
+        for key in ("allOf", "anyOf", "oneOf", "prefixItems"):
+            for child in obj.get(key, []):
+                visit(child)
+        for key in (
+            "properties", "patternProperties", "dependentSchemas",
+            "$defs", "definitions",
+        ):
+            for child in obj.get(key, {}).values():
+                visit(child)
+
+    visit(result)
+    return result
 
 
 class GrammarDraftRow(NamedTuple):
@@ -471,8 +531,9 @@ class GuidanceBackend(BaseGrammarBackend):
 
     def dispatch_json(self, key_string: str) -> BaseGrammarObject:
         try:
+            schema = _normalize_llguidance_schema_noops(json.loads(key_string))
             serialized_grammar = LLMatcher.grammar_from_json_schema(
-                key_string,
+                json.dumps(schema, separators=(",", ":")),
                 defaults={
                     "whitespace_flexible": self.any_whitespace,
                     "whitespace_pattern": self.whitespace_pattern,

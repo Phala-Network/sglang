@@ -14,6 +14,7 @@ from sglang.srt.constrained.llguidance_backend import (
     GuidanceBackend,
     GuidanceGrammar,
     _create_llguidance_tokenizer,
+    _normalize_llguidance_schema_noops,
 )
 from sglang.test.ci.ci_register import register_cpu_ci
 
@@ -121,6 +122,50 @@ class TestTiktokenLLGuidanceConversion(unittest.TestCase):
         grammar.fill_vocab_mask(mask, 0)
         for token in range(258, 264):
             self.assertFalse((int(mask[0, token // 32]) >> (token % 32)) & 1)
+
+    def test_json_schema_noops_are_preserved_without_weakening_constraints(self):
+        backend = GuidanceBackend(self.tokenizer, n_vocab=258, eos_token_ids=[256])
+        schemas = [
+            {
+                "type": "object",
+                "properties": {"n": {"type": "integer"}},
+                "required": ["n"],
+                "additionalProperties": False,
+                "propertyNames": True,
+            },
+            {
+                "type": "object",
+                "properties": {"n": {"type": "integer"}},
+                "required": ["n"],
+                "additionalProperties": False,
+                "uniqueItems": True,
+            },
+            {
+                "type": "array",
+                "items": {"type": "integer"},
+                "minContains": 1,
+                "maxContains": 2,
+                "uniqueItems": False,
+            },
+        ]
+        for schema in schemas:
+            normalized = _normalize_llguidance_schema_noops(schema)
+            self.assertIsInstance(
+                backend.dispatch_json(json.dumps(schema)), GuidanceGrammar
+            )
+            self.assertNotEqual(normalized, schema)
+
+        # An effective array uniqueness constraint remains strict and is not
+        # silently erased merely because the no-op cases above are accepted.
+        effective = {
+            "type": "array",
+            "items": {"type": "integer"},
+            "uniqueItems": True,
+        }
+        self.assertIn("uniqueItems", _normalize_llguidance_schema_noops(effective))
+        self.assertNotIsInstance(
+            backend.dispatch_json(json.dumps(effective)), GuidanceGrammar
+        )
 
 
 class TestLLGuidanceStructuralTags(unittest.TestCase):

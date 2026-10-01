@@ -221,11 +221,11 @@ def handle_grammar_backend(server_args: Any):
     validate_xgrammar_whitespace_limit(
         cfg.constrained_json_max_whitespace_cnt,
         any_whitespace=not cfg.constrained_json_disable_any_whitespace,
-        backend=cfg.grammar_backend or "xgrammar",
+        backend=cfg.grammar_backend or "llguidance",
     )
     if cfg.grammar_backend is None:
         declare_resolution(
-            server_args, "_handle_grammar_backend", grammar_backend="xgrammar"
+            server_args, "_handle_grammar_backend", grammar_backend="llguidance"
         )
 
 

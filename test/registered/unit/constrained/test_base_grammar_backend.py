@@ -450,8 +450,12 @@ class TestLlguidanceStructuralTagTriggerPairing(unittest.TestCase):
 
         from sglang.srt.constrained.llguidance_backend import GuidanceBackend
 
+        from llguidance import LLTokenizer
+
         backend = object.__new__(GuidanceBackend)
-        backend._from_serialized = lambda serialized: serialized
+        backend.llguidance_tokenizer = LLTokenizer("byte")
+        backend.tokenizer = None
+        backend._from_serialized = lambda serialized, **kwargs: serialized
         begins = [
             '<|message_model|>alpha<|content_invoke_tool_json|>{"name":"alpha","args":',
             '<|message_model|>beta<|content_invoke_tool_json|>{"name":"beta","args":',

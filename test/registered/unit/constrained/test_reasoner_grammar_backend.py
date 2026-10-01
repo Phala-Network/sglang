@@ -243,6 +243,15 @@ class TestReasonerGrammarBackend(unittest.TestCase):
         tokenizer = _DummyTokenizer(
             {
                 THINK_CLOSE: think_end_ids,
+                KimiK3ReasoningDetector.grammar_response_suffix: [
+                    2,
+                    10,
+                    3,
+                    2,
+                    11,
+                    3,
+                    12,
+                ],
                 "response": [10],
                 "message": [11],
                 "<|end_of_msg|>": [12],

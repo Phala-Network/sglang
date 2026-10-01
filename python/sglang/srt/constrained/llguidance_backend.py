@@ -15,7 +15,7 @@
 
 import json
 import logging
-from functools import cache
+from functools import cache, cached_property
 from typing import Iterable, List, NamedTuple, Optional, Tuple, Union
 
 import torch
@@ -97,6 +97,26 @@ def _normalize_eos_token_ids(
     return list(eos_token_ids)
 
 
+class _LiteralTokenBytes:
+    """Expose literal protocol-marker bytes, retaining EOS control semantics."""
+
+    def __init__(self, tokens, encode, eos_token_ids):
+        self.tokens = tokens
+        self.encode = encode
+        self.eos_token_id = (
+            eos_token_ids if isinstance(eos_token_ids, int) else eos_token_ids[0]
+        )
+        self.bos_token_id = None
+        self.special_token_ids = (
+            [eos_token_ids] if isinstance(eos_token_ids, int) else eos_token_ids
+        )
+
+    def __call__(self, text):
+        if isinstance(text, bytes):
+            text = text.decode("utf-8")
+        return self.encode(text)
+
+
 def _create_llguidance_tokenizer(
     tokenizer,
     n_vocab: Optional[int],
@@ -110,6 +130,32 @@ def _create_llguidance_tokenizer(
                 n_vocab=n_vocab,
                 eos_token=(tokenizer.eos_token_id if eos_token is None else eos_token),
             )
+    # Kimi exposes its native tiktoken Encoding through a slow HF wrapper.
+    # Preserve the exact merge ranks, special-token IDs and regex; converting
+    # through a generic HF fast tokenizer can change its tokenization.
+    from tiktoken import Encoding
+
+    encoding = getattr(tokenizer, "model", None)
+    if isinstance(encoding, Encoding):
+        from llguidance import TokenizerWrapper
+
+        effective_eos = tokenizer.eos_token_id if eos_token is None else eos_token
+        tokens = [b""] * max(encoding.n_vocab, n_vocab or 0)
+        for token_bytes, token_id in encoding._mergeable_ranks.items():
+            tokens[token_id] = token_bytes
+        for token_text, token_id in encoding._special_tokens.items():
+            tokens[token_id] = token_text.encode("utf-8")
+        return LLTokenizer(
+            TokenizerWrapper(
+                _LiteralTokenBytes(
+                    tokens,
+                    lambda text: encoding.encode(text, allowed_special="all"),
+                    effective_eos,
+                )
+            ),
+            n_vocab=n_vocab,
+            eos_token=effective_eos,
+        )
     return from_tokenizer(tokenizer, n_vocab, eos_token=eos_token)
 
 
@@ -405,10 +451,16 @@ class GuidanceBackend(BaseGrammarBackend):
         )
         return register_vocab_mask_buffer(name, vocab_mask, max_rows)
 
-    def _from_serialized(self, serialized_grammar) -> BaseGrammarObject:
+    def _from_serialized(
+        self, serialized_grammar, *, llguidance_tokenizer=None
+    ) -> BaseGrammarObject:
         try:
             return GuidanceGrammar(
-                llguidance_tokenizer=self.llguidance_tokenizer,
+                llguidance_tokenizer=(
+                    self.llguidance_tokenizer
+                    if llguidance_tokenizer is None
+                    else llguidance_tokenizer
+                ),
                 serialized_grammar=serialized_grammar,
             )
         except Exception as e:
@@ -443,6 +495,43 @@ class GuidanceBackend(BaseGrammarBackend):
             logger.error("Hit invalid ebnf: key_string=<redacted>, e=<redacted>")
             return InvalidGrammarObject(str(e))
 
+    @cached_property
+    def _structural_tokenizer(self):
+        if not isinstance(self.tokenizer, PreTrainedTokenizerFast):
+            return self.llguidance_tokenizer
+        # Structural markers may combine added special tokens with ordinary
+        # text. Compile their exact decoded text with the same IDs instead of
+        # assuming every <...> trigger is a single native special token.
+        # EOS retains its control semantics; JSON/regex use the original trie.
+        from llguidance import TokenizerWrapper
+
+        native = self.llguidance_tokenizer
+        tokens = []
+        for token_id in range(native.vocab_size):
+            if token_id >= len(self.tokenizer):
+                tokens.append(b"")
+            elif native.is_special_token(token_id):
+                tokens.append(
+                    self.tokenizer.decode(
+                        [token_id],
+                        skip_special_tokens=False,
+                        clean_up_tokenization_spaces=False,
+                    ).encode("utf-8")
+                )
+            else:
+                # Native bytes preserve incomplete UTF-8 token fragments.
+                tokens.append(native.decode_bytes([token_id]))
+        return LLTokenizer(
+            TokenizerWrapper(
+                _LiteralTokenBytes(
+                    tokens,
+                    lambda text: self.tokenizer.encode(text, add_special_tokens=False),
+                    native.eos_tokens,
+                )
+            ),
+            eos_token=native.eos_tokens,
+        )
+
     def dispatch_structural_tag(self, key_string: str) -> BaseGrammarObject:
         try:
             structural_tag = json.loads(key_string)
@@ -466,8 +555,10 @@ class GuidanceBackend(BaseGrammarBackend):
                 )
                 for structure in structural_tag["structures"]
             ]
-            g = StructTag.to_grammar(tags)
-            return self._from_serialized(g)
+            g = StructTag.to_grammar(tags, assume_special=False)
+            return self._from_serialized(
+                g, llguidance_tokenizer=self._structural_tokenizer
+            )
         except Exception as e:
             logger.error(
                 "Hit invalid structural_tag: key_string=<redacted>, e=<redacted>"

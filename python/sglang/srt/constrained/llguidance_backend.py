@@ -29,6 +29,9 @@ from llguidance.torch import (
     fill_next_token_bitmask_par,
     fill_next_token_bitmask_par_with_draft_tokens,
 )
+from referencing import Registry, Resource
+from referencing.exceptions import Unresolvable
+from referencing.jsonschema import DRAFT201909, DRAFT202012
 from transformers import PreTrainedTokenizerFast
 
 from sglang.srt.constrained.base_grammar_backend import (
@@ -57,13 +60,62 @@ def _normalize_llguidance_schema_noops(schema):
     not nested schemas, and are deliberately not traversed.
     """
     result = copy.deepcopy(schema)
+    dialects = {
+        "https://json-schema.org/draft/2019-09/schema": DRAFT201909,
+        "https://json-schema.org/draft/2020-12/schema": DRAFT202012,
+    }
+
+    def modern_dialects_only(obj, specification=DRAFT202012):
+        if not isinstance(obj, dict):
+            return True
+        if "$schema" in obj:
+            specification = dialects.get(obj["$schema"].rstrip("#"))
+            if specification is None:
+                return False
+        return all(
+            modern_dialects_only(child, specification)
+            for child in specification.subresources_of(obj)
+        )
+
+    # Old drafts ignore $ref siblings. Removing their no-op $ref would activate
+    # previously ignored assertions. Unknown dialects likewise stay native.
+    # Inspect schema positions before constructing resources so an unknown
+    # nested dialect cannot introduce a new resolver error or partial mutation.
+    if not modern_dialects_only(result):
+        return result
+    root = Resource.from_contents(result, default_specification=DRAFT202012)
+    resolver = Registry().resolver_with_root(root)
+    nodes = []
+    noop_refs = []
     seen = set()
 
-    def visit(obj):
+    def collect(resource, current_resolver):
+        obj = resource.contents
         if not isinstance(obj, dict) or id(obj) in seen:
             return
         seen.add(id(obj))
+        nodes.append(obj)
+        if "$ref" in obj:
+            try:
+                target = current_resolver.lookup(obj["$ref"]).contents
+            except Unresolvable:
+                # No network retrieval. Leave unresolved references for the
+                # native compiler to reject rather than guessing their meaning.
+                pass
+            else:
+                if target is True or target == {}:
+                    noop_refs.append(obj)
+        for child in resource.subresources():
+            collect(child, current_resolver.in_subresource(child))
 
+    # Resolve against the untouched document before deleting any pointer target.
+    # The resolver handles nested $id resource scopes and escaped JSON pointers.
+    # Resource traversal visits schema positions, never enum/const/default data.
+    collect(root, resolver)
+    for obj in noop_refs:
+        obj.pop("$ref")
+
+    for obj in nodes:
         if obj.get("propertyNames") is True or obj.get("propertyNames") == {}:
             obj.pop("propertyNames", None)
         if obj.get("uniqueItems") is False:
@@ -85,23 +137,6 @@ def _normalize_llguidance_schema_noops(schema):
             obj.pop("minContains", None)
             obj.pop("maxContains", None)
 
-        for key in (
-            "items", "additionalItems", "additionalProperties",
-            "unevaluatedItems", "unevaluatedProperties", "not", "if",
-            "then", "else", "contains", "propertyNames",
-        ):
-            visit(obj.get(key))
-        for key in ("allOf", "anyOf", "oneOf", "prefixItems"):
-            for child in obj.get(key, []):
-                visit(child)
-        for key in (
-            "properties", "patternProperties", "dependentSchemas",
-            "$defs", "definitions",
-        ):
-            for child in obj.get(key, {}).values():
-                visit(child)
-
-    visit(result)
     return result
 
 

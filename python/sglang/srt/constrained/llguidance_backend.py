@@ -226,11 +226,15 @@ class GuidanceGrammar(BaseGrammarObject):
     def copy(self):
         # Cache templates are pristine, so cloning their matcher creates a fresh
         # request grammar without recompiling the serialized grammar.
-        return GuidanceGrammar(
+        copied = GuidanceGrammar(
             llguidance_tokenizer=self.llguidance_tokenizer,
             serialized_grammar=self.serialized_grammar,
             ll_matcher=self.ll_matcher.deep_copy(),
         )
+        copied.finished = self.finished
+        copied._eos_consumed = self._eos_consumed
+        copied.current_token = self.current_token
+        return copied
 
     def try_jump_forward(self, tokenizer) -> Optional[Tuple[List[int], str]]:
         ff_tokens = self.ll_matcher.compute_ff_tokens()
@@ -240,12 +244,16 @@ class GuidanceGrammar(BaseGrammarObject):
             return None
 
     def with_response_suffix(self, suffix_ids):
-        return GuidanceResponseSuffixGrammar(
+        copied = GuidanceResponseSuffixGrammar(
             llguidance_tokenizer=self.llguidance_tokenizer,
             serialized_grammar=self.serialized_grammar,
             ll_matcher=self.ll_matcher.deep_copy(),
             suffix_ids=suffix_ids,
         )
+        copied.finished = self.finished
+        copied._eos_consumed = self._eos_consumed
+        copied.current_token = self.current_token
+        return copied
 
     def jump_forward_str_state(self, helper: Tuple[List[int], str]) -> Tuple[str, int]:
         return "", -1
@@ -338,6 +346,7 @@ class GuidanceResponseSuffixGrammar(GuidanceGrammar):
         copied.suffix_position = self.suffix_position
         copied.finished = self.finished
         copied._eos_consumed = self._eos_consumed
+        copied.current_token = self.current_token
         return copied
 
     def try_jump_forward(self, tokenizer):

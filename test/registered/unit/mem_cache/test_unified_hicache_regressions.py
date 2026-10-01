@@ -48,6 +48,14 @@ class TestHiCacheIndexDomains(unittest.TestCase):
         ]
         self.assertEqual(_split_hicache_size(10, tuple(pools)), (6, 3, 1))
 
+    def test_fixed_share_for_the_last_pool(self):
+        pools = [
+            SimpleNamespace(host_capacity_bytes=n, get_kv_size_bytes=lambda: (0, 0))
+            for n in (600, 200, 200)
+        ]
+        # SGLANG_HICACHE_MAMBA_SHARE: the last pool gets 60%, the rest split 3:1.
+        self.assertEqual(_split_hicache_size(100, tuple(pools), 0.6), (30, 10, 60))
+
 
 class TestHostGateCapacity(unittest.TestCase):
     def test_schedulable_memo_tracks_gate_without_allocator_mutation(self):

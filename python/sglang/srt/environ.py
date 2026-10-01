@@ -865,6 +865,9 @@ class Envs:
     # chain (an insert's end), not for every SWA page the chain carries. A host
     # hit can only end where SWA covers the window, which is such an end.
     SGLANG_HICACHE_SWA_SPARSE_BACKUP = EnvBool(False)
+    # Share of --hicache-size for the mamba host pool of hybrid models; unset splits it
+    # in proportion to the device pools.
+    SGLANG_HICACHE_MAMBA_SHARE = EnvFloat(None)
     SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR = EnvStr(None)
     # File-backend LRU eviction (opt-in; sizes accept SI/IEC suffixes, "0" disables).
     SGLANG_HICACHE_FILE_BACKEND_MAX_SIZE = EnvStr(None)

@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Optional
 
+from sglang.srt.environ import envs
 from sglang.srt.mem_cache.hicache_storage import (
     PoolHitPolicy,
     PoolName,
@@ -237,8 +238,13 @@ def build_kv_host_pool(
 
 
 def _split_hicache_size(
-    hicache_size: int, kv_pools: tuple[Any, ...]
+    hicache_size: int, kv_pools: tuple[Any, ...], last_share: Optional[float] = None
 ) -> tuple[float, ...]:
+    """Split the host budget in proportion to the device pools, or give the last pool
+    `last_share` of it and split the rest that way."""
+    if last_share is not None:
+        rest = _split_hicache_size(hicache_size * (1 - last_share), kv_pools[:-1])
+        return (*rest, hicache_size * last_share)
     device_pool_sizes = []
     for kv_pool in kv_pools:
         size_bytes = getattr(kv_pool, "host_capacity_bytes", None)
@@ -1318,7 +1324,9 @@ def build_hybrid_mamba_stack(
     kv_host_size, mamba_host_size = None, 0
     if get_memory().hicache_size > 0:
         kv_host_size, mamba_host_size = _split_hicache_size(
-            get_memory().hicache_size, (kv_pool, mamba_pool)
+            get_memory().hicache_size,
+            (kv_pool, mamba_pool),
+            envs.SGLANG_HICACHE_MAMBA_SHARE.get(),
         )
     if qsa_pool is not None and kv_host_size is not None:
         kv_bytes = sum(kv_pool.get_kv_size_bytes())
@@ -1456,7 +1464,9 @@ def build_hybrid_mamba_swa_stack(
     kv_host_size, swa_host_size, mamba_host_size = None, None, 0
     if get_memory().hicache_size > 0:
         kv_host_size, swa_host_size, mamba_host_size = _split_hicache_size(
-            get_memory().hicache_size, (full_kv_pool, swa_kv_pool, mamba_pool)
+            get_memory().hicache_size,
+            (full_kv_pool, swa_kv_pool, mamba_pool),
+            envs.SGLANG_HICACHE_MAMBA_SHARE.get(),
         )
     host_pool_group = build_hybrid_swa_group(
         page_size=page_size,

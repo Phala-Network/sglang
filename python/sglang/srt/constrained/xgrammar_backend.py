@@ -204,6 +204,90 @@ class XGrammarGrammar(BaseGrammarObject):
     def __repr__(self):
         return f"XGrammarGrammar({self.key_string=}, {self.accepted_tokens=}, {self.current_token=})"
 
+    def with_response_suffix(self, suffix_ids):
+        return XGrammarResponseSuffixGrammar(
+            self.matcher,
+            self.vocab_size,
+            self.ctx,
+            self.override_stop_tokens,
+            self.key_string,
+            self.grammar_stats,
+            suffix_ids=suffix_ids,
+        )
+
+
+class XGrammarResponseSuffixGrammar(XGrammarGrammar):
+    """Allow an exact native response trailer only after a complete JSON value.
+
+    Its final token is the model EOS. The native matcher must accept that EOS
+    before the trailer can begin, and receives it only when the trailer ends.
+    """
+
+    def __init__(self, *args, suffix_ids, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.suffix_ids = tuple(suffix_ids)
+        if len(self.suffix_ids) < 2:
+            raise ValueError("response suffix must contain a trailer and EOS")
+        self.suffix_position = 0
+
+    def accept_token(self, token):
+        if self.suffix_position or token == self.suffix_ids[0]:
+            if self.suffix_position >= len(self.suffix_ids):
+                raise ValueError("response suffix already complete")
+            if token != self.suffix_ids[self.suffix_position]:
+                raise ValueError("invalid response suffix token")
+            if self.suffix_position == 0:
+                # Inspect native completion without mutating rollback history.
+                mask = _allocate_token_bitmask(self.vocab_size, 1)
+                self.matcher.fill_next_token_bitmask(mask, 0)
+                eos = self.suffix_ids[-1]
+                if not (int(mask[0, eos // 32]) >> (eos % 32)) & 1:
+                    # The same token can be literal data inside a JSON string.
+                    # Preserve native validation without entering trailer state.
+                    super().accept_token(token)
+                    return
+            if self.suffix_position == len(self.suffix_ids) - 1:
+                super().accept_token(token)
+            else:
+                # accepted_tokens tracks only tokens fed to the native matcher;
+                # suffix_position owns the protocol trailer for rollback.
+                self.current_token = token
+            self.suffix_position += 1
+            return
+        super().accept_token(token)
+
+    def fill_vocab_mask(self, vocab_mask, idx):
+        def allow(token):
+            bit = token % 32
+            vocab_mask[idx, token // 32] |= -(1 << 31) if bit == 31 else 1 << bit
+
+        if self.suffix_position:
+            vocab_mask[idx].zero_()
+            if self.suffix_position < len(self.suffix_ids):
+                token = self.suffix_ids[self.suffix_position]
+                allow(token)
+            return
+        super().fill_vocab_mask(vocab_mask, idx)
+        eos = self.suffix_ids[-1]
+        if (int(vocab_mask[idx, eos // 32]) >> (eos % 32)) & 1:
+            token = self.suffix_ids[0]
+            allow(token)
+
+    def rollback(self, k):
+        trailer_steps = min(k, self.suffix_position)
+        if trailer_steps and self.suffix_position == len(self.suffix_ids):
+            super().rollback(1)  # Only the final EOS entered the native matcher.
+        self.suffix_position -= trailer_steps
+        if k > trailer_steps:
+            super().rollback(k - trailer_steps)
+
+    def copy(self):
+        return super().copy().with_response_suffix(self.suffix_ids)
+
+    def try_jump_forward(self, tokenizer):
+        # Trailer tokens are owned by this wrapper, not the native matcher.
+        return None
+
 
 class TokenizerNotSupportedError(Exception):
     """Raised when tokenizer is not supported by XGrammar backend."""

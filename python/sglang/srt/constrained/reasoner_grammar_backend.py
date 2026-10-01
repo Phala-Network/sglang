@@ -433,6 +433,11 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
                 f"could not be encoded by the tokenizer."
             )
         self.think_end_ids = think_end_ids
+        self.response_suffix_ids = self._encode_optional_marker(
+            tokenizer,
+            getattr(reasoning_parser.detector, "grammar_response_suffix", None),
+            "grammar_response_suffix",
+        )
         self.channel_header_end_ids = self._encode_optional_marker(
             tokenizer,
             getattr(reasoning_parser.detector, "grammar_channel_header_end", None),
@@ -535,4 +540,8 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
             return ret
         if key[0] == "full_assistant_ebnf":
             return ret
+        if key[0] == "json" and self.response_suffix_ids:
+            wrap_suffix = getattr(ret, "with_response_suffix", None)
+            if wrap_suffix is not None:
+                ret = wrap_suffix(self.response_suffix_ids)
         return self._make_grammar_object(ret, reasoning)

@@ -590,6 +590,8 @@ class KimiK3Detector(BaseReasoningFormatDetector):
     (see :meth:`_skipped_think_channel`).
     """
 
+    grammar_response_suffix = RESPONSE_CLOSE + MESSAGE_CLOSE + "<|end_of_msg|>"
+
     def __init__(
         self,
         stream_reasoning: bool = True,

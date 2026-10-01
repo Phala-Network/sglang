@@ -211,14 +211,20 @@ class SchemaTests(unittest.TestCase):
         )
         cfg = SimpleNamespace(
             grammar_backend=None,
-            constrained_json_max_whitespace_cnt=2,
+            constrained_json_max_whitespace_cnt=None,
             constrained_json_disable_any_whitespace=False,
         )
         namespace["handle_grammar_backend"](cfg)
-        namespace["declare_resolution"].assert_called_once()
-        cfg.grammar_backend = "outlines"
-        with self.assertRaises(ValueError):
-            namespace["handle_grammar_backend"](cfg)
+        namespace["declare_resolution"].assert_called_once_with(
+            cfg, "_handle_grammar_backend", grammar_backend="llguidance"
+        )
+        cfg.constrained_json_max_whitespace_cnt = 2
+        for backend in (None, "llguidance", "outlines"):
+            cfg.grammar_backend = backend
+            with self.assertRaises(ValueError):
+                namespace["handle_grammar_backend"](cfg)
+        cfg.grammar_backend = "xgrammar"
+        namespace["handle_grammar_backend"](cfg)
         fields = ast.parse((SRT / "arg_groups/fields/serving.py").read_text())
         cls = next(x for x in fields.body if isinstance(x, ast.ClassDef))
         field = next(

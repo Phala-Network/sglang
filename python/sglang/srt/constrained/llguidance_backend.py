@@ -41,6 +41,9 @@ from sglang.srt.constrained.base_grammar_backend import (
     InvalidGrammarObject,
     register_vocab_mask_buffer,
 )
+from sglang.srt.constrained.torch_ops.token_filter_torch_ops import (
+    set_token_filter_torch,
+)
 from sglang.srt.constrained.utils import is_legacy_structural_tag
 from sglang.srt.utils import get_int_env_var
 from sglang.srt.utils.common import is_pin_memory_available
@@ -498,6 +501,29 @@ class GuidanceResponseSuffixGrammar(GuidanceGrammar):
 
 
 class GuidanceBackend(BaseGrammarBackend):
+    @property
+    def is_support_token_filter(self):
+        return True
+
+    @staticmethod
+    def set_token_filter(
+        vocab_mask: torch.Tensor,
+        token_ids: List[int],
+        batch_idx: int,
+        is_allowed: bool = True,
+        reset_vocab_mask: bool = True,
+    ):
+        # LLGuidance fills packed int32 masks on the host before transferring
+        # them for sampling. Reuse the shared bit filter, including signed bit
+        # 31, duplicate IDs, row isolation, and optional incremental updates.
+        set_token_filter_torch(
+            vocab_mask,
+            token_ids,
+            batch_idx,
+            is_allowed=is_allowed,
+            reset_vocab_mask=reset_vocab_mask,
+        )
+
     def allocate_vocab_mask(self, vocab_size: int, batch_size: int, device):
         """Callbacks needed before a reasoning wrapper has compiled its grammar."""
         return _allocate_token_bitmask(

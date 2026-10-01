@@ -5,7 +5,6 @@ import unittest
 from types import SimpleNamespace
 
 import tiktoken
-
 import torch
 from llguidance import LLMatcher, LLTokenizer
 from llguidance.torch import allocate_token_bitmask
@@ -17,7 +16,6 @@ from sglang.srt.constrained.llguidance_backend import (
     _create_llguidance_tokenizer,
 )
 from sglang.test.ci.ci_register import register_cpu_ci
-
 
 register_cpu_ci(est_time=5, suite="base-a-test-cpu")
 

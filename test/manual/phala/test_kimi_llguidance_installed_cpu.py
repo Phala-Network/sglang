@@ -12,11 +12,11 @@ from pathlib import Path
 import torch
 from llguidance.torch import allocate_token_bitmask
 
-from sglang.srt.constrained.reasoner_grammar_backend import ReasonerGrammarBackend
 from sglang.srt.constrained.llguidance_backend import (
     GuidanceBackend,
     GuidanceResponseSuffixGrammar,
 )
+from sglang.srt.constrained.reasoner_grammar_backend import ReasonerGrammarBackend
 
 ROLLBACK_HISTORY_TEST_TOKENS = 200
 from sglang.srt.parser.reasoning_parser import KimiK3Detector, ReasoningParser

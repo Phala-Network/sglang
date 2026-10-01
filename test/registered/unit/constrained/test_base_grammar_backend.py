@@ -448,9 +448,9 @@ class TestLlguidanceStructuralTagTriggerPairing(unittest.TestCase):
     def test_each_structure_pairs_with_its_own_trigger(self):
         import json
 
-        from sglang.srt.constrained.llguidance_backend import GuidanceBackend
-
         from llguidance import LLTokenizer
+
+        from sglang.srt.constrained.llguidance_backend import GuidanceBackend
 
         backend = object.__new__(GuidanceBackend)
         backend.llguidance_tokenizer = LLTokenizer("byte")

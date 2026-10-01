@@ -42,7 +42,7 @@ from fastapi.responses import ORJSONResponse, StreamingResponse
 from jsonschema import Draft202012Validator, SchemaError
 
 from sglang.srt.constrained.xgrammar_schema import (
-    has_xgrammar_unsupported_json_features,
+    validate_xgrammar_sampling_constraints,
 )
 from sglang.srt.entrypoints.openai import (
     chat_encoding,
@@ -1104,12 +1104,15 @@ class OpenAIServingChat(OpenAIServingBase):
             ):
                 template_kwargs.setdefault("tool_choice", effective_tool_choice)
             if request.response_format is not None:
-                template_kwargs.setdefault(
-                    "response_format",
-                    request.response_format.model_dump(
-                        exclude_unset=True, by_alias=True
-                    ),
+                # The request contract wins over template defaults/overrides.
+                # In non-strict mode the renderer is the only schema consumer.
+                template_kwargs["response_format"] = request.response_format.model_dump(
+                    exclude_unset=True, by_alias=True
                 )
+                if request.response_format.type == "json_schema":
+                    template_kwargs["response_schema"] = (
+                        request.response_format.json_schema.schema_
+                    )
 
             request_tools = (
                 self._request_tools_for_prompt(request, exclude_unset=True) or None
@@ -1558,23 +1561,6 @@ class OpenAIServingChat(OpenAIServingBase):
                 # a 400 instead of crashing into a 500.
                 normalize_json_schema_types(tool.function.parameters)
                 Draft202012Validator.check_schema(tool.function.parameters)
-                # Kimi's non-strict native tags constrain call framing, not
-                # the parameter JSON Schema. Keep schema capability checks for
-                # strict tools and server-enforced parameter constraints.
-                checks_parameter_schema = (
-                    self.tool_call_parser != "kimi_k3"
-                    or tool.function.strict
-                    or envs.SGLANG_TOOL_STRICT_LEVEL.get() >= ToolStrictLevel.PARAMETER
-                )
-                if (
-                    self._grammar_backend == "xgrammar"
-                    and checks_parameter_schema
-                    and has_xgrammar_unsupported_json_features(tool.function.parameters)
-                ):
-                    return (
-                        f"Tool {i} function has a 'parameters' schema containing "
-                        "features unsupported by xgrammar."
-                    )
             except SchemaError as e:
                 return f"Tool {i} function has invalid 'parameters' schema: {str(e)}"
             except RecursionError:
@@ -1603,13 +1589,6 @@ class OpenAIServingChat(OpenAIServingBase):
                 Draft202012Validator.check_schema(schema)
             except SchemaError as e:
                 return f"Invalid response_format JSON schema: {str(e)}"
-            if self._grammar_backend == "xgrammar" and (
-                has_xgrammar_unsupported_json_features(schema)
-            ):
-                return (
-                    "response_format JSON schema contains features unsupported "
-                    "by xgrammar."
-                )
 
         return None
 
@@ -1772,6 +1751,8 @@ class OpenAIServingChat(OpenAIServingBase):
             tool_call_constraint=processed_messages.tool_call_constraint,
             renderer_handles_response_format=self.chat_encoding_spec == "kimi_k3",
         )
+        if self._grammar_backend == "xgrammar":
+            validate_xgrammar_sampling_constraints(sampling_params)
         from sglang.srt.entrypoints.openai.mode_sampling_defaults import (
             apply_mode_sampling_defaults,
         )
@@ -1917,6 +1898,7 @@ class OpenAIServingChat(OpenAIServingBase):
         # ignore_eos. Plain length-controlled requests must not acquire it.
         glm_constraint = (
             self.tool_call_parser == "glm47"
+            and envs.SGLANG_TOOL_STRICT_LEVEL.get() < ToolStrictLevel.PARAMETER
             and not any(tool.function.strict for tool in effective_tools)
             and not (
                 request.ignore_eos

@@ -149,6 +149,28 @@ else:
     Serving = namespace["OpenAIServingChat"]
     serving = NS(**namespace)
 
+    protocol_tree = ast.parse(
+        (SRT / "entrypoints/openai/protocol.py").read_text(encoding="utf-8")
+    )
+    request_class = next(
+        n
+        for n in protocol_tree.body
+        if isinstance(n, ast.ClassDef) and n.name == "ChatCompletionRequest"
+    )
+    predicate = next(
+        n
+        for n in request_class.body
+        if getattr(n, "name", None) == "uses_json_schema_constraint"
+    )
+    exec(
+        compile(
+            ast.fix_missing_locations(ast.Module(body=[predicate], type_ignores=[])),
+            "actual_schema_predicate.py",
+            "exec",
+        ),
+        namespace,
+    )
+
 
 def tool(name="loose", strict=False, unique=True):
     return {
@@ -189,6 +211,7 @@ def request(tools, choice="auto", stream=False, response_format=None):
         reasoning_effort=None,
         max_completion_tokens=None,
         max_tokens=None,
+        input_ids=None,
     )
     result.tools = [NS(function=NS(**t["function"])) for t in body["tools"]]
     result.messages = [NS(**m) for m in body["messages"]]
@@ -197,11 +220,17 @@ def request(tools, choice="auto", stream=False, response_format=None):
     result.response_format = (
         NS(
             type="json_schema",
-            json_schema=NS(schema_=response_format["json_schema"]["schema"]),
+            json_schema=NS(
+                schema_=response_format["json_schema"]["schema"],
+                strict=response_format["json_schema"].get("strict"),
+            ),
         )
         if response_format
         else None
     )
+    result.uses_json_schema_constraint = lambda **kwargs: namespace[
+        "uses_json_schema_constraint"
+    ](result, **kwargs)
     return result
 
 
@@ -245,9 +274,9 @@ class SchemaPrecheckTests(unittest.TestCase):
                             error = self.check(
                                 request([tool(strict=strict)], choice, stream), level
                             )
-                            self.assertEqual(bool(error), strict or level >= 2)
-                            if error:
-                                self.assertIn("unsupported by xgrammar", error)
+                            # Syntax is checked here; capability is checked only
+                            # after selecting the actual decoding constraint.
+                            self.assertIsNone(error)
 
     def test_mixed_strict_and_named_unselected_validation(self):
         for choice in (
@@ -256,19 +285,25 @@ class SchemaPrecheckTests(unittest.TestCase):
             "required",
             {"type": "function", "function": {"name": "loose"}},
         ):
-            self.assertTrue(
-                self.check(request([tool(), tool("strict", True)], choice)).startswith(
-                    "Tool 1 "
-                )
+            self.assertIsNone(
+                self.check(request([tool(), tool("strict", True)], choice))
             )
         self.assertIsNone(self.check(request([tool(), tool("other")], "required")))
 
     def test_schema_validity_and_other_parser_preserved(self):
         bad = tool()
         bad["function"]["parameters"]["properties"]["ids"]["uniqueItems"] = 0
-        self.assertIn("invalid 'parameters' schema", self.check(request([bad])))
+        for choice in (
+            "none",
+            "auto",
+            "required",
+            {"type": "function", "function": {"name": "loose"}},
+        ):
+            self.assertIn(
+                "invalid 'parameters' schema", self.check(request([bad], choice))
+            )
         self.server.tool_call_parser = "qwen3_coder"
-        self.assertIn("unsupported by xgrammar", self.check(request([tool()])))
+        self.assertIsNone(self.check(request([tool()])))
 
     def test_response_format_and_exact_false(self):
         for value in (False, True):
@@ -281,9 +316,7 @@ class SchemaPrecheckTests(unittest.TestCase):
                 "type": "json_schema",
                 "json_schema": {"name": "test", "schema": schema},
             }
-            self.assertEqual(
-                bool(self.check(request([tool()], response_format=fmt))), value
-            )
+            self.assertIsNone(self.check(request([tool()], response_format=fmt)))
         for value in (True, 0, None, "false"):
             self.assertTrue(
                 guard.has_xgrammar_unsupported_json_features({"uniqueItems": value})
@@ -296,18 +329,18 @@ class SchemaPrecheckTests(unittest.TestCase):
                 {"properties": {"uniqueItems": {"type": "boolean"}}}
             )
         )
-        for keyword in (
-            "contains",
-            "dependentSchemas",
-            "maxContains",
-            "minContains",
-            "multipleOf",
-            "patternProperties",
-            "propertyNames",
+        for schema in (
+            {"contains": {}},
+            {"dependentSchemas": {"x": {"required": ["y"]}}},
+            {"contains": {}, "maxContains": 1},
+            {"contains": {}, "minContains": 1},
+            {"type": "number", "multipleOf": 3},
+            {"patternProperties": {"^x": {"type": "integer"}}},
+            {"propertyNames": {"pattern": "^x"}},
         ):
             self.assertTrue(
                 guard.has_xgrammar_unsupported_json_features(
-                    {"properties": {"x": {keyword: {}}}}
+                    {"properties": {"x": schema}}
                 )
             )
         self.assertTrue(

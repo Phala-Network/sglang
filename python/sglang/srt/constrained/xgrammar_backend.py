@@ -16,7 +16,7 @@
 import dataclasses
 import json
 import logging
-from typing import Dict, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
 from xgrammar import (
@@ -38,6 +38,9 @@ from sglang.srt.constrained.base_grammar_backend import (
 )
 from sglang.srt.constrained.utils import is_legacy_structural_tag
 from sglang.srt.constrained.xgrammar_schema import (
+    normalize_xgrammar_schema_noops,
+    sanitize_xgrammar_structural_format,
+    sanitize_xgrammar_structural_tag_structures,
     validate_xgrammar_schema,
     validate_xgrammar_whitespace_limit,
 )
@@ -297,42 +300,10 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
                 reset_vocab_mask=reset_vocab_mask,
             )
 
-    @staticmethod
-    def _sanitize_structural_format(structural_format):
-        """Normalize/validate only schema-bearing positions, never schema data."""
-        if not isinstance(structural_format, dict):
-            return
-
-        fmt_type = structural_format.get("type")
-        if fmt_type in {"json_schema", "qwen_xml_parameter"}:
-            if structural_format.get("json_schema") is None:
-                structural_format["json_schema"] = {}
-            validate_xgrammar_schema(structural_format["json_schema"])
-            if fmt_type == "json_schema":
-                validate_xgrammar_whitespace_limit(
-                    structural_format.get("max_whitespace_cnt")
-                )
-
-        if fmt_type in {"tag", "optional", "plus", "star", "repeat"}:
-            XGrammarGrammarBackend._sanitize_structural_format(
-                structural_format.get("content")
-            )
-        elif fmt_type in {"sequence", "or"}:
-            for element in structural_format.get("elements", []):
-                XGrammarGrammarBackend._sanitize_structural_format(element)
-        elif fmt_type in {"triggered_tags", "tags_with_separator"}:
-            for tag in structural_format.get("tags", []):
-                XGrammarGrammarBackend._sanitize_structural_format(tag)
-        elif fmt_type in {"dispatch", "token_dispatch"}:
-            for _, content in structural_format.get("rules", []):
-                XGrammarGrammarBackend._sanitize_structural_format(content)
-
-    @staticmethod
-    def _sanitize_structural_tag_structures(structural_tag: Dict) -> None:
-        for structure in structural_tag.get("structures", []):
-            if structure.get("schema") is None:
-                structure["schema"] = {}
-            validate_xgrammar_schema(structure["schema"])
+    _sanitize_structural_format = staticmethod(sanitize_xgrammar_structural_format)
+    _sanitize_structural_tag_structures = staticmethod(
+        sanitize_xgrammar_structural_tag_structures
+    )
 
     def _from_context(
         self, ctx: CompiledGrammar, key_string: str, grammar_stats: GrammarStats
@@ -359,6 +330,7 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
             else:
                 schema = {} if key_string == "$$ANY$$" else json.loads(key_string)
                 validate_xgrammar_schema(schema)
+                schema = normalize_xgrammar_schema_noops(schema)
                 ctx = self.grammar_compiler.compile_json_schema(
                     schema=schema,
                     any_whitespace=self.any_whitespace,

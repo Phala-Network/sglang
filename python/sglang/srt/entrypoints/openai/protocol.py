@@ -1225,6 +1225,20 @@ class ChatCompletionRequest(BaseModel):
 
         return values
 
+    def uses_json_schema_constraint(
+        self, *, renderer_handles_response_format: bool = False
+    ) -> bool:
+        """Only explicit non-strict schemas rendered into the prompt may opt out."""
+        return bool(
+            self.response_format
+            and self.response_format.type == "json_schema"
+            and (
+                self.response_format.json_schema.strict is not False
+                or not renderer_handles_response_format
+                or self.input_ids is not None
+            )
+        )
+
     def to_sampling_params(
         self,
         stop: List[str],
@@ -1280,9 +1294,8 @@ class ChatCompletionRequest(BaseModel):
         if self.response_format and self.response_format.type == "json_schema":
             # strict=false may only go unconstrained when the renderer forwards
             # response_format to the model; plain chat templates never see it.
-            if (
-                self.response_format.json_schema.strict is not False
-                or not renderer_handles_response_format
+            if self.uses_json_schema_constraint(
+                renderer_handles_response_format=renderer_handles_response_format
             ):
                 sampling_params["json_schema"] = convert_json_schema_to_str(
                     self.response_format.json_schema.schema_

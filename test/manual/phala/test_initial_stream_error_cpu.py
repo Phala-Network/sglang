@@ -3,6 +3,7 @@
 import ast
 import asyncio
 import json
+import os
 import unittest
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -16,6 +17,16 @@ from pydantic import BaseModel
 
 ROOT = Path(__file__).resolve().parents[3]
 SRT = ROOT / "python/sglang/srt"
+INSTALLED = os.environ.get("PHALA_KIMI_INSTALLED") == "1"
+if INSTALLED:
+    import sglang.srt.entrypoints.openai.serving_base as installed_base
+    from sglang.srt.entrypoints.openai.protocol import ErrorResponse
+    from sglang.srt.entrypoints.request_disconnect import (
+        await_response_or_disconnect,
+        response_disconnect_watched,
+    )
+
+    SRT = Path(installed_base.__file__).resolve().parents[2]
 
 
 def execute(path, names, ns, owner=None):
@@ -42,20 +53,30 @@ class TestInitialStreamError(unittest.IsolatedAsyncioTestCase):
             Literal=Literal,
             BaseModel=BaseModel,
         )
-        execute(SRT / "entrypoints/openai/protocol.py", {"ErrorResponse"}, self.ns)
-        execute(
-            SRT / "entrypoints/request_disconnect.py",
-            {"response_disconnect_watched", "await_response_or_disconnect"},
-            self.ns,
-        )
-        path = SRT / "entrypoints/openai/serving_base.py"
-        execute(path, {"GenerationStreamingResponse"}, self.ns)
-        execute(
-            path,
-            {"create_error_response", "_streaming_response_before_headers"},
-            self.ns,
-            "OpenAIServingBase",
-        )
+        if INSTALLED:
+            self.ns.update(
+                ErrorResponse=ErrorResponse,
+                response_disconnect_watched=response_disconnect_watched,
+                await_response_or_disconnect=await_response_or_disconnect,
+                GenerationStreamingResponse=installed_base.GenerationStreamingResponse,
+                create_error_response=installed_base.OpenAIServingBase.create_error_response,
+                _streaming_response_before_headers=installed_base.OpenAIServingBase._streaming_response_before_headers,
+            )
+        else:
+            execute(SRT / "entrypoints/openai/protocol.py", {"ErrorResponse"}, self.ns)
+            execute(
+                SRT / "entrypoints/request_disconnect.py",
+                {"response_disconnect_watched", "await_response_or_disconnect"},
+                self.ns,
+            )
+            path = SRT / "entrypoints/openai/serving_base.py"
+            execute(path, {"GenerationStreamingResponse"}, self.ns)
+            execute(
+                path,
+                {"create_error_response", "_streaming_response_before_headers"},
+                self.ns,
+                "OpenAIServingBase",
+            )
         self.abort = Mock(return_value=None)
         self.serving = SimpleNamespace(
             tokenizer_manager=SimpleNamespace(create_abort_task=self.abort)

@@ -12,6 +12,7 @@ import orjson
 from fastapi import HTTPException, Request
 from fastapi.responses import ORJSONResponse, StreamingResponse
 
+from sglang.srt.constrained.xgrammar_schema import UnsupportedXGrammarSchema
 from sglang.srt.entrypoints.openai.encoding_dsv32 import DS32EncodingError
 from sglang.srt.entrypoints.openai.protocol import ErrorResponse, OpenAIServingRequest
 from sglang.srt.entrypoints.request_disconnect import await_response_or_disconnect
@@ -146,6 +147,8 @@ class OpenAIServingBase(ABC):
             return self.create_error_response(
                 message=e.detail, err_type=str(e.status_code), status_code=e.status_code
             )
+        except UnsupportedXGrammarSchema as e:
+            return self.create_error_response(message=str(e))
         except ValueError as e:
             return self.create_error_response(
                 message=str(e),

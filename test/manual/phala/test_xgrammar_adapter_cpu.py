@@ -61,6 +61,9 @@ def adapter_namespace(compiler_factory=None):
         "InvalidGrammarObject": InvalidGrammar,
         "GrammarCompiler": compiler_factory or Mock(),
         "validate_xgrammar_schema": schema_module.validate_xgrammar_schema,
+        "normalize_xgrammar_schema_noops": schema_module.normalize_xgrammar_schema_noops,
+        "sanitize_xgrammar_structural_format": schema_module.sanitize_xgrammar_structural_format,
+        "sanitize_xgrammar_structural_tag_structures": schema_module.sanitize_xgrammar_structural_tag_structures,
         "validate_xgrammar_whitespace_limit": schema_module.validate_xgrammar_whitespace_limit,
     }
     source_nodes("constrained/utils.py", {"is_legacy_structural_tag"}, namespace)
@@ -82,7 +85,7 @@ class SchemaTests(unittest.TestCase):
             bad,
             {"items": bad},
             {"anyOf": [bad]},
-            {"$defs": {"x": bad}},
+            {"$defs": {"x": bad}, "$ref": "#/$defs/x"},
             {"properties": {"pattern": bad}},
             {"additionalProperties": bad},
         ):

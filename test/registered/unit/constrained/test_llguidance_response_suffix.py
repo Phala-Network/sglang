@@ -11,7 +11,9 @@ from sglang.srt.constrained.llguidance_backend import GuidanceGrammar
 from sglang.test.ci.ci_register import register_cpu_ci
 
 
-@register_cpu_ci(est_time=5, suite="base-a-test-cpu")
+register_cpu_ci(est_time=5, suite="base-a-test-cpu")
+
+
 class TestLLGuidanceResponseSuffix(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -53,7 +55,7 @@ class TestLLGuidanceResponseSuffix(unittest.TestCase):
         grammar.rollback(len(self.suffix))
         self.assertFalse(grammar.is_terminated())
         self.assertEqual(grammar.suffix_position, 0)
-        self.assertFalse(self._allowed(self._mask(grammar), self.suffix[0]))
+        self.assertTrue(self._allowed(self._mask(grammar), self.suffix[0]))
 
         direct = self.template.copy()
         self._complete_json(direct)

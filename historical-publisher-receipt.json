@@ -1,0 +1,101 @@
+{
+  "candidate_tag": "logfix-glm53-v0520-r3-astra-20260923-framework-r3",
+  "candidate_ref": "ghcr.io/phala-network/sglang:logfix-glm53-v0520-r3-astra-20260923-framework-r3",
+  "base": "ghcr.io/phala-network/sglang:logfix-glm53-v0520-r3-astra-20260923-final@sha256:c8b06dbaddf9537e7531957675cec860087eb61740445ab305c1a85caa18a388",
+  "base_id": "sha256:c202fe39d1d1bbe1741a1dc77c489a2f5df41b6619252cdbb5eac38012c47e9a",
+  "final_image_id": "sha256:696360679c216ffab55626d70fc63a6ea2f16b46000bcc18f67a2e3f081d0c2a",
+  "helper_sha256": "b62eafff3bb0f6af564da7bcf2e3e381f2622a779a8b6e863a25841666918640",
+  "gates": [
+    {
+      "name": "actual_http_privacy",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "actual_granian_http_privacy",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "srt_privacy_and_regression",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "positive_parsers",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "framework_filter_unit",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "logging_config_only_ast_and_helper_binding",
+      "passed": true,
+      "files": [
+        {
+          "file": "disaggregation/encoder/http_server.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "disaggregation/encoder/receiver.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "distributed/gated_launch.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "entrypoints/engine_info_bootstrap_server.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "entrypoints/http_server.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "mem_cache/storage/hf3fs/mini_3fs_metadata_server.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "utils/common.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "utils/framework_log_privacy.py",
+          "logging_integration_only": true
+        }
+      ]
+    },
+    {
+      "name": "126_parser_differential_cases",
+      "passed": true
+    },
+    {
+      "name": "hf_help",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "hf_download_help",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "sglang_serve_help",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "http_import",
+      "passed": true,
+      "exit_code": 0
+    }
+  ],
+  "passed": true,
+  "published_ref": "ghcr.io/phala-network/sglang:logfix-glm53-v0520-r3-astra-20260923-framework-r3@sha256:c66a2b4efc3fc23668146ee8d89a58fd30f17176958fb1f0c27ed9c637fb0ebd",
+  "registry_digest": "sha256:c66a2b4efc3fc23668146ee8d89a58fd30f17176958fb1f0c27ed9c637fb0ebd",
+  "registry_config_digest": "sha256:696360679c216ffab55626d70fc63a6ea2f16b46000bcc18f67a2e3f081d0c2a"
+}

@@ -1,0 +1,24 @@
+{
+  "reference": "ghcr.io/phala-network/sglang:logfix-qwen36-v0519-r3-astra-20260923-framework-r3@sha256:523bd7f4c557474e31bd510c1299cc3c4cbd98ab320e80a341a88305bfe15a8a",
+  "config_digest": "sha256:4e5cc650056ecf9ee4cdb5299a6470de4e21a5b91896ed087147ffab2df0d51f",
+  "entrypoint": [
+    "/opt/nvidia/nvidia_entrypoint.sh"
+  ],
+  "cmd": null,
+  "safe_source_labels": {
+    "com.nvidia.cudnn.version": "9.14.0.64-1",
+    "org.opencontainers.image.revision": "1a56fbb0dc48ec3fb2b4b629fc4e74a3b57c639a",
+    "org.opencontainers.image.source": "https://github.com/Phala-Network/sglang",
+    "org.opencontainers.image.version": "qwen38-27b-sglang-v0.5.19-phala-r5-1a56fbb0dc-20260914",
+    "org.phala.base.image": "ghcr.io/phala-network/sglang:logfix-qwen36-v0519-r3-astra-20260923-final@sha256:7c47bb5274d5bb98c23348f28c1fabc510c2064b04156924416e026c0ed116dc",
+    "org.phala.base.source.commit": "0bcd822377da7b5718e674eaf9c870d349424dd1",
+    "org.phala.buildkit.version": "v0.33.0-dddd5621af04ae57823085c93a063383f71d3173",
+    "org.phala.framework.logprivacy.sha256": "b62eafff3bb0f6af564da7bcf2e3e381f2622a779a8b6e863a25841666918640",
+    "org.phala.source.commit": "1a56fbb0dc48ec3fb2b4b629fc4e74a3b57c639a",
+    "org.phala.source.date.epoch": "1789363568",
+    "org.phala.source.repository": "https://github.com/Phala-Network/sglang",
+    "org.phala.source.runtime.content.digest": "sha256:d24f56c07cd5ed3c35f1ae274aa494f432a32175ce793e968966a90aa3686798",
+    "org.phala.source.runtime.tree.digest": "gitsha1:f473f78ea2e31eab9c7ca827e4a122fa788d4afe",
+    "org.phala.source.tree.digest": "gitsha1:20e296059df02e8adc12af5eef4a01eeebe85964"
+  }
+}

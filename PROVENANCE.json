@@ -1,0 +1,11 @@
+{
+  "archive_sha256": "6ed5a6b9fca84ff90d7f7187aa3a1a6e6bbc3cd251f6f1fedf9df0fe2d2f913b",
+  "archive_member": "./logfix-qwen36-v0519-r3-astra-20260923-framework-r3/final-source.json",
+  "snapshot_json_sha256": "829e69f32d6b609005d4315eb6b0b738595bbc5d737355bf7920c9626dc8a8bf",
+  "kind": "historical full installed SRT Python snapshot",
+  "original_build_commit": "unproven",
+  "archive_commit_kind": "reconstructed archival snapshot, not original build commit",
+  "image_reference": "ghcr.io/phala-network/sglang:logfix-qwen36-v0519-r3-astra-20260923-framework-r3@sha256:523bd7f4c557474e31bd510c1299cc3c4cbd98ab320e80a341a88305bfe15a8a",
+  "files": 1766,
+  "scope": "Only installed SRT Python files are represented. Non-SRT engine files, dependencies, native artifacts and full image reproducibility are not proven by this Git tree."
+}

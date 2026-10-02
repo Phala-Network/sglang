@@ -1,0 +1,24 @@
+{
+  "reference": "ghcr.io/phala-network/sglang:logfix-kimi-k3-v0520-r4-privacy-astra-20260923-framework-r3@sha256:752dc324c147d4d426fa18529de5fc466f29599b0065dbf0e24db248f387343c",
+  "config_digest": "sha256:f11c2a3ad92deede5963ebdb4d14d7afa9d6f22dd0aa42fdd531d051e0d66f26",
+  "entrypoint": [
+    "/opt/nvidia/nvidia_entrypoint.sh"
+  ],
+  "cmd": null,
+  "safe_source_labels": {
+    "com.nvidia.cudnn.version": "9.14.0.64-1",
+    "org.opencontainers.image.revision": "a479d6ce0f7fdbefcafc4fac93af3737fc5df7f7",
+    "org.opencontainers.image.source": "https://github.com/Phala-Network/sglang",
+    "org.opencontainers.image.version": "v0.5.20-kimi-k3-h288-final-r2",
+    "org.phala.base.image": "ghcr.io/phala-network/sglang:logfix-kimi-k3-v0520-r4-privacy-astra-20260923-final@sha256:6561b1c7835b8393000c35054c4feec581f7e2e17f6927dd121bd9b66aa7f146",
+    "org.phala.base.image.id": "sha256:7f46baee4aa4a9ca6b28ac29b297051144d1f378b66ac7680da45a008ece5251",
+    "org.phala.buildkit.version": "v0.26.2",
+    "org.phala.framework.logprivacy.sha256": "b62eafff3bb0f6af564da7bcf2e3e381f2622a779a8b6e863a25841666918640",
+    "org.phala.source.base.commit": "22dfb99dfadbc06f5474ca594613986e9cff22b7",
+    "org.phala.source.candidate.commit": "22dfb99dfadbc06f5474ca594613986e9cff22b7",
+    "org.phala.source.commit": "22dfb99dfadbc06f5474ca594613986e9cff22b7",
+    "org.phala.source.date.epoch": "1789980467",
+    "org.phala.source.repository": "https://github.com/Phala-Network/sglang",
+    "org.phala.source.tree.digest": "c900062f246b56bf01e71b80533888d6222d2906"
+  }
+}

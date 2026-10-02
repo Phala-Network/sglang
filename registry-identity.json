@@ -1,0 +1,14 @@
+{
+  "reference": "ghcr.io/phala-network/sglang:logfix-qwen-gemma-v0519-r3-astra-20260923-framework-r3@sha256:1696a849ddc2760e459ff7c06d735eedfcec3406fa7d17b9a8d974f9ebca21d0",
+  "config_digest": "sha256:6dd0a043ad0d3d0dffbc99ceeada5dcc0456f49f12cc50a9ef3edd04082bbd9d",
+  "entrypoint": null,
+  "cmd": null,
+  "safe_source_labels": {
+    "com.nvidia.cudnn.version": "9.14.0.64-1",
+    "org.opencontainers.image.revision": "82da9278e229402abcb50b46ee5a57e801bb651c",
+    "org.opencontainers.image.source": "https://github.com/Phala-Network/sglang",
+    "org.opencontainers.image.version": "qwen38-gemma4-v0519-r10",
+    "org.phala.base.image": "ghcr.io/phala-network/sglang:logfix-qwen-gemma-v0519-r3-astra-20260923-final@sha256:62d2e5cad1b89b6071d8cfccfd45da339b5a8f7319e40374b323d811398417e0",
+    "org.phala.framework.logprivacy.sha256": "b62eafff3bb0f6af564da7bcf2e3e381f2622a779a8b6e863a25841666918640"
+  }
+}

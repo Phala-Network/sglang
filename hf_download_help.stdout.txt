@@ -1,0 +1,63 @@
+Usage: hf download [OPTIONS] REPO_ID [FILENAMES]...
+
+  Download files from the Hub.
+
+Arguments:
+  REPO_ID         The ID of the repo (e.g. `username/repo-name` or
+                  `spaces/username/repo-name`).  [required]
+  [FILENAMES]...  Files to download (e.g. `config.json`,
+                  `data/metadata.jsonl`).
+
+Options:
+  --type, --repo-type [model|dataset|space]
+                                  The type of repository (model, dataset, or
+                                  space).  [default: (model)]
+  --revision TEXT                 Git revision id which can be a branch name,
+                                  a tag, or a commit hash.
+  --include TEXT                  Glob patterns to include from files to
+                                  download. eg: *.json
+  --exclude TEXT                  Glob patterns to exclude from files to
+                                  download.
+  --cache-dir TEXT                Directory where to save files.
+  --local-dir TEXT                If set, the downloaded file will be placed
+                                  under this directory. Check out https://hugg
+                                  ingface.co/docs/huggingface_hub/guides/downl
+                                  oad#download-files-to-a-local-folder for
+                                  more details.
+  --force-download / --no-force-download
+                                  If True, the files will be downloaded even
+                                  if they are already cached.  [default: no-
+                                  force-download]
+  --dry-run / --no-dry-run        If True, perform a dry run without actually
+                                  downloading the file.  [default: no-dry-run]
+  --token TEXT                    A User Access Token generated from
+                                  https://huggingface.co/settings/tokens.
+  --max-workers INTEGER           Maximum number of workers to use for
+                                  downloading files. Default is 8.  [default:
+                                  8]
+  -h, --help                      Show this message and exit.
+
+Formatting options:
+  --format [auto|human|agent|json|quiet]
+                                  Output format. Defaults to 'auto' which
+                                  picks 'agent' or 'human' based on the
+                                  terminal.
+  --json                          JSON output. Equivalent to '--format json'.
+  -q, --quiet                     Quiet output (one ID per line). Equivalent
+                                  to '--format quiet'.
+  --no-truncate                   Do not truncate scalar values in human
+                                  tables (list/dict columns stay shortened).
+
+Examples
+  $ hf download meta-llama/Llama-3.2-1B-Instruct
+  $ hf download meta-llama/Llama-3.2-1B-Instruct config.json tokenizer.json
+  $ hf download meta-llama/Llama-3.2-1B-Instruct --include "*.safetensors"
+  --exclude "*.bin"
+  $ hf download meta-llama/Llama-3.2-1B-Instruct --local-dir ./models/llama
+  $ hf download HuggingFaceM4/FineVision art/ --repo-type dataset
+  $ hf download hf://datasets/HuggingFaceH4/ultrachat_200k
+
+Learn more
+  Use `hf <command> --help` for more information about a command.
+  Read the documentation at
+  https://huggingface.co/docs/huggingface_hub/en/guides/cli

@@ -1,0 +1,101 @@
+{
+  "candidate_tag": "logfix-qwen-gemma-v0519-r3-astra-20260923-framework-r3",
+  "candidate_ref": "ghcr.io/phala-network/sglang:logfix-qwen-gemma-v0519-r3-astra-20260923-framework-r3",
+  "base": "ghcr.io/phala-network/sglang:logfix-qwen-gemma-v0519-r3-astra-20260923-final@sha256:62d2e5cad1b89b6071d8cfccfd45da339b5a8f7319e40374b323d811398417e0",
+  "base_id": "sha256:7b7df0e77ece45c90772bea99b488a78b8fb905196f743723f3e027dfe336f0d",
+  "final_image_id": "sha256:6dd0a043ad0d3d0dffbc99ceeada5dcc0456f49f12cc50a9ef3edd04082bbd9d",
+  "helper_sha256": "b62eafff3bb0f6af564da7bcf2e3e381f2622a779a8b6e863a25841666918640",
+  "gates": [
+    {
+      "name": "actual_http_privacy",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "actual_granian_http_privacy",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "srt_privacy_and_regression",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "positive_parsers",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "framework_filter_unit",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "logging_config_only_ast_and_helper_binding",
+      "passed": true,
+      "files": [
+        {
+          "file": "disaggregation/encoder/http_server.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "disaggregation/encoder/receiver.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "distributed/gated_launch.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "entrypoints/engine_info_bootstrap_server.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "entrypoints/http_server.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "mem_cache/storage/hf3fs/mini_3fs_metadata_server.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "utils/common.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "utils/framework_log_privacy.py",
+          "logging_integration_only": true
+        }
+      ]
+    },
+    {
+      "name": "126_parser_differential_cases",
+      "passed": true
+    },
+    {
+      "name": "hf_help",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "hf_download_help",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "sglang_serve_help",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "http_import",
+      "passed": true,
+      "exit_code": 0
+    }
+  ],
+  "passed": true,
+  "published_ref": "ghcr.io/phala-network/sglang:logfix-qwen-gemma-v0519-r3-astra-20260923-framework-r3@sha256:1696a849ddc2760e459ff7c06d735eedfcec3406fa7d17b9a8d974f9ebca21d0",
+  "registry_digest": "sha256:1696a849ddc2760e459ff7c06d735eedfcec3406fa7d17b9a8d974f9ebca21d0",
+  "registry_config_digest": "sha256:6dd0a043ad0d3d0dffbc99ceeada5dcc0456f49f12cc50a9ef3edd04082bbd9d"
+}

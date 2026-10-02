@@ -1,0 +1,144 @@
+{
+  "candidate_ref": "ghcr.io/phala-network/sglang:logfix-deepseek-v0520-r5-framework-r4",
+  "base": "ghcr.io/phala-network/sglang:logfix-deepseek-v0520-r5@sha256:d2dfdc79d78e925170c05bad961269d49ced55652a7bc45f209503df7c87d502",
+  "base_id": "sha256:d2b05291af4b7edd53c7cd436d6979b4f4168ff991029c25edbc23137070584a",
+  "final_image_id": "sha256:ba1e5e230737765da00242278e07184de4fb8e67df90d0d83b842c53826cf781",
+  "base_layers_preserved": true,
+  "runtime_config_preserved": true,
+  "helper_sha256": "67f6252abfa482a68eab908a12aef8cfdbf0e52e5830b69e3fe2026b0cb413be",
+  "gates": [
+    {
+      "name": "actual_http_privacy",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "actual_granian_http_privacy",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "framework_filter_unit",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "installed_integration_ast",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "path_filter_and_levels",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "srt_privacy",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "deepseek_v41_native",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "hf_help",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "hf_download_help",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "sglang_cli",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "http_import",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "parser_regressions",
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "name": "openai_no_new_failures",
+      "passed": true,
+      "inherited_failures": [
+        "test/registered/unit/entrypoints/openai/test_serving_chat.py::ServingChatTestCase::test_streaming_abort_with_ids_enabled",
+        "test/registered/unit/entrypoints/openai/test_serving_chat.py::ServingChatTestCase::test_streaming_abort_yields_error",
+        "test/registered/unit/entrypoints/openai/test_serving_chat.py::ServingChatTestCase::test_streaming_logprobs_not_flushed_on_empty_delta_step_without_parser",
+        "test/registered/unit/entrypoints/openai/test_serving_responses.py::test_active_stream_cancel_and_final_history",
+        "test/registered/unit/entrypoints/openai/test_serving_responses.py::test_completion_preserves_cancelled_response[False]",
+        "test/registered/unit/entrypoints/openai/test_serving_responses.py::test_response_store_persistence_and_continuation[False-False]",
+        "test/registered/unit/entrypoints/openai/test_serving_responses.py::test_response_store_persistence_and_continuation[True-False]",
+        "test/registered/unit/entrypoints/openai/test_serving_responses.py::test_standalone_builtin_tools_without_storage"
+      ]
+    }
+  ],
+  "source_changes": [
+    {
+      "file": "disaggregation/encoder/http_server.py",
+      "logging_integration_only": true,
+      "base_sha256": "09edd632b1f20658775a66168af96b6388e30e72538a153e0943d8e1480f902a",
+      "final_sha256": "adee5ced4d74ab17435ed21c880b4f4a1d62e57fee5731263a45037b46ce6420"
+    },
+    {
+      "file": "disaggregation/encoder/receiver.py",
+      "logging_integration_only": true,
+      "base_sha256": "b3aa7b918a97859fbe259494ea8f76708cc910804e71f9d55af514144320cb36",
+      "final_sha256": "366e8b4d430b4b25ef9783dfac2c6132492873fc742d357465582283b7d47a59"
+    },
+    {
+      "file": "distributed/gated_launch.py",
+      "logging_integration_only": true,
+      "base_sha256": "8eda74a414ddb5f9f35716340e4439c3ba5d402cae2ab4c83d0ea51645deb90d",
+      "final_sha256": "77fe16c753054e98f6502bdc28357609f65bfe9fd181dd1fdddf5871a14496fb"
+    },
+    {
+      "file": "entrypoints/engine_info_bootstrap_server.py",
+      "logging_integration_only": true,
+      "base_sha256": "92824fe2949a635a18d471677791730b4943b1d98fbe1d07726ed110630d62ce",
+      "final_sha256": "ac8efd0e23703df9bcd1e04ef1ea1e3668512f4aa59dd56eb2f093261df95889"
+    },
+    {
+      "file": "entrypoints/http_server.py",
+      "logging_integration_only": true,
+      "base_sha256": "7e473dfb3725a33b3dba68644cdcf258c8d472ee60ee8eca052aa66c322091c0",
+      "final_sha256": "8accabb7b344e5583d4827e3bf3f679d2180a6ab3352b81bb2276e7416c10a1a"
+    },
+    {
+      "file": "mem_cache/storage/hf3fs/mini_3fs_metadata_server.py",
+      "logging_integration_only": true,
+      "base_sha256": "0be047d239ecaf7f154fd570e2c3de463615d391e66dd9471b670e2141c22dcc",
+      "final_sha256": "74b1430f92b451f44746e6a28d9d2a994adf4992542b92000f208e115c214291"
+    },
+    {
+      "file": "utils/common.py",
+      "logging_integration_only": true,
+      "base_sha256": "3d8f4cec1d5a07e840b44551da1c469da7a2f37b27716e2e953364ef079db173",
+      "final_sha256": "289cce8e25844d745cb815e11a8da30b7adbd1e7708d7de94f5de89e313254ed"
+    },
+    {
+      "file": "utils/framework_log_privacy.py",
+      "logging_integration_only": true,
+      "base_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "final_sha256": "67f6252abfa482a68eab908a12aef8cfdbf0e52e5830b69e3fe2026b0cb413be"
+    }
+  ],
+  "passed": true,
+  "production_deployment": "not performed",
+  "third_party_boundary": "Actual Uvicorn and Granian HTTP/1 loopback tested; no HTTP/2, TLS, WebSocket, GPU/model service, or arbitrary third-party logger acceptance.",
+  "parser_external_resource_module_excluded": "test_function_call_parser.py",
+  "published_ref": "ghcr.io/phala-network/sglang:logfix-deepseek-v0520-r5-framework-r4@sha256:c941471e78a97c9e90bb06b914899295ade1503b21a104e69e974b8ca7f366c2",
+  "registry_digest": "sha256:c941471e78a97c9e90bb06b914899295ade1503b21a104e69e974b8ca7f366c2",
+  "registry_config_digest": "sha256:ba1e5e230737765da00242278e07184de4fb8e67df90d0d83b842c53826cf781",
+  "immutable_pull_verified": true,
+  "published_unix": 1790145164.058059
+}

@@ -1,0 +1,7 @@
+{
+  "hrrn_in_help": null,
+  "multi_value_exclusion_in_help": null,
+  "hf_download_historical_gate": true,
+  "scope": "Historical help/source evidence only; model-specific candidate argument validation remains with runtime owner.",
+  "help_available": false
+}

@@ -1,0 +1,10 @@
+{
+  "kind": "installed SRT Python bytes extracted from exact historically qualified image config on approved .201 builder",
+  "historical_changed_file_hashes_matched": 8,
+  "snapshot_json_sha256": "4d487c86890170194133291f9b44183d5414987783144b2db9df93385c53fcbe",
+  "original_build_commit": "unproven",
+  "archive_commit_kind": "reconstructed archival snapshot, not original build commit",
+  "image_reference": "ghcr.io/phala-network/sglang:logfix-deepseek-v0520-r5-framework-r4@sha256:c941471e78a97c9e90bb06b914899295ade1503b21a104e69e974b8ca7f366c2",
+  "files": 1890,
+  "scope": "Only installed SRT Python files are represented. Non-SRT engine files, dependencies, native artifacts and full image reproducibility are not proven by this Git tree."
+}

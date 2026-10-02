@@ -1,0 +1,15 @@
+{
+  "reference": "ghcr.io/phala-network/sglang:logfix-deepseek-v0520-r5-framework-r4@sha256:c941471e78a97c9e90bb06b914899295ade1503b21a104e69e974b8ca7f366c2",
+  "config_digest": "sha256:ba1e5e230737765da00242278e07184de4fb8e67df90d0d83b842c53826cf781",
+  "entrypoint": [
+    "/opt/nvidia/nvidia_entrypoint.sh"
+  ],
+  "cmd": null,
+  "safe_source_labels": {
+    "com.nvidia.cudnn.version": "9.14.0.64-1",
+    "io.phala.logfix.version": "deepseek-v0520-r5",
+    "org.opencontainers.image.revision": "9acba212f3376c215a9b48a44dcbace15c0982b7",
+    "org.opencontainers.image.source": "https://github.com/Phala-Network/sglang",
+    "org.opencontainers.image.version": "0.5.20+phala.dsv41.9acba212"
+  }
+}

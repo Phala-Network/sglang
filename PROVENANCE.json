@@ -1,0 +1,11 @@
+{
+  "archive_sha256": "6ed5a6b9fca84ff90d7f7187aa3a1a6e6bbc3cd251f6f1fedf9df0fe2d2f913b",
+  "archive_member": "./logfix-nemotron-v0519-r3-astra-20260923-framework-r3/final-source.json",
+  "snapshot_json_sha256": "dc7a83e9e259d88329a9e82e76738f3878aa0cfd125e761c0709ef8ef8c9e2b4",
+  "kind": "historical full installed SRT Python snapshot",
+  "original_build_commit": "unproven",
+  "archive_commit_kind": "reconstructed archival snapshot, not original build commit",
+  "image_reference": "ghcr.io/phala-network/sglang:logfix-nemotron-v0519-r3-astra-20260923-framework-r3@sha256:27f50313b75b4a1d1c5900779969054df07e71a81952fb8d3a38577678c8155b",
+  "files": 1767,
+  "scope": "Only installed SRT Python files are represented. Non-SRT engine files, dependencies, native artifacts and full image reproducibility are not proven by this Git tree."
+}

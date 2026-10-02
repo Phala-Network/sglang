@@ -1,0 +1,22 @@
+{
+  "reference": "ghcr.io/phala-network/sglang:logfix-nemotron-v0519-r3-astra-20260923-framework-r3@sha256:27f50313b75b4a1d1c5900779969054df07e71a81952fb8d3a38577678c8155b",
+  "config_digest": "sha256:2ea3ceb2f29acc1712c5b9eb07072a6979b2fca46166474413cfb9b735c47622",
+  "entrypoint": [
+    "/opt/nvidia/nvidia_entrypoint.sh"
+  ],
+  "cmd": null,
+  "safe_source_labels": {
+    "com.nvidia.cudnn.version": "9.14.0.64-1",
+    "org.opencontainers.image.revision": "cfe6dbb89416065555d4a2f0d2260704680136ec",
+    "org.opencontainers.image.source": "https://github.com/Phala-Network/sglang",
+    "org.opencontainers.image.version": "v0.5.19-nemotron-3-5-lightning-single-r10",
+    "org.phala.base.image": "ghcr.io/phala-network/sglang:logfix-nemotron-v0519-r3-astra-20260923-final@sha256:075db1ac10f6b0a3a673b6a98e72cbd0386c4cca1438603e32c1cbe5241642f7",
+    "org.phala.base.source.commit": "0bcd822377da7b5718e674eaf9c870d349424dd1",
+    "org.phala.buildkit.version": "v0.12.5",
+    "org.phala.framework.logprivacy.sha256": "b62eafff3bb0f6af564da7bcf2e3e381f2622a779a8b6e863a25841666918640",
+    "org.phala.source.commit": "cfe6dbb89416065555d4a2f0d2260704680136ec",
+    "org.phala.source.date.epoch": "1789686873",
+    "org.phala.source.repository": "https://github.com/Phala-Network/sglang",
+    "org.phala.source.tree.digest": "git-sha1:3ddcf3ea8e77184006e8a21ac77122fc2ad4e321"
+  }
+}

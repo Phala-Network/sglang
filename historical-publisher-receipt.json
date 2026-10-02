@@ -1,0 +1,101 @@
+{
+  "candidate_tag": "logfix-nemotron-v0519-r3-astra-20260923-framework-r3",
+  "candidate_ref": "ghcr.io/phala-network/sglang:logfix-nemotron-v0519-r3-astra-20260923-framework-r3",
+  "base": "ghcr.io/phala-network/sglang:logfix-nemotron-v0519-r3-astra-20260923-final@sha256:075db1ac10f6b0a3a673b6a98e72cbd0386c4cca1438603e32c1cbe5241642f7",
+  "base_id": "sha256:62e6acd2a1e89e3b199f721bbaac532f8c98dd6fa3c8fea576689f5cf85839c9",
+  "final_image_id": "sha256:2ea3ceb2f29acc1712c5b9eb07072a6979b2fca46166474413cfb9b735c47622",
+  "helper_sha256": "b62eafff3bb0f6af564da7bcf2e3e381f2622a779a8b6e863a25841666918640",
+  "gates": [
+    {
+      "name": "actual_http_privacy",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "actual_granian_http_privacy",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "srt_privacy_and_regression",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "positive_parsers",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "framework_filter_unit",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "logging_config_only_ast_and_helper_binding",
+      "passed": true,
+      "files": [
+        {
+          "file": "disaggregation/encoder/http_server.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "disaggregation/encoder/receiver.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "distributed/gated_launch.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "entrypoints/engine_info_bootstrap_server.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "entrypoints/http_server.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "mem_cache/storage/hf3fs/mini_3fs_metadata_server.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "utils/common.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "utils/framework_log_privacy.py",
+          "logging_integration_only": true
+        }
+      ]
+    },
+    {
+      "name": "126_parser_differential_cases",
+      "passed": true
+    },
+    {
+      "name": "hf_help",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "hf_download_help",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "sglang_serve_help",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "http_import",
+      "passed": true,
+      "exit_code": 0
+    }
+  ],
+  "passed": true,
+  "published_ref": "ghcr.io/phala-network/sglang:logfix-nemotron-v0519-r3-astra-20260923-framework-r3@sha256:27f50313b75b4a1d1c5900779969054df07e71a81952fb8d3a38577678c8155b",
+  "registry_digest": "sha256:27f50313b75b4a1d1c5900779969054df07e71a81952fb8d3a38577678c8155b",
+  "registry_config_digest": "sha256:2ea3ceb2f29acc1712c5b9eb07072a6979b2fca46166474413cfb9b735c47622"
+}

@@ -1,0 +1,101 @@
+{
+  "candidate_tag": "logfix-muse-v0519-r3-astra-20260923-framework-r3",
+  "candidate_ref": "ghcr.io/phala-network/sglang:logfix-muse-v0519-r3-astra-20260923-framework-r3",
+  "base": "ghcr.io/phala-network/sglang:logfix-muse-v0519-r3-astra-20260923-final@sha256:eba8da60fb1f2f55c9ec653e32880910fc1e334e7dfcc233a57cab5ca6c4e58e",
+  "base_id": "sha256:ad4b6aff1ff3c0f23e576ae4a491d4d56280d284b71d2febb13fc09eda776494",
+  "final_image_id": "sha256:0f1355917c0821c04cd51e0859e9528e76e2c3734463cc2314c459ce4b551bf5",
+  "helper_sha256": "b62eafff3bb0f6af564da7bcf2e3e381f2622a779a8b6e863a25841666918640",
+  "gates": [
+    {
+      "name": "actual_http_privacy",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "actual_granian_http_privacy",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "srt_privacy_and_regression",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "positive_parsers",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "framework_filter_unit",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "logging_config_only_ast_and_helper_binding",
+      "passed": true,
+      "files": [
+        {
+          "file": "disaggregation/encoder/http_server.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "disaggregation/encoder/receiver.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "distributed/gated_launch.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "entrypoints/engine_info_bootstrap_server.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "entrypoints/http_server.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "mem_cache/storage/hf3fs/mini_3fs_metadata_server.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "utils/common.py",
+          "logging_integration_only": true
+        },
+        {
+          "file": "utils/framework_log_privacy.py",
+          "logging_integration_only": true
+        }
+      ]
+    },
+    {
+      "name": "126_parser_differential_cases",
+      "passed": true
+    },
+    {
+      "name": "hf_help",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "hf_download_help",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "sglang_serve_help",
+      "passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "http_import",
+      "passed": true,
+      "exit_code": 0
+    }
+  ],
+  "passed": true,
+  "published_ref": "ghcr.io/phala-network/sglang:logfix-muse-v0519-r3-astra-20260923-framework-r3@sha256:ab82d2b31b7442f037e855cbbe900acfb59df03f813f201daa0d64f59273bae6",
+  "registry_digest": "sha256:ab82d2b31b7442f037e855cbbe900acfb59df03f813f201daa0d64f59273bae6",
+  "registry_config_digest": "sha256:0f1355917c0821c04cd51e0859e9528e76e2c3734463cc2314c459ce4b551bf5"
+}

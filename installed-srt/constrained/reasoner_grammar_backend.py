@@ -1,0 +1,471 @@
+# Copyright 2023-2024 SGLang Team
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+"""The baseclass of a backend for reasoner grammar-guided constrained decoding."""
+
+import logging
+from typing import List, Optional, Tuple, Union
+
+import torch
+from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
+
+from sglang.srt.environ import envs
+from sglang.srt.parser.reasoning_parser import ReasoningParser
+from sglang.srt.utils.token_sequence_matcher import TokenSequenceMatcher
+
+from .base_grammar_backend import (
+    BaseGrammarBackend,
+    BaseGrammarObject,
+    InvalidGrammarObject,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class ReasonerGrammarObject(BaseGrammarObject):
+    """Defers grammar constraints until the reasoning end sequence is complete."""
+
+    def __init__(
+        self,
+        grammar: Optional[BaseGrammarObject],
+        think_end_ids: List[int],
+        channel_header_end_ids: Optional[List[int]] = None,
+        channel_reasoning_header_ids: Optional[List[int]] = None,
+        max_channel_header_tokens: int = 16,
+        think_excluded_token_ids: Optional[List[int]] = None,
+        max_think_tokens: int = -1,
+        enable_token_filter: bool = False,
+        token_filter_fn=None,
+        allocate_vocab_mask_fn=None,
+        move_vocab_mask_fn=None,
+        apply_vocab_mask_fn=None,
+    ):
+        super().__init__()
+        self.grammar = grammar
+        self.think_end_ids = tuple(think_end_ids)
+        self._think_end_matcher = TokenSequenceMatcher(self.think_end_ids)
+        self.channel_header_end_ids = tuple(channel_header_end_ids or ())
+        self._channel_header_end_matcher = (
+            TokenSequenceMatcher(self.channel_header_end_ids)
+            if self.channel_header_end_ids
+            else None
+        )
+        self.channel_reasoning_header_ids = tuple(channel_reasoning_header_ids or ())
+        self._channel_reasoning_header_matcher = (
+            TokenSequenceMatcher(self.channel_reasoning_header_ids)
+            if self.channel_reasoning_header_ids
+            else None
+        )
+        self.max_channel_header_tokens = max_channel_header_tokens
+        self.think_excluded_token_ids = think_excluded_token_ids
+        self.max_think_tokens = max_think_tokens
+        self.enable_token_filter = enable_token_filter
+        self.token_filter_fn = token_filter_fn
+        self.allocate_vocab_mask_fn = allocate_vocab_mask_fn
+        self.move_vocab_mask_fn = move_vocab_mask_fn
+        self.apply_vocab_mask_fn = apply_vocab_mask_fn
+
+        self.tokens_in_think = -1
+        self.tokens_after_end = -1
+        self._matched_think_end_tokens = 0
+        self._waiting_for_channel_header = False
+        self._channel_header_tokens = 0
+        self._matched_channel_header_end_tokens = 0
+        self._matched_channel_reasoning_header_tokens = 0
+        self._saw_channel_reasoning_header = False
+        self._state_history = []
+        self._grammar_accept_history: List[bool] = []
+
+    def maybe_init_reasoning(self, reasoning: bool):
+        self._matched_think_end_tokens = 0
+        self._waiting_for_channel_header = False
+        self._channel_header_tokens = 0
+        self._matched_channel_header_end_tokens = 0
+        self._matched_channel_reasoning_header_tokens = 0
+        self._saw_channel_reasoning_header = False
+        self._state_history.clear()
+        self._grammar_accept_history.clear()
+        if reasoning:
+            self.tokens_in_think = 0
+            self.tokens_after_end = -1
+        else:
+            self.tokens_in_think = -1
+            self.tokens_after_end = 0
+
+    def _is_thinking(self):
+        return (
+            self.tokens_in_think >= 0
+            and self.tokens_after_end == -1
+            and not self._waiting_for_channel_header
+        )
+
+    def _is_generation(self):
+        return self.tokens_after_end >= 0
+
+    def _is_waiting_for_channel_header(self):
+        return self._waiting_for_channel_header
+
+    def _snapshot_state(self):
+        return (
+            self.tokens_in_think,
+            self.tokens_after_end,
+            self._matched_think_end_tokens,
+            self._waiting_for_channel_header,
+            self._channel_header_tokens,
+            self._matched_channel_header_end_tokens,
+            self._matched_channel_reasoning_header_tokens,
+            self._saw_channel_reasoning_header,
+        )
+
+    def _restore_state(self, state):
+        (
+            self.tokens_in_think,
+            self.tokens_after_end,
+            self._matched_think_end_tokens,
+            self._waiting_for_channel_header,
+            self._channel_header_tokens,
+            self._matched_channel_header_end_tokens,
+            self._matched_channel_reasoning_header_tokens,
+            self._saw_channel_reasoning_header,
+        ) = state
+
+    def _start_channel_header(self):
+        self._waiting_for_channel_header = True
+        self._channel_header_tokens = 0
+        self._matched_channel_header_end_tokens = 0
+        self._matched_channel_reasoning_header_tokens = 0
+        self._saw_channel_reasoning_header = False
+
+    def _finish_channel_header(self):
+        self._waiting_for_channel_header = False
+        if self._saw_channel_reasoning_header:
+            self.tokens_in_think = 0
+            self.tokens_after_end = -1
+            self._matched_think_end_tokens = 0
+        else:
+            self.tokens_after_end = 0
+
+    def transfer_state(self, token: int) -> None:
+        self._state_history.append(self._snapshot_state())
+        if self._is_thinking():
+            previous_match = self._matched_think_end_tokens
+            matched = self._think_end_matcher.advance(previous_match, token)
+            if matched == len(self._think_end_matcher):
+                self._matched_think_end_tokens = 0
+                if self._channel_header_end_matcher is None:
+                    self.tokens_after_end = 0
+                else:
+                    self._start_channel_header()
+            else:
+                self.tokens_in_think += previous_match + 1 - matched
+                self._matched_think_end_tokens = matched
+        elif self._is_waiting_for_channel_header():
+            self._channel_header_tokens += 1
+            matched = self._channel_header_end_matcher.advance(
+                self._matched_channel_header_end_tokens, token
+            )
+            self._matched_channel_header_end_tokens = matched
+
+            if (
+                self._channel_reasoning_header_matcher is not None
+                and not self._saw_channel_reasoning_header
+            ):
+                reasoning_matched = self._channel_reasoning_header_matcher.advance(
+                    self._matched_channel_reasoning_header_tokens, token
+                )
+                self._matched_channel_reasoning_header_tokens = reasoning_matched
+                self._saw_channel_reasoning_header = reasoning_matched == len(
+                    self._channel_reasoning_header_matcher
+                )
+
+            if matched == len(self._channel_header_end_matcher):
+                self._finish_channel_header()
+            elif (
+                self.max_channel_header_tokens >= 0
+                and self._channel_header_tokens >= self.max_channel_header_tokens
+            ):
+                logger.warning('Channel header did not close within <redacted> tokens; resuming grammar')
+                self._saw_channel_reasoning_header = False
+                self._finish_channel_header()
+        elif self._is_generation():
+            self.tokens_after_end += 1
+
+    def rollback_state(self):
+        if self._state_history:
+            self._restore_state(self._state_history.pop())
+
+    def accept_token(self, token: int):
+        # Track the last accepted token on the wrapper itself (mirroring
+        # XGrammarGrammar.accept_token). Disaggregation's process_prebuilt uses
+        # `grammar.current_token is None` to detect a retracted request whose
+        # token was already accepted and must not be re-accepted. Without this,
+        # a ReasonerGrammarObject's current_token stays None forever (the inner
+        # grammar's is updated, not the wrapper's), so the guard never fires and
+        # the token is accepted twice -> "Tokens not accepted" -> FINISH_ABORT.
+        self.current_token = token
+        accepted_by_grammar = self._is_generation() and self.grammar is not None
+        self._grammar_accept_history.append(accepted_by_grammar)
+        if accepted_by_grammar:
+            self.grammar.accept_token(token)
+        self.transfer_state(token)
+
+    def is_terminated(self):
+        if self._is_generation() and self.grammar is not None:
+            return self.grammar.is_terminated()
+        return False
+
+    def rollback(self, k):
+        if self.grammar is not None:
+            steps_after = sum(self._grammar_accept_history[-k:]) if k > 0 else 0
+            if steps_after > 0:
+                self.grammar.rollback(steps_after)
+        for _ in range(k):
+            if self._grammar_accept_history:
+                self._grammar_accept_history.pop()
+            self.rollback_state()
+
+    def _can_think_more(self):
+        return (
+            self.max_think_tokens < 0
+            or self.tokens_in_think + self._matched_think_end_tokens
+            < self.max_think_tokens
+        )
+
+    def _do_token_filter(self, vocab_mask, token_ids, idx, is_allowed=True):
+        if self.token_filter_fn is not None:
+            self.token_filter_fn(vocab_mask, token_ids, idx, is_allowed)
+
+    def fill_vocab_mask(self, vocab_mask: torch.Tensor, idx: int) -> None:
+        if self._is_thinking():
+            if not self.enable_token_filter:
+                return
+            if self._can_think_more():
+                if self.think_excluded_token_ids is not None:
+                    self._do_token_filter(
+                        vocab_mask,
+                        self.think_excluded_token_ids,
+                        idx,
+                        is_allowed=False,
+                    )
+            else:
+                self._do_token_filter(
+                    vocab_mask,
+                    [self.think_end_ids[self._matched_think_end_tokens]],
+                    idx,
+                    is_allowed=True,
+                )
+            return
+        if self._is_generation() and self.grammar is not None:
+            self.grammar.fill_vocab_mask(vocab_mask, idx)
+
+    def allocate_vocab_mask(self, vocab_size, batch_size, device):
+        if self.grammar is not None:
+            return self.grammar.allocate_vocab_mask(vocab_size, batch_size, device)
+        if self.allocate_vocab_mask_fn is not None:
+            return self.allocate_vocab_mask_fn(vocab_size, batch_size, device)
+        return None
+
+    def move_vocab_mask(self, vocab_mask, device):
+        if self.grammar is not None:
+            return self.grammar.move_vocab_mask(vocab_mask, device)
+        if self.move_vocab_mask_fn is not None:
+            return self.move_vocab_mask_fn(vocab_mask, device)
+        return vocab_mask
+
+    @property
+    def apply_vocab_mask(self):
+        if self.grammar is not None:
+            return self.grammar.apply_vocab_mask
+        return self.apply_vocab_mask_fn
+
+    def copy(self):
+        new_obj = ReasonerGrammarObject(
+            grammar=self.grammar.copy() if self.grammar is not None else None,
+            think_end_ids=self.think_end_ids,
+            channel_header_end_ids=self.channel_header_end_ids,
+            channel_reasoning_header_ids=self.channel_reasoning_header_ids,
+            max_channel_header_tokens=self.max_channel_header_tokens,
+            think_excluded_token_ids=self.think_excluded_token_ids,
+            max_think_tokens=self.max_think_tokens,
+            enable_token_filter=self.enable_token_filter,
+            token_filter_fn=self.token_filter_fn,
+            allocate_vocab_mask_fn=self.allocate_vocab_mask_fn,
+            move_vocab_mask_fn=self.move_vocab_mask_fn,
+            apply_vocab_mask_fn=self.apply_vocab_mask_fn,
+        )
+        new_obj.tokens_in_think = self.tokens_in_think
+        new_obj.tokens_after_end = self.tokens_after_end
+        new_obj._matched_think_end_tokens = self._matched_think_end_tokens
+        new_obj._waiting_for_channel_header = self._waiting_for_channel_header
+        new_obj._channel_header_tokens = self._channel_header_tokens
+        new_obj._matched_channel_header_end_tokens = (
+            self._matched_channel_header_end_tokens
+        )
+        new_obj._matched_channel_reasoning_header_tokens = (
+            self._matched_channel_reasoning_header_tokens
+        )
+        new_obj._saw_channel_reasoning_header = self._saw_channel_reasoning_header
+        new_obj._state_history = list(self._state_history)
+        new_obj._grammar_accept_history = list(self._grammar_accept_history)
+        new_obj._finished = self._finished
+        new_obj.current_token = self.current_token
+        return new_obj
+
+    @property
+    def finished(self):
+        if self.grammar is not None:
+            return self.grammar.finished
+        return self._finished
+
+    @finished.setter
+    def finished(self, finished):
+        if self.grammar is not None:
+            self.grammar.finished = finished
+        else:
+            self._finished = finished
+
+    def try_jump_forward(self, tokenizer):
+        if self._is_generation() and self.grammar is not None:
+            return self.grammar.try_jump_forward(tokenizer)
+        return None
+
+    def jump_forward_str_state(self, helper):
+        if self._is_generation() and self.grammar is not None:
+            return self.grammar.jump_forward_str_state(helper)
+        return None
+
+    def jump_and_retokenize(self, old_output_ids, new_output_ids, next_state):
+        if self._is_generation() and self.grammar is not None:
+            return self.grammar.jump_and_retokenize(
+                old_output_ids, new_output_ids, next_state
+            )
+
+
+class ReasonerGrammarBackend(BaseGrammarBackend):
+    def __init__(
+        self,
+        grammar_backend: BaseGrammarBackend,
+        reasoning_parser: ReasoningParser,
+        tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+        enable_strict_thinking: bool = False,
+    ):
+        super().__init__()
+        self.grammar_backend = grammar_backend
+        think_end_ids = tokenizer.encode(
+            reasoning_parser.detector.think_end_token, add_special_tokens=False
+        )
+        if not think_end_ids:
+            raise ValueError(
+                f"think_end_token '{reasoning_parser.detector.think_end_token}' "
+                f"could not be encoded by the tokenizer."
+            )
+        self.think_end_ids = think_end_ids
+        self.channel_header_end_ids = self._encode_optional_marker(
+            tokenizer,
+            getattr(reasoning_parser.detector, "grammar_channel_header_end", None),
+            "grammar_channel_header_end",
+        )
+        self.channel_reasoning_header_ids = self._encode_optional_marker(
+            tokenizer,
+            getattr(
+                reasoning_parser.detector, "grammar_channel_reasoning_header", None
+            ),
+            "grammar_channel_reasoning_header",
+        )
+        self.max_channel_header_tokens = envs.SGLANG_MAX_CHANNEL_HEADER_TOKENS.get()
+        self._enable_strict_thinking = enable_strict_thinking
+        self.think_excluded_token_ids = self._get_think_excluded_token_ids(
+            reasoning_parser, tokenizer
+        )
+        self.max_think_tokens = envs.SGLANG_MAX_THINK_TOKENS.get()
+        self.enable_token_filter = self.enable_strict_thinking and (
+            self.think_excluded_token_ids is not None or self.max_think_tokens >= 0
+        )
+        if (
+            self.enable_token_filter
+            and not self.grammar_backend.is_support_token_filter
+        ):
+            raise ValueError(
+                "Strict reasoning format requested but the grammar backend does not "
+                "support token filtering. Use a grammar backend that supports token "
+                "filtering (e.g., xgrammar) or disable strict reasoning mode."
+            )
+        self._token_filter_fn = (
+            self.grammar_backend.set_token_filter if self.enable_token_filter else None
+        )
+
+    @staticmethod
+    def _encode_optional_marker(tokenizer, marker, marker_name):
+        if marker is None:
+            return None
+        ids = tokenizer.encode(marker, add_special_tokens=False)
+        if not ids:
+            raise ValueError(f"{marker_name} '{marker}' could not be encoded.")
+        return ids
+
+    def _get_think_excluded_token_ids(
+        self,
+        reasoning_parser: ReasoningParser,
+        tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+    ) -> Optional[List[int]]:
+        excluded_ids = []
+        if (not self.enable_strict_thinking) or (
+            not reasoning_parser.detector.think_excluded_tokens
+        ):
+            return None
+        for token in reasoning_parser.detector.think_excluded_tokens:
+            new_ids = tokenizer.encode(token, add_special_tokens=False)
+            if not new_ids:
+                raise ValueError(
+                    f"think_excluded_token '{token}' could not be encoded by the "
+                    f"tokenizer. All excluded tokens must be encodable for strict "
+                    f"reasoning mode to function correctly."
+                )
+            excluded_ids += new_ids
+        return excluded_ids
+
+    def _make_grammar_object(
+        self, grammar: Optional[BaseGrammarObject], reasoning: bool
+    ) -> ReasonerGrammarObject:
+        obj = ReasonerGrammarObject(
+            grammar=grammar,
+            think_end_ids=self.think_end_ids,
+            channel_header_end_ids=self.channel_header_end_ids,
+            channel_reasoning_header_ids=self.channel_reasoning_header_ids,
+            max_channel_header_tokens=self.max_channel_header_tokens,
+            think_excluded_token_ids=self.think_excluded_token_ids,
+            max_think_tokens=self.max_think_tokens,
+            enable_token_filter=self.enable_token_filter,
+            token_filter_fn=self._token_filter_fn,
+            allocate_vocab_mask_fn=self.grammar_backend.allocate_vocab_mask,
+            move_vocab_mask_fn=self.grammar_backend.move_vocab_mask,
+            apply_vocab_mask_fn=self.grammar_backend.apply_vocab_mask,
+        )
+        obj.maybe_init_reasoning(reasoning)
+        return obj
+
+    def init_strict_reasoning_grammar(
+        self, reasoning: bool
+    ) -> Optional[BaseGrammarObject]:
+        """Create a grammar object for strict token filtering only (no inner grammar)."""
+        if not self.enable_strict_thinking:
+            return None
+        return self._make_grammar_object(None, reasoning)
+
+    def _init_value_dispatch(
+        self, key: Tuple[str, str], reasoning: bool
+    ) -> Optional[BaseGrammarObject]:
+        ret = self.grammar_backend._init_value_dispatch(key, reasoning)
+        if ret is None or isinstance(ret, InvalidGrammarObject):
+            return ret
+        return self._make_grammar_object(ret, reasoning)

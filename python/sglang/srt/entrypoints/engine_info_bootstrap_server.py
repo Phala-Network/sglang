@@ -62,13 +62,10 @@ class EngineInfoBootstrapServer:
                         weights_info_dict,
                     )
 
-                logger.info(
-                    f"Registered transfer engine info for tp_rank={tp_rank}, "
-                    f"session_id={session_id}"
-                )
+                logger.info('Registered transfer engine info for tp_rank=<redacted>, session_id=<redacted>')
                 return PlainTextResponse("OK")
             except Exception as e:
-                logger.error(f"Failed to register engine info: {e}")
+                logger.error('Failed to register engine info: <redacted>')
                 raise HTTPException(status_code=400, detail=str(e))
 
         @app.get("/get_transfer_engine_info")
@@ -87,6 +84,8 @@ class EngineInfoBootstrapServer:
 
             return {"rank": rank, "remote_instance_transfer_engine_info": list(info)}
 
+        from sglang.srt.utils.framework_log_privacy import configure_framework_log_privacy
+        configure_framework_log_privacy()
         config = uvicorn.Config(app, host=host, port=port, log_level="warning")
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(
@@ -94,7 +93,7 @@ class EngineInfoBootstrapServer:
             daemon=True,
         )
         self._thread.start()
-        logger.info(f"EngineInfoBootstrapServer started on {host}:{port}")
+        logger.info('EngineInfoBootstrapServer started on <redacted>:<redacted>')
 
     def close(self):
         self._server.should_exit = True

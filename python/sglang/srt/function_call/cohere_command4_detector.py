@@ -74,10 +74,7 @@ class CohereCommand4Detector(BaseFormatDetector):
             try:
                 arr, _ = _partial_json_loads(body, Allow.ALL)
             except (MalformedJSON, json.JSONDecodeError, ValueError) as e:
-                logger.warning(
-                    f"Cohere tool-call body did not parse as JSON: {e}; "
-                    "returning surrounding text as normal output."
-                )
+                logger.warning('Cohere tool-call body did not parse as JSON: <redacted>; returning surrounding text as normal output.')
                 return StreamingParseResult(normal_text=normal_text)
 
         normalized = self._normalize_calls(arr)

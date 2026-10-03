@@ -65,11 +65,5 @@ def run(
     new_value = replacement_values[replacement_pick]
 
     req_to_token = req_to_token_pool.req_to_token
-    logger.info(
-        "kv_canary perturb req_to_token: req_pool_idx=%d position=%d original_slot=%d new_slot=%d",
-        target.req_pool_idx,
-        target.position,
-        target.value,
-        new_value,
-    )
+    logger.info('kv_canary perturb req_to_token: req_pool_idx=<redacted> position=<redacted> original_slot=<redacted> new_slot=<redacted>')
     req_to_token[target.req_pool_idx, target.position] = new_value

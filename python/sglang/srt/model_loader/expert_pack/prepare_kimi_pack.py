@@ -83,7 +83,7 @@ def main() -> int:
         try:
             detail = validate_pack(pack, expert_tensors, spec)
         except (OSError, ValueError) as exc:
-            print(f"EXPERT_PACK_INVALID path={pack} detail={exc}", flush=True)
+            print('EXPERT_PACK_INVALID path=<redacted> detail=<redacted>')
             if args.check_only:
                 return 1
         else:

@@ -294,15 +294,7 @@ class BaseMultimodalProcessor(ABC):
             else None
         )
         if self.mm_preprocess_cache.enabled:
-            logger.info(
-                "Multimodal preprocess cache enabled for %s: %d MiB total "
-                "(%d MiB per tokenizer worker), at most 8192 entries; "
-                "caller content hashes are %s.",
-                type(self).__name__,
-                total_cache_mb,
-                worker_cache_bytes // (1024 * 1024),
-                "trusted" if self.trust_mm_content_hashes else "verified",
-            )
+            logger.info('Multimodal preprocess cache enabled for <redacted>: <redacted> MiB total (<redacted> MiB per tokenizer worker), at most 8192 entries; caller content hashes are <redacted>.')
 
         self._tokenizer = _tokenizer_of(self._processor)
 
@@ -364,11 +356,7 @@ class BaseMultimodalProcessor(ABC):
                     lambda: self._processor, self.mm_processor_worker_num
                 )
             except Exception:
-                logger.warning(
-                    "Unable to clone the multimodal processor for concurrent "
-                    "workers; falling back to synchronous processing.",
-                    exc_info=True,
-                )
+                logger.warning('Unable to clone the multimodal processor for concurrent workers; falling back to synchronous processing.')
                 self.mm_processor_worker_num = 1
         if self.mm_processor_executor is not None:
             logger.info(
@@ -433,16 +421,7 @@ class BaseMultimodalProcessor(ABC):
                 MM_FEATURE_CACHE_SIZE, worker_num
             )
             total_pool_size = per_worker_pool_size * worker_num
-            logger.info(
-                "CUDA IPC multimodal feature pools reserve %.0f MiB total on "
-                "GPU %d (%.0f MiB per tokenizer worker × %d; configured "
-                "budget %.0f MiB).",
-                total_pool_size / (1024 * 1024),
-                self.server_args.base_gpu_id,
-                per_worker_pool_size / (1024 * 1024),
-                worker_num,
-                MM_FEATURE_CACHE_SIZE / (1024 * 1024),
-            )
+            logger.info('CUDA IPC multimodal feature pools reserve <redacted> MiB total on GPU <redacted> (<redacted> MiB per tokenizer worker × <redacted>; configured budget <redacted> MiB).')
             self.cudaipc_mmfeature_pool = MmItemMemoryPool(
                 per_worker_pool_size,
                 MM_ITEM_MEMORY_POOL_RECYCLE_INTERVAL,
@@ -528,10 +507,7 @@ class BaseMultimodalProcessor(ABC):
         try:
             failed_executor.shutdown(wait=False, cancel_futures=True)
         except Exception:
-            logger.warning(
-                "Failed to shut down a broken multimodal CPU preprocess pool",
-                exc_info=True,
-            )
+            logger.warning('Failed to shut down a broken multimodal CPU preprocess pool')
 
     def compute_mrope_positions(self, input_ids, mm_items):
         """Compute M-RoPE positions from expanded input_ids and multimodal items.
@@ -1060,13 +1036,7 @@ class BaseMultimodalProcessor(ABC):
             return futures
 
         for idx, data in enumerate(data_list):
-            logger.debug(
-                "[_submit_mm_data_loading_tasks_simple] submit load task: "
-                "modality=%s, index=%d, data_type=%s",
-                modality.name,
-                idx,
-                type(data),
-            )
+            logger.debug('[_submit_mm_data_loading_tasks_simple] submit load task: modality=<redacted>, index=<redacted>, data_type=<redacted>')
             future = self.io_executor.submit(
                 self.__class__._load_single_item,
                 data,
@@ -1106,9 +1076,7 @@ class BaseMultimodalProcessor(ABC):
                 try:
                     data = next(data_iterator)
                 except StopIteration:
-                    logger.warning(
-                        f"Mismatch: More '{modality.name}' tokens found than corresponding data provided."
-                    )
+                    logger.warning("Mismatch: More '<redacted>' tokens found than corresponding data provided.")
                     return futures, task_info
 
                 frame_count_limit = None
@@ -1350,22 +1318,13 @@ class BaseMultimodalProcessor(ABC):
             try:
                 result = await asyncio.wrap_future(future)
             except ValueError as e:
-                logger.info(
-                    "[load_mm_data(simple)] invalid %s data at index=%d: %s",
-                    modality.name,
-                    idx,
-                    e,
-                )
+                logger.info('[load_mm_data(simple)] invalid <redacted> data at index=<redacted>: <redacted>')
                 raise ValueError(
                     f"An exception occurred while loading {modality.name} data "
                     f"at index {idx}: {e}"
                 ) from e
             except Exception as e:
-                logger.exception(
-                    "[load_mm_data(simple)] error loading %s data at index=%d",
-                    modality.name,
-                    idx,
-                )
+                logger.error('[load_mm_data(simple)] error loading <redacted> data at index=<redacted>')
                 raise RuntimeError(
                     f"An exception occurred while loading {modality.name} data at index {idx}: {e}"
                 )
@@ -1876,9 +1835,7 @@ class BaseMultimodalProcessor(ABC):
                         dtype=input_ids.dtype,
                     )
                 except Exception as e:
-                    logger.warning(
-                        f"Due to {e}, falling back to decode+retokenize, which may change prompt length (token drift)."
-                    )
+                    logger.warning('Due to <redacted>, falling back to decode+retokenize, which may change prompt length (token drift).')
         else:
             ret = None
 

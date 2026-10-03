@@ -408,7 +408,7 @@ class PrefillBootstrapQueue:
     def _check_if_req_exceed_kv_capacity(self, req: Req) -> bool:
         if len(req.origin_input_ids) > self.max_total_num_tokens:
             message = f"Request {req.rid} exceeds the maximum number of tokens: {len(req.origin_input_ids)} > {self.max_total_num_tokens}"
-            logger.error(message)
+            logger.error('Request-path diagnostic redacted')
             req.time_stats.trace_ctx.abort(abort_info={"reason": message})
             prepare_abort(req, message, status_code=HTTPStatus.BAD_REQUEST)
             self.scheduler.output_streamer.stream_output([req], req.return_logprob)
@@ -1070,9 +1070,9 @@ class SchedulerDisaggregationPrefillMixin:
             error_message += f" with exception {e}"
         # Mute error message for propagated exceptions to avoid duplicate logging
         if getattr(exc, "is_from_another_rank", False):
-            logger.debug(error_message)
+            logger.debug('Request-path diagnostic redacted')
         else:
-            logger.warning(error_message)
+            logger.warning('Request-path diagnostic redacted')
         req.time_stats.trace_ctx.abort(abort_info={"reason": error_message})
         release_kv_cache(req, self.tree_cache)  # unlock the tree
         self._release_aborted_request(req)
@@ -1110,7 +1110,7 @@ class SchedulerDisaggregationPrefillMixin:
             except Exception:
                 # Transport notification is best effort; local ownership must
                 # still be released or the next idle invariant check will fail.
-                logger.exception("Failed to notify KV sender of abort for %s", req.rid)
+                logger.error('Failed to notify KV sender of abort for <redacted>')
 
         if req.to_finish is not None and not req.finished():
             req.update_finish_state()
@@ -1136,9 +1136,9 @@ class SchedulerDisaggregationPrefillMixin:
             is_propagated = getattr(e, "is_from_another_rank", False)
         # Mute error message for propagated exceptions to avoid duplicate logging
         if is_propagated:
-            logger.debug(error_message)
+            logger.debug('Request-path diagnostic redacted')
         else:
-            logger.warning(error_message)
+            logger.warning('Request-path diagnostic redacted')
         req.time_stats.trace_ctx.abort(abort_info={"reason": error_message})
         if req.kv.holds_kv or req.kv.holds_mamba:
             release_kv_cache(req, self.tree_cache)
@@ -1296,12 +1296,7 @@ class SchedulerDisaggregationPrefillMixin:
                 end_idx = base + ((end_idx - base) // grid_tokens) * grid_tokens
 
         if end_idx < start_idx:
-            logger.debug(
-                "send_kv_chunk skip: rid=%s start_send_idx=%s end_idx=%s",
-                req.rid,
-                start_idx,
-                end_idx,
-            )
+            logger.debug('send_kv_chunk skip: rid=<redacted> start_send_idx=<redacted> end_idx=<redacted>')
             return
 
         state_indices: Optional[List] = None
@@ -1487,19 +1482,13 @@ class SchedulerDisaggregationPrefillMixin:
         req.time_stats.reset_prefill_retry_time()
         req.advance_cache_request_handle()
         if req.prefill_attempt_count >= max_attempts:
-            logger.info(
-                f"Req {req.rid} exhausted optimistic prefill attempts "
-                "falling back to bootstrap queue"
-            )
+            logger.info('Req <redacted> exhausted optimistic prefill attempts falling back to bootstrap queue')
             # Reset it so the next real bootstrap done can be recorded.
             req.time_stats.bootstrap_done_time = 0.0
             self.disagg_prefill_bootstrap_queue.queue.append(req)
         else:
             req.prefill_attempt_count += 1
-            logger.info(
-                f"Req {req.rid} optimistic prefill yielded "
-                f"({req.prefill_attempt_count}/{max_attempts} attempts used)"
-            )
+            logger.info('Req <redacted> optimistic prefill yielded (<redacted>/<redacted> attempts used)')
             if self.metrics_reporter.enable_metrics:
                 self.metrics_collector.increment_prefill_retries(1)
             req.time_stats.set_wait_queue_entry_time()

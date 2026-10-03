@@ -262,10 +262,7 @@ def init_mori_op(
         torch._C._distributed_c10d._register_process_group(group_name, cpu_group)
     except Exception as e:
         if "already registered" in str(e):
-            logger.info(
-                f"[MORI init] The same process group is already "
-                f"registered. Ignoring [{str(e)}]"
-            )
+            logger.info('[MORI init] The same process group is already registered. Ignoring [<redacted>]')
         else:
             raise
     else:
@@ -330,12 +327,7 @@ def init_mori_op(
     elif combine_dtype == CombineDtype.fp4:
         combine_quant_type = "fp4_blockwise"
 
-    logger.info(
-        f"[MORI init] {world_size=} {rank=} {hidden_size=} {params_dtype=} "
-        f"{num_max_dispatch_tokens_per_rank=} {num_local_experts=} "
-        f"{router_topk=} {mode=} {dispatch_dtype=} {combine_dtype=} "
-        f"{use_external_inp_buf=} "
-    )
+    logger.info('[MORI init] world_size=<redacted> rank=<redacted> hidden_size=<redacted> params_dtype=<redacted> num_max_dispatch_tokens_per_rank=<redacted> num_local_experts=<redacted> router_topk=<redacted> mode=<redacted> dispatch_dtype=<redacted> combine_dtype=<redacted> use_external_inp_buf=<redacted> ')
 
     def check_mori_compatibility(kwargs: dict) -> None:
         """Remove kwargs not accepted by the installed mori's EpDispatchCombineConfig."""

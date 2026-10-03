@@ -211,9 +211,9 @@ class EncoderBootstrapServer:
             self._evicted_urls.pop(url, None)
             if url not in self._urls:
                 self._urls.append(url)
-                logger.info(f"Registered encoder URL: {url}")
+                logger.info('Registered encoder URL: <redacted>')
                 return True
-            logger.debug(f"Encoder URL already registered: {url}")
+            logger.debug('Encoder URL already registered: <redacted>')
             return False
 
     def unregister(self, url: str) -> bool:
@@ -229,7 +229,7 @@ class EncoderBootstrapServer:
             self._evicted_urls.pop(url, None)
             self._health_fail_counts.pop(url, None)
             if removed:
-                logger.info(f"Unregistered encoder URL: {url}")
+                logger.info('Unregistered encoder URL: <redacted>')
             return removed
 
     def list_urls(self) -> List[str]:
@@ -324,13 +324,15 @@ class EncoderBootstrapServer:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.error(f"Health check loop error: {e}", exc_info=True)
+                logger.error('Health check loop error: <redacted>')
 
     # ------------------------------------------------------------------ #
     # Lifecycle                                                          #
     # ------------------------------------------------------------------ #
     def _run_server(self):
 
+        from sglang.srt.utils.framework_log_privacy import configure_framework_log_privacy
+        configure_framework_log_privacy()
         config = uvicorn.Config(
             self.app,
             host=self.host,
@@ -348,7 +350,7 @@ class EncoderBootstrapServer:
         try:
             self._server.run()
         except Exception as e:
-            logger.error(f"EncoderBootstrapServer error: {e}", exc_info=True)
+            logger.error('EncoderBootstrapServer error: <redacted>')
 
     def close(self):
         if self._server is not None:
@@ -431,7 +433,7 @@ async def _gather_blocking_grpc_calls(calls):
         results = await asyncio.shield(future)
         for result in results:
             if isinstance(result, Exception):
-                logger.error("gRPC call failed while draining cancellation: %s", result)
+                logger.error('gRPC call failed while draining cancellation: <redacted>')
         raise
 
     for result in results:
@@ -818,12 +820,7 @@ def _resolve_embedding_part_request_id(
         return None
     original_req_id = extract_original_req_id(embedding_data.req_id)
     if expected_req_id is not None and original_req_id != expected_req_id:
-        logger.warning(
-            "Dropping stale embedding data: expected rid=%s, got rid=%s "
-            "(likely from ZMQ port reuse)",
-            expected_req_id,
-            embedding_data.req_id,
-        )
+        logger.warning('Dropping stale embedding data: expected rid=<redacted>, got rid=<redacted> (likely from ZMQ port reuse)')
         return None
     embedding_data.req_id = original_req_id
     return original_req_id
@@ -983,10 +980,7 @@ class WaitingMMRequestBase(ABC):
             if not self._is_valid_embedding_part(recv_obj):
                 return
             if getattr(recv_obj, "error_msg", None) is not None:
-                logger.warning(
-                    f"Received error signal from encoder for {self.rid}: "
-                    f"{recv_obj.error_msg} {recv_obj.error_code = }"
-                )
+                logger.warning('Received error signal from encoder for <redacted>: <redacted> recv_obj.error_code = <redacted>')
                 self._fail_and_release(recv_obj.error_msg, recv_obj.error_code)
                 return
             # ZMQ materializes frame 1; RDMA already wrote the registered buffer.
@@ -996,7 +990,7 @@ class WaitingMMRequestBase(ABC):
             )
         except Exception as e:
             # A malformed message must fail this request, not the scheduler loop.
-            logger.exception("Failed to decode embedding message for rid=%s", self.rid)
+            logger.error('Failed to decode embedding message for rid=<redacted>')
             self._fail_and_release(f"Failed to decode embedding message: {e}")
             return
 
@@ -1079,7 +1073,7 @@ class WaitingMMRequestBase(ABC):
         self.status = WaitingMMRequestStatus.SUCCESS
 
     def _fail_assemble(self, e: Exception) -> None:
-        logger.exception("Failed to assemble multimodal inputs for rid=%s", self.rid)
+        logger.error('Failed to assemble multimodal inputs for rid=<redacted>')
         self._fail_and_release(f"Failed to assemble multimodal inputs: {e}")
 
     def _bind_pool_slot_to_mm_inputs(self, mm_inputs) -> bool:
@@ -1141,12 +1135,7 @@ class WaitingZmqRequest(WaitingMMRequestBase):
         error = future.exception()
         if error is None:
             return
-        logger.error(
-            "Failed to register encoder receive URL for rid=%s: %s",
-            self.rid,
-            error,
-            exc_info=error,
-        )
+        logger.error('Failed to register encoder receive URL for rid=<redacted>: <redacted>')
         with self.registration_lock:
             self.registration_error = (
                 f"Failed to register receive URL with encoder: {error}",
@@ -1160,7 +1149,7 @@ class WaitingZmqRequest(WaitingMMRequestBase):
                     response.raise_for_status()
                     return await response.text()
             except Exception as e:
-                logger.error(f"Failed to send request to {url}: {e}")
+                logger.error('Failed to send request to <redacted>: <redacted>')
                 raise
 
         async def send_embedding_port(req_id, receive_count, host_name, embedding_port):
@@ -1198,9 +1187,7 @@ class WaitingZmqRequest(WaitingMMRequestBase):
                             ).to_host_port_str(),
                             "modality": modality.name,
                         }
-                        logger.info(
-                            f"Preparing to send to {target_url} with part_req_id={part_req_id}"
-                        )
+                        logger.info('Preparing to send to <redacted> with part_req_id=<redacted>')
                         task = _send_single_request(session, target_url, payload)
                         tasks.append(task)
                         cum_idx += 1
@@ -1215,16 +1202,9 @@ class WaitingZmqRequest(WaitingMMRequestBase):
                 for i, result in enumerate(results):
                     if isinstance(result, asyncio.TimeoutError):
                         timeout_val = envs.SGLANG_ENCODER_HTTP_TIMEOUT.get()
-                        logger.error(
-                            f"Request {i} to encoder /scheduler_receive_url timed out "
-                            f"({timeout_val}s) for req_id={req_id}"
-                        )
+                        logger.error('Request <redacted> to encoder /scheduler_receive_url timed out (<redacted>s) for req_id=<redacted>')
                     elif isinstance(result, Exception):
-                        logger.error(
-                            f"Request {i} to encoder /scheduler_receive_url failed for "
-                            f"req_id={req_id}: {result}",
-                            exc_info=result,
-                        )
+                        logger.error('Request <redacted> to encoder /scheduler_receive_url failed for req_id=<redacted>: <redacted>')
                     else:
                         logger.debug(f"Request {i} succeeded.")
                 failed = [r for r in results if isinstance(r, BaseException)]
@@ -1276,17 +1256,13 @@ class WaitingZmqRequest(WaitingMMRequestBase):
                 f"(pool is {self.embedding_pool.size_bytes // (1024 * 1024)}MB). "
                 f"Raise SGLANG_EMBEDDING_POOL_SIZE_MB."
             )
-            logger.error(f"{error_msg} rid={self.rid}")
+            logger.error('<redacted> rid=<redacted>')
             self._fail_and_release(error_msg)
             return False
         staged = self.embedding_pool.try_stage([p for p in parts if p is not None])
         if staged is None:
             if not self._pool_full_warned:
-                logger.warning(
-                    f"EmbeddingPool full; rid={self.rid} pending for "
-                    f"{total_bytes // (1024 * 1024)}MB. Raise "
-                    f"SGLANG_EMBEDDING_POOL_SIZE_MB if this is frequent."
-                )
+                logger.warning('EmbeddingPool full; rid=<redacted> pending for <redacted>MB. Raise SGLANG_EMBEDDING_POOL_SIZE_MB if this is frequent.')
                 self._pool_full_warned = True
             return False
         self.embeddings_buffer, self._pool_slot_id = staged
@@ -1310,7 +1286,7 @@ class WaitingZmqRequestGrpc(WaitingZmqRequest):
                 encoder_url = self.encoder_urls[idx]
                 receive_url = f"{host_name}:{embedding_port}"
                 target_url = f"{encoder_url}/SchedulerReceiveUrl"
-                logger.info(f"Preparing to send to {target_url}")
+                logger.info('Preparing to send to <redacted>')
                 tasks.append(
                     _grpc_scheduler_receive_url(
                         _grpc_target(encoder_url),
@@ -1328,7 +1304,7 @@ class WaitingZmqRequestGrpc(WaitingZmqRequest):
 
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
-                    logger.error(f"Request {i} failed: {result}")
+                    logger.error('Request <redacted> failed: <redacted>')
                 else:
                     logger.debug(f"Request {i} succeeded.")
             failed = [r for r in results if isinstance(r, BaseException)]
@@ -1396,7 +1372,7 @@ class WaitingRDMARequest(WaitingMMRequestBase):
         try:
             asyncio.run(self._pull_meta_and_receive_embedding())
         except Exception as e:
-            logger.error(f"RDMA receive failed for rid={self.rid}: {e}")
+            logger.error('RDMA receive failed for rid=<redacted>: <redacted>')
             self._record_receive_error(str(e))
         finally:
             with self._buffer_lock:
@@ -1501,11 +1477,7 @@ class WaitingRDMARequest(WaitingMMRequestBase):
                     with self._buffer_lock:
                         self.embeddings_buffer = pool_view
                         self._pool_slot_id = slot_id
-                    logger.info(
-                        f"Pool-allocated Mooncake GPU landing buffer: "
-                        f"rid={self.rid}, size={total_bytes}, "
-                        f"addr={buffer_address}, slot={slot_id}"
-                    )
+                    logger.info('Pool-allocated Mooncake GPU landing buffer: rid=<redacted>, size=<redacted>, addr=<redacted>, slot=<redacted>')
                 else:
                     gpu_buffer = torch.empty(
                         total_bytes, dtype=torch.uint8, device=f"cuda:{self.gpu_id}"
@@ -1516,11 +1488,7 @@ class WaitingRDMARequest(WaitingMMRequestBase):
                     buffer_address = gpu_buffer.data_ptr()
                     with self._buffer_lock:
                         self.embeddings_buffer = gpu_buffer
-                    logger.info(
-                        f"Per-request registered Mooncake GPU landing buffer "
-                        f"(pool disabled): rid={self.rid}, size={total_bytes}, "
-                        f"addr={buffer_address}"
-                    )
+                    logger.info('Per-request registered Mooncake GPU landing buffer (pool disabled): rid=<redacted>, size=<redacted>, addr=<redacted>')
             else:
                 self.embeddings_buffer = None
                 buffer_address = 0
@@ -1562,7 +1530,7 @@ class WaitingRDMARequest(WaitingMMRequestBase):
             send_responses = await asyncio.gather(*send_tasks, return_exceptions=True)
             if not await self._check_encoder_responses(send_responses, "/send"):
                 return
-            logger.info(f"RDMA transfers completed for rid={self.rid}")
+            logger.info('RDMA transfers completed for rid=<redacted>')
 
     def _extract_embedding_from_buffer(self, recv_obj, parts) -> None:
         # The embedding already landed in the pre-registered GPU buffer via
@@ -1601,7 +1569,7 @@ class WaitingRDMARequest(WaitingMMRequestBase):
             try:
                 self.embeddings_engine.deregister(self.embeddings_buffer.data_ptr())
             except Exception:
-                logger.exception("Failed to deregister GPU buffer for rid=%s", self.rid)
+                logger.error('Failed to deregister GPU buffer for rid=<redacted>')
         self.embeddings_buffer = None
 
 
@@ -1621,18 +1589,13 @@ async def _extract_encoder_error(responses, endpoint, context, encode_requests=N
             ctx = f"{context}, encoder={label}"
         if isinstance(resp, asyncio.TimeoutError):
             timeout_val = envs.SGLANG_ENCODER_HTTP_TIMEOUT.get()
-            logger.error(
-                f"Encoder {endpoint} timeout ({timeout_val}s) for {ctx} (request {i})"
-            )
+            logger.error('Encoder <redacted> timeout (<redacted>s) for <redacted> (request <redacted>)')
             return (
                 f"Encoder {endpoint} timeout ({timeout_val}s)",
                 int(HTTPStatus.GATEWAY_TIMEOUT),
             )
         if isinstance(resp, Exception):
-            logger.error(
-                f"Encoder {endpoint} failed for {ctx} (request {i}): {resp}",
-                exc_info=resp,
-            )
+            logger.error('Encoder <redacted> failed for <redacted> (request <redacted>): <redacted>')
             return str(resp), int(HTTPStatus.BAD_GATEWAY)
         if resp.status != 200:
             try:
@@ -1640,7 +1603,7 @@ async def _extract_encoder_error(responses, endpoint, context, encode_requests=N
                 msg = err.get("message", "Unknown error")
             except Exception:
                 msg = await resp.text()
-            logger.error(f"Encoder {endpoint} returned error {resp.status}: {msg}")
+            logger.error('Encoder <redacted> returned error <redacted>: <redacted>')
             return msg, int(resp.status)
     return None
 
@@ -1742,11 +1705,7 @@ class EmbeddingPool:
         large requests can starve behind small ones, plus thundering-herd.
         """
         if nbytes > self.size_bytes:
-            logger.error(
-                f"EmbeddingPool: requested {nbytes // (1024 * 1024)}MB "
-                f"exceeds pool capacity {self.size_bytes // (1024 * 1024)}MB. "
-                f"Raise SGLANG_EMBEDDING_POOL_SIZE_MB."
-            )
+            logger.error('EmbeddingPool: requested <redacted>MB exceeds pool capacity <redacted>MB. Raise SGLANG_EMBEDDING_POOL_SIZE_MB.')
             return None
         aligned = (nbytes + self._ALIGN - 1) & ~(self._ALIGN - 1)
         deadline = time.monotonic() + timeout
@@ -1769,10 +1728,7 @@ class EmbeddingPool:
                     warned = True
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    logger.error(
-                        f"EmbeddingPool alloc timed out after "
-                        f"{timeout}s waiting for {nbytes // (1024 * 1024)}MB."
-                    )
+                    logger.error('EmbeddingPool alloc timed out after <redacted>s waiting for <redacted>MB.')
                     return None
                 self._cond.wait(timeout=remaining)
 
@@ -1954,10 +1910,7 @@ class MMReceiverBase(ABC):
                         engine=self.embeddings_engine,
                     )
                 except Exception:
-                    logger.exception(
-                        "Failed to allocate EmbeddingPool, "
-                        "falling back to per-request register"
-                    )
+                    logger.error('Failed to allocate EmbeddingPool, falling back to per-request register')
                     self.embedding_pool = None
             if hf_config is not None:
                 self._init_mm_processor(server_args, hf_config)
@@ -1973,10 +1926,7 @@ class MMReceiverBase(ABC):
                             self.gpu_id, pool_mb * 1024 * 1024
                         )
                     except Exception:
-                        logger.exception(
-                            "Failed to allocate EmbeddingPool, "
-                            "falling back to unpooled receive"
-                        )
+                        logger.error('Failed to allocate EmbeddingPool, falling back to unpooled receive')
                         self.embedding_pool = None
             if hf_config is not None:
                 self._init_mm_processor(
@@ -2045,7 +1995,7 @@ class MMReceiverBase(ABC):
             ):
                 waiting_req._fail_and_release("Aborted by user", error_code=400)
                 waiting_req.release_resources()
-                logger.info(f"Abort waiting mm request. rid={waiting_req.rid}")
+                logger.info('Abort waiting mm request. rid=<redacted>')
 
     async def recv_mm_data(
         self, request_obj, mm_processor, prompt, need_wait_for_mm_inputs=True
@@ -2070,10 +2020,7 @@ class MMReceiverBase(ABC):
             )
             mm_data = self._extract_url_data(request_obj)
             modalities = [m.get("modality") for m in mm_data]
-            logger.info(
-                f"[{req_id}] Sending encode request to E, "
-                f"modalities={modalities}, num_items={len(mm_data)}"
-            )
+            logger.info('[<redacted>] Sending encode request to E, modalities=<redacted>, num_items=<redacted>')
             send_time = time.monotonic()
             encode_task = asyncio.create_task(
                 self.encode(
@@ -2103,20 +2050,18 @@ class MMReceiverBase(ABC):
                     or encode_task.result() is not None
                 )
             ):
-                logger.warning(
-                    f"[{req_id}] Encoder dispatch failed; skipping embedding wait"
-                )
+                logger.warning('[<redacted>] Encoder dispatch failed; skipping embedding wait')
                 return None
             result = await asyncio.wait_for(
                 recv_task,
                 timeout=self.recv_timeout - (time.monotonic() - send_time),
             )
             elapsed = time.monotonic() - send_time
-            logger.info(f"[{req_id}] Received embedding from E in {elapsed:.3f}s")
+            logger.info('[<redacted>] Received embedding from E in <redacted>s')
             return result
         except asyncio.TimeoutError:
             elapsed = time.monotonic() - send_time
-            logger.warning(f"[{req_id}] Embedding recv timeout after {elapsed:.3f}s")
+            logger.warning('[<redacted>] Embedding recv timeout after <redacted>s')
             return None
         finally:
             tasks = [task for task in (encode_task, recv_task) if task is not None]
@@ -2146,17 +2091,11 @@ class MMReceiverBase(ABC):
                 if not _embedding_part_matches_request(recv_obj, req_id):
                     continue
                 if getattr(recv_obj, "error_msg", None) is not None:
-                    logger.warning(
-                        f"Encoder error for req_id={req_id}: {recv_obj.error_msg} "
-                        f"error_code={getattr(recv_obj, 'error_code', None)}"
-                    )
+                    logger.warning('Encoder error for req_id=<redacted>: <redacted> error_code=<redacted>')
                     return None
-                logger.debug("recv_obj=%s", recv_obj)
+                logger.debug('recv_obj=<redacted>')
                 if len(parts) < 2:
-                    logger.error(
-                        "zmq_to_tokenizer expected 2-part message, got %d parts",
-                        len(parts),
-                    )
+                    logger.error('zmq_to_tokenizer expected 2-part message, got <redacted> parts')
                     return None
                 buffer = parts[1].buffer if hasattr(parts[1], "buffer") else parts[1]
                 # Clone so we don't depend on ZMQ buffer after next recv.
@@ -2176,9 +2115,7 @@ class MMReceiverBase(ABC):
                 **recv_embedding_data.get_mm_extra_meta(),
             )
         except Exception:
-            logger.exception(
-                "Failed to receive encoder embeddings for req_id=%s", req_id
-            )
+            logger.error('Failed to receive encoder embeddings for req_id=<redacted>')
             return None
         finally:
             recv_socket.close()
@@ -2205,10 +2142,7 @@ class MMReceiverBase(ABC):
         encode_urls = list(self.encode_urls)
 
         if mm_data and encode_urls:
-            logger.info(
-                f"Dispatching {len(mm_data)} mm items to {len(encode_urls)} "
-                f"encoder(s) {encode_urls} for request {obj.rid}"
-            )
+            logger.info('Dispatching <redacted> mm items to <redacted> encoder(s) <redacted> for request <redacted>')
             obj.need_wait_for_mm_inputs = True
 
             num_items_assigned = self._assign_items_by_modality(
@@ -2242,10 +2176,7 @@ class MMReceiverBase(ABC):
             # never arrive.  A warning is emitted so the user can diagnose why
             # disaggregation is not happening for this request.
             if mm_data:
-                logger.warning(
-                    f"No encoder URLs available for request {obj.rid}; "
-                    "processing without encoder disaggregation."
-                )
+                logger.warning('No encoder URLs available for request <redacted>; processing without encoder disaggregation.')
             obj.need_wait_for_mm_inputs = False
             return None
 
@@ -2290,20 +2221,14 @@ class MMReceiverBase(ABC):
             try:
                 recv_obj: EmbeddingData = safe_pickle_loads(parts[0])
             except Exception as error:
-                logger.warning(
-                    "Dropping malformed embedding data from the shared "
-                    "scheduler socket: %s",
-                    error,
-                )
+                logger.warning('Dropping malformed embedding data from the shared scheduler socket: <redacted>')
                 continue
             rid = _resolve_embedding_part_request_id(recv_obj)
             if rid is None:
                 continue
             waiting_req = self.waiting_by_rid.get(rid)
             if waiting_req is None:
-                logger.warning(
-                    "Dropping embedding data for inactive request %s", recv_obj.req_id
-                )
+                logger.warning('Dropping embedding data for inactive request <redacted>')
                 continue
             waiting_req.consume_parts(parts)
 
@@ -2314,10 +2239,7 @@ class MMReceiverBase(ABC):
             if isinstance(recv_req, EncoderDispatchErrorReq):
                 waiting_req = self.waiting_by_rid.get(recv_req.rid)
                 if waiting_req is None:
-                    logger.debug(
-                        "Ignoring encoder dispatch error for inactive request %s",
-                        recv_req.rid,
-                    )
+                    logger.debug('Ignoring encoder dispatch error for inactive request <redacted>')
                 else:
                     waiting_req._fail_and_release(
                         recv_req.error_msg, recv_req.error_code
@@ -2358,9 +2280,7 @@ class MMReceiverBase(ABC):
                     waiting_req.send_encode_request()
                 except Exception as error:
                     local_error = f"{type(error).__name__}: {error}"
-                    logger.exception(
-                        "Failed to start multimodal receive for rid=%s", recv_req.rid
-                    )
+                    logger.error('Failed to start multimodal receive for rid=<redacted>')
 
                 # The status all-reduce below requires every TP rank to append
                 # exactly the same requests. Agree on startup before appending.
@@ -2377,23 +2297,16 @@ class MMReceiverBase(ABC):
                         f"rank {rank}: {rank_errors[rank]}" for rank in failed_ranks
                     )
                     error_msg = f"Failed to start multimodal receive ({details})"
-                    logger.error(error_msg)
+                    logger.error('Request-path diagnostic redacted')
                     if waiting_req is not None:
                         try:
                             waiting_req.release_resources()
                         except Exception:
-                            logger.exception(
-                                "Failed to release multimodal receive resources "
-                                "for rid=%s",
-                                waiting_req.rid,
-                            )
+                            logger.error('Failed to release multimodal receive resources for rid=<redacted>')
                         try:
                             waiting_req.close_recv_socket()
                         except Exception:
-                            logger.exception(
-                                "Failed to close multimodal receive socket for rid=%s",
-                                waiting_req.rid,
-                            )
+                            logger.error('Failed to close multimodal receive socket for rid=<redacted>')
                         self.waiting_by_rid.pop(waiting_req.rid, None)
                     abort_reqs.append(
                         (
@@ -2439,9 +2352,7 @@ class MMReceiverBase(ABC):
                 new_recv_reqs.append(waiting_req.recv_req)
             elif status_value == WaitingMMRequestStatus.FAIL:
                 self._sync_fail_info_across_tp(waiting_req)
-                logger.error(
-                    f"Waiting request {waiting_req.rid} failed: {waiting_req.error_msg} {waiting_req.error_code = }"
-                )
+                logger.error('Waiting request <redacted> failed: <redacted> waiting_req.error_code = <redacted>')
                 # A peer's FAIL can force-abort this locally PENDING/SUCCESS
                 # rank, so release any buffer/slot it still holds.
                 waiting_req.release_resources()
@@ -2453,9 +2364,7 @@ class MMReceiverBase(ABC):
                     )
                 )
             elif status_value == WaitingMMRequestStatus.TIMEOUT:
-                logger.error(
-                    f"Timed out waiting for image embeddings for request {waiting_req.rid}"
-                )
+                logger.error('Timed out waiting for image embeddings for request <redacted>')
                 waiting_req.release_resources()
                 abort_reqs.append(
                     (
@@ -2500,7 +2409,7 @@ class MMReceiverBase(ABC):
                 )
             )
         except Exception as e:
-            logger.error(f"Encode failed for request {req_id}: {e}", exc_info=True)
+            logger.error('Encode failed for request <redacted>: <redacted>')
             dispatch_error = EncoderDispatchErrorReq(
                 rid=req_id,
                 error_msg=str(e),

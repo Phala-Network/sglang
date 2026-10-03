@@ -87,19 +87,7 @@ def install_canary(
 
     # Single-line summary of every knob that controls canary behavior at boot time.
     # Disaggregation mode is included so PD logs are unambiguous about which side this is.
-    logger.info(
-        "install_canary: disaggregation_mode=%s config=%s perturb_config=%s "
-        "launch_capacities=%s n_buffer_groups=%d buffer_group_kinds=%s "
-        "swa_window_size=%d speculative_num_steps=%d",
-        get_disagg().disaggregation_mode,
-        config,
-        perturb_config,
-        launch_capacities,
-        len(buffer_groups),
-        [g.kind.name for g in buffer_groups],
-        swa_window_size,
-        speculative_num_steps,
-    )
+    logger.info('install_canary: disaggregation_mode=<redacted> config=<redacted> perturb_config=<redacted> launch_capacities=<redacted> n_buffer_groups=<redacted> buffer_group_kinds=<redacted> swa_window_size=<redacted> speculative_num_steps=<redacted>')
     return manager
 
 

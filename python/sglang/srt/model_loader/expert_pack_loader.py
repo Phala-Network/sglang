@@ -276,11 +276,7 @@ class ExpertPackModelLoader(BaseModelLoader):
                         "Kimi-K3 GGUF did not initialize all model parameters: "
                         f"missing={len(missing_params)} [{preview}]"
                     )
-                logger.info(
-                    "Kimi-K3 parameter coverage complete: loaded=%d expected=%d",
-                    len(set(loaded_params) & expected_params),
-                    len(expected_params),
-                )
+                logger.info('Kimi-K3 parameter coverage complete: loaded=<redacted> expected=<redacted>')
             for _, module in model.named_modules():
                 quant_method = getattr(module, "quant_method", None)
                 if quant_method is not None:
@@ -310,11 +306,5 @@ class ExpertPackModelLoader(BaseModelLoader):
         )
         store.stats["dense_bytes"] = dense_bytes
         model.expert_pack_store = store
-        logger.info(
-            "Loaded verified DeepSeek expert-pack model: source_sha256=%s "
-            "pack_sha256=%s dense_bytes=%d resident_experts=0",
-            store.header.source_blob_sha256,
-            store.pack_sha256,
-            dense_bytes,
-        )
+        logger.info('Loaded verified DeepSeek expert-pack model: source_sha256=<redacted> pack_sha256=<redacted> dense_bytes=<redacted> resident_experts=0')
         return model.eval()

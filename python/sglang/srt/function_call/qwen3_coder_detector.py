@@ -88,7 +88,7 @@ class Qwen3CoderDetector(BaseFormatDetector):
                     return params
                 else:
                     return {}
-        logger.warning(f"Tool '{func_name}' is not defined in the tools list.")
+        logger.warning("Tool '<redacted>' is not defined in the tools list.")
         return {}
 
     def _get_param_type(self, param_schema: Any) -> str:
@@ -108,10 +108,7 @@ class Qwen3CoderDetector(BaseFormatDetector):
 
         if param_name not in param_config:
             if param_config != {}:
-                logger.warning(
-                    f"Parsed parameter '{param_name}' is not defined in the tool "
-                    f"parameters for tool '{func_name}', directly returning the string value."
-                )
+                logger.warning("Parsed parameter '<redacted>' is not defined in the tool parameters for tool '<redacted>', directly returning the string value.")
             return param_value
 
         param_type = self._get_param_type(param_config[param_name])
@@ -127,10 +124,7 @@ class Qwen3CoderDetector(BaseFormatDetector):
             try:
                 param_value = int(param_value)
             except Exception:
-                logger.warning(
-                    f"Parsed value '{param_value}' of parameter '{param_name}' is not an integer in tool "
-                    f"'{func_name}', degenerating to string."
-                )
+                logger.warning("Parsed value '<redacted>' of parameter '<redacted>' is not an integer in tool '<redacted>', degenerating to string.")
             return param_value
         elif param_type.startswith("num") or param_type.startswith("float"):
             try:
@@ -141,17 +135,12 @@ class Qwen3CoderDetector(BaseFormatDetector):
                 if maybe_convert and param_value.is_integer():
                     param_value = int(param_value)
             except Exception:
-                logger.warning(
-                    f"Parsed value '{param_value}' of parameter '{param_name}' is not a float in tool "
-                    f"'{func_name}', degenerating to string."
-                )
+                logger.warning("Parsed value '<redacted>' of parameter '<redacted>' is not a float in tool '<redacted>', degenerating to string.")
             return param_value
         elif param_type in ["boolean", "bool", "binary"]:
             param_value = param_value.lower()
             if param_value not in ["true", "false"]:
-                logger.warning(
-                    f"Parsed value '{param_value}' of parameter '{param_name}' is not a boolean (`true` of `false`) in tool '{func_name}', degenerating to false."
-                )
+                logger.warning("Parsed value '<redacted>' of parameter '<redacted>' is not a boolean (`true` of `false`) in tool '<redacted>', degenerating to false.")
             return param_value == "true"
         else:
             if (
@@ -163,16 +152,11 @@ class Qwen3CoderDetector(BaseFormatDetector):
                     param_value = json.loads(param_value)
                     return param_value
                 except Exception:
-                    logger.warning(
-                        f"Parsed value '{param_value}' of parameter '{param_name}' cannot be parsed with json.loads in tool "
-                        f"'{func_name}', will try other methods to parse it."
-                    )
+                    logger.warning("Parsed value '<redacted>' of parameter '<redacted>' cannot be parsed with json.loads in tool '<redacted>', will try other methods to parse it.")
             try:
                 param_value = safe_literal_eval(param_value)
             except Exception:
-                logger.warning(
-                    f"Parsed value '{param_value}' of parameter '{param_name}' cannot be converted via Python `ast.literal_eval()` in tool '{func_name}', degenerating to string."
-                )
+                logger.warning("Parsed value '<redacted>' of parameter '<redacted>' cannot be converted via Python `ast.literal_eval()` in tool '<redacted>', degenerating to string.")
             return param_value
 
     def detect_and_parse(self, text: str, tools: List[Tool]) -> StreamingParseResult:
@@ -240,7 +224,7 @@ class Qwen3CoderDetector(BaseFormatDetector):
             return StreamingParseResult(normal_text=normal_text, calls=calls)
 
         except Exception as e:
-            logger.error(f"Error in detect_and_parse: {e}")
+            logger.error('Error in detect_and_parse: <redacted>')
             return StreamingParseResult(normal_text=text)
 
     def parse_streaming_increment(

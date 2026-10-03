@@ -45,19 +45,12 @@ class SSLCertRefresher:
         """Watch cert and key files and reload on change."""
         try:
             async for _changes in awatch(self._cert_path, self._key_path):
-                logger.info(
-                    "SSL cert/key file change detected, reloading: cert=%s key=%s",
-                    self._cert_path,
-                    self._key_path,
-                )
+                logger.info('SSL cert/key file change detected, reloading: cert=<redacted> key=<redacted>')
                 try:
                     self._ssl_context.load_cert_chain(self._cert_path, self._key_path)
                     logger.info("SSL cert/key reloaded successfully.")
                 except Exception:
-                    logger.exception(
-                        "Failed to reload SSL cert/key — continuing with "
-                        "previous certificates."
-                    )
+                    logger.error('Failed to reload SSL cert/key — continuing with previous certificates.')
         except asyncio.CancelledError:
             return
 
@@ -66,18 +59,12 @@ class SSLCertRefresher:
         assert self._ca_path is not None
         try:
             async for _changes in awatch(self._ca_path):
-                logger.info(
-                    "SSL CA file change detected, reloading: ca=%s",
-                    self._ca_path,
-                )
+                logger.info('SSL CA file change detected, reloading: ca=<redacted>')
                 try:
                     self._ssl_context.load_verify_locations(self._ca_path)
                     logger.info("SSL CA certificates reloaded successfully.")
                 except Exception:
-                    logger.exception(
-                        "Failed to reload SSL CA certificates — continuing "
-                        "with previous CA bundle."
-                    )
+                    logger.error('Failed to reload SSL CA certificates — continuing with previous CA bundle.')
         except asyncio.CancelledError:
             return
 

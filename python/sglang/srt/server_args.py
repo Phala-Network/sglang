@@ -898,9 +898,7 @@ class PortArgs:
                 if dp_rank is None or worker_ports is None:
                     wait_port_available(scheduler_input_port, "scheduler_input_port")
             except ValueError:
-                logger.exception(
-                    f"Port is already in use. {dist_init_port=} {port_base=} {detokenizer_port=} {nccl_port=} {scheduler_input_port=}"
-                )
+                logger.error('Port is already in use. dist_init_port=<redacted> port_base=<redacted> detokenizer_port=<redacted> nccl_port=<redacted> scheduler_input_port=<redacted>')
                 raise
 
             return PortArgs(

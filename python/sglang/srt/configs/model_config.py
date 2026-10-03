@@ -1513,21 +1513,14 @@ class ModelConfig:
                     quant_cfg = self._parse_modelopt_quant_config(quant_config_dict)
                 except huggingface_hub.errors.LocalEntryNotFoundError:
                     # Offline mode and file not in cache - this is normal for non-quantized models
-                    logger.debug(
-                        f"hf_quant_config.json not found in cache for {self.model_path} "
-                        "(offline mode, normal for non-quantized models)"
-                    )
+                    logger.debug('hf_quant_config.json not found in cache for <redacted> (offline mode, normal for non-quantized models)')
                 except huggingface_hub.errors.OfflineModeIsEnabled:
                     # Should not reach here after our changes, but keep for safety
                     logger.warning(
                         "Offline mode is enabled, skipping hf_quant_config.json check"
                     )
                 except Exception as e:
-                    logger.warning(
-                        "Failed to load hf_quant_config.json for model %s: %s",
-                        self.model_path,
-                        e,
-                    )
+                    logger.warning('Failed to load hf_quant_config.json for model <redacted>: <redacted>')
             elif os.path.exists(os.path.join(self.model_path, "hf_quant_config.json")):
                 quant_config_file = os.path.join(
                     self.model_path, "hf_quant_config.json"

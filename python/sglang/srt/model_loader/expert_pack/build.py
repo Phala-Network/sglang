@@ -452,11 +452,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
             checkpoint["pack_end"] = stream.tell()
             checkpoint["entries"] = [entry.to_dict() for entry in entries]
             write_json_atomic(checkpoint_path, checkpoint)
-            print(
-                f"completed layer {layer}/{args.num_layers - 1}: pack_end={stream.tell()}",
-                file=sys.stderr,
-                flush=True,
-            )
+            print('completed layer <redacted>/<redacted>: pack_end=<redacted>')
 
         if stream.tell() != expected_pack_bytes:
             raise ValueError(
@@ -617,19 +613,7 @@ def main() -> int:
         inspect_pack(args.output, args.limit)
         return 0
     manifest = build(args)
-    print(
-        json.dumps(
-            {
-                "pack": manifest["pack_path"],
-                "pack_sha256": manifest["pack_sha256"],
-                "manifest": str(args.manifest.resolve()),
-                "objects": manifest["object_count"],
-                "entries": manifest["index_count"],
-                "pack_size": manifest["pack_size"],
-            },
-            sort_keys=True,
-        )
-    )
+    print('Request-path diagnostic redacted')
     return 0
 
 

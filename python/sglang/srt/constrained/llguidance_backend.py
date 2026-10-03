@@ -266,7 +266,7 @@ class GuidanceBackend(BaseGrammarBackend):
                 serialized_grammar=serialized_grammar,
             )
         except Exception as e:
-            logger.error(f"Hit invalid grammar: {serialized_grammar=}, {e=}")
+            logger.error('Hit invalid grammar: serialized_grammar=<redacted>, e=<redacted>')
             return InvalidGrammarObject(str(e))
 
     def dispatch_json(self, key_string: str) -> BaseGrammarObject:
@@ -279,7 +279,7 @@ class GuidanceBackend(BaseGrammarBackend):
                 },
             )
         except Exception as e:
-            logger.error(f"Hit invalid json_schema: {key_string=}, {e=}")
+            logger.error('Hit invalid json_schema: key_string=<redacted>, e=<redacted>')
             return InvalidGrammarObject(str(e))
         return self._from_serialized(serialized_grammar)
 
@@ -292,7 +292,7 @@ class GuidanceBackend(BaseGrammarBackend):
             serialized_grammar = grammar_from("ebnf", key_string)
             return self._from_serialized(serialized_grammar)
         except ValueError as e:
-            logger.error(f"Hit invalid ebnf: {key_string=}, {e=}")
+            logger.error('Hit invalid ebnf: key_string=<redacted>, e=<redacted>')
             return InvalidGrammarObject(str(e))
 
     def dispatch_structural_tag(self, key_string: str) -> BaseGrammarObject:
@@ -321,5 +321,5 @@ class GuidanceBackend(BaseGrammarBackend):
             g = StructTag.to_grammar(tags)
             return self._from_serialized(g)
         except Exception as e:
-            logger.error(f"Hit invalid structural_tag: {key_string=}, {e=}")
+            logger.error('Hit invalid structural_tag: key_string=<redacted>, e=<redacted>')
             return InvalidGrammarObject(str(e))

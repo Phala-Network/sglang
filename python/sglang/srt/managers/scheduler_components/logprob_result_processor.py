@@ -104,11 +104,7 @@ class SchedulerLogprobResultProcessor:
         except ValueError as e:
             # Unrepresentable rows (e.g. multi-item scoring): keep the nested
             # format, mirroring the tokenizer manager fallback.
-            logger.warning(
-                "Falling back to nested input top logprobs for rid=%s: %s",
-                req.rid,
-                e,
-            )
+            logger.warning('Falling back to nested input top logprobs for rid=<redacted>: <redacted>')
             return
         req.logprob.input_top_logprobs_val = []
         req.logprob.input_top_logprobs_idx = []

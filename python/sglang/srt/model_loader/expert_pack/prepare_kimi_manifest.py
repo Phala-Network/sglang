@@ -67,5 +67,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print('error: <redacted>')
         raise SystemExit(1)

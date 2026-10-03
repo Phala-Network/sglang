@@ -320,11 +320,7 @@ def _migrate_deprecated_dp_rank(values: dict) -> dict:
     if isinstance(values, dict) and values.get("data_parallel_rank") is not None:
         import warnings
 
-        warnings.warn(
-            "'data_parallel_rank' is deprecated, use 'routed_dp_rank' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        warnings.warn("'data_parallel_rank' is deprecated, use 'routed_dp_rank' instead.")
         if values.get("routed_dp_rank") is None:
             values["routed_dp_rank"] = values["data_parallel_rank"]
     return values

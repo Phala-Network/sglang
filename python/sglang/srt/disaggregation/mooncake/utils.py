@@ -68,18 +68,12 @@ def init_mooncake_custom_mem_pool(
                 f"Initialized custom memory pool: {custom_mem_pool_type} on device {device}"
             )
         except ImportError as e:
-            logger.warning(
-                f"Failed to import mooncake allocator for {custom_mem_pool_type}: {e}. "
-                f"Falling back to default memory pool."
-            )
+            logger.warning('Failed to import mooncake allocator for <redacted>: <redacted>. Falling back to default memory pool.')
             enable_custom_mem_pool = False
             custom_mem_pool = None
             custom_mem_pool_type = None
         except Exception as e:
-            logger.error(
-                f"Failed to initialize custom memory pool {custom_mem_pool_type}: {e}. "
-                f"Falling back to default memory pool."
-            )
+            logger.error('Failed to initialize custom memory pool <redacted>: <redacted>. Falling back to default memory pool.')
             enable_custom_mem_pool = False
             custom_mem_pool = None
             custom_mem_pool_type = None

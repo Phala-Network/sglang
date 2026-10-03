@@ -235,7 +235,7 @@ class Glm4MoeDetector(BaseFormatDetector):
                 calls.extend(self.parse_base_json(match_result, tools))
             return StreamingParseResult(normal_text=normal_text, calls=calls)
         except Exception as e:
-            logger.error(f"Error in detect_and_parse: {e}", exc_info=True)
+            logger.error('Error in detect_and_parse: <redacted>')
             # return the normal text if parsing fails
             return StreamingParseResult(normal_text=text)
 
@@ -311,9 +311,7 @@ class Glm4MoeDetector(BaseFormatDetector):
                 return str(num)
             except (ValueError, AttributeError):
                 # Fallback to string if not a valid number
-                logger.warning(
-                    f"Failed to parse '{value}' as number, treating as string"
-                )
+                logger.warning("Failed to parse '<redacted>' as number, treating as string")
                 return json.dumps(str(value), ensure_ascii=False)
         else:
             # For object/array types, return as-is (should already be valid JSON)
@@ -601,9 +599,7 @@ class Glm4MoeDetector(BaseFormatDetector):
                                     "arguments"
                                 ] = arguments
                         except Exception as e:
-                            logger.debug(
-                                f"Failed to parse arguments: {e}", exc_info=True
-                            )
+                            logger.debug('Failed to parse arguments: <redacted>')
 
                         # Remove the completed tool call from buffer
                         self._buffer = current_text[partial_match.end(3) :]
@@ -619,7 +615,7 @@ class Glm4MoeDetector(BaseFormatDetector):
             return StreamingParseResult(normal_text="", calls=calls)
 
         except Exception as e:
-            logger.error(f"Error in parse_streaming_increment: {e}", exc_info=True)
+            logger.error('Error in parse_streaming_increment: <redacted>')
             return StreamingParseResult(normal_text=current_text)
 
     def _parse_argument_pairs(

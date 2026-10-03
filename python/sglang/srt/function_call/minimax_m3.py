@@ -77,11 +77,7 @@ class MinimaxM3Detector(BaseFormatDetector):
             normal_text, calls = self._extract(text, tools)
             return StreamingParseResult(normal_text=normal_text, calls=calls)
         except Exception as exc:
-            logger.warning(
-                "invalid MiniMax M3 tool call returned as content: %s",
-                exc,
-                exc_info=True,
-            )
+            logger.warning('invalid MiniMax M3 tool call returned as content: <redacted>')
             return StreamingParseResult(normal_text=original_text, calls=[])
 
     def supports_structural_tag(self) -> bool:
@@ -141,7 +137,7 @@ class MinimaxM3Detector(BaseFormatDetector):
                     call.tool_index = len(results)
                     results.append(call)
             except Exception:
-                logger.warning("invalid tool call for %s dropped", func_name)
+                logger.warning('invalid tool call for <redacted> dropped')
         return results
 
     def parse_streaming_increment(

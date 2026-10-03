@@ -99,7 +99,7 @@ def _resolve_platform() -> SRTPlatform:
             plugin_fn = ep_map[selected].load()
             result = plugin_fn()
         except Exception:
-            logger.exception("Failed to activate platform plugin: %s", selected)
+            logger.error('Failed to activate platform plugin: <redacted>')
             raise
 
         if result is None:
@@ -121,7 +121,7 @@ def _resolve_platform() -> SRTPlatform:
                 activated[name] = result
                 logger.info("OOT platform plugin activated: %s -> %s", name, result)
         except Exception:
-            logger.exception("Failed to activate platform plugin: %s", name)
+            logger.error('Failed to activate platform plugin: <redacted>')
 
     if len(activated) == 0:
         if _is_cpu_available():

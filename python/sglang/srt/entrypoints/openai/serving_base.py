@@ -117,14 +117,14 @@ class OpenAIServingBase(ABC):
                 status_code=400,
             )
         except DS32EncodingError as e:
-            logger.info(f"DS32EncodingError: {e}")
+            logger.info('DS32EncodingError: <redacted>')
             return self.create_error_response(
                 message=str(e),
                 err_type="BadRequest",
                 status_code=400,
             )
         except Exception as e:
-            logger.exception(f"Error in request: {e}")
+            logger.error('Error in request: <redacted>')
             return self.create_error_response(
                 message=f"Internal server error: {str(e)}",
                 err_type="InternalServerError",
@@ -242,7 +242,7 @@ class OpenAIServingBase(ABC):
                 else None
             )
         except json.JSONDecodeError as e:
-            logger.exception(f"Error in request: {e}")
+            logger.error('Error in request: <redacted>')
             raw_labels = None
 
         if isinstance(raw_labels, dict):
@@ -276,10 +276,7 @@ class OpenAIServingBase(ABC):
                     body_routed_dp_rank is not None
                     and header_dp_rank != body_routed_dp_rank
                 ):
-                    logger.debug(
-                        f"X-Data-Parallel-Rank header ({header_dp_rank}) overrides "
-                        f"body routed_dp_rank ({body_routed_dp_rank})"
-                    )
+                    logger.debug('X-Data-Parallel-Rank header (<redacted>) overrides body routed_dp_rank (<redacted>)')
                 return header_dp_rank
             except ValueError:
                 raise HTTPException(

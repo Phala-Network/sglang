@@ -674,9 +674,7 @@ class Exaone4ForCausalLM(nn.Module):
             return weight.cpu().to(torch.float32).numpy().tolist()[:truncate_size]
 
         except Exception:
-            logger.error(
-                f"Error getting weights by name {name} in Exaone4ForCausalLM: {get_exception_traceback()}"
-            )
+            logger.error('Error getting weights by name <redacted> in Exaone4ForCausalLM: <redacted>')
             return None
 
     def get_embed_and_head(self):

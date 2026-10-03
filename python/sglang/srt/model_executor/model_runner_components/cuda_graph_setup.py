@@ -423,16 +423,7 @@ def capture_prefill_graph(
     # constructing the runner so every backend consumes the same config.
     prefill_config.bs = capture_num_tokens
     if not capture_num_tokens:
-        logger.warning(
-            "Disable prefill CUDA graph capture because no configured "
-            "capture size fits backend=%s with max_capture_tokens=%s "
-            "(max_capture_requests=%s, context_length=%s, request-pool size=%s).",
-            prefill_backend,
-            max_capture_tokens,
-            max_capture_requests,
-            context_length,
-            model_runner.req_to_token_pool.size,
-        )
+        logger.warning('Disable prefill CUDA graph capture because no configured capture size fits backend=<redacted> with max_capture_tokens=<redacted> (max_capture_requests=<redacted>, context_length=<redacted>, request-pool size=<redacted>).')
         return eager_runner
 
     # Collect attention layers and moe layers from the model. Keep a VLM
@@ -567,11 +558,7 @@ def capture_decode_graph(*, model_runner: ModelRunner) -> GraphCapture:
         num_tokens_per_req = 1
     capture_bs, _ = get_batch_sizes_to_capture(model_runner, num_tokens_per_req)
     decode_backend = get_exec().graph.cuda_graph_config.decode.backend
-    logger.info(
-        f"Capture {capture_name} {graph_backend[model_runner.device]} begin. "
-        f"backend={decode_backend}, num_tokens_per_req={num_tokens_per_req}, "
-        f"bs={capture_bs}, avail mem={before_mem:.2f} GB"
-    )
+    logger.info('Capture <redacted> <redacted> begin. backend=<redacted>, num_tokens_per_req=<redacted>, bs=<redacted>, avail mem=<redacted> GB')
 
     if current_platform.is_out_of_tree():
         GraphRunnerCls = current_platform.get_graph_runner_cls()

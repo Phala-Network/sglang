@@ -85,9 +85,7 @@ def wait_port_available(
             else:
                 pid = process.pid
                 error_message = f"{port_name} is used by a process already. {process.name()=}' {process.cmdline()=} {process.status()=} {pid=}"
-                logger.info(
-                    f"port {port} is in use. Waiting for {i} seconds for {port_name} to be available. {error_message}"
-                )
+                logger.info('port <redacted> is in use. Waiting for <redacted> seconds for <redacted> to be available. <redacted>')
         time.sleep(1)
 
     if raise_exception:
@@ -236,9 +234,7 @@ def config_socket(socket, socket_type: zmq.SocketType):
         total_mem = mem.total / 1024**3
         available_mem = mem.available / 1024**3
     except Exception as e:
-        logger.warning(
-            "psutil.virtual_memory() failed (%s); using default ZMQ buffer size", e
-        )
+        logger.warning('psutil.virtual_memory() failed (<redacted>); using default ZMQ buffer size')
         total_mem = available_mem = 0
     if total_mem > 32 and available_mem > 16:
         buf_size = int(0.5 * 1024**3)
@@ -287,9 +283,7 @@ def get_local_ip_by_nic(interface: str = None) -> Optional[str]:
                 if ip and not ip.startswith("fe80::") and ip != "::1":
                     return ip.split("%")[0]
     except (ValueError, OSError) as e:
-        logger.warning(
-            f"{e} Can not get local ip from NIC. Please verify whether SGLANG_LOCAL_IP_NIC is set correctly."
-        )
+        logger.warning('<redacted> Can not get local ip from NIC. Please verify whether SGLANG_LOCAL_IP_NIC is set correctly.')
     return None
 
 

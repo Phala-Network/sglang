@@ -111,7 +111,7 @@ class KimiK2Detector(BaseFormatDetector):
                 return name, call_index
             return None, call_index
 
-        logger.warning("Unexpected tool_call_id format: %s", function_id)
+        logger.warning('Unexpected tool_call_id format: <redacted>')
         return None, 0
 
     def _infer_tool_name(self, tools: List[Tool], function_args: str = None):
@@ -126,9 +126,7 @@ class KimiK2Detector(BaseFormatDetector):
             return tools[0].function.name
 
         if not function_args:
-            logger.debug(
-                "No function_args for tool name inference with %d tools", len(tools)
-            )
+            logger.debug('No function_args for tool name inference with <redacted> tools')
             return None
 
         try:
@@ -174,7 +172,7 @@ class KimiK2Detector(BaseFormatDetector):
         try:
             function_call_tuples = self.tool_call_regex.findall(text)
 
-            logger.debug("function_call_tuples: %s", function_call_tuples)
+            logger.debug('function_call_tuples: <redacted>')
 
             tool_calls = []
             # ``tool_index`` is the per-response 0-based position of the call
@@ -191,7 +189,7 @@ class KimiK2Detector(BaseFormatDetector):
                 if function_name is None:
                     continue
 
-                logger.debug(f"function_name {function_name}")
+                logger.debug('function_name <redacted>')
 
                 tool_calls.append(
                     ToolCallItem(
@@ -206,7 +204,7 @@ class KimiK2Detector(BaseFormatDetector):
             return StreamingParseResult(normal_text=content, calls=tool_calls)
 
         except Exception as e:
-            logger.error("Error in detect_and_parse: %s", e, exc_info=True)
+            logger.error('Error in detect_and_parse: <redacted>')
             return StreamingParseResult(normal_text=text)
 
     def parse_streaming_increment(
@@ -284,10 +282,7 @@ class KimiK2Detector(BaseFormatDetector):
                         if end_idx == -1:
                             # Wait for the end marker before deciding.
                             break
-                        logger.warning(
-                            "Kimi-K2 unrecognized tool_call_id %r; skipping section.",
-                            function_id,
-                        )
+                        logger.warning('Kimi-K2 unrecognized tool_call_id <redacted>; skipping section.')
                         self._buffer = buffer[end_idx + len(self.tool_call_end_token) :]
                         self._reset_inflight_call_state()
                         continue
@@ -351,7 +346,7 @@ class KimiK2Detector(BaseFormatDetector):
             )
 
         except Exception as e:
-            logger.error("Error in parse_streaming_increment: %s", e, exc_info=True)
+            logger.error('Error in parse_streaming_increment: <redacted>')
             # Drop the buffer to avoid leaking raw special tokens.
             self._buffer = ""
             self._reset_inflight_call_state()

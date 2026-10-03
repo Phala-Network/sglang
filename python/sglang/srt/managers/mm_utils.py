@@ -208,7 +208,7 @@ class TransportProxyTensor(torch.Tensor):
                     ).set_(storage, storage_offset=s_offset, size=shape, stride=stride)
                     self.set_(reconstructed_tensor)
             except Exception as e:
-                print(f"Error: Failed to deserialize from CUDA IPC handle ({e}).")
+                print('Error: Failed to deserialize from CUDA IPC handle (<redacted>).')
                 raise e
 
         elif state["tensor_data"] is not None:
@@ -1347,10 +1347,7 @@ class ShmPointerMMData:
                 try:
                     handle.close()
                 except Exception:
-                    logger.warning(
-                        "Failed to close a malformed multimodal SHM handle",
-                        exc_info=True,
-                    )
+                    logger.warning('Failed to close a malformed multimodal SHM handle')
             self._materialization_error = f"{type(error).__name__}: {error}"
 
     def materialize(self) -> torch.Tensor:
@@ -1373,10 +1370,7 @@ class ShmPointerMMData:
             except FileNotFoundError:
                 return
             except OSError:
-                logger.warning(
-                    "Failed to reopen a multimodal SHM segment for cleanup",
-                    exc_info=True,
-                )
+                logger.warning('Failed to reopen a multimodal SHM segment for cleanup')
                 return
         try:
             try:
@@ -1384,18 +1378,12 @@ class ShmPointerMMData:
             except FileNotFoundError:
                 pass
             except OSError:
-                logger.warning(
-                    "Failed to unlink a multimodal SHM segment",
-                    exc_info=True,
-                )
+                logger.warning('Failed to unlink a multimodal SHM segment')
         finally:
             try:
                 handle.close()
             except Exception:
-                logger.warning(
-                    "Failed to close a multimodal SHM handle",
-                    exc_info=True,
-                )
+                logger.warning('Failed to close a multimodal SHM handle')
 
     def __del__(self):
         # Only close; never unlink. Unlinking is materialize()'s job.

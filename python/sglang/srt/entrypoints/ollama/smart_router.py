@@ -89,7 +89,7 @@ Category:"""
             result = response["message"]["content"].strip().upper()
 
             if verbose:
-                print(f"[Router] LLM Judge: {result}")
+                print('[Router] LLM Judge: <redacted>')
 
             if "COMPLEX" in result:
                 return True, "Complex task"
@@ -98,7 +98,7 @@ Category:"""
 
         except Exception as e:
             if verbose:
-                print(f"[Router] LLM Judge failed: {e}, defaulting to local")
+                print('[Router] LLM Judge failed: <redacted>, defaulting to local')
             return False, "Judge failed, defaulting to local"
 
     def should_use_remote(self, prompt: str, verbose: bool = False) -> tuple[bool, str]:
@@ -165,7 +165,7 @@ Category:"""
             location = "Local Ollama"
 
         if verbose:
-            print(f"[Router] -> {location} | Model: {model}")
+            print('[Router] -> <redacted> | Model: <redacted>')
 
         try:
             response = client.chat(model=model, messages=messages)
@@ -178,7 +178,7 @@ Category:"""
         except Exception as e:
             # Fallback to the other option
             if verbose:
-                print(f"[Router] {location} failed: {e}, falling back...")
+                print('[Router] <redacted> failed: <redacted>, falling back...')
 
             fallback_client = (
                 self.remote_client if not use_remote else self.local_client
@@ -235,7 +235,7 @@ Category:"""
             location = "Local Ollama"
 
         if verbose:
-            print(f"[Router] -> {location} | Model: {model}")
+            print('[Router] -> <redacted> | Model: <redacted>')
 
         for chunk in client.chat(model=model, messages=messages, stream=True):
             yield chunk
@@ -243,13 +243,13 @@ Category:"""
 
 def main():
     """Interactive demo of the smart router."""
-    print("=" * 60)
-    print("Smart Router: Local Ollama <-> Remote SGLang")
-    print("=" * 60)
-    print("\nRouting strategy:")
-    print("  LLM Judge classifies each request as SIMPLE or COMPLEX")
-    print("  - SIMPLE tasks -> Local Ollama (fast)")
-    print("  - COMPLEX tasks -> Remote SGLang (powerful)")
+    print('Request-path diagnostic redacted')
+    print('Smart Router: Local Ollama <-> Remote SGLang')
+    print('Request-path diagnostic redacted')
+    print('\nRouting strategy:')
+    print('  LLM Judge classifies each request as SIMPLE or COMPLEX')
+    print('  - SIMPLE tasks -> Local Ollama (fast)')
+    print('  - COMPLEX tasks -> Remote SGLang (powerful)')
     print("\nType 'quit' to exit\n")
 
     router = SmartRouter(
@@ -264,7 +264,7 @@ def main():
         try:
             user_input = input("You: ").strip()
             if user_input.lower() in ["quit", "exit", "q"]:
-                print("Goodbye!")
+                print('Goodbye!')
                 break
             if not user_input:
                 continue
@@ -272,24 +272,24 @@ def main():
             messages.append({"role": "user", "content": user_input})
 
             # Use streaming for real-time output
-            print("\nAssistant: ", end="", flush=True)
+            print('\nAssistant: ')
             full_response = ""
             for chunk in router.chat_stream(
                 prompt=user_input, messages=messages, verbose=True
             ):
                 content = chunk.get("message", {}).get("content", "")
                 if content:
-                    print(content, end="", flush=True)
+                    print('Request-path diagnostic redacted')
                     full_response += content
-            print("\n")
+            print('\n')
 
             messages.append({"role": "assistant", "content": full_response})
 
         except KeyboardInterrupt:
-            print("\nGoodbye!")
+            print('\nGoodbye!')
             break
         except Exception as e:
-            print(f"Error: {e}\n")
+            print('Error: <redacted>\n')
 
 
 if __name__ == "__main__":

@@ -80,10 +80,7 @@ class DynamicChunkSizer:
             try:
                 samples = self._profile_prefill_latency()
             except Exception as e:
-                logger.warning(
-                    f"[PP Dynamic Chunk] Failed to profile prefill latency: {e!r}. "
-                    "Dynamic chunking will be disabled."
-                )
+                logger.warning('[PP Dynamic Chunk] Failed to profile prefill latency: <redacted>. Dynamic chunking will be disabled.')
 
         # The samples are global, so one broadcast from global rank 0 (a PP0 rank)
         # reaches every stage and attention rank; a failure travels as None.
@@ -100,10 +97,7 @@ class DynamicChunkSizer:
             self.predictor.fit(seq_lens, latencies)
         except Exception as e:
             # Every rank fits the same samples, so this fails on all of them alike.
-            logger.warning(
-                f"[PP Dynamic Chunk] Failed to fit the chunk-size predictor: {e!r}. "
-                "Dynamic chunking will be disabled."
-            )
+            logger.warning('[PP Dynamic Chunk] Failed to fit the chunk-size predictor: <redacted>. Dynamic chunking will be disabled.')
             return False
         self.predictor.set_target_latency(self.chunked_prefill_size)
         self.predictor.is_ready = True

@@ -172,7 +172,7 @@ class KimiK3Detector(BaseFormatDetector):
             ]
             return StreamingParseResult(normal_text=before, calls=calls)
         except Exception as e:
-            logger.error("Error in Kimi K3 detect_and_parse: %s", e, exc_info=True)
+            logger.error('Error in Kimi K3 detect_and_parse: <redacted>')
             return StreamingParseResult(normal_text=before)
 
     def parse_streaming_increment(
@@ -208,9 +208,7 @@ class KimiK3Detector(BaseFormatDetector):
                 )
             return StreamingParseResult(normal_text=normal_text, calls=calls)
         except Exception as e:
-            logger.error(
-                "Error in Kimi K3 parse_streaming_increment: %s", e, exc_info=True
-            )
+            logger.error('Error in Kimi K3 parse_streaming_increment: <redacted>')
             # _sent_normal_idx indexes into _buffer, so it must be reset with it;
             # otherwise every later _emit_normal_text sees limit <= _sent_normal_idx
             # and silently drops the rest of the response.
@@ -223,11 +221,7 @@ class KimiK3Detector(BaseFormatDetector):
         if open_idx != -1:
             section = self._buffer[open_idx + len(self.bot_token) :]
             if not self._parse_calls(section):
-                logger.warning(
-                    "Kimi K3 tools section ended with no complete tool call; "
-                    "dropping %d buffered chars",
-                    len(section),
-                )
+                logger.warning('Kimi K3 tools section ended with no complete tool call; dropping <redacted> buffered chars')
             return StreamingParseResult()
         pending = self._emit_normal_text(limit=len(self._buffer))
         return StreamingParseResult(normal_text=strip_partial_marker_suffix(pending))

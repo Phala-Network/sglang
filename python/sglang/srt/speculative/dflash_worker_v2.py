@@ -734,11 +734,7 @@ class DFlashWorkerV2(BaseSpecWorker):
                 "DFLASH sampling rehearsal exhausted graph-pool memory for the "
                 f"{bs}x{block_size}x{vocab_size} verify probability matrices"
             )
-            logger.warning(
-                "Graph pool %s; disabling borrowing and reserving the measured "
-                "headroom in the post-capture KV sizing instead",
-                reason,
-            )
+            logger.warning('Graph pool <redacted>; disabling borrowing and reserving the measured headroom in the post-capture KV sizing instead')
             disable_graph_pool_borrow(reason)
             peak_bytes = self._measure_sampling_peak(
                 candidates=candidates,
@@ -950,10 +946,7 @@ class DFlashWorkerV2(BaseSpecWorker):
                     first_attn.head_dim,
                 )
         except Exception as e:
-            logger.warning(
-                "DFLASH fused KV initialization failed, falling back to sequential path: %s",
-                e,
-            )
+            logger.warning('DFLASH fused KV initialization failed, falling back to sequential path: <redacted>')
             self._use_fused_kv_materialize = False
             self._fused_kv_helper = None
 
@@ -1824,10 +1817,7 @@ class DFlashWorkerV2(BaseSpecWorker):
                         )
                         return
                     except Exception as e:
-                        logger.warning(
-                            "DFLASH fused prefix-direct KV append failed; falling back to the per-layer prefix-direct path: %s",
-                            e,
-                        )
+                        logger.warning('DFLASH fused prefix-direct KV append failed; falling back to the per-layer prefix-direct path: <redacted>')
                         self._use_fused_kv_materialize = False
                         self._fused_kv_helper = None
 
@@ -1862,10 +1852,7 @@ class DFlashWorkerV2(BaseSpecWorker):
                     )
                     return
                 except Exception as e:
-                    logger.warning(
-                        "DFLASH fused KV append-by-loc failed; falling back to sequential path: %s",
-                        e,
-                    )
+                    logger.warning('DFLASH fused KV append-by-loc failed; falling back to sequential path: <redacted>')
                     self._use_fused_kv_materialize = False
                     self._fused_kv_helper = None
 
@@ -2117,10 +2104,7 @@ class DFlashWorkerV2(BaseSpecWorker):
                     )
                 except Exception as e:
                     self._use_triton_accept_bonus = False
-                    logger.warning(
-                        "DFLASH Triton accept/bonus failed; falling back to eager path: %s",
-                        e,
-                    )
+                    logger.warning('DFLASH Triton accept/bonus failed; falling back to eager path: <redacted>')
                     accept_len, bonus = compute_dflash_correct_drafts_and_bonus(
                         candidates=candidates,
                         target_predict=target_predict,
@@ -2368,10 +2352,7 @@ class DFlashWorkerV2(BaseSpecWorker):
                 )
             except Exception as e:
                 self._use_triton_prepare_block = False
-                logger.warning(
-                    "DFLASH Triton prepare_block failed; falling back to eager path: %s",
-                    e,
-                )
+                logger.warning('DFLASH Triton prepare_block failed; falling back to eager path: <redacted>')
                 block_ids.fill_(int(self._mask_token_id))
                 block_ids[:, 0].copy_(draft_input.bonus_tokens)
                 torch.add(

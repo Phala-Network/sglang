@@ -594,9 +594,7 @@ class OPTForCausalLM(nn.Module):
             return weight.cpu().to(torch.float32).numpy().tolist()[:truncate_size]
 
         except Exception:
-            logger.error(
-                f"Error getting weights by name {name} in OPTForCausalLM: {get_exception_traceback()}"
-            )
+            logger.error('Error getting weights by name <redacted> in OPTForCausalLM: <redacted>')
             return None
 
     def get_embed_and_head(self):

@@ -196,12 +196,7 @@ def _compute_and_print_diff(
     rel_diff = _calc_rel_diff(x_target, x_baseline)
 
     rel_diff_marker: str = "❌" if rel_diff > diff_threshold else "✅"
-    print(
-        prefix_text
-        + f"{rel_diff_marker} rel_diff={rel_diff}\t"
-        + f"max_abs_diff={max_abs_diff}\t"
-        + f"mean_abs_diff={mean_abs_diff}"
-    )
+    print('Request-path diagnostic redacted')
 
     max_diff_coord = _argmax_coord(raw_abs_diff)
     print(
@@ -251,7 +246,7 @@ def _load_object(path):
     try:
         x = torch.load(path, weights_only=False)
     except Exception as e:
-        print(f"Skip load {path} since error {e}")
+        print('Skip load <redacted> since error <redacted>')
         return None
 
     if isinstance(x, dict) and "value" in x:

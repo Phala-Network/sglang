@@ -312,7 +312,7 @@ def rpd_to_chrome_trace(
                 % (row[0], row[1], row[2], row[1], row[3])
             )
     except:
-        print("Did not find SMI data")
+        print('Did not find SMI data')
 
     # Create the (global) memory counter
     """

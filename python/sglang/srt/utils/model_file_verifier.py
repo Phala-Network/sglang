@@ -119,9 +119,7 @@ def generate_checksums(
         json.dumps(manifest.to_dict(), indent=2, sort_keys=True)
     )
 
-    print(
-        f"[ModelFileVerifier] Generated checksums for {len(manifest.files)} files -> {output_path}"
-    )
+    print('[ModelFileVerifier] Generated checksums for <redacted> files -> <redacted>')
     return manifest
 
 

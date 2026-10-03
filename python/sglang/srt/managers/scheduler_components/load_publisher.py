@@ -184,13 +184,7 @@ class SchedulerLoadPublisher:
             atexit.register(self.close)
         except Exception:
             # Best-effort: a bind failure must not take down startup.
-            logger.warning(
-                "load-publisher disabled: failed to bind the load socket at "
-                "%r; /server_info advertises this range but nothing is "
-                "listening on it",
-                endpoint,
-                exc_info=True,
-            )
+            logger.warning('load-publisher disabled: failed to bind the load socket at <redacted>; /server_info advertises this range but nothing is listening on it')
 
     @property
     def enable(self) -> bool:
@@ -272,11 +266,7 @@ class SchedulerLoadPublisher:
             # failure episode (this runs every loop, so don't flood).
             if not self._publish_failed:
                 self._publish_failed = True
-                logger.warning(
-                    "load-publisher: publish failed; routers fall back to "
-                    "their in-flight load signal",
-                    exc_info=True,
-                )
+                logger.warning('load-publisher: publish failed; routers fall back to their in-flight load signal')
 
     def close(self) -> None:
         if self._socket is not None:

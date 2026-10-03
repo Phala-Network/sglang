@@ -602,11 +602,7 @@ def build_detection_context(
         try:
             vocab = set(tokenizer.get_vocab().keys())
         except Exception as e:
-            logger.warning(
-                "Failed to load tokenizer vocab for template detection: %s. "
-                "Vocab-dependent detection rules will be skipped.",
-                e,
-            )
+            logger.warning('Failed to load tokenizer vocab for template detection: <redacted>. Vocab-dependent detection rules will be skipped.')
     return TemplateDetectionContext(
         template=template,
         reasoning_config=reasoning_config,
@@ -625,13 +621,7 @@ def match_rules(
             if rule.predicate(ctx):
                 return rule.value
         except Exception as e:
-            logger.warning(
-                "Detection rule '%s' for %s raised an exception: %s. Skipping.",
-                rule.name,
-                label,
-                e,
-                exc_info=True,
-            )
+            logger.warning("Detection rule '<redacted>' for <redacted> raised an exception: <redacted>. Skipping.")
     return None
 
 
@@ -814,7 +804,7 @@ def resolve_auto_parsers(server_args) -> None:
     try:
         explicit_jinja_template = _load_explicit_jinja_template(chat_template_arg)
     except Exception as e:
-        logger.warning("Failed to load explicit Jinja chat template: %s", e)
+        logger.warning('Failed to load explicit Jinja chat template: <redacted>')
         explicit_jinja_template = None
     has_explicit_template_without_detection = (
         chat_template_arg is not None and explicit_jinja_template is None
@@ -827,7 +817,7 @@ def resolve_auto_parsers(server_args) -> None:
             trust_remote_code=cfg.trust_remote_code,
         )
     except Exception as e:
-        logger.warning(f"Failed to load tokenizer for auto-detection: {e}")
+        logger.warning('Failed to load tokenizer for auto-detection: <redacted>')
 
     template = explicit_jinja_template
     if template is None and tokenizer is not None:
@@ -850,10 +840,7 @@ def resolve_auto_parsers(server_args) -> None:
             try:
                 detected.update(_architecture_auto_parsers(server_args, needs))
             except Exception as e:
-                logger.warning(
-                    "Failed to load model config for architecture-based auto-detection: %s",
-                    e,
-                )
+                logger.warning('Failed to load model config for architecture-based auto-detection: <redacted>')
         for attr, label in (
             ("reasoning_parser", "reasoning parser"),
             ("tool_call_parser", "tool-call parser"),

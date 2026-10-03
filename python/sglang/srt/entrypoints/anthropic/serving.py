@@ -97,13 +97,7 @@ def _anthropic_input_tokens(usage) -> int:
         # Upstream telemetry bug: cached cannot exceed the prompt it caches.
         # Clamping silently here would hide the discrepancy from billing
         # dashboards, so make it visible at WARNING level.
-        logger.warning(
-            "Cached tokens (%d) exceed prompt tokens (%d); clamping "
-            "input_tokens to 0. This usually indicates an upstream "
-            "telemetry bug.",
-            cached,
-            prompt,
-        )
+        logger.warning('Cached tokens (<redacted>) exceed prompt tokens (<redacted>); clamping input_tokens to 0. This usually indicates an upstream telemetry bug.')
     return max(prompt - cached, 0)
 
 
@@ -214,7 +208,7 @@ class AnthropicServing:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.exception("Error converting Anthropic request: %s", e)
+            logger.error('Error converting Anthropic request: <redacted>')
             return self._error_response(
                 status_code=400,
                 error_type="invalid_request_error",
@@ -402,11 +396,7 @@ class AnthropicServing:
                     reasoning_text
                 )
             except ValueError as e:
-                logger.warning(
-                    "Dropping prior-turn thinking history (%d blocks): %s",
-                    len(thinking_parts),
-                    e,
-                )
+                logger.warning('Dropping prior-turn thinking history (<redacted> blocks): <redacted>')
                 return None, None
 
         system_parts: list[str] = []
@@ -598,12 +588,7 @@ class AnthropicServing:
             # the Anthropic SDK would have accepted the request and we
             # mirror that. Operators see the unenforced budget in logs.
             if anthropic_request.thinking.budget_tokens is not None:
-                logger.warning(
-                    "Anthropic thinking.budget_tokens=%d is accepted for "
-                    "SDK compatibility but the local backend has no "
-                    "equivalent hard-cap knob — the budget is not enforced",
-                    anthropic_request.thinking.budget_tokens,
-                )
+                logger.warning('Anthropic thinking.budget_tokens=<redacted> is accepted for SDK compatibility but the local backend has no equivalent hard-cap knob — the budget is not enforced')
             # Claude 4.7's ``adaptive`` is treated identically to ``enabled``
             # because the local backend has no auto-throttle equivalent.
             # Anything other than ``disabled`` enables reasoning.
@@ -636,20 +621,13 @@ class AnthropicServing:
                 # Custom params are silently ignored by backends that
                 # don't recognise them; logging it makes the propagation
                 # visible.
-                logger.info(
-                    "Anthropic output_config.task_budget hint: %d %s",
-                    oc.task_budget.total,
-                    oc.task_budget.type,
-                )
+                logger.info('Anthropic output_config.task_budget hint: <redacted> <redacted>')
 
         # ``betas`` is the Anthropic SDK's opt-in feature list (e.g.
         # ``["thinking-2025-08-04"]``). The local backend has no
         # equivalent beta system; accept-and-log so requests don't 400.
         if anthropic_request.betas:
-            logger.info(
-                "Anthropic request opted into betas %s — no-op locally",
-                anthropic_request.betas,
-            )
+            logger.info('Anthropic request opted into betas <redacted> — no-op locally')
 
         # Convert tools. Deferred tools stay in the list with defer_loading=True;
         # the chat template hides them from the initial <tools> block and renders
@@ -663,12 +641,7 @@ class AnthropicServing:
                     # because Anthropic provides the implementation. We can't
                     # forward them to the OpenAI tools array (which requires a
                     # schema), so skip with a visible log.
-                    logger.info(
-                        "Skipping built-in Anthropic server tool %r (type=%r): "
-                        "no native support in the OpenAI-compatible backend",
-                        tool.name,
-                        tool.type,
-                    )
+                    logger.info('Skipping built-in Anthropic server tool <redacted> (type=<redacted>): no native support in the OpenAI-compatible backend')
                     continue
 
                 # Custom tools always have a validated input_schema
@@ -769,7 +742,7 @@ class AnthropicServing:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.exception("Error processing Anthropic request: %s", e)
+            logger.error('Error processing Anthropic request: <redacted>')
             return self._error_response(
                 status_code=500,
                 error_type="api_error",
@@ -814,7 +787,7 @@ class AnthropicServing:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.exception("Error converting streaming request: %s", e)
+            logger.error('Error converting streaming request: <redacted>')
             return self._error_response(
                 status_code=500,
                 error_type="api_error",
@@ -1005,7 +978,7 @@ class AnthropicServing:
         try:
             stream_iter = openai_stream.__aiter__()
         except Exception as e:
-            logger.exception("Failed to open OpenAI stream: %s", e)
+            logger.error('Failed to open OpenAI stream: <redacted>')
             for frame in _flush_on_error("api_error", "Internal server error"):
                 yield frame
             return
@@ -1022,14 +995,14 @@ class AnthropicServing:
                 # ``stream_started`` flag is still False — surface as a
                 # proper Anthropic error event rather than aborting the
                 # StreamingResponse generator.
-                logger.warning("OpenAI stream raised before first chunk: %s", e)
+                logger.warning('OpenAI stream raised before first chunk: <redacted>')
                 for frame in _flush_on_error(
                     "invalid_request_error", str(e) or "Request failed"
                 ):
                     yield frame
                 return
             except Exception as e:
-                logger.exception("OpenAI stream raised mid-flight: %s", e)
+                logger.error('OpenAI stream raised mid-flight: <redacted>')
                 for frame in _flush_on_error("api_error", "Internal server error"):
                     yield frame
                 return
@@ -1068,10 +1041,7 @@ class AnthropicServing:
                 # Emit message_delta with stop_reason and usage
                 effective_finish = finish_reason or "stop"
                 if effective_finish not in STOP_REASON_MAP:
-                    logger.warning(
-                        "Unmapped streaming finish_reason %r; defaulting to end_turn",
-                        effective_finish,
-                    )
+                    logger.warning('Unmapped streaming finish_reason <redacted>; defaulting to end_turn')
                 stop_reason = STOP_REASON_MAP.get(effective_finish, "end_turn")
                 yield _emit(
                     MessageDeltaEvent(
@@ -1096,20 +1066,12 @@ class AnthropicServing:
                 upstream = _parse_upstream_error(data_str)
                 if upstream is not None:
                     error_type, error_message = upstream
-                    logger.warning(
-                        "Forwarding upstream stream error (%s): %s",
-                        error_type,
-                        error_message,
-                    )
+                    logger.warning('Forwarding upstream stream error (<redacted>): <redacted>')
                     for frame in _flush_on_error(error_type, error_message):
                         yield frame
                     return
 
-                logger.warning(
-                    "Failed to parse Anthropic stream chunk (%s): %s",
-                    type(e).__name__,
-                    data_str[:200],
-                )
+                logger.warning('Failed to parse Anthropic stream chunk (<redacted>): <redacted>')
                 for frame in _flush_on_error("api_error", "Stream processing error"):
                     yield frame
                 return
@@ -1223,11 +1185,7 @@ class AnthropicServing:
                     elif tc_func and tc_func.arguments:
                         # Continuing arguments for current tool call
                         if content_block_type != "tool_use":
-                            logger.warning(
-                                "Dropping tool_call argument delta with no "
-                                "open tool_use block: %r",
-                                (tc_func.arguments or "")[:100],
-                            )
+                            logger.warning('Dropping tool_call argument delta with no open tool_use block: <redacted>')
                             continue
                         yield _emit(
                             ContentBlockDeltaEvent(
@@ -1290,12 +1248,7 @@ class AnthropicServing:
                     # Surface invalid tool arguments so an empty-dict
                     # tool call is never indistinguishable from a real
                     # one when something downstream goes wrong.
-                    logger.warning(
-                        "Tool %r emitted invalid JSON arguments: %r — "
-                        "defaulting to empty input",
-                        tool_call.function.name,
-                        (raw_args or "")[:200],
-                    )
+                    logger.warning('Tool <redacted> emitted invalid JSON arguments: <redacted> — defaulting to empty input')
                     tool_input = {}
 
                 content.append(
@@ -1309,10 +1262,7 @@ class AnthropicServing:
         # Map stop reason
         finish_reason = choice.finish_reason or "stop"
         if finish_reason not in STOP_REASON_MAP:
-            logger.warning(
-                "Unmapped OpenAI finish_reason %r; defaulting to end_turn",
-                finish_reason,
-            )
+            logger.warning('Unmapped OpenAI finish_reason <redacted>; defaulting to end_turn')
         stop_reason = STOP_REASON_MAP.get(finish_reason, "end_turn")
 
         # Anthropic requires ``content`` to contain at least one block.
@@ -1398,12 +1348,7 @@ class AnthropicServing:
         server-side, but it never reaches the wire.
         """
         if exception_name:
-            logger.warning(
-                "Anthropic error response %s (exception=%s): %s",
-                error_type,
-                exception_name,
-                message,
-            )
+            logger.warning('Anthropic error response <redacted> (exception=<redacted>): <redacted>')
         error_resp = AnthropicErrorResponse(
             error=AnthropicError(type=error_type, message=message)
         )
@@ -1437,7 +1382,7 @@ class AnthropicServing:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.exception("Error converting count_tokens request: %s", e)
+            logger.error('Error converting count_tokens request: <redacted>')
             return self._error_response(
                 status_code=400,
                 error_type="invalid_request_error",
@@ -1467,7 +1412,7 @@ class AnthropicServing:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.exception("Error counting tokens: %s", e)
+            logger.error('Error counting tokens: <redacted>')
             return self._error_response(
                 status_code=500,
                 error_type="api_error",

@@ -47,7 +47,7 @@ def resolve_hunyuan_tokens(tokenizer) -> Dict[str, str]:
         try:
             vocab = tokenizer.get_vocab()
         except Exception as e:
-            logger.warning("Failed to read Hunyuan tokenizer vocab: %s", e)
+            logger.warning('Failed to read Hunyuan tokenizer vocab: <redacted>')
             vocab = None
     if isinstance(vocab, dict):
         for tok in vocab:
@@ -320,9 +320,7 @@ class HunyuanDetector(BaseFormatDetector):
             for function_name, function_args in self.tool_call_regex.findall(text):
                 function_name = function_name.strip()
                 if function_name not in tool_indices and not forward_unknown:
-                    logger.warning(
-                        "Model attempted to call undefined function: %s", function_name
-                    )
+                    logger.warning('Model attempted to call undefined function: <redacted>')
                     continue
 
                 arg_dict: Dict[str, Any] = {}
@@ -339,7 +337,7 @@ class HunyuanDetector(BaseFormatDetector):
                 )
             return StreamingParseResult(normal_text=normal_text, calls=calls)
         except Exception as e:
-            logger.error(f"Error in detect_and_parse: {e}", exc_info=True)
+            logger.error('Error in detect_and_parse: <redacted>')
             return StreamingParseResult(normal_text=text)
 
     # ------------------------------------------------------------------
@@ -357,7 +355,7 @@ class HunyuanDetector(BaseFormatDetector):
         try:
             return self._parse_streaming_increment_impl(new_text, tools)
         except Exception as e:
-            logger.error(f"Error in parse_streaming_increment: {e}", exc_info=True)
+            logger.error('Error in parse_streaming_increment: <redacted>')
             return StreamingParseResult()
 
     def _parse_streaming_increment_impl(
@@ -424,9 +422,7 @@ class HunyuanDetector(BaseFormatDetector):
                     tool_name not in self._tool_indices
                     and not envs.SGLANG_FORWARD_UNKNOWN_TOOLS.get()
                 ):
-                    logger.warning(
-                        "Model attempted to call undefined function: %s", tool_name
-                    )
+                    logger.warning('Model attempted to call undefined function: <redacted>')
 
                 self._streaming_tool_name = tool_name
                 self.current_tool_id += 1

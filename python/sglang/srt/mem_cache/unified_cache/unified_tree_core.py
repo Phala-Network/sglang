@@ -2906,7 +2906,7 @@ class UnifiedTreeCore(UnifiedTreeCoreInterface):
                 f"across {len(all_nodes)} nodes):\n"
                 + "\n".join(f"  {e}" for e in errors)
             )
-            logger.error(msg)
+            logger.error('Request-path diagnostic redacted')
             self.pretty_print()
             raise AssertionError(msg)
 
@@ -2964,13 +2964,7 @@ class UnifiedTreeCore(UnifiedTreeCoreInterface):
                 f"{ct}={'yes' if node.component_data[ct].value is not None else 'no'}"
                 for ct in self.component_types
             )
-            print(
-                " " * indent,
-                f"[{node.id}]",
-                len(node.key),
-                f"full_lock={node.component_data[BASE_COMPONENT_TYPE].lock_ref}",
-                component_str,
-            )
+            print('Request-path diagnostic redacted')
             for child in node.children.values():
                 stack.append((child, indent + 2))
 

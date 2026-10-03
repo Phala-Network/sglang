@@ -92,12 +92,7 @@ class NixlEPBuffer:
             state.buffer.set_tcp_store_group(current_store)
 
         state.buffer.connect_ranks(ranks)
-        logger.debug(
-            "[Elastic EP][nixl] connect (%s) ranks=%s group_size=%s",
-            tag,
-            ranks,
-            state.buffer.group_size,
-        )
+        logger.debug('[Elastic EP][nixl] connect (<redacted>) ranks=<redacted> group_size=<redacted>')
 
     @classmethod
     def _update_connections(cls, state, scale_to: int) -> None:

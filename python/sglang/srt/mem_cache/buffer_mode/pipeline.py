@@ -372,16 +372,7 @@ class BufferModePipeline:
             # broken stale sweep — a bug, not load.
             self._backlog_cap_hits += 1
             if self._backlog_cap_hits <= 3 or self._backlog_cap_hits % 1000 == 0:
-                logger.error(
-                    "HiCache write backlog cap hit (occurrence %d): "
-                    "backlog=%d cap=%d queue=%d. Live backlog is bounded "
-                    "by the device pool span, so this indicates a "
-                    "stale-sweep or accounting leak.",
-                    self._backlog_cap_hits,
-                    self.write_backlog_tokens_,
-                    self.write_backlog_cap,
-                    len(self.pending_write_queue),
-                )
+                logger.error('HiCache write backlog cap hit (occurrence <redacted>): backlog=<redacted> cap=<redacted> queue=<redacted>. Live backlog is bounded by the device pool span, so this indicates a stale-sweep or accounting leak.')
             self._log_backup_dropped(intent_tokens)
             return
         # A span larger than any pool's whole staging capacity can never
@@ -899,14 +890,7 @@ class BufferModePipeline:
         )
         matched_len, node_id, _ = self._cache.tree_core.match_full_device_prefix(key)
         if matched_len < f.matched_len:
-            logger.warning(
-                "HiCache staged prefetch deferred req=%s reason=shrunk "
-                "matched=%d now=%d tokens=%d",
-                req.rid,
-                f.matched_len,
-                matched_len,
-                f.num_tokens,
-            )
+            logger.warning('HiCache staged prefetch deferred req=<redacted> reason=shrunk matched=<redacted> now=<redacted> tokens=<redacted>')
             self._refetch_staged(f)
             return False
         root_id = self._cache.tree_core.empty_match_result.last_device_node
@@ -1077,25 +1061,11 @@ class BufferModePipeline:
             self._staged_admission_defers[request] = defers
             cache._log_storage_prefetch_deferred(f.num_tokens, "device_capacity")
             if defers < self.max_staged_admission_defers:
-                logger.warning(
-                    "HiCache staged prefetch deferred at admission req=%s "
-                    "reason=device_capacity pool=%s tokens=%d defers=%d",
-                    req.rid,
-                    pool,
-                    f.num_tokens,
-                    defers,
-                )
+                logger.warning('HiCache staged prefetch deferred at admission req=<redacted> reason=device_capacity pool=<redacted> tokens=<redacted> defers=<redacted>')
                 return
             # Still unmaterializable: drop the hold so the admission loop stops
             # breaking on this request, which recomputes on its next pass.
-            logger.warning(
-                "HiCache staged prefetch dropped after %d device_capacity "
-                "deferrals req=%s pool=%s tokens=%d",
-                defers,
-                req.rid,
-                pool,
-                f.num_tokens,
-            )
+            logger.warning('HiCache staged prefetch dropped after <redacted> device_capacity deferrals req=<redacted> pool=<redacted> tokens=<redacted>')
             self.release_staged_hold(request, reason="device_capacity")
             req.staged_prefetch_plan = None
 
@@ -1278,13 +1248,7 @@ class BufferModePipeline:
             free_fn(device_indices)
 
         cc.prefetch_tokens_occupied -= f.occupied_tokens
-        logger.info(
-            "HiCache prefetch fill committed req=%s filled=%d occupied=%d locked=%d",
-            f.request.rid,
-            f.num_tokens,
-            cc.prefetch_tokens_occupied,
-            self.anchor_locked_tokens_,
-        )
+        logger.info('HiCache prefetch fill committed req=<redacted> filled=<redacted> occupied=<redacted> locked=<redacted>')
         cache._finish_storage_prefetch(
             f.request, fulfilled_tokens=f.num_tokens, reason=None
         )

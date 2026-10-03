@@ -499,10 +499,7 @@ class CommonKVManager(BaseKVManager):
             try:
                 self._send_multipart_locked(na.to_tcp(), parts, is_ipv6=na.is_ipv6)
             except Exception as e:
-                logger.warning(
-                    f"Failed to sync status {status} of room {bootstrap_room} to "
-                    f"{na.to_host_port_str()}: {e}"
-                )
+                logger.warning('Failed to sync status <redacted> of room <redacted> to <redacted>: <redacted>')
 
     def conclude_transfer(
         self,
@@ -664,7 +661,7 @@ class CommonKVManager(BaseKVManager):
                 is_ipv6=na.is_ipv6,
             )
         except Exception as e:
-            logger.debug(f"Failed to send drained ABORT_ACK for room {room}: {e}")
+            logger.debug('Failed to send drained ABORT_ACK for room <redacted>: <redacted>')
 
     def _maybe_ack_drained_abort(self, room: int) -> None:
         """Send the deferred ack once an aborted room's chunks have drained
@@ -791,13 +788,7 @@ class CommonKVManager(BaseKVManager):
             return
         prefill_url = self._resolve_rebootstrap_prefill_url(kv_receiver)
         if not prefill_url:
-            logger.error(
-                "PD retract rebootstrap could not resolve the prefill /generate "
-                "URL from bootstrap info (rid=%s bootstrap_room=%s bootstrap_addr=%s).",
-                payload.get("rid"),
-                payload.get("bootstrap_room"),
-                kv_receiver.bootstrap_addr,
-            )
+            logger.error('PD retract rebootstrap could not resolve the prefill /generate URL from bootstrap info (rid=<redacted> bootstrap_room=<redacted> bootstrap_addr=<redacted>).')
             self._fail_prefill_recompute(
                 kv_receiver,
                 "PD retract rebootstrap could not resolve the prefill /generate "
@@ -834,19 +825,14 @@ class CommonKVManager(BaseKVManager):
                 timeout=self.waiting_timeout,
             )
             if response.status_code >= 400:
-                logger.error(
-                    "PD rebootstrap prefill failed for rid=%s status=%s body=%s",
-                    rid,
-                    response.status_code,
-                    response.text[:512],
-                )
+                logger.error('PD rebootstrap prefill failed for rid=<redacted> status=<redacted> body=<redacted>')
                 self._fail_prefill_recompute(
                     kv_receiver,
                     f"PD retract rebootstrap /generate failed for rid={rid} "
                     f"(status={response.status_code}).",
                 )
         except Exception:
-            logger.exception("PD rebootstrap prefill request failed for rid=%s", rid)
+            logger.error('PD rebootstrap prefill request failed for rid=<redacted>')
             self._fail_prefill_recompute(
                 kv_receiver,
                 f"PD retract rebootstrap /generate request errored for rid={rid}.",
@@ -870,12 +856,10 @@ class CommonKVManager(BaseKVManager):
                 data = response.json()
                 info = PrefillServerInfo(**data)
             else:
-                logger.error(
-                    f"Failed to get prefill server info: {response.status_code}, {response.text}"
-                )
+                logger.error('Failed to get prefill server info: <redacted>, <redacted>')
                 return False
         except Exception as e:
-            logger.error(f"Error fetching prefill server info from bootstrap: {e}")
+            logger.error('Error fetching prefill server info from bootstrap: <redacted>')
             return False
 
         # Sanity checks
@@ -1102,18 +1086,14 @@ class CommonKVManager(BaseKVManager):
                 cause = e
                 while cause.__cause__ is not None:
                     cause = cause.__cause__
-                logger.warning(
-                    f"Prefill register attempt {attempt + 1}/{max_retries} failed: {cause}"
-                )
+                logger.warning('Prefill register attempt <redacted>/<redacted> failed: <redacted>')
             if attempt == max_retries - 1:
                 break
             delay = min(initial_delay * (2**attempt), max_delay) * (
                 0.75 + 0.25 * (time.monotonic() % 1)
             )
             time.sleep(delay)
-        logger.error(
-            f"Prefill instance failed to register to bootstrap server after {max_retries} retries"
-        )
+        logger.error('Prefill instance failed to register to bootstrap server after <redacted> retries')
 
     def _connect(self, endpoint: str, is_ipv6: bool = False):
         with self._socket_lock:
@@ -1338,7 +1318,7 @@ class CommonKVManager(BaseKVManager):
                                 self.heartbeat_failures.get(bootstrap_addr, 0) + 1
                             )
                     except Exception:
-                        logger.info(f"Attempting to reconnect to {bootstrap_addr}...")
+                        logger.info('Attempting to reconnect to <redacted>...')
                         self.heartbeat_failures[bootstrap_addr] = (
                             self.heartbeat_failures.get(bootstrap_addr, 0) + 1
                         )
@@ -1398,10 +1378,7 @@ class CommonKVManager(BaseKVManager):
                 self.update_status(room, KVPoll.Failed)
                 affected_rooms.append(room)
 
-        logger.error(
-            f"Lost connection with prefill instance (bootstrap_addr: {failed_bootstrap_addr}), "
-            f"{len(affected_rooms)} requests affected"
-        )
+        logger.error('Lost connection with prefill instance (bootstrap_addr: <redacted>), <redacted> requests affected')
 
 
 class CommonKVSender(BaseKVSender):
@@ -1463,11 +1440,9 @@ class CommonKVSender(BaseKVSender):
         try:
             response = requests.post(url, json=payload, timeout=5)
             if response.status_code != 200:
-                logger.error(
-                    f"Failed to register prefill dp_rank: {response.status_code}, {response.text}"
-                )
+                logger.error('Failed to register prefill dp_rank: <redacted>, <redacted>')
         except Exception as e:
-            logger.error(f"Failed to register prefill dp_rank: {e}")
+            logger.error('Failed to register prefill dp_rank: <redacted>')
 
     def init(self, num_kv_indices: int, aux_index: Optional[int] = None):
         self.num_kv_indices = num_kv_indices
@@ -1738,12 +1713,10 @@ class CommonKVReceiver(BaseKVReceiver):
                 bootstrap_info["pp_rank"] = int(target_pp_rank)
                 return bootstrap_info
             else:
-                logger.error(
-                    f"Failed to get prefill server info: {response.status_code}, {response.text}"
-                )
+                logger.error('Failed to get prefill server info: <redacted>, <redacted>')
                 return None
         except Exception as e:
-            logger.error(f"Error fetching prefill info from bootstrap: {e}")
+            logger.error('Error fetching prefill info from bootstrap: <redacted>')
             return None
 
     @staticmethod
@@ -1761,12 +1734,10 @@ class CommonKVReceiver(BaseKVReceiver):
             if response.status_code == 200:
                 return response.json()
             else:
-                logger.error(
-                    f"Failed to query dp_ranks: {response.status_code}, {response.text}"
-                )
+                logger.error('Failed to query dp_ranks: <redacted>, <redacted>')
                 return {}
         except Exception as e:
-            logger.error(f"Error querying dp_ranks from bootstrap: {e}")
+            logger.error('Error querying dp_ranks from bootstrap: <redacted>')
             return {}
 
     @classmethod
@@ -1888,9 +1859,7 @@ class CommonKVReceiver(BaseKVReceiver):
                     f"to {bootstrap_info.get('rank_ip', 'unknown')}:{bootstrap_info.get('rank_port', 'unknown')}"
                 )
             except Exception as e:
-                logger.debug(
-                    f"Failed to send abort notification for room {self.bootstrap_room}: {e}"
-                )
+                logger.debug('Failed to send abort notification for room <redacted>: <redacted>')
 
 
 class CommonKVBootstrapServer(BaseKVBootstrapServer):
@@ -2168,7 +2137,7 @@ class CommonKVBootstrapServer(BaseKVBootstrapServer):
             )
             self._loop.run_forever()
         except Exception as e:
-            logger.error(f"Server error: {str(e)}", exc_info=True)
+            logger.error('Server error: <redacted>')
         finally:
             # Cleanup
             self._loop.run_until_complete(self._runner.cleanup())

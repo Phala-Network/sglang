@@ -464,13 +464,7 @@ class NvidiaKDAKernel(LinearAttnKernelBase):
                 token_start += group_tokens
         except Exception:
             ssm_states.index_copy_(0, all_slot_indices, state_backup)
-            logger.warning(
-                "NVIDIA KDA prefill failed (T=%d sequences=%d); restored states "
-                "and fell back to Triton for this batch",
-                num_tokens,
-                len(seq_lens),
-                exc_info=True,
-            )
+            logger.warning('NVIDIA KDA prefill failed (T=<redacted> sequences=<redacted>); restored states and fell back to Triton for this batch')
             return self._triton_extend(
                 q,
                 k,

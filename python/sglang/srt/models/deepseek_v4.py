@@ -362,11 +362,7 @@ if _wo_a_aiter_batched_gemm_enabled:
         )
     except Exception as err:  # pragma: no cover - env-dependent
         _wo_a_aiter_batched_gemm_enabled = False
-        logger.warning(
-            "aiter wo_a batched_gemm_bf16 import failed; using einsum for wo_a "
-            "for the rest of this process: %s",
-            err,
-        )
+        logger.warning('aiter wo_a batched_gemm_bf16 import failed; using einsum for wo_a for the rest of this process: <redacted>')
 
 # Flipped once if the (already-imported) aiter kernel raises at runtime, so a
 # per-call kernel failure falls back to the einsum for the rest of the process
@@ -432,11 +428,7 @@ def _apply_wo_a_bf16_matmul(
             return y.transpose(0, 1).contiguous()
         except Exception as err:
             _wo_a_aiter_batched_gemm_disabled = True
-            logger.warning(
-                "aiter wo_a batched_gemm_bf16 failed; disabling the reroute and "
-                "falling back to einsum for the rest of this process: %s",
-                err,
-            )
+            logger.warning('aiter wo_a batched_gemm_bf16 failed; disabling the reroute and falling back to einsum for the rest of this process: <redacted>')
     return torch.einsum("tgd,grd->tgr", o, wo_a)
 
 
@@ -4035,9 +4027,7 @@ class DeepseekV4ForCausalLM(nn.Module):
             )
         }
         if unloaded_params:
-            logger.warning(
-                f"Some weights are not initialized from checkpoints: {unloaded_params}"
-            )
+            logger.warning('Some weights are not initialized from checkpoints: <redacted>')
 
         self.post_load_weights(is_nextn=is_nextn, weight_names=weight_names)
 

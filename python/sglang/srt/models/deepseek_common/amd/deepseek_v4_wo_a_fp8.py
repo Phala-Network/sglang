@@ -59,11 +59,7 @@ if _is_hip and _is_gfx95_supported:
             batched_gemm_a8w8_mxscale as _batched_gemm_a8w8_mxscale,
         )
     except Exception as err:  # pragma: no cover - env-dependent
-        logger.warning(
-            "aiter batched_gemm_a8w8_mxscale import failed; the DSV4 wo_a fp8 "
-            "path is unavailable on this build: %s",
-            err,
-        )
+        logger.warning('aiter batched_gemm_a8w8_mxscale import failed; the DSV4 wo_a fp8 path is unavailable on this build: <redacted>')
 
 # Fused inverse-RoPE + per-token-group mxfp8 quant in a single aiter kernel.
 # Optional enhancement over the two-kernel path (fused_rope_inplace + the Triton
@@ -77,12 +73,7 @@ if _batched_gemm_a8w8_mxscale is not None:
             inverse_rope_group_quant as _inverse_rope_group_quant,
         )
     except Exception as err:  # pragma: no cover - env-dependent
-        logger.warning(
-            "aiter inverse_rope_group_quant import failed; the DSV4 wo_a fp8 "
-            "fused inverse-RoPE path is unavailable, using the two-kernel "
-            "path: %s",
-            err,
-        )
+        logger.warning('aiter inverse_rope_group_quant import failed; the DSV4 wo_a fp8 fused inverse-RoPE path is unavailable, using the two-kernel path: <redacted>')
 
 
 def is_wo_a_fp8_mxscale_supported() -> bool:

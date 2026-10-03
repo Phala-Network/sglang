@@ -107,11 +107,6 @@ class RemoteInstanceWeightTransporter:
                     f"with bootstrap server at {bootstrap_na}"
                 )
             else:
-                logger.error(
-                    f"Failed to register transfer engine info for tp_rank={self.tp_rank}: "
-                    f"{resp.status_code}, {resp.text}"
-                )
+                logger.error('Failed to register transfer engine info for tp_rank=<redacted>: <redacted>, <redacted>')
         except Exception as e:
-            logger.error(
-                f"Failed to register transfer engine info for tp_rank={self.tp_rank}: {e}"
-            )
+            logger.error('Failed to register transfer engine info for tp_rank=<redacted>: <redacted>')

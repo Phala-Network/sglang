@@ -66,9 +66,7 @@ try:
         unified_attention_3d_mtp_ragged_func,
     )
 except ImportError:
-    print(
-        "aiter is AMD specific kernel library. Please make sure aiter is installed on your AMD device."
-    )
+    print('aiter is AMD specific kernel library. Please make sure aiter is installed on your AMD device.')
 
 from sglang.kernels.ops.attention.dcp_kernels import create_mla_kv_page_table_for_dcp
 from sglang.kernels.ops.attention.merge_state import merge_state_triton

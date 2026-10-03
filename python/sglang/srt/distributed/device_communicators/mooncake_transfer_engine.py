@@ -234,12 +234,7 @@ class MooncakeTransferEngine:
             ret = -1
 
         if ret < 0:
-            logger.debug(
-                "Failed to transfer data from %s to %s - %s.",
-                buffer,
-                session_id,
-                peer_buffer_address,
-            )
+            logger.debug('Failed to transfer data from <redacted> to <redacted> - <redacted>.')
 
         return ret
 
@@ -265,13 +260,7 @@ class MooncakeTransferEngine:
                 )
 
         if ret < 0:
-            logger.debug(
-                "Failed to batch transfer data. Buffers: %s, Session: %s, "
-                "Peer addresses: %s",
-                buffers,
-                session_id,
-                peer_buffer_addresses,
-            )
+            logger.debug('Failed to batch transfer data. Buffers: <redacted>, Session: <redacted>, Peer addresses: <redacted>')
         return ret
 
     def get_session_id(self):

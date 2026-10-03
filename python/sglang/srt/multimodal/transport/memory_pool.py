@@ -321,11 +321,7 @@ class StreamOrderedMmFeaturePool:
                 with self._lock, torch.cuda.device(self.device_id):
                     self._recycle_ready_leases_locked()
             except Exception:
-                logger.warning(
-                    "%s multimodal pool recycle failed",
-                    self.transport_name,
-                    exc_info=True,
-                )
+                logger.warning('<redacted> multimodal pool recycle failed')
             self._recycler_stop_event.wait(self._recycle_interval)
 
     def copy_tensor(

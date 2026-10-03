@@ -64,9 +64,7 @@ def check_sglang_ready(
                 break
             except (httpx.ConnectError, httpx.HTTPStatusError) as e:
                 if retry_num % 10 == 0:
-                    logger.warning(
-                        f"fail to check sglang ready, retry {retry_num} times, error: {e}"
-                    )
+                    logger.warning('fail to check sglang ready, retry <redacted> times, error: <redacted>')
                 retry_num += 1
                 time.sleep(0.1)
 
@@ -227,13 +225,10 @@ def run_with_torchrun():
         result = subprocess.run(cmd, check=False)
         sys.exit(result.returncode)
     except FileNotFoundError:
-        print(
-            "Error: torchrun command not found. Please ensure PyTorch is installed.",
-            file=sys.stderr,
-        )
+        print('Error: torchrun command not found. Please ensure PyTorch is installed.')
         sys.exit(1)
     except KeyboardInterrupt:
-        print("\nInterrupted by user", file=sys.stderr)
+        print('\nInterrupted by user')
         sys.exit(130)
 
 

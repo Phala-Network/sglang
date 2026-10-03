@@ -14,7 +14,7 @@ from safetensors.torch import load_file, save_file
 def main(args):
     dir_input = Path(_maybe_snapshot_download(args.input))
     dir_output = Path(args.output)
-    print(f"{dir_input=} {dir_output=}")
+    print('dir_input=<redacted> dir_output=<redacted>')
 
     dir_output.mkdir(parents=True, exist_ok=True)
 
@@ -45,10 +45,10 @@ def main(args):
             state_dict, safetensors_index, debug_name=str(path_output_safetensors)
         )
         if len(state_dict) > 0:
-            print(f"Save {len(state_dict)} tensors to {path_output_safetensors}")
+            print('Save <redacted> tensors to <redacted>')
             save_file(state_dict, path_output_safetensors)
         else:
-            print(f"Skip saving {path_output_safetensors} since it is empty")
+            print('Skip saving <redacted> since it is empty')
 
 
 def _maybe_snapshot_download(path):

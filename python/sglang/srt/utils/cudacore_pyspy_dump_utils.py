@@ -84,12 +84,12 @@ def pyspy_dump_schedulers(scheduler_only=False):
                 result = subprocess.run(
                     cmd, shell=True, capture_output=True, text=True, check=True
                 )
-                logger.error(f"Pyspy dump for PID {pid} ({cmd}):\n{result.stdout}")
+                logger.error('Pyspy dump for PID <redacted> (<redacted>):\n<redacted>')
                 break
             except subprocess.CalledProcessError as e:
-                logger.error(f"Pyspy failed ({cmd}). Error: {e.stderr}")
+                logger.error('Pyspy failed (<redacted>). Error: <redacted>')
                 if attempt == 1:
-                    logger.error(f"All pyspy dump attempts failed for PID {pid}.")
+                    logger.error('All pyspy dump attempts failed for PID <redacted>.')
 
 
 def trigger_cuda_user_coredump(scheduler_only=False):
@@ -116,29 +116,11 @@ def trigger_cuda_user_coredump(scheduler_only=False):
                 os.write(fd, b"1")
             finally:
                 os.close(fd)
-            logger.error(
-                "Triggered CUDA user coredump for PID %s via %s",
-                proc.pid,
-                pipe_path,
-            )
+            logger.error('Triggered CUDA user coredump for PID <redacted> via <redacted>')
         except FileNotFoundError:
-            logger.error(
-                "CUDA coredump pipe not found for PID %s: %s. Ensure "
-                "CUDA_ENABLE_USER_TRIGGERED_COREDUMP=1 was set before this "
-                "process initialized CUDA.",
-                proc.pid,
-                pipe_path,
-            )
+            logger.error('CUDA coredump pipe not found for PID <redacted>: <redacted>. Ensure CUDA_ENABLE_USER_TRIGGERED_COREDUMP=1 was set before this process initialized CUDA.')
         except OSError as e:
             if e.errno == ENXIO:
-                logger.error(
-                    "CUDA coredump pipe has no reader for PID %s: %s",
-                    proc.pid,
-                    pipe_path,
-                )
+                logger.error('CUDA coredump pipe has no reader for PID <redacted>: <redacted>')
             else:
-                logger.exception(
-                    "Failed to trigger CUDA user coredump for PID %s via %s",
-                    proc.pid,
-                    pipe_path,
-                )
+                logger.error('Failed to trigger CUDA user coredump for PID <redacted> via <redacted>')

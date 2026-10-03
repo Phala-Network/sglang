@@ -33,9 +33,7 @@ def _resolve_mode(images_config, num_images: int = 1) -> dict:
     key = mode.strip().lower()
     preset = _IMAGE_MODE_PRESETS.get(key)
     if preset is None:
-        logger.error(
-            f"Unknown image_mode '{mode}'. Supported: {', '.join(_IMAGE_MODE_PRESETS)}"
-        )
+        logger.error("Unknown image_mode '<redacted>'. Supported: <redacted>")
         raise ValueError(
             f"Unknown image_mode '{mode}'. Supported: {', '.join(_IMAGE_MODE_PRESETS)}"
         )

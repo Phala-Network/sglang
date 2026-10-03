@@ -1187,7 +1187,7 @@ def get_device_sm_nvidia_smi():
 
     except (subprocess.CalledProcessError, FileNotFoundError, ValueError) as e:
         # Handle cases where nvidia-smi isn't available or output is unexpected
-        logger.error("Error getting compute capability: %s", e)
+        logger.error('Error getting compute capability: <redacted>')
         return (0, 0)  # Default/fallback value
 
 
@@ -1761,9 +1761,7 @@ def load_audio(
         except Exception as e:
             # torchcodec's bytes-buffer IO can fail on WAV files that carry
             # large trailing metadata chunks. Fall back to soundfile, which reads the PCM payload directly.
-            logger.warning(
-                f"torchcodec AudioDecoder failed ({e}); falling back to soundfile + torchaudio."
-            )
+            logger.warning('torchcodec AudioDecoder failed (<redacted>); falling back to soundfile + torchaudio.')
 
     # Fallback: soundfile + torchaudio (ARM / no FFmpeg / torchcodec failure)
     import soundfile as sf
@@ -1882,11 +1880,7 @@ def is_jpeg_with_cuda(
 
 @lru_cache(maxsize=16)
 def _warn_fancy_jpeg_fallback(error: str) -> None:
-    logger.warning(
-        "High-fidelity GPU JPEG decode is unavailable; falling back to PIL. "
-        "Install the Kimi-K3 serving image or NVIDIA nvImageCodec. Error: %s",
-        error,
-    )
+    logger.warning('High-fidelity GPU JPEG decode is unavailable; falling back to PIL. Install the Kimi-K3 serving image or NVIDIA nvImageCodec. Error: <redacted>')
 
 
 def _load_image(
@@ -1916,10 +1910,7 @@ def _load_image(
             if gpu_image_decode == "nvjpeg_fancy":
                 _warn_fancy_jpeg_fallback(f"{type(e).__name__}: {e}")
             else:
-                logger.warning(
-                    "Failed to decode JPEG on GPU, falling back to CPU. Error: %s",
-                    e,
-                )
+                logger.warning('Failed to decode JPEG on GPU, falling back to CPU. Error: <redacted>')
     try:
         image = Image.open(BytesIO(image_bytes))
     except OSError as e:
@@ -2079,7 +2070,7 @@ def sample_video_frames(video, *, desired_fps: int, max_frames: int) -> list[int
 
 def encode_video(video_path, frame_count_limit=None):
     if not os.path.exists(video_path):
-        logger.error(f"Video {video_path} does not exist")
+        logger.error('Video <redacted> does not exist')
         return []
 
     if frame_count_limit == 0:
@@ -2379,7 +2370,7 @@ def set_ulimit(target_soft_limit=65535):
         try:
             resource.setrlimit(resource_type, (target_soft_limit, current_hard))
         except ValueError as e:
-            logger.warning(f"Fail to set RLIMIT_NOFILE: {e}")
+            logger.warning('Fail to set RLIMIT_NOFILE: <redacted>')
 
     # stack size
     resource_type = resource.RLIMIT_STACK
@@ -2391,7 +2382,7 @@ def set_ulimit(target_soft_limit=65535):
                 resource_type, (target_soft_limit_stack_size, current_hard)
             )
         except ValueError as e:
-            logger.warning(f"Fail to set RLIMIT_STACK: {e}")
+            logger.warning('Fail to set RLIMIT_STACK: <redacted>')
 
 
 def rank0_log(msg: str):
@@ -2600,7 +2591,7 @@ def delete_directory(dirpath):
         # This will remove the directory and all its contents
         shutil.rmtree(dirpath)
     except OSError as e:
-        logger.warning("Failed to delete directory %s: %s", dirpath, e.strerror)
+        logger.warning('Failed to delete directory <redacted>: <redacted>')
 
 
 # Temporary directory for prometheus multiprocess mode
@@ -3299,6 +3290,8 @@ def set_uvicorn_logging_configs(server_args=None):
     LOGGING_CONFIG["formatters"]["access"]["datefmt"] = "%Y-%m-%d %H:%M:%S"
 
     _configure_uvicorn_access_log_filter(LOGGING_CONFIG, server_args)
+    from sglang.srt.utils.framework_log_privacy import configure_framework_log_privacy
+    configure_framework_log_privacy()
 
 
 def _configure_uvicorn_access_log_filter(
@@ -3391,6 +3384,8 @@ def launch_dummy_health_check_server(host, port, enable_metrics):
         add_prometheus_middleware(app)
         enable_func_timer()
 
+    from sglang.srt.utils.framework_log_privacy import configure_framework_log_privacy
+    configure_framework_log_privacy()
     config = uvicorn.Config(
         app,
         host=host,
@@ -3408,7 +3403,7 @@ def launch_dummy_health_check_server(host, port, enable_metrics):
         try:
             asyncio.run(server.serve())
         except Exception as e:
-            logger.error(f"Dummy health check server failed to start: {e}")
+            logger.error('Dummy health check server failed to start: <redacted>')
             raise
         finally:
             logger.info(
@@ -3535,7 +3530,7 @@ def retry(
             # NOT retry, just propagate so unittest handles it.
             raise
         except Exception as e:
-            traceback.print_exc()
+            traceback.print_exception(RuntimeError('Exception details redacted'))
 
             if try_index >= max_retry:
                 raise Exception(f"retry() exceed maximum number of retries.")
@@ -3547,9 +3542,7 @@ def retry(
                 0.75 + 0.25 * random.random()
             )
 
-            logger.warning(
-                f"retry() failed once ({try_index}th try, maximum {max_retry} retries). Will delay {delay:.2f}s and retry. Error: {e}"
-            )
+            logger.warning('retry() failed once (<redacted>th try, maximum <redacted> retries). Will delay <redacted>s and retry. Error: <redacted>')
 
             time.sleep(delay)
 
@@ -3755,9 +3748,9 @@ def log_info_on_rank0(logger, msg):
     except Exception as e:
         if torch.distributed.is_initialized():
             if torch.distributed.get_rank() == 0:
-                logger.info(f"{msg} (rank-check failed: {e})")
+                logger.info('<redacted> (rank-check failed: <redacted>)')
         else:
-            logger.info(f"{msg} (rank-check failed: {e})")
+            logger.info('<redacted> (rank-check failed: <redacted>)')
 
 
 def log_debug_on_rank0(logger, msg):
@@ -3772,9 +3765,9 @@ def log_debug_on_rank0(logger, msg):
     except Exception as e:
         if torch.distributed.is_initialized():
             if torch.distributed.get_rank() == 0:
-                logger.debug(f"{msg} (rank-check failed: {e})")
+                logger.debug('<redacted> (rank-check failed: <redacted>)')
         else:
-            logger.debug(f"{msg} (rank-check failed: {e})")
+            logger.debug('<redacted> (rank-check failed: <redacted>)')
 
 
 def load_json_config(data: str):
@@ -4352,7 +4345,7 @@ def apply_module_patch(target_module, target_function, wrappers):
                 setattr(value, target_function, candidate)
         except ImportError as e:
             # Ignore some modules reporting ImportError when calling hasattr
-            logger.warning(f"Ignore {value} reports ImportError with:\n{str(e)}")
+            logger.warning('Ignore <redacted> reports ImportError with:\n<redacted>')
 
 
 def parse_module_path(module_path, function_name, create_dummy):

@@ -173,9 +173,7 @@ class SchedulerProfilerManager:
             return self._profile_manager.manual_start()
 
         stage_str = f" for {stage.name}" if stage else ""
-        logger.info(
-            f"Profiling starts{stage_str}. Traces will be saved to: {self.torch_profiler_output_dir} (with profile id: {self.profile_id})",
-        )
+        logger.info('Profiling starts<redacted>. Traces will be saved to: <redacted> (with profile id: <redacted>)')
 
         activities = self.profiler_activities
         with_stack = self.torch_profiler_with_stack
@@ -305,7 +303,7 @@ class SchedulerProfilerManager:
 
             logger.info(f"Profile merge completed: {merged_path}")
         except Exception as e:
-            logger.error(f"Failed to merge profiles: {e}", exc_info=True)
+            logger.error('Failed to merge profiles: <redacted>')
             return f" Merge failed: {e!s}"
         else:
             return merge_message
@@ -389,11 +387,7 @@ class SchedulerProfilerManager:
 
         merge_message = self._merge_profile_traces()
 
-        logger.info(
-            "Profiling done. Traces are saved to: %s%s",
-            self.torch_profiler_output_dir,
-            merge_message,
-        )
+        logger.info('Profiling done. Traces are saved to: <redacted><redacted>')
 
         if self.torch_profiler is not None:
             self.torch_profiler = None

@@ -549,10 +549,7 @@ class MultimodalDataItem(msgspec.Struct, kw_only=True, dict=True, array_like=Tru
             try:
                 value.release_without_reconstruction(count)
             except Exception:
-                logger.warning(
-                    "Failed to release an abandoned multimodal transport proxy",
-                    exc_info=True,
-                )
+                logger.warning('Failed to release an abandoned multimodal transport proxy')
 
     @staticmethod
     def _resolve_transport_consumer_count(proxy, requested_count: int) -> int:
@@ -693,10 +690,7 @@ class MultimodalInputs:
                 # borrowed features retained for possible re-prefill.
                 item.release_transport_proxies()
             except Exception:
-                logger.warning(
-                    "Failed to release an unused multimodal feature transport",
-                    exc_info=True,
-                )
+                logger.warning('Failed to release an unused multimodal feature transport')
             finally:
                 item.feature = None
 
@@ -1528,12 +1522,7 @@ class Req(ReqDllmMixin):
             and self.return_logprob
             and self.logprob_start_len >= 0
         ):
-            logger.warning(
-                "logprob_start_len=%d is not supported for streaming sessions "
-                "and will be ignored (rid=%s). Only new-token logprobs are returned.",
-                self.logprob_start_len,
-                self.rid,
-            )
+            logger.warning('logprob_start_len=<redacted> is not supported for streaming sessions and will be ignored (rid=<redacted>). Only new-token logprobs are returned.')
             self.logprob_start_len = -1
 
         # Pass the full array with a raw-token cap (limit) instead of slicing,
@@ -1787,12 +1776,7 @@ class Req(ReqDllmMixin):
                     try:
                         matched = re.search(stop_regex_str, tail_str)
                     except (re.error, RecursionError) as e:
-                        logger.warning(
-                            "req %s: invalid stop_regex %r (%s); aborting the request",
-                            self.rid,
-                            stop_regex_str,
-                            e,
-                        )
+                        logger.warning('req <redacted>: invalid stop_regex <redacted> (<redacted>); aborting the request')
                         self.finished_reason = FINISH_ABORT(
                             f"invalid stop_regex {stop_regex_str!r}: {e}",
                             HTTPStatus.BAD_REQUEST,
@@ -2058,7 +2042,7 @@ class Req(ReqDllmMixin):
         err_type: str = "BadRequestError",
     ):
         if get_parallel().tp_rank == 0:
-            logger.error(f"{error_msg}, {self.rid=}")
+            logger.error('<redacted>, self.rid=<redacted>')
         # Session requests share historical multimodal inputs with their prior
         # request. The session owns and releases those features when it closes.
         if self.multimodal_inputs is not None and self.session is None:
@@ -3216,11 +3200,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
                     status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
                 )
                 reqs_to_abort.append(req)
-                logger.warning(
-                    "retract_decode: aborted request %s, retraction host pool "
-                    "exhausted",
-                    req.rid,
-                )
+                logger.warning('retract_decode: aborted request <redacted>, retraction host pool exhausted')
 
         if len(sorted_indices) <= 1 and not self.check_decode_mem(
             selected_indices=sorted_indices
@@ -3242,9 +3222,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
                     self.token_to_kv_pool_allocator,
                 )
             self.release_req(last_idx, 0, offload_kv=False)
-            logger.warning(
-                "retract_decode: aborted last request %s due to OOM", last_req.rid
-            )
+            logger.warning('retract_decode: aborted last request <redacted> due to OOM')
 
         self.filter_batch(keep_indices=sorted_indices)
 

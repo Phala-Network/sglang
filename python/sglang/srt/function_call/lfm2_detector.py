@@ -549,16 +549,12 @@ class Lfm2Detector(BaseFormatDetector):
         """
         function_name = self._get_function_name(call.func)
         if function_name is None:
-            logger.warning(
-                f"Tool call function must be a name or dotted name, got: {type(call.func).__name__}"
-            )
+            logger.warning('Tool call function must be a name or dotted name, got: <redacted>')
             return None
 
         # Validate that the function exists in the tools
         if function_name not in tool_indices:
-            logger.warning(
-                f"Model attempted to call undefined function: {function_name}"
-            )
+            logger.warning('Model attempted to call undefined function: <redacted>')
             if not envs.SGLANG_FORWARD_UNKNOWN_TOOLS.get():
                 return None  # Skip unknown tools (default legacy behavior)
 
@@ -567,7 +563,7 @@ class Lfm2Detector(BaseFormatDetector):
             # values used to be dropped silently, emitting a
             # successful-looking call with arguments missing. Reject
             # instead (parseable sibling calls are kept).
-            logger.warning(f"Tool call {function_name} has positional arguments")
+            logger.warning('Tool call <redacted> has positional arguments')
             return None
 
         # Parse arguments
@@ -581,7 +577,7 @@ class Lfm2Detector(BaseFormatDetector):
                 try:
                     unpacked = self._get_parameter_value(keyword.value)
                 except ValueError as e:
-                    logger.warning(f"Failed to parse **-unpacked arguments: {e}")
+                    logger.warning('Failed to parse **-unpacked arguments: <redacted>')
                     return None
                 if not isinstance(unpacked, dict):
                     logger.warning("**-unpacked arguments must be a dict literal")
@@ -591,7 +587,7 @@ class Lfm2Detector(BaseFormatDetector):
             try:
                 arguments[keyword.arg] = self._get_parameter_value(keyword.value)
             except ValueError as e:
-                logger.warning(f"Failed to parse argument {keyword.arg}: {e}")
+                logger.warning('Failed to parse argument <redacted>: <redacted>')
                 return None
 
         if restore_reserved_kwarg:
@@ -605,7 +601,7 @@ class Lfm2Detector(BaseFormatDetector):
             # which is not valid JSON for downstream clients.
             parameters = json.dumps(arguments, ensure_ascii=False, allow_nan=False)
         except (ValueError, TypeError) as e:
-            logger.warning(f"Arguments of {function_name} are not valid JSON: {e}")
+            logger.warning('Arguments of <redacted> are not valid JSON: <redacted>')
             return None
 
         return ToolCallItem(
@@ -698,7 +694,7 @@ class Lfm2Detector(BaseFormatDetector):
         except (SyntaxError, ValueError) as e:
             return [], f"Python syntax error: {e}"
         except Exception as e:
-            logger.exception("Unexpected error in pythonic tool call parsing")
+            logger.error('Unexpected error in pythonic tool call parsing')
             return [], f"Unexpected error: {e}"
 
     def _parse_json_content(
@@ -745,7 +741,7 @@ class Lfm2Detector(BaseFormatDetector):
                 return calls
             # If JSON parsing failed but it looked like JSON, log the error
             if error:
-                logger.debug(f"JSON parsing failed: {error}, trying Pythonic format")
+                logger.debug('JSON parsing failed: <redacted>, trying Pythonic format')
 
         # Try Pythonic format
         calls, error = self._parse_pythonic_content(content, tools)
@@ -753,7 +749,7 @@ class Lfm2Detector(BaseFormatDetector):
             return calls
 
         if error:
-            logger.warning(f"Failed to parse tool calls: {error}")
+            logger.warning('Failed to parse tool calls: <redacted>')
 
         return []
 

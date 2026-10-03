@@ -150,13 +150,9 @@ class DSAMetadataManagementMixin:
                 fused_kernel_succeeded = True
 
             except ImportError:
-                print(
-                    "Warning: Fused metadata copy kernel not available, falling back to individual copies."
-                )
+                print('Warning: Fused metadata copy kernel not available, falling back to individual copies.')
             except Exception as e:
-                print(
-                    f"Warning: Fused metadata copy kernel failed with error: {e}, falling back to individual copies."
-                )
+                print('Warning: Fused metadata copy kernel failed with error: <redacted>, falling back to individual copies.')
 
         # Fallback to individual copy operations if the fused kernel is unavailable
         # or fails at runtime.

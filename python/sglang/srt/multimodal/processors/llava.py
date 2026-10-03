@@ -103,7 +103,7 @@ class LlavaImageProcessor(BaseMultimodalProcessor):
         except CLIENT_MEDIA_EXCEPTIONS as error:
             raise ValueError(f"Error while processing image: {error}") from error
         except Exception:
-            logger.error("Exception in TokenizerManager:\n" + get_exception_traceback())
+            logger.error('Request-path diagnostic redacted')
             raise
 
     async def _fetch_remote_image_bytes(self, url):

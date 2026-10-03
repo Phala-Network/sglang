@@ -163,10 +163,7 @@ def _build_rope_kernel(inputs: MlxAOTKernelBuildInputs) -> MlxAOTRoPEKernel:
     try:
         rope_pool_fused = _load_metal_rope_pool_fused()
     except Exception as exc:  # noqa: BLE001
-        logger.info(
-            "AOT Metal RoPE kernel not available (%s) - falling back to mx.fast.rope.",
-            exc,
-        )
+        logger.info('AOT Metal RoPE kernel not available (<redacted>) - falling back to mx.fast.rope.')
         return MlxAOTRoPEKernel()
 
     logger.info(
@@ -238,11 +235,7 @@ class MlxAOTKernelContext:
                     slot_ids.append(slot)
                 new_token_slots = mx.array(slot_ids, dtype=mx.int32)
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "AOT RoPE: failed to resolve new-token slots (%s); "
-                    "falling back to RoPE-only for this decode step",
-                    exc,
-                )
+                logger.warning('AOT RoPE: failed to resolve new-token slots (<redacted>); falling back to RoPE-only for this decode step')
 
         return cls(
             rope=MlxAOTRoPEContext(

@@ -108,13 +108,7 @@ def decode_audio_container(
                 mono=mono,
             )
             if skipped_packets:
-                logger.warning(
-                    "Skipped %d undecodable audio packet(s); kept %d decoded "
-                    "chunk(s). First decode error: %s",
-                    skipped_packets,
-                    len(chunks),
-                    first_decode_error,
-                )
+                logger.warning('Skipped <redacted> undecodable audio packet(s); kept <redacted> decoded chunk(s). First decode error: <redacted>')
     except _AudioContainerDecodeError:
         raise
     except Exception as error:
@@ -144,5 +138,5 @@ def extract_audio_from_video_bytes(
             mono=True,
         )
     except Exception:
-        logger.warning("Error extracting audio from video", exc_info=True)
+        logger.warning('Error extracting audio from video')
         return None

@@ -1513,11 +1513,7 @@ class Qwen3VLForConditionalGeneration(nn.Module):
                         RETAINED_CUDA_IPC_FEATURE_PROXY_KEY, None
                     )
                 except Exception:
-                    logger.warning(
-                        "Failed to release a borrowed CUDA IPC feature after "
-                        "materialization failed",
-                        exc_info=True,
-                    )
+                    logger.warning('Failed to release a borrowed CUDA IPC feature after materialization failed')
                 item.feature = None
             raise
         packed_ready = None
@@ -1534,11 +1530,7 @@ class Qwen3VLForConditionalGeneration(nn.Module):
                         RETAINED_CUDA_IPC_FEATURE_PROXY_KEY, None
                     )
                 except Exception:
-                    logger.warning(
-                        "Failed to release a copied CUDA IPC feature; retaining "
-                        "its lease until request cleanup",
-                        exc_info=True,
-                    )
+                    logger.warning('Failed to release a copied CUDA IPC feature; retaining its lease until request cleanup')
         if preserve_for_reprefill:
             return materialized, borrowed_items, packed_ready
         return materialized
@@ -1570,11 +1562,7 @@ class Qwen3VLForConditionalGeneration(nn.Module):
                 item.model_specific_data[CUDA_IPC_FEATURE_COPY_EVENT_KEY] = host_ready
         except Exception:
             # The generic multimodal path will offload the owned CUDA slices.
-            logger.warning(
-                "Failed to preserve CUDA IPC features on the copy stream; "
-                "falling back to the generic offload path",
-                exc_info=True,
-            )
+            logger.warning('Failed to preserve CUDA IPC features on the copy stream; falling back to the generic offload path')
 
     def get_input_embeddings(self):
         return self.model.embed_tokens
@@ -1743,7 +1731,7 @@ class Qwen3VLForConditionalGeneration(nn.Module):
                         continue
 
                 except KeyError:
-                    print(params_dict.keys())
+                    print('Request-path diagnostic redacted')
                     raise
 
                 weight_loader = getattr(param, "weight_loader", default_weight_loader)

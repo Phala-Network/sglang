@@ -36,7 +36,7 @@ class ValueWithMeta:
         try:
             raw = torch.load(path, weights_only=False, map_location="cpu")
         except Exception as e:
-            print(f"Skip load {path} since error {e}")
+            print('Skip load <redacted> since error <redacted>')
             return ValueWithMeta(
                 value=LOAD_FAILED, meta={**meta_from_filename, "filename": path.name}
             )
@@ -86,9 +86,7 @@ class DumpLoader:
         if isinstance(output, dict) and "value" in output:
             output = output["value"]
 
-        print(
-            f"[DumpLoader] load from {path=} (query: {name=} {kwargs=}, output: {type(output)})"
-        )
+        print('[DumpLoader] load from path=<redacted> (query: name=<redacted> kwargs=<redacted>, output: <redacted>)')
         return output
 
 
@@ -107,7 +105,7 @@ def read_meta(directory):
                 }
             )
         except Exception as e:
-            print(f"[DumpLoader] skip loading {p} due to error {e}")
+            print('[DumpLoader] skip loading <redacted> due to error <redacted>')
 
     df = pl.DataFrame(rows)
     df = df.with_columns(

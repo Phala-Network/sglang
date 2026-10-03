@@ -133,11 +133,7 @@ def _resolve_attention_backend_model_cls(config: PretrainedConfig):
                 getattr(config, "_name_or_path", ""),
             )
         except Exception as e:
-            logger.warning(
-                "Failed to load dynamic module from auto_map[%s]: %s.",
-                key,
-                e,
-            )
+            logger.warning('Failed to load dynamic module from auto_map[<redacted>]: <redacted>.')
     return None
 
 
@@ -738,11 +734,7 @@ class TransformersBase(nn.Module):
                             {f"{child_name}.{k}": v for k, v in base_tp.items()}
                         )
                 except Exception as e:
-                    logger.debug(
-                        "Could not infer TP plan from base model type '%s': %s",
-                        base_type,
-                        e,
-                    )
+                    logger.debug("Could not infer TP plan from base model type '<redacted>': <redacted>")
         return plan
 
     def _normalize_tp_plan(self, tp_plan: Mapping[str, str]) -> dict[str, Style]:

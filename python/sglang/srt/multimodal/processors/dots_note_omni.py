@@ -392,13 +392,7 @@ class DotsNoteOmniProcessor(BaseMultimodalProcessor):
         request_videos = len(video_data) if video_data else 0
         request_images = len(image_data) if image_data else 0
         request_audios = len(audio_data) if audio_data else 0
-        logger.info(
-            "[dots_mm] rid=%s request videos=%d images=%d audios=%d",
-            request_obj.rid,
-            request_videos,
-            request_images,
-            request_audios,
-        )
+        logger.info('[dots_mm] rid=<redacted> request videos=<redacted> images=<redacted> audios=<redacted>')
 
         if video_data:
             video_config = dict(request_obj.video_config or {})
@@ -459,18 +453,7 @@ class DotsNoteOmniProcessor(BaseMultimodalProcessor):
                 input_text, image_data, audio_data, video_media
             )
             preprocess_elapsed = time.perf_counter() - preprocess_started
-            logger.info(
-                "[dots_mm] rid=%s video_preprocess elapsed=%.3fs "
-                "expanded_frames=%d expanded_audio_segments=%d content_items=%d "
-                "after_preprocess images=%d audios=%d",
-                request_obj.rid,
-                preprocess_elapsed,
-                total_frames,
-                total_audio_segments,
-                total_content_items,
-                len(image_data),
-                len(audio_data),
-            )
+            logger.info('[dots_mm] rid=<redacted> video_preprocess elapsed=<redacted>s expanded_frames=<redacted> expanded_audio_segments=<redacted> content_items=<redacted> after_preprocess images=<redacted> audios=<redacted>')
 
         base_output = await self.load_mm_data(
             prompt=input_text,

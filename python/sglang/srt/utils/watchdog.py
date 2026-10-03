@@ -126,9 +126,7 @@ class WatchdogRaw:
             while True:
                 self._watchdog_once()
         except Exception as e:
-            logger.error(
-                f"{self.debug_name} watchdog thread crashed: {e}", exc_info=True
-            )
+            logger.error('<redacted> watchdog thread crashed: <redacted>')
 
     def _watchdog_once(self):
         watchdog_last_counter = 0
@@ -147,13 +145,10 @@ class WatchdogRaw:
             time.sleep(self.watchdog_timeout / 2)
 
         if self.dump_info is not None and (info_msg := self.dump_info()):
-            logger.error(f"{self.debug_name} debug info:\n{info_msg}")
+            logger.error('<redacted> debug info:\n<redacted>')
 
         pyspy_dump_schedulers()
-        logger.error(
-            f"{self.debug_name} watchdog timeout "
-            f"({self.watchdog_timeout=}, {self.soft=})"
-        )
+        logger.error('<redacted> watchdog timeout (self.watchdog_timeout=<redacted>, self.soft=<redacted>)')
         print(file=sys.stderr, flush=True)
         print(file=sys.stdout, flush=True)
 
@@ -206,18 +201,14 @@ class SubprocessWatchdog:
                 if self._check_processes():
                     return
         except Exception as e:
-            logger.error(f"SubprocessWatchdog thread crashed: {e}", exc_info=True)
+            logger.error('SubprocessWatchdog thread crashed: <redacted>')
 
     def _check_processes(self) -> bool:
         for proc, name in zip(self._processes, self._names):
             if proc.is_alive() or proc.exitcode == 0:
                 continue
 
-            logger.error(
-                f"Subprocess {name} (pid={proc.pid}) crashed "
-                f"with exit code {proc.exitcode}. "
-                f"Triggering SIGQUIT for cleanup..."
-            )
+            logger.error('Subprocess <redacted> (pid=<redacted>) crashed with exit code <redacted>. Triggering SIGQUIT for cleanup...')
             os.kill(os.getpid(), signal.SIGQUIT)
             return True
         return False

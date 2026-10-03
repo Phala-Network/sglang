@@ -93,10 +93,7 @@ class FanOutCommunicator(Generic[T]):
             or self._result_event is None
             or self._result_fan_out is None
         ):
-            logger.debug(
-                "Dropping communicator response without active waiter: %s",
-                type(recv_obj).__name__,
-            )
+            logger.debug('Dropping communicator response without active waiter: <redacted>')
             return
         self._result_values.append(recv_obj)
         if len(self._result_values) == self._result_fan_out:

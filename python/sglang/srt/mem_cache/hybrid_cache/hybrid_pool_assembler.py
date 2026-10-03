@@ -1920,7 +1920,7 @@ def attach_hybrid_pool_to_unified_cache(
         )
         _apply_stack_result(cache, kvcache, params, result)
     except Exception:
-        logger.exception("attach_hybrid_pool_to_unified_cache failed")
+        logger.error('attach_hybrid_pool_to_unified_cache failed')
         raise
 
 
@@ -2083,7 +2083,7 @@ def attach_hybrid_minimax_sparse_pool_to_hiradix_cache(
             len(sparse_pool.index_k_layer_id_mapping),
         )
     except Exception:
-        logger.exception("attach_hybrid_minimax_sparse_pool_to_hiradix_cache failed")
+        logger.error('attach_hybrid_minimax_sparse_pool_to_hiradix_cache failed')
         raise
 
 
@@ -2132,5 +2132,5 @@ def attach_hybrid_dsa_pool_to_hiradix_cache(
             len(layer_mapping),
         )
     except Exception:
-        logger.exception("attach_hybrid_dsa_pool_to_hiradix_cache failed")
+        logger.error('attach_hybrid_dsa_pool_to_hiradix_cache failed')
         raise

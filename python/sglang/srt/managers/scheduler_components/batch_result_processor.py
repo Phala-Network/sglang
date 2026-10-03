@@ -164,18 +164,7 @@ class SchedulerBatchResultProcessor:
             req.routed_experts is not None
             and req.routed_experts.shape[0] != expected_rows
         ):
-            logger.warning(
-                "routed_experts row-count mismatch for req %s: got %d, expected %d "
-                "(seqlen=%d, raw_seqlen=%d, cached_tokens=%d, start_len=%s). "
-                "This indicates a silent bug.",
-                req.rid,
-                req.routed_experts.shape[0],
-                expected_rows,
-                seqlen,
-                req.seqlen,
-                req.cached_tokens,
-                req.routed_experts_start_len,
-            )
+            logger.warning('routed_experts row-count mismatch for req <redacted>: got <redacted>, expected <redacted> (seqlen=<redacted>, raw_seqlen=<redacted>, cached_tokens=<redacted>, start_len=<redacted>). This indicates a silent bug.')
 
     def _maybe_collect_indexer_topk(self, req: Req):
         capturer = get_global_indexer_capturer()
@@ -702,9 +691,7 @@ class SchedulerBatchResultProcessor:
                 # Grammar accept_token can raise ValueError if the token is not in the
                 # grammar. This can happen if the grammar is not set correctly or the
                 # token is invalid.
-                logger.error(
-                    f"Grammar accept_token failed for req {req.rid} with token {next_token_id}: {e}"
-                )
+                logger.error('Grammar accept_token failed for req <redacted> with token <redacted>: <redacted>')
                 req.to_finish = FINISH_ABORT()
         req.grammar.finished = req.finished()
 
@@ -841,10 +828,7 @@ class SchedulerBatchResultProcessor:
         except ValueError as e:
             # accept_token raises ValueError if the token is not in the grammar
             # (misconfigured grammar or invalid token); abort the request.
-            logger.error(
-                f"Grammar accept_token failed for req {req.rid} with token "
-                f"{tokens}: {e}"
-            )
+            logger.error('Grammar accept_token failed for req <redacted> with token <redacted>: <redacted>')
             req.to_finish = FINISH_ABORT()
         return retained
 

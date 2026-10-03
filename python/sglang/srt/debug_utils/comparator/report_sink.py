@@ -42,10 +42,7 @@ class ReportSink:
                 self._report_file = open(report_path, "w", encoding="utf-8")
                 self._report_path = report_path
             except OSError as exc:
-                print(
-                    f"Warning: cannot open report file {report_path}: {exc}",
-                    file=sys.stderr,
-                )
+                print('Warning: cannot open report file <redacted>: <redacted>')
 
     def add(self, record: _OutputRecord) -> None:
         self._print_to_stdout(record)

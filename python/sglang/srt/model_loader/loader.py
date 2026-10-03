@@ -1355,12 +1355,7 @@ class QuantizedRLModelLoader(DefaultModelLoader):
             if scale_param.data.shape == new_scale.shape:
                 scale_param.data.copy_(new_scale)
             else:
-                logger.warning(
-                    "[QuantizedRL] Scale shape mismatch for %s: expected %s, got %s",
-                    scale_param_name,
-                    scale_param.data.shape,
-                    new_scale.shape,
-                )
+                logger.warning('[QuantizedRL] Scale shape mismatch for <redacted>: expected <redacted>, got <redacted>')
         else:
             stacked_key = next(
                 (
@@ -1380,9 +1375,7 @@ class QuantizedRLModelLoader(DefaultModelLoader):
             )
             rows_per_shard = scale_param.data.shape[-1] // max(len(shard_names), 1)
             if rows_per_shard * len(shard_names) != scale_param.data.shape[-1]:
-                logger.warning(
-                    f"Scale param shape {scale_param.data.shape[-1]} not divisible by {len(shard_names)}"
-                )
+                logger.warning('Scale param shape <redacted> not divisible by <redacted>')
             offset = 0
             for idx, shard in enumerate(shard_names):
                 shard_id = (
@@ -2029,14 +2022,7 @@ class PreshardedModelLoader(DefaultModelLoader):
             del meta_model
             return self._hash_structural_signature(sig_input)
         except Exception as e:
-            logger.warning(
-                "Failed to build structural signature for presharded cache key "
-                "(model_type=%s): %s",
-                getattr(
-                    getattr(model_config, "hf_config", None), "model_type", "unknown"
-                ),
-                e,
-            )
+            logger.warning('Failed to build structural signature for presharded cache key (model_type=<redacted>): <redacted>')
             return None
         finally:
             _clear_meta_rope_cache()
@@ -3458,7 +3444,7 @@ class RemoteInstanceModelLoader(BaseModelLoader):
         for name, tensor in model.named_parameters():
             weight_info = seed_transfer_engine_weight_info.get(name, None)
             if weight_info is None:
-                logger.error(f"Cannot find weight info for {name}.")
+                logger.error('Cannot find weight info for <redacted>.')
                 return False
 
             seed_ptr, seed_numel, seed_element_size = weight_info
@@ -3466,11 +3452,7 @@ class RemoteInstanceModelLoader(BaseModelLoader):
                 seed_numel != tensor.numel()
                 or seed_element_size != tensor.element_size()
             ):
-                logger.error(
-                    f"Weight info does not match for {name}, "
-                    f"expected ({seed_numel}, {seed_element_size}), "
-                    f"got ({tensor.numel()}, {tensor.element_size()})"
-                )
+                logger.error('Weight info does not match for <redacted>, expected (<redacted>, <redacted>), got (<redacted>, <redacted>)')
                 return False
             client_ptr = tensor.data_ptr()
             client_len = tensor.numel() * tensor.element_size()
@@ -3486,7 +3468,7 @@ class RemoteInstanceModelLoader(BaseModelLoader):
             client_len_list,
         )
         if ret < 0:
-            logger.error(f"batch transfer failed, error: {ret}")
+            logger.error('batch transfer failed, error: <redacted>')
             return False
 
         _post_load_weights(model)
@@ -3836,9 +3818,7 @@ class ModelOptModelLoader(DefaultModelLoader):
                 self._maybe_export_modelopt(model, export_path)
                 return
             except Exception as e:
-                logger.warning(
-                    f"Failed to restore from {quantized_ckpt_restore_path}: {e}"
-                )
+                logger.warning('Failed to restore from <redacted>: <redacted>')
                 rank0_log("Proceeding with calibration-based quantization...")
 
         # Set up calibration-based quantization
@@ -3876,9 +3856,7 @@ class ModelOptModelLoader(DefaultModelLoader):
                     mto.save(model, quantized_ckpt_save_path)
                     rank0_log(f"Quantized model saved to {quantized_ckpt_save_path}")
                 except Exception as e:
-                    logger.warning(
-                        f"Failed to save quantized checkpoint to {quantized_ckpt_save_path}: {e}"
-                    )
+                    logger.warning('Failed to save quantized checkpoint to <redacted>: <redacted>')
 
             # Export model if path provided
             self._maybe_export_modelopt(model, export_path)
@@ -4042,7 +4020,7 @@ class ModelOptModelLoader(DefaultModelLoader):
                 export_path=export_path,
             )
         except Exception as e:
-            logger.warning(f"ModelOpt quantization failed: {e}")
+            logger.warning('ModelOpt quantization failed: <redacted>')
             rank0_log("Proceeding without quantization...")
 
         return model.eval()

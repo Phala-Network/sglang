@@ -127,7 +127,7 @@ def main() -> int:
             }
         with open(args.baseline_file, "w") as f:
             json.dump(result, f, indent=2)
-        print(f"\nWrote baseline to {args.baseline_file}")
+        print('\nWrote baseline to <redacted>')
         return 0
 
     with open(args.baseline_file) as f:

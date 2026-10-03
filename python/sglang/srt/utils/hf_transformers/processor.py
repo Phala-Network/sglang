@@ -152,12 +152,7 @@ def _build_processor_manually(
                 pp_auto_map = json.load(f).get("auto_map", {})
             proc_ref = pp_auto_map.get("AutoProcessor")
         except (OSError, json.JSONDecodeError, ValueError) as e:
-            logger.warning(
-                "_build_processor_manually: could not read preprocessor_config.json "
-                "for %s: %s",
-                model_path,
-                e,
-            )
+            logger.warning('_build_processor_manually: could not read preprocessor_config.json for <redacted>: <redacted>')
     if not proc_ref:
         raise ValueError(f"Cannot determine processor class for {model_path}")
 
@@ -191,13 +186,7 @@ def _build_processor_manually(
             try:
                 init_kwargs["feature_extractor"] = fe_class()
             except TypeError as e:
-                logger.warning(
-                    "Cannot instantiate feature extractor %s with no arguments "
-                    "for %s: %s",
-                    fe_class_name,
-                    model_path,
-                    e,
-                )
+                logger.warning('Cannot instantiate feature extractor <redacted> with no arguments for <redacted>: <redacted>')
         else:
             logger.warning(
                 "Feature extractor class %s not found in transformers for %s",
@@ -305,11 +294,7 @@ def get_processor(
     except ValueError as e:
         error_message = str(e)
         if "Unrecognized feature extractor" in error_message:
-            logger.info(
-                "AutoProcessor failed on feature extractor for %s, "
-                "constructing processor manually",
-                tokenizer_name,
-            )
+            logger.info('AutoProcessor failed on feature extractor for <redacted>, constructing processor manually')
             processor = _build_processor_manually(
                 tokenizer_name,
                 config,
@@ -320,11 +305,7 @@ def get_processor(
         elif (
             "are not supported by" in error_message and "MistralCommon" in error_message
         ):
-            logger.info(
-                "AutoProcessor for %s rejected standard kwargs, "
-                "retrying without trust_remote_code",
-                tokenizer_name,
-            )
+            logger.info('AutoProcessor for <redacted> rejected standard kwargs, retrying without trust_remote_code')
             kwargs.pop("_from_auto", None)
             processor = AutoProcessor.from_pretrained(
                 tokenizer_name,

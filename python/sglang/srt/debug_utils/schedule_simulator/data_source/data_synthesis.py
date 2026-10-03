@@ -26,10 +26,7 @@ def generate_random_requests(
             )
         )
 
-    print(
-        f"Generated {len(requests)} random requests "
-        f"(input_len={input_len}, output_len={output_len}, range_ratio={range_ratio})"
-    )
+    print('Generated <redacted> random requests (input_len=<redacted>, output_len=<redacted>, range_ratio=<redacted>)')
     return requests
 
 
@@ -65,12 +62,7 @@ def generate_gsp_requests(
             idx += 1
 
     random.shuffle(requests)
-    print(
-        f"Generated {len(requests)} GSP requests "
-        f"({num_groups} groups x {prompts_per_group} prompts, "
-        f"system_prompt_len={system_prompt_len}, question_len={question_len}, "
-        f"output_len={output_len})"
-    )
+    print('Generated <redacted> GSP requests (<redacted> groups x <redacted> prompts, system_prompt_len=<redacted>, question_len=<redacted>, output_len=<redacted>)')
     return requests
 
 

@@ -35,7 +35,7 @@ def main(args):
     df_good_to_bad = df_meta.filter(pl.col("correctness_delta") < 0)
     df_bad_to_good = df_meta.filter(pl.col("correctness_delta") > 0)
 
-    print(f"Dump output to {args.output_path}")
+    print('Dump output to <redacted>')
     Path(args.output_path).write_text(
         json.dumps(
             dict(

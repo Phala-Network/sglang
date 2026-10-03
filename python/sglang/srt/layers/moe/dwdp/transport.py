@@ -80,10 +80,7 @@ def _copy_local_weights_to_handles(
         handles[(layer_idx, name)] = handle
         sizes[(layer_idx, name)] = phys_size
 
-        logger.debug(
-            f"Phase 1: layer={layer_idx}, name={name}, "
-            f"phys_size={phys_size}, data_offset={data_offset}"
-        )
+        logger.debug('Phase 1: layer=<redacted>, name=<redacted>, phys_size=<redacted>, data_offset=<redacted>')
 
     torch.cuda.empty_cache()
 

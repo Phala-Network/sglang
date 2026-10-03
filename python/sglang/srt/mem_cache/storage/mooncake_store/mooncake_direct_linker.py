@@ -215,12 +215,7 @@ class MooncakeDirectLinker(UnifiedCacheLinker):
         restorable = result.restorable_prefix_pages or []
         self.stats["lookup"] += 1
         if restorable:
-            logger.info(
-                "Mooncake direct linker lookup hit: rid=%s pages=%d candidates=%d",
-                rid,
-                restorable[-1],
-                len(restorable),
-            )
+            logger.info('Mooncake direct linker lookup hit: rid=<redacted> pages=<redacted> candidates=<redacted>')
         return restorable
 
     def load(self, rid: str, transfers: list[PoolTransfer]) -> bool:
@@ -281,7 +276,7 @@ class MooncakeDirectLinker(UnifiedCacheLinker):
                     self.load_layer_wise(counter_index, list(pending.values()))
                 except BaseException as error:
                     self.layer_done_counter.fail(counter_index, error)
-                    logger.exception("Mooncake layer-wise load batch failed")
+                    logger.error('Mooncake layer-wise load batch failed')
                 finally:
                     self.completed_loads.put(list(pending))
             finally:
@@ -342,14 +337,14 @@ class MooncakeDirectLinker(UnifiedCacheLinker):
                 self.layer_done_counter.complete(counter_index, layer)
         except BaseException as error:
             self.layer_done_counter.fail(counter_index, error)
-            logger.exception("Mooncake layer-wise load batch failed")
+            logger.error('Mooncake layer-wise load batch failed')
         finally:
             for keys in started:
                 try:
                     self.storage.store.batch_get_session_end(keys)
                 except BaseException as error:
                     self.layer_done_counter.fail(counter_index, error)
-                    logger.exception("Mooncake layer-wise load session cleanup failed")
+                    logger.error('Mooncake layer-wise load session cleanup failed')
 
     def offload(self, transfers: list[PoolTransfer]) -> bool:
         expanded = self.pool_group.resolve_transfers(transfers, allow_partial=True)
@@ -382,7 +377,7 @@ class MooncakeDirectLinker(UnifiedCacheLinker):
                         logger.info("Mooncake direct linker offload: tokens=%d", tokens)
                 self.offload_results.put(success)
             except BaseException:
-                logger.exception("Mooncake offload failed")
+                logger.error('Mooncake offload failed')
                 self.offload_results.put(False)
             finally:
                 self.offload_queue.task_done()

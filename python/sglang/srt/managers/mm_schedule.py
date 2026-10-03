@@ -668,11 +668,7 @@ def _adjust_embedding_length(
 ) -> torch.Tensor:
     num_mm_tokens_in_embedding = embedding.shape[0]
     if num_mm_tokens_in_input_ids != num_mm_tokens_in_embedding:
-        logger.warning(
-            f"Number of tokens in multimodal embedding does not match those in the input text. "
-            f"Got {num_mm_tokens_in_input_ids} tokens in the text but {num_mm_tokens_in_embedding} "
-            f"tokens from multimodal embeddings."
-        )
+        logger.warning('Number of tokens in multimodal embedding does not match those in the input text. Got <redacted> tokens in the text but <redacted> tokens from multimodal embeddings.')
         if num_mm_tokens_in_input_ids < num_mm_tokens_in_embedding:
             chunked_prefill_size = get_schedule().chunked_prefill_size
             if chunked_prefill_size != -1:

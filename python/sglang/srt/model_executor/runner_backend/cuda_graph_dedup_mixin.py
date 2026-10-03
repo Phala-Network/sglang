@@ -312,11 +312,7 @@ class DedupedCudaGraphMixin:
         except TypeError:
             return None
         except Exception as e:
-            logger.warning(
-                "[CudaGraph][dedup] %s init failed (%s); using plain executables.",
-                type(self).__name__,
-                e,
-            )
+            logger.warning('[CudaGraph][dedup] <redacted> init failed (<redacted>); using plain executables.')
             return None
 
     def begin_cuda_graph_capture(self) -> None:

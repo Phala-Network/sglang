@@ -68,7 +68,7 @@ class HttpServerEngineAdapter(EngineBase):
         # every read here is of the record it just built -- a bag read would
         # either fail closed or answer for an unrelated engine in the process.
         cfg = resolving_view(self.server_args)
-        print(f"Launch HttpServerEngineAdapter at: {cfg.host}:{cfg.port}")
+        print('Launch HttpServerEngineAdapter at: <redacted>:<redacted>')
         self.process = launch_server_process(self.server_args)
 
     def _make_request(self, endpoint: str, payload: Optional[dict] = None):

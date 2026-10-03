@@ -90,7 +90,7 @@ def create_arg_parser() -> argparse.ArgumentParser:
 def _load_requests(args: argparse.Namespace) -> List[SimRequest]:
     if args.input:
         requests = load_from_request_logger(args.input)
-        print(f"Loaded {len(requests)} requests from {args.input}")
+        print('Loaded <redacted> requests from <redacted>')
     elif args.synth_gsp:
         requests = generate_gsp_requests(
             num_groups=args.synth_gsp_num_groups,
@@ -151,9 +151,7 @@ def main(args: argparse.Namespace) -> SimulationResult:
         max_steps=args.max_steps,
     )
 
-    print(
-        f"Running simulation with {args.num_gpus_per_engine} GPUs/engine x {args.num_engines} engines, router={args.router}, scheduler={args.scheduler}"
-    )
+    print('Running simulation with <redacted> GPUs/engine x <redacted> engines, router=<redacted>, scheduler=<redacted>')
     result = sim.run(requests)
 
     print("\n=== Summary ===")
@@ -163,6 +161,6 @@ def main(args: argparse.Namespace) -> SimulationResult:
     if args.output:
         with open(args.output, "w") as f:
             json.dump(result.summary, f, indent=2)
-        print(f"\nSummary saved to {args.output}")
+        print('\nSummary saved to <redacted>')
 
     return result

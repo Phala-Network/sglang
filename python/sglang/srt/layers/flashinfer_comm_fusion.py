@@ -118,11 +118,7 @@ if is_flashinfer_available():
             )
     except (ImportError, AttributeError) as e:
         _flashinfer_allreduce_unavailable = True
-        logger.warning(
-            "flashinfer.comm allreduce_fusion API is not available (%s), "
-            "falling back to standard implementation",
-            e,
-        )
+        logger.warning('flashinfer.comm allreduce_fusion API is not available (<redacted>), falling back to standard implementation')
 
     try:
         from flashinfer.comm.mnnvl import TorchDistBackend
@@ -354,11 +350,7 @@ def _preflight_check_workspace_memory(
         )
         local_ok = _probe_cumem_create_sequence(cuda_driver, allocation_sizes, prop)
     except Exception as e:
-        logger.warning(
-            "FlashInfer workspace preflight probe failed (%s). "
-            "Skipping allreduce fusion.",
-            e,
-        )
+        logger.warning('FlashInfer workspace preflight probe failed (<redacted>). Skipping allreduce fusion.')
         local_ok = False
 
     flag = torch.tensor([1 if local_ok else 0], dtype=torch.int32)
@@ -554,10 +546,7 @@ class FlashInferWorkspaceManager:
                 )
         except Exception as e:
             _flashinfer_allreduce_unavailable = True
-            logger.warning(
-                f"Failed to initialize FlashInfer workspace (backend={backend}): {e}. "
-                "Disabling flashinfer allreduce fusion permanently."
-            )
+            logger.warning('Failed to initialize FlashInfer workspace (backend=<redacted>): <redacted>. Disabling flashinfer allreduce fusion permanently.')
             self.workspace = None
             self._workspace_size_check_kwarg = None
             self._workspace_size_check_strategy_type = None
@@ -594,7 +583,7 @@ class FlashInferWorkspaceManager:
                 )
             return self.workspace.is_buffer_size_sufficient(**check_kw)
         except Exception as e:
-            logger.debug(f"FlashInfer workspace size check failed: {e}")
+            logger.debug('FlashInfer workspace size check failed: <redacted>')
             # Fallback: some backends may not implement is_buffer_size_sufficient;
             # reuse if within our allocated dimensions.
             if (
@@ -613,7 +602,7 @@ class FlashInferWorkspaceManager:
                 if hasattr(self.workspace, "destroy"):
                     self.workspace.destroy()
             except Exception as e:
-                logger.warning(f"Failed to cleanup FlashInfer workspace: {e}")
+                logger.warning('Failed to cleanup FlashInfer workspace: <redacted>')
             finally:
                 self.workspace = None
                 self._workspace_size_check_kwarg = None
@@ -675,7 +664,7 @@ def _sync_allreduce_unavailable_across_tp():
                 "workspace initialization failed on at least one rank."
             )
     except Exception as e:
-        logger.debug(f"Failed to sync flashinfer unavailable flag: {e}")
+        logger.debug('Failed to sync flashinfer unavailable flag: <redacted>')
 
 
 def ensure_workspace_initialized(

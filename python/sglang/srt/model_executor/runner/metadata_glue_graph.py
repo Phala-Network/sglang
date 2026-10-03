@@ -88,12 +88,7 @@ class MetadataGlueGraph:
             with torch.cuda.graph(graph, stream=self._capture_stream):
                 attn_backend.init_forward_metadata_out_graph(fb_view)
         except Exception:
-            logger.warning(
-                "Metadata glue-graph capture failed for key %s; falling back "
-                "to eager metadata prep permanently.",
-                key,
-                exc_info=True,
-            )
+            logger.warning('Metadata glue-graph capture failed for key <redacted>; falling back to eager metadata prep permanently.')
             self.disabled = True
             # Ops under a failed capture were recorded, not executed — run
             # this step's prep for real.

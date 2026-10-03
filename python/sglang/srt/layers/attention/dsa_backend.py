@@ -145,9 +145,7 @@ if _is_hip:
         )
         from aiter.mla import mla_decode_fwd, mla_prefill_fwd  # noqa: F401
     except ImportError:
-        print(
-            "aiter is AMD specific kernel library. Please make sure aiter is installed on your AMD device."
-        )
+        print('aiter is AMD specific kernel library. Please make sure aiter is installed on your AMD device.')
 elif _is_xpu:
     from sgl_kernel.flash_attn import (
         flash_attn_varlen_func,
@@ -3809,13 +3807,9 @@ class DeepseekSparseAttnMultiStepBackend:
             except (ImportError, Exception) as e:
                 # Fallback to loop if multi-backend kernel not available or fails
                 if isinstance(e, ImportError):
-                    print(
-                        "Warning: Multi-backend fused metadata copy kernel not available, falling back to loop."
-                    )
+                    print('Warning: Multi-backend fused metadata copy kernel not available, falling back to loop.')
                 else:
-                    print(
-                        f"Warning: Multi-backend fused metadata copy kernel failed with error: {e}, falling back to loop."
-                    )
+                    print('Warning: Multi-backend fused metadata copy kernel failed with error: <redacted>, falling back to loop.')
                 for i in range(self.speculative_num_steps - 1):
                     self.attn_backends[
                         i

@@ -145,10 +145,7 @@ class GlobalMetadataState:
                     f"Successfully loaded metadata for {len(self.ranks)} ranks."
                 )
         except (json.JSONDecodeError, KeyError, TypeError) as e:
-            logging.error(
-                f"Failed to load or parse persistence file: {e}. Starting fresh.",
-                exc_info=True,
-            )
+            logging.error('Failed to load or parse persistence file: <redacted>. Starting fresh.')
             self.ranks.clear()
 
     def save_to_disk(self):
@@ -173,7 +170,7 @@ class GlobalMetadataState:
             temp_path.rename(self.persistence_path)
             logging.info(f"Metadata successfully persisted to {self.persistence_path}")
         except Exception as e:
-            logging.error(f"Failed to save metadata to disk: {e}", exc_info=True)
+            logging.error('Failed to save metadata to disk: <redacted>')
 
     def schedule_save(self):
         if self.is_shutting_down or not self.persistence_path:
@@ -330,6 +327,8 @@ class Hf3fsMetadataServer:
         else:
             logging.info("Persistence is DISABLED.")
 
+        from sglang.srt.utils.framework_log_privacy import configure_framework_log_privacy
+        configure_framework_log_privacy()
         uvicorn.run(self.app, host=host, port=port)
 
 
@@ -364,7 +363,7 @@ class Hf3fsGlobalMetadataClient(Hf3fsMetadataInterface):
                 return {}
             return orjson.loads(response.content)  # type: ignore[union-attr]
         except requests.exceptions.RequestException as e:
-            logging.error(f"Failed to POST to {endpoint} after retries: {e}")
+            logging.error('Failed to POST to <redacted> after retries: <redacted>')
             raise RuntimeError(f"Failed to connect to metadata server: {e}") from e
 
     def initialize(

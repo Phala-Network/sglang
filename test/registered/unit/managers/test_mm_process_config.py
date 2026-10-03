@@ -163,7 +163,7 @@ class TestBaseProcessorConfigExtraction(CustomTestCase):
         finally:
             proc.mm_processor_executor.shutdown()
 
-    def test_explicit_single_worker_disables_executor(self):
+    def test_explicit_single_worker_still_leaves_the_event_loop(self):
         from sglang.srt.multimodal.processors.base_processor import (
             BaseMultimodalProcessor,
         )
@@ -171,7 +171,7 @@ class TestBaseProcessorConfigExtraction(CustomTestCase):
         with patch.object(BaseMultimodalProcessor, "auto_mm_processor_worker_num", 4):
             proc = self._make_processor({}, mm_processor_worker_num=1)
         self.assertEqual(proc.mm_processor_worker_num, 1)
-        self.assertIsNone(proc.mm_processor_executor)
+        self.assertIsNotNone(proc.mm_processor_executor)
 
     def test_parallel_workers_require_processor_support(self):
         from sglang.srt.multimodal.processors.base_processor import (
@@ -183,7 +183,7 @@ class TestBaseProcessorConfigExtraction(CustomTestCase):
         ):
             proc = self._make_processor({}, mm_processor_worker_num=2)
         self.assertEqual(proc.mm_processor_worker_num, 1)
-        self.assertIsNone(proc.mm_processor_executor)
+        self.assertIsNotNone(proc.mm_processor_executor)
 
     def test_cpu_preprocessing_path_gets_two_workers(self):
         """A processor whose preprocessing stays on the CPU: the second worker is
@@ -203,7 +203,7 @@ class TestBaseProcessorConfigExtraction(CustomTestCase):
                 {}, image_processor=MagicMock(spec=BaseImageProcessor)
             )
         self.assertEqual(proc.mm_processor_worker_num, 1)
-        self.assertIsNone(proc.mm_processor_executor)
+        self.assertIsNotNone(proc.mm_processor_executor)
 
     def test_non_accelerator_fast_processor_gets_two_workers(self):
         from transformers import BaseImageProcessor

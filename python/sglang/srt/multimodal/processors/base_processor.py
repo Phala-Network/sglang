@@ -387,8 +387,10 @@ class BaseMultimodalProcessor(ABC):
                 type(self).__name__,
             )
             self.mm_processor_worker_num = 1
+        # One worker too: run inline, processing a video of hundreds of frames would
+        # stall every stream the tokenizer manager serves.
         self.mm_processor_executor = None
-        if self.mm_processor_worker_num > 1:
+        if not skip_mm_pool:
             try:
                 # A callable, not the object: subclasses finish customizing
                 # `_processor` after this returns, and the workers must clone it
@@ -398,15 +400,14 @@ class BaseMultimodalProcessor(ABC):
                 )
             except Exception:
                 logger.warning(
-                    "Unable to clone the multimodal processor for concurrent "
-                    "workers; falling back to synchronous processing.",
+                    "Unable to clone the multimodal processor for worker "
+                    "threads; falling back to synchronous processing.",
                     exc_info=True,
                 )
                 self.mm_processor_worker_num = 1
         if self.mm_processor_executor is not None:
             logger.info(
-                "Multimodal processor concurrency enabled with %d isolated "
-                "worker threads (%s).",
+                "Multimodal processor runs on %d isolated worker thread(s) (%s).",
                 self.mm_processor_worker_num,
                 "auto" if requested_mm_processor_worker_num == 0 else "explicit",
             )

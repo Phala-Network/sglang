@@ -1,3 +1,4 @@
+import asyncio
 import math
 import os
 import re
@@ -250,7 +251,16 @@ async def preprocess_video(
     image_factor: int = IMAGE_FACTOR,
     video_config: dict = {},
 ) -> torch.Tensor:
-    # preprocessed video
+    # Decoding and resizing up to FPS_MAX_FRAMES frames takes seconds of CPU: on the
+    # event loop it would stall every stream the tokenizer manager serves.
+    return await asyncio.to_thread(_preprocess_video, vr, image_factor, video_config)
+
+
+def _preprocess_video(
+    vr,
+    image_factor: int = IMAGE_FACTOR,
+    video_config: dict = {},
+) -> torch.Tensor:
     is_video_obj = isinstance(vr, VideoDecoderWrapper)
     if not is_video_obj:
         return vr, None

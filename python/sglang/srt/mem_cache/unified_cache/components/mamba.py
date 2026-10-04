@@ -1046,42 +1046,69 @@ class MambaComponent(TreeComponent):
         while tracker[ct] < num_tokens and x is not None and host_lru.in_list(x):
             if not enabled:
                 x_next = host_lru.get_prev_no_host_lock(x)
-            cd = x.component_data[ct]
-            if x in self.tree_core.evictable_host_leaves and (
-                not enabled or self._can_evict_leaf_atomically(x)
-            ):
-                # Host leaf: atomic eviction (all components host + delete)
-                self.tree_core._evict_host_leaf(
-                    x, tracker, device_frees, host_frees, cache_actions=cache_actions
-                )
-            else:
-                # Internal (or a leaf a session still pins): tombstone Mamba + cascade
-                assert cd.host_value is not None
-                self.tree_core._evict_component_and_detach_lru(
-                    x,
-                    self,
-                    target=EvictLayer.HOST,
-                    tracker=tracker,
-                    device_frees=device_frees,
-                    host_frees=host_frees,
-                    cache_actions=cache_actions,
-                )
-                self.tree_core._cascade_evict(
-                    x,
-                    self,
-                    tracker,
-                    device_frees=device_frees,
-                    host_frees=host_frees,
-                    target=EvictLayer.HOST,
-                    cache_actions=cache_actions,
-                )
-                self.tree_core._update_evictable_leaf_sets(x)
+            self._evict_host_node(
+                x, tracker, device_frees, host_frees, cache_actions=cache_actions
+            )
             if enabled:
                 x = host_lru.cursor_next(host_lock=True)
             else:
                 x = x_next
         if enabled:
             host_lru.cursor_end()
+
+    def drop_host_value(
+        self,
+        node: UnifiedTreeNode,
+        tracker: dict[ComponentType, int],
+        device_frees: dict[ComponentType, list[torch.Tensor]],
+        host_frees: dict[ComponentType, list[torch.Tensor]],
+        cache_actions: list[CacheAction | ComponentAction],
+    ) -> None:
+        cd = node.component_data[self.component_type]
+        if cd.host_value is not None and cd.host_lock_ref == 0:
+            self._evict_host_node(
+                node, tracker, device_frees, host_frees, cache_actions=cache_actions
+            )
+
+    def _evict_host_node(
+        self,
+        x: UnifiedTreeNode,
+        tracker: dict[ComponentType, int],
+        device_frees: dict[ComponentType, list[torch.Tensor]],
+        host_frees: dict[ComponentType, list[torch.Tensor]],
+        cache_actions: list[CacheAction | ComponentAction],
+    ) -> None:
+        cd = x.component_data[self.component_type]
+        if x in self.tree_core.evictable_host_leaves and (
+            not self.tree_core.enable_session_radix_cache
+            or self._can_evict_leaf_atomically(x)
+        ):
+            # Host leaf: atomic eviction (all components host + delete)
+            self.tree_core._evict_host_leaf(
+                x, tracker, device_frees, host_frees, cache_actions=cache_actions
+            )
+        else:
+            # Internal (or a leaf a session still pins): tombstone Mamba + cascade
+            assert cd.host_value is not None
+            self.tree_core._evict_component_and_detach_lru(
+                x,
+                self,
+                target=EvictLayer.HOST,
+                tracker=tracker,
+                device_frees=device_frees,
+                host_frees=host_frees,
+                cache_actions=cache_actions,
+            )
+            self.tree_core._cascade_evict(
+                x,
+                self,
+                tracker,
+                device_frees=device_frees,
+                host_frees=host_frees,
+                target=EvictLayer.HOST,
+                cache_actions=cache_actions,
+            )
+            self.tree_core._update_evictable_leaf_sets(x)
 
     def free_host_values(self, host_values: list[torch.Tensor]) -> None:
         if self._mamba_pool_host is None:

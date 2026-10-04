@@ -552,6 +552,13 @@ class UnifiedTreeCoreInterface(ABC):
         """Evict a component's host-side resources; no-op if the component is absent."""
         ...
 
+    def drop_host_value(
+        self, node_id: NodeId, component_type: ComponentType
+    ) -> DriveHostEvictionResult:
+        """Drop one node's host copy of a component that the host tier can no
+        longer load back, so a later backup stores it afresh. Default no-op."""
+        return DriveHostEvictionResult()
+
     @abstractmethod
     def evict_excess_path_states(
         self,

@@ -1961,6 +1961,21 @@ class UnifiedTreeCore(UnifiedTreeCoreInterface):
             )
         return result
 
+    def drop_host_value(
+        self, node_id: NodeId, component_type: ComponentType
+    ) -> DriveHostEvictionResult:
+        result = DriveHostEvictionResult()
+        comp = self.components_by_type.get(component_type)
+        if comp is not None:
+            comp.drop_host_value(
+                self.node_by_id(node_id),
+                result.tracker,
+                result.device_frees,
+                result.host_frees,
+                cache_actions=result.cache_actions,
+            )
+        return result
+
     def evict_excess_path_states(
         self,
         tail_node_id: NodeId,

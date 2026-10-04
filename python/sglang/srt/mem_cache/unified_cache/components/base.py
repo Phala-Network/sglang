@@ -856,6 +856,18 @@ class TreeComponent(ABC):
         Default no-op for components without host storage."""
         pass
 
+    def drop_host_value(
+        self,
+        node: UnifiedTreeNode,
+        tracker: dict[ComponentType, int],
+        device_frees: dict[ComponentType, list[torch.Tensor]],
+        host_frees: dict[ComponentType, list[torch.Tensor]],
+        cache_actions: list[CacheAction | ComponentAction],
+    ) -> None:
+        """Drop *node*'s host copy of this component, one the host tier can no
+        longer load back. Default no-op."""
+        pass
+
     def apply_component_action(self, action: ComponentAction) -> None:
         """Apply a component-routed cache action; dispatched by the cache."""
         raise NotImplementedError(

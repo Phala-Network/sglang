@@ -68,6 +68,7 @@ from sglang.srt.utils import (
 _is_cpu = is_cpu()
 _is_npu = is_npu()
 _is_xpu = is_xpu()
+_FORCE_CPU_IMAGE_PREPROCESSING = envs.SGLANG_FORCE_CPU_IMAGE_PREPROCESSING.get()
 
 
 @dataclasses.dataclass
@@ -240,7 +241,7 @@ def _forget_parent_executor_wakeups():
 
 class BaseMultimodalProcessor(ABC):
     models = []
-    gpu_image_decode = True  # Enable GPU decoding by default
+    gpu_image_decode = not _FORCE_CPU_IMAGE_PREPROCESSING
     smart_rgb_conversion = False
     video_preprocessing_device = None
     # Redo preprocessing on CPU when the GPU runs out of memory (the tokenizer
@@ -804,7 +805,11 @@ class BaseMultimodalProcessor(ABC):
         tokenizer process each carry their own ``base_gpu_id``.
         """
         server_args = self.server_args
-        if _is_cpu or get_exec().deterministic.rl_on_policy_target is not None:
+        if (
+            _is_cpu
+            or _FORCE_CPU_IMAGE_PREPROCESSING
+            or get_exec().deterministic.rl_on_policy_target is not None
+        ):
             return "cpu"
         if _is_xpu:
             return "xpu"

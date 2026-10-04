@@ -1649,7 +1649,8 @@ class Envs:
     # set False to fall back to the per-image loop.
     SGLANG_VIT_ENABLE_VECTORIZED_POS_EMBED = EnvBool(True)
     SGLANG_MM_SKIP_COMPUTE_HASH = EnvBool(False)
-    # Supported by Kimi-K2.5 and native diffusion RGB input preprocessing.
+    # Decode and preprocess images on the CPU: nvJPEG decodes one image at a time
+    # per process, and under confidential computing every upload is encrypted.
     SGLANG_FORCE_CPU_IMAGE_PREPROCESSING = EnvBool(False)
     # For pre-tokenized (list[int]) multimodal prompts,
     # preserve the user's original tokens to avoid retokenization drift.

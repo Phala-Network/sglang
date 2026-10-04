@@ -52,7 +52,12 @@ class TestFastImageProcessorDevice(CustomTestCase):
         self.addCleanup(reset_context)
 
     def _device(self, processor, cuda_alike=True, device_type="cuda", **platform):
-        flags = {"_is_cpu": False, "_is_xpu": False, "_is_npu": False}
+        flags = {
+            "_is_cpu": False,
+            "_is_xpu": False,
+            "_is_npu": False,
+            "_FORCE_CPU_IMAGE_PREPROCESSING": False,
+        }
         flags.update(platform)
         platforms = SimpleNamespace(
             current_platform=SimpleNamespace(
@@ -83,6 +88,12 @@ class TestFastImageProcessorDevice(CustomTestCase):
     def test_rl_on_policy_target_forces_cpu(self):
         processor = _make(base_gpu_id=3, rl_on_policy_target="fsdp")
         self.assertEqual(self._device(processor), "cpu")
+
+    def test_forced_cpu_preprocessing_wins_over_base_gpu_id(self):
+        processor = _make(base_gpu_id=3)
+        self.assertEqual(
+            self._device(processor, _FORCE_CPU_IMAGE_PREPROCESSING=True), "cpu"
+        )
 
     def test_cpu_and_xpu_platforms_win_over_base_gpu_id(self):
         processor = _make(base_gpu_id=3)

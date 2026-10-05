@@ -248,7 +248,8 @@ class BaseMultimodalProcessor(ABC):
     # process shares its GPU with the scheduler).
     retry_on_cpu_after_gpu_oom = False
     prefer_tokenized_input = False
-    precompute_hash_before_cpu_transfer = False
+    # CPU features are hashed here, off the scheduler's loop.
+    precompute_hash_before_cpu_transfer = _FORCE_CPU_IMAGE_PREPROCESSING
     # Set by processors that already build input_ids from the request's own
     # tokens, so the retokenize-avoidance rebuild below has nothing to add.
     preserve_processor_input_ids = False

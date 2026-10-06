@@ -64,6 +64,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse, Response, StreamingResponse
 from fastapi.routing import APIRoute
 
+from sglang.srt.utils.public_config import sanitize_server_info
 from sglang.srt.arg_groups.overrides import resolving_view
 from sglang.srt.configs.embedding_model_spec import resolved_embedding_plan
 from sglang.srt.constants import HEALTH_CHECK_RID_PREFIX
@@ -857,7 +858,7 @@ async def server_info():
 
     server_args = _global_state.tokenizer_manager.server_args
 
-    return msgspec_to_builtins(
+    return sanitize_server_info(msgspec_to_builtins(
         {
             **server_args.resolved_dict(),
             "launch_command": server_args.launch_command,
@@ -871,7 +872,7 @@ async def server_info():
             # `runtime_context.describe_kv_events_publisher` for the contract.
             "kv_events": describe_kv_events_publisher(server_args),
         }
-    )
+    ))
 
 
 # example usage:

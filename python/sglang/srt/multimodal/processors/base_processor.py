@@ -995,16 +995,24 @@ class BaseMultimodalProcessor(ABC):
             elif modality == Modality.AUDIO:
                 return load_audio(data, audio_sample_rate)
 
-        except CLIENT_MEDIA_EXCEPTIONS as e:
-            data_str = str(data)
-            if len(data_str) > 100:
-                data_str = data_str[:100] + "..."
-            raise ValueError(f"Error while loading data {data_str}: {e}") from e
-        except Exception as e:
-            data_str = str(data)
-            if len(data_str) > 100:
-                data_str = data_str[:100] + "..."
-            raise RuntimeError(f"Error while loading data {data_str}: {e}") from e
+        except CLIENT_MEDIA_EXCEPTIONS:
+            # Public errors must not include media bytes, URLs or decoder details.
+            # Preserve the existing client/internal exception boundary.
+            media = {
+                Modality.IMAGE: "image",
+                Modality.VIDEO: "video",
+                Modality.AUDIO: "audio",
+            }.get(modality, "media")
+            raise ValueError(
+                f"Invalid or unavailable {media} (media_input_error). "
+                "Check the source is accessible, the encoding is valid, "
+                "and the format is supported."
+            ) from None
+        except Exception:
+            raise RuntimeError(
+                "Media processing failed (media_processing_error). "
+                "Retry or contact the service operator."
+            ) from None
 
     @staticmethod
     def _get_preprocessed_input_format(data):

@@ -365,8 +365,8 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
             json.decoder.JSONDecodeError,
             UnicodeDecodeError,
         ) as e:
-            logger.error(f"Hit invalid json_schema: {key_string=}, {e=}")
-            return InvalidGrammarObject(str(e))
+            logger.error("Invalid JSON schema (exception_type=%s)", type(e).__name__)
+            return InvalidGrammarObject("Invalid or unsupported JSON schema (schema_invalid).")
         return self._from_context(ctx, key_string, GrammarStats(dispatch_type="json"))
 
     def dispatch_ebnf(self, key_string: str) -> BaseGrammarObject:

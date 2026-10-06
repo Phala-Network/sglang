@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, Optional, final
 
-from sglang.srt.entrypoints.openai.protocol import PromptTokensDetails, UsageInfo
+from sglang.srt.entrypoints.openai.protocol import (
+    CompletionTokensDetails, PromptTokensDetails, UsageInfo,
+)
 
 
 @final
@@ -123,4 +125,8 @@ class UsageProcessor:
             total_tokens=prompt_tokens + completion_tokens,
             prompt_tokens_details=details,
             reasoning_tokens=reasoning_tokens,
+            completion_tokens_details=(
+                CompletionTokensDetails(reasoning_tokens=int(reasoning_tokens))
+                if reasoning_tokens is not None else None
+            ),
         )

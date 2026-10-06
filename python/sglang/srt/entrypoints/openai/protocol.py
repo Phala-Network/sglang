@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+from pydantic import model_serializer
+
 import logging
 import time
 import unicodedata
@@ -206,13 +208,27 @@ class PromptTokensDetails(BaseModel):
         return data
 
 
+class CompletionTokensDetails(BaseModel):
+    """OpenAI-compatible alias; reasoning is already included in completion tokens."""
+
+    reasoning_tokens: Optional[int] = None
+
+
 class UsageInfo(BaseModel):
     prompt_tokens: int = 0
     total_tokens: int = 0
     completion_tokens: Optional[int] = 0
     # Used to return cached tokens info when --enable-cache-report is set
     prompt_tokens_details: Optional[PromptTokensDetails] = None
+    completion_tokens_details: Optional[CompletionTokensDetails] = None
     reasoning_tokens: Optional[int] = 0
+
+    @model_serializer(mode="wrap")
+    def _serialize_completion_details(self, handler):
+        data = handler(self)
+        if "completion_tokens_details" not in self.model_fields_set:
+            data.pop("completion_tokens_details", None)
+        return data
 
 
 class StreamOptions(BaseModel):

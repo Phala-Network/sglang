@@ -117,16 +117,16 @@ class OpenAIServingBase(ABC):
                 status_code=400,
             )
         except DS32EncodingError as e:
-            logger.info(f"DS32EncodingError: {e}")
+            logger.info("DS32EncodingError (exception_type=%s)", type(e).__name__)
             return self.create_error_response(
-                message=str(e),
+                message="Invalid message history (ds32_input_error).",
                 err_type="BadRequest",
                 status_code=400,
             )
         except Exception as e:
-            logger.exception(f"Error in request: {e}")
+            logger.error("Error in request (exception_type=%s)", type(e).__name__)
             return self.create_error_response(
-                message=f"Internal server error: {str(e)}",
+                message="Internal server error (request_processing_error).",
                 err_type="InternalServerError",
                 status_code=500,
             )
@@ -242,7 +242,7 @@ class OpenAIServingBase(ABC):
                 else None
             )
         except json.JSONDecodeError as e:
-            logger.exception(f"Error in request: {e}")
+            logger.error("Error in request (exception_type=%s)", type(e).__name__)
             raw_labels = None
 
         if isinstance(raw_labels, dict):

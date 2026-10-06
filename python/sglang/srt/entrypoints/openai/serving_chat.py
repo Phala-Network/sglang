@@ -1074,8 +1074,8 @@ class OpenAIServingChat(OpenAIServingBase):
                 # a 400 instead of crashing into a 500.
                 normalize_json_schema_types(tool.function.parameters)
                 Draft202012Validator.check_schema(tool.function.parameters)
-            except SchemaError as e:
-                return f"Tool {i} function has invalid 'parameters' schema: {str(e)}"
+            except SchemaError:
+                return f"tools[{i}].function.parameters: schema_invalid; provide a valid JSON Schema."
             except RecursionError:
                 return (
                     f"Tool {i} function 'parameters' schema is too deeply nested "
@@ -1097,7 +1097,11 @@ class OpenAIServingChat(OpenAIServingBase):
         if request.response_format and request.response_format.type == "json_schema":
             schema = getattr(request.response_format.json_schema, "schema_", None)
             if schema is None:
-                return "schema_ is required for json_schema response format request."
+                return "response_format.json_schema.schema: schema_missing; provide a JSON Schema."
+            try:
+                Draft202012Validator.check_schema(schema)
+            except SchemaError:
+                return "response_format.json_schema.schema: schema_invalid; provide a valid JSON Schema."
 
         return None
 
@@ -2583,11 +2587,7 @@ class OpenAIServingChat(OpenAIServingBase):
                             "from %s output; dropping the incomplete call",
                             self.tool_call_parser,
                         )
-                        logger.debug(
-                            "Unparsed tool call output (%d chars): %r",
-                            len(text),
-                            text[:2000],
-                        )
+                        logger.debug("Unparsed tool call output (content omitted).")
                         return ToolCallProcessingResult(None, text, finish_reason)
 
                     tool_calls = []
@@ -2612,7 +2612,7 @@ class OpenAIServingChat(OpenAIServingBase):
                         finish_reason["matched"] = None
                     return ToolCallProcessingResult(tool_calls, text, finish_reason)
                 except Exception as e:
-                    logger.error(f"Tool call parsing error: {e}")
+                    logger.error("Tool call parsing error (exception_type=%s)", type(e).__name__)
                     return ToolCallProcessingResult(None, text, finish_reason)
 
             if is_required and detector_owns_format:
@@ -2621,7 +2621,7 @@ class OpenAIServingChat(OpenAIServingBase):
                     self.tool_call_parser,
                     len(text),
                 )
-                logger.debug("Unparsed required tool call output: %r", text[:2000])
+                logger.debug("Unparsed required tool call output (content omitted).")
                 return ToolCallProcessingResult(None, text, finish_reason)
 
         # json_schema constraint → JSON array output for required/named
@@ -2670,8 +2670,8 @@ class OpenAIServingChat(OpenAIServingBase):
                     )
                 return ToolCallProcessingResult(tool_calls, "", finish_reason)
             except Exception as e:
-                logger.error(f"Tool call parsing error: {e}")
-                logger.debug("Unparsed required tool call output: %r", text[:2000])
+                logger.error("Tool call parsing error (exception_type=%s)", type(e).__name__)
+                logger.debug("Unparsed required tool call output (content omitted).")
                 finish_reason["type"] = original_finish_type
                 return ToolCallProcessingResult(None, text, finish_reason)
 

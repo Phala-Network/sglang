@@ -51,6 +51,7 @@ import torch
 import uvloop
 import zmq
 
+from sglang.srt.utils.public_config import sanitize_server_info
 from sglang.srt.arg_groups.overrides import (
     attention_backends_of,
     resolved_view,
@@ -286,7 +287,7 @@ class Engine(EngineScoreMixin, EngineBase):
                 "Engine(" + ", ".join(f"{k}={v!r}" for k, v in kwargs.items()) + ")",
             )
         self.server_args = server_args
-        logger.info(f"server_args={server_args.resolved_dict()}")
+        logger.info("server_args=%s", sanitize_server_info(server_args.resolved_dict()))
 
         # Rust Server is not supported with the offline Engine API
         if envs.SGLANG_RUST_SERVER.get():
@@ -1120,7 +1121,7 @@ class Engine(EngineScoreMixin, EngineBase):
             # Allocate ports for inter-process communications
             if port_args is None:
                 port_args = PortArgs.init_new(server_args)
-            logger.info(f"server_args={server_args.resolved_dict()}")
+            logger.info("server_args=%s", sanitize_server_info(server_args.resolved_dict()))
 
             # Start the engine info bootstrap server if per-rank info is needed.
             engine_info_bootstrap_server = None
@@ -1486,7 +1487,7 @@ class Engine(EngineScoreMixin, EngineBase):
         internal_states = self.loop.run_until_complete(
             self.tokenizer_manager.get_internal_state()
         )
-        return msgspec_to_builtins(
+        return sanitize_server_info(msgspec_to_builtins(
             {
                 **self.tokenizer_manager.server_args.resolved_dict(),
                 "launch_command": self.tokenizer_manager.server_args.launch_command,
@@ -1495,7 +1496,7 @@ class Engine(EngineScoreMixin, EngineBase):
                 "internal_states": internal_states,
                 "version": __version__,
             }
-        )
+        ))
 
     def get_model_info(self):
         """What this engine is serving right now.

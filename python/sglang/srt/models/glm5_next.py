@@ -1,4 +1,5 @@
 import logging
+import time
 from array import array
 from contextlib import nullcontext
 from functools import partial
@@ -1243,6 +1244,8 @@ class Glm5NextForConditionalGeneration(nn.Module):
 
         self.pp_group = get_parallel().pp_group
         self.config = text_config
+        # Model loaders construct this module under model_config.dtype.
+        self._mhc_activation_dtype = torch.get_default_dtype()
         self.tp_size = get_parallel().tp_size
         self.quant_config = quant_config
         self.use_dsa = is_deepseek_dsa(text_config)
@@ -1546,6 +1549,62 @@ class Glm5NextForConditionalGeneration(nn.Module):
         else:
             return hidden_states
 
+    def _prewarm_mhc_kernels(self) -> None:
+        """Compile the generic mHC split buckets before serving, once per rank."""
+        if getattr(self, "_mhc_prewarmed_at_load", False):
+            return
+        if (
+            self.encoder_only
+            or not self.config.mhc
+            or not _is_cuda
+            or not envs.SGLANG_OPT_USE_TILELANG_MHC_PRE.get()
+        ):
+            return
+        # These guards are uniform within a TP group, including empty PP stages.
+        layer = next(
+            (m for m in self.model.layers if isinstance(m, Glm5NextDecoderLayer)),
+            None,
+        )
+        if layer is None or self._mhc_activation_dtype != torch.bfloat16:
+            return
+
+        from sglang.kernels.ops.layernorm.mhc import prewarm_mhc_pre
+
+        tic = time.perf_counter()
+        config = layer.config
+        residual = torch.zeros(
+            (1, config.hc_mult, config.hidden_size),
+            dtype=self._mhc_activation_dtype,
+            device=layer.hc_attn_fn.device,
+        )
+        prewarm_mhc_pre(
+            residual=residual,
+            fn=layer.hc_attn_fn,
+            hc_scale=layer.hc_attn_scale,
+            hc_base=layer.hc_attn_base,
+            rms_eps=config.rms_norm_eps,
+            hc_pre_eps=config.hc_eps,
+            hc_sinkhorn_eps=config.hc_eps,
+            hc_post_mult_value=_MHC_POST_MULT_VALUE,
+            sinkhorn_repeat=config.hc_sinkhorn_iters,
+            n_splits=1,
+            n_splits_pre=32,
+            norm_weight=layer.input_layernorm.weight.data,
+            norm_eps=layer.input_layernorm.variance_epsilon,
+        )
+        torch.cuda.synchronize()
+        compile_secs = time.perf_counter() - tic
+        del residual
+        # Match the load-time contract: release transients before pool sizing.
+        torch.cuda.empty_cache()
+        get_parallel().tp_group.barrier()
+        self._mhc_prewarmed_at_load = True
+        logger.info(
+            "GLM mHC prewarm at load: compile %.1fs, rank sync +%.1fs",
+            compile_secs,
+            time.perf_counter() - tic - compile_secs,
+        )
+
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]], is_nextn=False):
         if is_nextn:
             if hasattr(self.config, "num_nextn_predict_layers"):
@@ -1794,6 +1853,8 @@ class Glm5NextForConditionalGeneration(nn.Module):
             DeepseekV2WeightLoaderMixin.post_load_weights(
                 self, is_nextn=is_nextn, weight_names=weight_names
             )
+        if not is_nextn:
+            self._prewarm_mhc_kernels()
 
     def post_load_weights(self, is_nextn: bool = False, weight_names=None):
         if self.encoder_only:
@@ -1801,6 +1862,8 @@ class Glm5NextForConditionalGeneration(nn.Module):
         DeepseekV2WeightLoaderMixin.post_load_weights(
             self, is_nextn=is_nextn, weight_names=weight_names
         )
+        if not is_nextn:
+            self._prewarm_mhc_kernels()
 
     def load_kv_cache_scales(self, quantization_param_path: str) -> None:
         if self.model is None:

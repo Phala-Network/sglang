@@ -1012,10 +1012,15 @@ class SchedulerBatchResultProcessor:
                 req.to_finish = sampling_mask_finish_reason
                 new_accept_len = 0
             else:
+                output_start = len(req.output_ids)
                 req.output_ids.extend(next_token_id)
                 new_accept_len = len(next_token_id)
-                self._maybe_update_reasoning_tokens(req, next_token_id)
             req.update_finish_state(new_accept_len)
+            if sampling_mask_finish_reason is None:
+                # Count only the newly committed suffix after length/stop truncation.
+                self._maybe_update_reasoning_tokens(
+                    req, list(req.output_ids_through_stop[output_start:])
+                )
 
             if sampling_mask_finish_reason is not None:
                 self._handle_sampling_mask_abort(req)

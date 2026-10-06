@@ -1894,16 +1894,14 @@ class OpenAIServingChat(OpenAIServingBase):
             self.reasoning_parser,
             structured_tools=bool(effective_tools) and effective_tool_choice != "none",
         )
-        # The implicit single-turn grammar terminates at EOS independently of
-        # ignore_eos. Plain length-controlled requests must not acquire it.
+        # A grammar reaching its terminal state ends generation regardless of
+        # `ignore_eos`, so only install it when the request allows tool calls.
         glm_constraint = (
             self.tool_call_parser == "glm47"
+            and bool(effective_tools)
+            and effective_tool_choice != "none"
             and envs.SGLANG_TOOL_STRICT_LEVEL.get() < ToolStrictLevel.PARAMETER
             and not any(tool.function.strict for tool in effective_tools)
-            and not (
-                request.ignore_eos
-                and (not effective_tools or effective_tool_choice == "none")
-            )
         )
         if glm_constraint:
             enable_thinking = (request.chat_template_kwargs or {}).get(

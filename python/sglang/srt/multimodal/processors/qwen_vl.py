@@ -246,8 +246,8 @@ def smart_nframes(
     return nframes
 
 
-# One video at a time, as on the event loop: each holds up to FPS_MAX_FRAMES
-# full-resolution frames in pinned memory, and already decodes on its own threads.
+# One video at a time, as on the event loop: each already decodes on up to 16
+# threads, and two at once gained 1.2-1.4x throughput for twice the memory.
 _VIDEO_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
     max_workers=1, thread_name_prefix="sglang-mm-video"
 )
@@ -283,12 +283,8 @@ def _preprocess_video(
     )
     idx = np.linspace(0, total_frames - 1, num=nframes, dtype=np.int64)
     idx = np.unique(idx)
+    nframes = len(idx)
 
-    video = vr.get_frames_as_tensor(idx.tolist())
-
-    video = video.permute(0, 3, 1, 2)  # NHWC -> TCHW
-
-    nframes, _, height, width = video.shape
     min_pixels = video_config.get("min_pixels", VIDEO_MIN_PIXELS)
     total_pixels = video_config.get("total_pixels", VIDEO_TOTAL_PIXELS)
     max_pixels = max(
@@ -299,8 +295,6 @@ def _preprocess_video(
         int(min_pixels * 1.05),
     )
 
-    get_batch_time = time.perf_counter()
-
     max_pixels_supposed = video_config.get("max_pixels", max_pixels)
 
     if max_pixels_supposed > max_pixels:
@@ -308,26 +302,30 @@ def _preprocess_video(
             f"The given max_pixels[{max_pixels_supposed}] exceeds limit[{max_pixels}]."
         )
     max_pixels = min(max_pixels_supposed, max_pixels)
-    if "resized_height" in video_config and "resized_width" in video_config:
-        resized_height, resized_width = smart_resize(
-            video_config["resized_height"],
-            video_config["resized_width"],
-            factor=image_factor,
+
+    def resize(frames):  # NHWC -> TCHW at the model's size
+        frames = frames.permute(0, 3, 1, 2)
+        if "resized_height" in video_config and "resized_width" in video_config:
+            size = smart_resize(
+                video_config["resized_height"],
+                video_config["resized_width"],
+                factor=image_factor,
+            )
+        else:
+            size = smart_resize(
+                frames.shape[2],
+                frames.shape[3],
+                factor=image_factor,
+                min_pixels=min_pixels,
+                max_pixels=max_pixels,
+            )
+        return torchvision.transforms.functional.resize(
+            frames, list(size), interpolation=InterpolationMode.BILINEAR
         )
-    else:
-        resized_height, resized_width = smart_resize(
-            height,
-            width,
-            factor=image_factor,
-            min_pixels=min_pixels,
-            max_pixels=max_pixels,
-        )
-    smart_resize_time = time.perf_counter()
-    video = torchvision.transforms.functional.resize(
-        video,
-        [resized_height, resized_width],
-        interpolation=InterpolationMode.BILINEAR,
-    )
+
+    # Resized as they are decoded: holding up to FPS_MAX_FRAMES full-size frames at
+    # once takes ~4.8 GB at 1080p and ~19 GB at 4K.
+    video = vr.get_frames_as_tensor(idx.tolist(), transform=resize)
     if not is_cpu() and video.device.type == "cpu":
         video = video.pin_memory()
     video_metadata = {
@@ -337,13 +335,9 @@ def _preprocess_video(
         "frames_indices": idx,
         "video_backend": "torchvision",
     }
-    torchvision_resize_time = time.perf_counter()
     logger.debug(
         f"[preprocess_video Perf], "
-        f"get_batch_time: {(get_batch_time - entry_time) * 1000:.2f} ms, "
-        f"smart_resize_time: {(smart_resize_time - get_batch_time) * 1000:.2f} ms, "
-        f"torchvision_resize_time: {(torchvision_resize_time - smart_resize_time) * 1000:.2f} ms, "
-        f"total_time: {(torchvision_resize_time - entry_time) * 1000:.2f} ms"
+        f"total_time: {(time.perf_counter() - entry_time) * 1000:.2f} ms"
     )
     return video, video_metadata
 

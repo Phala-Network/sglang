@@ -17,6 +17,9 @@ except (ImportError, RuntimeError):
 
 _cuda_backend_enabled: bool | None = None
 
+# Full-size frames one decoder holds before a transform shrinks them.
+_TRANSFORM_STEP_BYTES = 64 << 20
+
 
 def _try_cuda_backend() -> bool:
     """Try to enable torchcodec CUDA backend. Caches result after first call."""
@@ -31,6 +34,17 @@ def _try_cuda_backend() -> bool:
     except Exception:
         _cuda_backend_enabled = False
     return _cuda_backend_enabled
+
+
+def _decode_in_steps(decode, indices, step, transform):
+    """``decode(indices)`` -> NHWC frames; with a transform, ``step`` frames at a time."""
+    if transform is None:
+        return decode(indices)
+    import torch
+
+    return torch.cat(
+        [transform(decode(indices[i : i + step])) for i in range(0, len(indices), step)]
+    )
 
 
 def _is_cpu_engine() -> bool:
@@ -129,9 +143,19 @@ class VideoDecoderWrapper:
         else:
             return self._decoder.get_batch(indices).asnumpy()
 
-    def get_frames_as_tensor(self, indices: list):
-        """Return frames at given indices as a torch tensor (NHWC, uint8, pinned memory)."""
+    def get_frames_as_tensor(self, indices: list, transform=None):
+        """Return frames at given indices as a torch tensor (NHWC, uint8, pinned memory).
+
+        ``transform`` maps a batch of decoded NHWC frames to what is returned, e.g.
+        resized frames. The frames are then decoded a few at a time, so a long video
+        never holds all of its full-size frames at once.
+        """
         import torch
+
+        step = len(indices)
+        if transform is not None:
+            height, width = self.frame_shape
+            step = max(1, _TRANSFORM_STEP_BYTES // (height * width * 3))
 
         if (
             _BACKEND == "torchcodec"
@@ -143,19 +167,25 @@ class VideoDecoderWrapper:
                 num_threads = min(os.cpu_count() or 8, 16)
             num_threads = min(num_threads, len(indices))
             if num_threads > 1:
-                return self._parallel_decode(indices, num_threads)
+                return self._parallel_decode(indices, num_threads, step, transform)
 
         if _BACKEND == "torchcodec":
-            batch = self._decoder.get_frames_at(indices)
-            if _is_cpu_engine():
-                return batch.data
-            return batch.data if batch.data.is_cuda else batch.data.pin_memory()
+            output = _decode_in_steps(
+                lambda ix: self._decoder.get_frames_at(ix).data,
+                indices,
+                step,
+                transform,
+            )
         else:
-            arr = self._decoder.get_batch(indices).asnumpy()
-            output = torch.from_numpy(arr)
-            return output if _is_cpu_engine() else output.pin_memory()
+            output = _decode_in_steps(
+                lambda ix: torch.from_numpy(self._decoder.get_batch(ix).asnumpy()),
+                indices,
+                step,
+                transform,
+            )
+        return output if _is_cpu_engine() or output.is_cuda else output.pin_memory()
 
-    def _parallel_decode(self, indices, num_threads):
+    def _parallel_decode(self, indices, num_threads, step, transform):
         """Decode frames using multiple VideoDecoder instances in parallel threads."""
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -174,7 +204,9 @@ class VideoDecoderWrapper:
             if cuda_device is not None:
                 torch.cuda.set_device(cuda_device)
             d = VideoDecoder(source, **kwargs)
-            return d.get_frames_at(chunk).data
+            return _decode_in_steps(
+                lambda ix: d.get_frames_at(ix).data, chunk, step, transform
+            )
 
         with ThreadPoolExecutor(max_workers=len(chunks)) as executor:
             future_to_idx = {

@@ -280,6 +280,9 @@ class ReqState:
 
     dispatched: bool = False
     abort_sent: bool = False
+    # Identifies the API request object that created this state. A delayed
+    # disconnect task must not abort a later request that reuses the same rid.
+    request_owner: Optional[Union[GenerateReqInput, EmbeddingReqInput]] = None
 
     # Prevent duplicate releases after completion or ownership transfer.
     lora_released: bool = False
@@ -2428,9 +2431,34 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         # Abort the request if the client is disconnected.
         async def abort_request():
             await asyncio.sleep(2)
-            rids = [obj.rid] if obj.is_single else obj.rid
-            for rid in rids:
-                if rid in self.rid_to_state:
+            # Some entrypoints create the background task before this request
+            # has normalized GenerateReqInput. Without a normalized request,
+            # there is no scheduler rid to abort.
+            if not hasattr(obj, "is_single"):
+                return
+            if obj.is_single:
+                rid = getattr(obj, "rid", None)
+                if not isinstance(rid, str) or not rid:
+                    return
+                expected_requests = [(rid, obj)]
+            else:
+                batch_size = getattr(obj, "batch_size", None)
+                rids = getattr(obj, "rid", None)
+                if (
+                    not isinstance(batch_size, int)
+                    or batch_size < 1
+                    or not isinstance(rids, list)
+                    or len(rids) < batch_size
+                    or any(
+                        not isinstance(rid, str) or not rid
+                        for rid in rids[:batch_size]
+                    )
+                ):
+                    return
+                expected_requests = [(rids[i], obj) for i in range(batch_size)]
+            for rid, expected_owner in expected_requests:
+                state = self.rid_to_state.get(rid)
+                if state is not None and state.request_owner is expected_owner:
                     self.abort_request(rid)
 
         background_tasks = BackgroundTasks()
@@ -3813,7 +3841,10 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 external_trace_header = extract_trace_headers(request.headers)
                 obj.external_trace_header = external_trace_header
 
-        # Normalize single/batch into a uniform list of (rid, sub_obj, bootstrap_room)
+        # Normalize single/batch into a uniform list of (rid, sub_obj, bootstrap_room).
+        # Parallel sampling can expand obj.rid for children while batch_size remains
+        # the original parent count. Only initialize parent placeholders here; the
+        # dummy prefill and every sample regenerate and initialize child rids.
         if not hasattr(obj, "is_single") or obj.is_single:
             items = [(obj.rid, obj, getattr(obj, "bootstrap_room", None))]
         else:
@@ -3827,7 +3858,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                         else None
                     ),
                 )
-                for i in range(len(obj.rid))
+                for i in range(obj.batch_size)
             ]
 
         rids = set()
@@ -3840,6 +3871,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         for rid, sub_obj, bootstrap_room in items:
             time_stats = APIServerReqTimeStats(disagg_mode=self.disaggregation_mode)
             state = ReqState([], False, asyncio.Event(), sub_obj, time_stats)
+            state.request_owner = obj
             if self.enable_trace:
                 time_stats.init_trace_ctx(rid, bootstrap_room, external_trace_header)
             time_stats.set_created_time(created_time)

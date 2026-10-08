@@ -1,16 +1,22 @@
+import json
+import os
 import random
 import unittest
 from contextlib import contextmanager
 
 from transformers import AutoTokenizer
 
+from sglang.srt.environ import envs
 from sglang.srt.utils.patch_tokenizer import (
     _PadPaddingSideShim,
+    _EncodePieceFastPathPatcher,
     _SpecialTokensCachePatcher,
     decode_without_hf_kwargs,
+    patch_tokenizer,
     unpatch_tokenizer,
 )
 from sglang.test.ci.ci_register import register_cpu_ci
+from sglang.test.test_utils import CustomTestCase
 
 register_cpu_ci(est_time=30, suite="base-a-test-cpu", nightly=True)
 register_cpu_ci(est_time=16, suite="stage-b-test-cpu-intel")
@@ -274,6 +280,168 @@ class _FakeRaisingTokenizer:
         raise RuntimeError("boom")
 
 
+class TestEncodePieceFastPathPatcher(CustomTestCase):
+    """The fast path must be a pure shortcut: every segment shape it handles
+    (or declines) has to encode to the same ids as the original method."""
+
+    def test_encode_piece_matches_original_on_every_segment_shape(self):
+        tokenizer = _load_k3_tokenizer()
+        specials = list(tokenizer.special_tokens)
+        rng = random.Random(0)
+        random_texts = [
+            _random_text_from_tokens(tokenizer, num_tokens=n, rng=rng)
+            for n in (1, 7, 100, 1000)
+        ]
+        segments = [
+            # exactly one special token -> table lookup
+            *[(tok, True) for tok in specials],
+            # special token with a suffix / two specials -> original path
+            *[(tok + "x", True) for tok in specials[:8]],
+            (specials[0] + specials[1], True),
+            # plain text -> encode_ordinary
+            *[(text, False) for text in random_texts],
+            ("", False),
+            ("", True),
+            (" " * 40, False),
+            # special literal inside plain text -> original path
+            *[(f"user wrote {tok} literally", False) for tok in specials[:8]],
+            # lone surrogate (json.loads('"\\ud83d"') in a tool result) ->
+            # tiktoken's UnicodeEncodeError fix-up must still apply
+            ("tool output \ud83d broken", False),
+            ("tool output \ud83d broken", True),
+            # longer than MAX_NO_WHITESPACES_CHARS -> original splitter path
+            ("b" * 30_000 + " tail", False),
+            ("b" * 30_000 + " tail", True),
+        ]
+        # Exercise both sides of the exact splitter shortcut boundary. Include
+        # whitespace runs as well as the no-whitespace limit the guard mirrors.
+        for size in (24_999, 25_000, 25_001):
+            for text in ("a" * size, " " * size, "\n" * size):
+                segments.extend((text, allow) for allow in (False, True))
+        for text in (
+            "中文工具结果 café e\u0301 👩\u200d💻 العربية",
+            "\ud800",
+            "\udfff",
+            "paired \ud83d\ude00 and lone \ud83d",
+            "\x00\t\r\n\\\"",
+            *[f"{tok}prefix{tok}" for tok in specials[:8]],
+        ):
+            segments.extend((text, allow) for allow in (False, True))
+        original = type(tokenizer)._encode_text_piece
+        _EncodePieceFastPathPatcher.patch(tokenizer)
+        try:
+            for text, allow_special in segments:
+                self.assertEqual(
+                    original(tokenizer, text, allow_special),
+                    tokenizer._encode_text_piece(text, allow_special),
+                    (text[:40], allow_special),
+                )
+        finally:
+            _EncodePieceFastPathPatcher.unpatch(tokenizer)
+
+    def test_chat_template_ids_unchanged_for_tool_call_conversation(self):
+        # Kimi-K3's encoding_k3 renders one segment per control token or tag
+        # name and four text segments per tool-call attribute; this is the
+        # shape the fast path exists for.
+        tokenizer = _load_k3_tokenizer()
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "Bash",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                    },
+                },
+            }
+        ]
+        messages = [
+            {"role": "system", "content": "You are a coding agent."},
+            {"role": "user", "content": "deploy it"},
+        ]
+        for i in range(300):
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": f"call_{i}",
+                            "type": "function",
+                            "function": {
+                                "name": "Bash",
+                                "arguments": json.dumps(
+                                    {"command": f'printf "中文 café 👩‍💻"; ls /tmp/{i}'},
+                                    ensure_ascii=False,
+                                ),
+                            },
+                        }
+                    ],
+                }
+            )
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": f"call_{i}",
+                    "content": (
+                        f"total 0\n<|im_end|> literal in tool output {i}\n"
+                        "中文 café e\u0301 👩\u200d💻 lone surrogate \ud83d\n"
+                        + " ".join(tokenizer.special_tokens)
+                    ),
+                }
+            )
+        kwargs = dict(tools=tools, tokenize=True, add_generation_prompt=True)
+        expected = tokenizer.apply_chat_template(messages, **kwargs)
+
+        _EncodePieceFastPathPatcher.patch(tokenizer)
+        try:
+            self.assertEqual(
+                expected, tokenizer.apply_chat_template(messages, **kwargs)
+            )
+        finally:
+            _EncodePieceFastPathPatcher.unpatch(tokenizer)
+
+    def test_unpatch_restores_encode_piece(self):
+        tokenizer = _load_k3_tokenizer()
+        cls = type(tokenizer)
+        original = cls._encode_text_piece
+
+        _EncodePieceFastPathPatcher.patch(tokenizer)
+        self.assertIsNot(cls._encode_text_piece, original)
+        _EncodePieceFastPathPatcher.patch(tokenizer)  # idempotent
+        _EncodePieceFastPathPatcher.unpatch(tokenizer)
+
+        self.assertIs(cls._encode_text_piece, original)
+        self.assertFalse(hasattr(cls, "_original_encode_text_piece"))
+        self.assertFalse(hasattr(tokenizer, "_sglang_special_literal_regex"))
+
+    def test_k2_tokenizer_without_encode_text_piece_is_skipped(self):
+        # The K2 family shares the TikTokenTokenizer class/module name but
+        # inlines the segment loop into encode(); patch_tokenizer must still
+        # apply the special-tokens cache and skip the encode-piece fast path.
+        tokenizer = _load_tokenizer()
+        cls = type(tokenizer)
+        self.assertFalse(hasattr(cls, "_encode_text_piece"))
+        self.assertFalse(_EncodePieceFastPathPatcher.applies_to(tokenizer))
+
+        expected = tokenizer.encode("hello <|im_end|> world")
+        with envs.SGLANG_PATCH_TOKENIZER.override(True):
+            patched = patch_tokenizer(tokenizer)
+        try:
+            self.assertIs(patched, tokenizer)
+            self.assertTrue(getattr(cls, "_sglang_special_tokens_patched", False))
+            self.assertFalse(getattr(cls, "_sglang_encode_piece_patched", False))
+            self.assertEqual(patched.encode("hello <|im_end|> world"), expected)
+        finally:
+            unpatch_tokenizer(tokenizer)
+
+
+def _random_text_from_tokens(tokenizer, num_tokens, rng):
+    token_ids = [rng.randint(0, tokenizer.vocab_size - 1) for _ in range(num_tokens)]
+    return tokenizer.decode(token_ids)
+
+
 def _get_class_attr_ids(cls):
     return {
         n: id(v.fget if isinstance(v, property) else v) for n, v in vars(cls).items()
@@ -285,6 +453,80 @@ def _load_tokenizer():
     return AutoTokenizer.from_pretrained(
         "nvidia/Kimi-K2-Thinking-NVFP4", trust_remote_code=True
     )
+
+
+def _load_k3_tokenizer():
+    # Only Kimi-K3's tokenization_kimi.py has _encode_text_piece / encoding_k3.
+    local_path = os.environ.get("SGLANG_TEST_K3_TOKENIZER_PATH")
+    return AutoTokenizer.from_pretrained(
+        local_path or "moonshotai/Kimi-K3",
+        revision="f831ab66814297da540d832a5235f8e904f29d06",
+        trust_remote_code=True,
+        local_files_only=bool(local_path),
+    )
+
+
+class TestEncodePieceFastPathBoundaries(unittest.TestCase):
+    """Dependency-free branch guards; real tiktoken equivalence lives above."""
+
+    def test_shortcut_and_fallback_branches_preserve_ids(self):
+        class Model:
+            def encode_ordinary(self, text):
+                # Mirrors the public tiktoken surrogate fix-up boundary, not BPE.
+                normalized = text.encode("utf-16", "surrogatepass").decode(
+                    "utf-16", "replace"
+                )
+                return list(normalized.encode("utf-8"))
+
+        class Tokenizer:
+            special_tokens = {"<|im_end|>": 0, "[.*]": 257}
+
+            def __init__(self):
+                self.model = Model()
+                self.fallback_calls = []
+
+            def _encode_text_piece(self, text, allow_special_tokens=True):
+                self.fallback_calls.append((text, allow_special_tokens))
+                if allow_special_tokens and text in self.special_tokens:
+                    return [self.special_tokens[text]]
+                return self.model.encode_ordinary(text)
+
+        tokenizer = Tokenizer()
+        original = Tokenizer._encode_text_piece
+        cases = [
+            ("<|im_end|>", True, False),  # zero-valued special ID is valid
+            ("[.*]", True, False),
+            ("x[.*]y", False, True),  # regex literals must be escaped
+            ("ordinary [xx] text", False, False),
+            ("<|im_end|><|im_end|>", True, True),
+            ("prefix<|im_end|>suffix", False, True),
+            ("", False, False),
+            ("", True, True),
+            ("中文 👩\u200d💻 \ud800", False, False),
+        ]
+        cases += [
+            ("a" * size, False, size > 25_000)
+            for size in (24_999, 25_000, 25_001)
+        ]
+        _EncodePieceFastPathPatcher.patch(tokenizer)
+        try:
+            for text, allow, fallback in cases:
+                expected = original(tokenizer, text, allow)
+                tokenizer.fallback_calls.clear()
+                self.assertEqual(expected, tokenizer._encode_text_piece(text, allow))
+                self.assertEqual(bool(tokenizer.fallback_calls), fallback)
+        finally:
+            _EncodePieceFastPathPatcher.unpatch(tokenizer)
+        self.assertIs(Tokenizer._encode_text_piece, original)
+
+    def test_k2_shape_is_untouched(self):
+        class WithoutEncodePiece:
+            pass
+
+        tokenizer = WithoutEncodePiece()
+        self.assertFalse(_EncodePieceFastPathPatcher.applies_to(tokenizer))
+        self.assertIs(_EncodePieceFastPathPatcher.patch(tokenizer), tokenizer)
+        self.assertFalse(hasattr(WithoutEncodePiece, "_sglang_encode_piece_patched"))
 
 
 @contextmanager

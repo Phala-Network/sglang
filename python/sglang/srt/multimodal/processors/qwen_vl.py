@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import math
 import os
 import re
@@ -245,6 +246,13 @@ def smart_nframes(
     return nframes
 
 
+# One video at a time, as on the event loop: each holds up to FPS_MAX_FRAMES
+# full-resolution frames in pinned memory, and already decodes on its own threads.
+_VIDEO_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="sglang-mm-video"
+)
+
+
 # process video, qwen-specific
 async def preprocess_video(
     vr,
@@ -253,7 +261,9 @@ async def preprocess_video(
 ) -> torch.Tensor:
     # Decoding and resizing up to FPS_MAX_FRAMES frames takes seconds of CPU: on the
     # event loop it would stall every stream the tokenizer manager serves.
-    return await asyncio.to_thread(_preprocess_video, vr, image_factor, video_config)
+    return await asyncio.get_running_loop().run_in_executor(
+        _VIDEO_EXECUTOR, _preprocess_video, vr, image_factor, video_config
+    )
 
 
 def _preprocess_video(

@@ -383,12 +383,12 @@ class BaseMultimodalProcessor(ABC):
         ):
             logger.warning(
                 "Concurrent multimodal processing is not supported by %s; "
-                "using synchronous processing.",
+                "using one worker.",
                 type(self).__name__,
             )
             self.mm_processor_worker_num = 1
-        # One worker too: run inline, processing a video of hundreds of frames would
-        # stall every stream the tokenizer manager serves.
+        # Built for one worker too: inline on the event loop, processing a long
+        # video would stall every stream the tokenizer manager serves.
         self.mm_processor_executor = None
         if not skip_mm_pool:
             try:

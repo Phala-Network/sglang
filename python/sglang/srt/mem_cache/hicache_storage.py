@@ -328,8 +328,9 @@ class HiCacheStorage(ABC):
         ------------------------------------------------------
         Each ``PoolTransfer`` in ``pool_transfers`` describes a secondary
         cache pool (e.g. Mamba SSM states) that must be co-present with the
-        KV pages.  The final ``final_pages`` is the minimum across all pools,
-        so a missing auxiliary page shrinks the usable prefix.
+        KV pages. The usable prefix ends at the greatest stop point that all
+        pools can restore. Trailing-page pools may have gaps in their valid
+        stop points, so taking the minimum of their maxima is not sufficient.
 
         - ``"all_pages"`` (default):  every page in [0, kv_hit) must exist
           for this pool.  Used for pools that are required for every token

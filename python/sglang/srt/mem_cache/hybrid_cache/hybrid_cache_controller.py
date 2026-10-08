@@ -1422,10 +1422,12 @@ class HybridCacheController(BaseHiCacheController):
         )
         operation.all_hash_values = hash_value
 
-        if operation.assume_stored:
+        if operation.assume_stored and not operation.pool_transfers:
             # A prior hit on a suffix of this span proved it stored, and writes
             # are prefix-covered, so re-querying only adds a round trip. Nothing
             # is verified now, so no pool gets a verdict to learn from.
+            # Auxiliary trailing checkpoints are sparse: a KV-only proof does
+            # not prove a Mamba endpoint. Query hybrid pools before rank sync.
             kv_hit_pages = len(hash_value)
             operation.pool_storage_result.update_kv_hit_pages(kv_hit_pages)
             operation.query_pool_hit_pages = {}
@@ -1445,6 +1447,7 @@ class HybridCacheController(BaseHiCacheController):
             )
 
         kv_hit_pages = hit_result.kv_hit_pages
+        operation.restorable_prefix_pages = hit_result.restorable_prefix_pages
         operation.pool_storage_result.update_kv_hit_pages(kv_hit_pages)
         operation.pool_storage_result.restorable_prefix_pages = (
             hit_result.restorable_prefix_pages

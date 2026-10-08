@@ -213,6 +213,7 @@ class UsageInfo(BaseModel):
     # Used to return cached tokens info when --enable-cache-report is set
     prompt_tokens_details: Optional[PromptTokensDetails] = None
     reasoning_tokens: Optional[int] = 0
+    completion_tokens_details: Optional[Dict[str, int]] = None
 
 
 class StreamOptions(BaseModel):
@@ -937,6 +938,7 @@ class ChatCompletionRequest(BaseModel):
     session_params: Optional[Dict] = None
     separate_reasoning: bool = True
     stream_reasoning: bool = True
+    reasoning_exclude: bool = False
     chat_template_kwargs: Optional[Dict] = None
 
     # SGLang multimodal controls (extensions)
@@ -1013,6 +1015,9 @@ class ChatCompletionRequest(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def normalize_reasoning_inputs(cls, values: Dict):
+        from .dsv41_compat import normalize_request
+
+        values = normalize_request(values)
         r = values.get("reasoning")
         thinking = None
 

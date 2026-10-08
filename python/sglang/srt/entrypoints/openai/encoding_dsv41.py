@@ -5,6 +5,7 @@ Mid-conversation system messages trigger the assistant generation header.
 """
 
 import copy
+from .dsv41_compat import _prepare_messages
 import json
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -66,9 +67,11 @@ REASONING_EFFORT_TEMPLATE = (
 )
 
 REASONING_EFFORT_MAPPINGS: Dict[str, int] = {
+    "minimal": 25,
     "low": 50,
+    "medium": 62,
     "high": 75,
-    "xhigh": 75,
+    "xhigh": 90,
     "max": 100,
 }
 DEFAULT_REASONING_EFFORT = "high"
@@ -689,6 +692,7 @@ def encode_messages(
     Returns the prompt string, or ``(prompt, {"images": [...]})`` when
     ``return_multi_modal_data`` is set; the image records are in prompt order.
     """
+    messages = _prepare_messages(messages)
     context = context or []
     processed_context, _ = process_image_messages(context) if context else ([], [])
     processed_messages, images = process_image_messages(messages)

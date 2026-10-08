@@ -123,4 +123,8 @@ class UsageProcessor:
             total_tokens=prompt_tokens + completion_tokens,
             prompt_tokens_details=details,
             reasoning_tokens=reasoning_tokens,
+            completion_tokens_details=(
+                {"reasoning_tokens": int(reasoning_tokens)}
+                if reasoning_tokens is not None else None
+            ),
         )

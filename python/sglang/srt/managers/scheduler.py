@@ -6089,7 +6089,7 @@ def run_scheduler_process(
 
     except Exception:
         traceback = get_exception_traceback()
-        logger.error(f"Scheduler hit an exception: {traceback}")
+        logger.error("Scheduler safe exception type=%s frames=%s", _phala_safe_exception()[0], _phala_safe_exception()[1])
         parent_process.send_signal(signal.SIGQUIT)
         # Opt-in: SIGKILL the pgroup so sibling ranks don't spew thousands
         # of NCCL/TCPStore tracebacks before they finally die.
@@ -6123,3 +6123,13 @@ def _make_abort_req(
             num_output_tokens=len(req.output_ids),
         ),
     )
+
+
+def _phala_safe_exception():
+    import sys
+    kind, _, tb = sys.exc_info()
+    frames = []
+    while tb is not None and len(frames) < 32:
+        frames.append((os.path.basename(tb.tb_frame.f_code.co_filename), tb.tb_lineno))
+        tb = tb.tb_next
+    return (kind.__name__ if kind is not None else "Unknown", frames)

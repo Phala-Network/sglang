@@ -1103,7 +1103,9 @@ class OpenAIServingChat(OpenAIServingBase):
 
     def _validate_media_content(self, request: ChatCompletionRequest) -> str | None:
         if self.tokenizer_manager.model_config.is_multimodal:
-            return None
+            from .dsv41_compat import _validate_media_parts
+
+            return _validate_media_parts(self, request)
 
         media_type = next(
             (
@@ -1298,6 +1300,9 @@ class OpenAIServingChat(OpenAIServingBase):
         self, request: ChatCompletionRequest, is_multimodal: bool
     ) -> MessageProcessingResult:
         """Process chat messages and apply chat template"""
+        from .dsv41_compat import drop_tool_definitions
+
+        drop_tool_definitions(request)
         if self.default_chat_template_kwargs:
             ctk = dict(request.chat_template_kwargs or {})
             for k, v in self.default_chat_template_kwargs.items():
@@ -2404,7 +2409,7 @@ class OpenAIServingChat(OpenAIServingBase):
                     role="assistant",
                     content=text if text else "",
                     tool_calls=tool_calls,
-                    reasoning_content=reasoning_text if reasoning_text else None,
+                    reasoning_content=reasoning_text if reasoning_text and not request.reasoning_exclude else None,
                 ),
                 logprobs=choice_logprobs,
                 finish_reason=finish_reason["type"] if finish_reason else None,
@@ -2729,7 +2734,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 reasoning_text = (reasoning_text or "") + end_reasoning_text
             if end_normal_text:
                 normal_text = (normal_text or "") + end_normal_text
-        return reasoning_text, normal_text
+        return None if request.reasoning_exclude else reasoning_text, normal_text
 
     def _get_history_tool_calls_cnt(self, request: ChatCompletionRequest) -> int:
         """Counts the number of tool calls in the request's message history.

@@ -265,7 +265,7 @@ class HiCacheNixl(HiCacheStorage):
             logger.error(f"Failed to execute transfer: {e}")
             import traceback
 
-            logger.error(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Traceback: {print('Runtime exception (details redacted)')}")
             return False
         finally:
             self.agent.release_xfer_handle(xfer_req)

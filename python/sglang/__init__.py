@@ -1,5 +1,8 @@
 """SGLang public API."""
 
+from sglang._phala_privacy.runtime import install as _install_phala_privacy
+_install_phala_privacy()
+
 import platform as _platform
 import sys as _sys
 

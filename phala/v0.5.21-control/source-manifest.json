@@ -1,0 +1,62 @@
+{
+  "python/sglang/__init__.py": {
+    "base_sha256": "0c6bd1b5bc75da013d49d26f7799ca36d682779293405dce1adc193b97a0e6bd",
+    "final_sha256": "d43d8d96a241aa8b27c1e527b8a55a541dc74d40d43fedf441498d32574b5adc"
+  },
+  "python/sglang/_phala_privacy/__init__.py": {
+    "base_sha256": null,
+    "final_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "python/sglang/_phala_privacy/privacy_sites.json": {
+    "base_sha256": null,
+    "final_sha256": "3c0fc2f2552da3bdb815bfa44108a3ab89ad7739af5dd3cb795343caac095328"
+  },
+  "python/sglang/_phala_privacy/runtime.py": {
+    "base_sha256": null,
+    "final_sha256": "e0473938c3df9368cf53ecfaa432cce9cc327792321c7c1d94eb6896fbe03285"
+  },
+  "python/sglang/srt/entrypoints/http_server.py": {
+    "base_sha256": "1fbb46671e86d0ebf23046efa09e8e03d251754e681ba03b818dbb7a75c79c55",
+    "final_sha256": "8dbe689546cfa3d0cddbe7c373ade08c317454227a81d085185be7c2b98dab39"
+  },
+  "python/sglang/srt/entrypoints/openai/dsv41_compat.py": {
+    "base_sha256": null,
+    "final_sha256": "072c908940968d414015f07d89e895a0c8f8d9c8bc069eba7dd814b7a9d08371"
+  },
+  "python/sglang/srt/entrypoints/openai/encoding_dsv41.py": {
+    "base_sha256": "9c29c810c440589f2456df36ecf754a5083244f5d5887c64d6735f32b538ea4c",
+    "final_sha256": "99c8734a0075bd2511d6f95c220a538fbea489a3d9263f685d2792b856be4c37"
+  },
+  "python/sglang/srt/entrypoints/openai/protocol.py": {
+    "base_sha256": "c59fda1238546fb2945d7bbb79466a66344dc054b262aecd85fb2659072aea88",
+    "final_sha256": "32fdcca7cecb63b1256be8f13518db9e88e8dd0632be81a4788ed7c8818d8779"
+  },
+  "python/sglang/srt/entrypoints/openai/serving_chat.py": {
+    "base_sha256": "a0886cdf125b9c8c98c4618a4a6afee7020095623b7ee6cd874b67b94f9efb36",
+    "final_sha256": "c92fd6015b3cd48d26833db0833cd9e34c7c531f80ba05bfd8b6b3b215d45d35"
+  },
+  "python/sglang/srt/entrypoints/openai/usage_processor.py": {
+    "base_sha256": "883c4c3ba95eb52fa57d5bf732d128063bac0b032f484776331220f61b7498a5",
+    "final_sha256": "1f22292c8254212906e4c51b64261ef37fa4048d8506b465a42061278cbf39f7"
+  },
+  "python/sglang/srt/managers/scheduler.py": {
+    "base_sha256": "b61df5b750adc748a99ceb381b8494c199fb3f704d793da5a0217bd6bbb606c4",
+    "final_sha256": "29c56583c08813d664a17bed58554045d937410249fb25860709708aa12906b2"
+  },
+  "python/sglang/srt/managers/scheduler_components/weight_updater.py": {
+    "base_sha256": "82349bcc4b9f29944de8a870bc043474943ed169d0a36b49d82cd554e043d1b0",
+    "final_sha256": "f8b0254bb993a202bd9deb6fbce90661d7825480a0541aeb3370e6ab55d7cf7c"
+  },
+  "python/sglang/srt/mem_cache/storage/nixl/hicache_nixl.py": {
+    "base_sha256": "8d9109990e4bbb2fd0ad60dc676c4369fabbd946ab84cd32c6a093af5125797f",
+    "final_sha256": "25ce985dc2a45736bc8cabc566f2d99f6f5fe72c933985143d9573a16cc0fe5b"
+  },
+  "python/sglang/srt/utils/common.py": {
+    "base_sha256": "71abb02aca154dfd2f30ed7e13b6550ac98ec9883b32e73e744e317552730fea",
+    "final_sha256": "0b48ffed00ecb00c0fec7025622a8ba4a540449dc53eae19e6073916de931068"
+  },
+  "python/sglang/srt/utils/framework_log_privacy.py": {
+    "base_sha256": null,
+    "final_sha256": "67f6252abfa482a68eab908a12aef8cfdbf0e52e5830b69e3fe2026b0cb413be"
+  }
+}

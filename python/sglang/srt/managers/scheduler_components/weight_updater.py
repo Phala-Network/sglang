@@ -433,7 +433,7 @@ class SchedulerWeightUpdaterManager:
             )
         except Exception as e:
             logger.warning(f"check_weights see error: {e}")
-            traceback.print_exc()
+            print('Runtime exception (details redacted)')
             return CheckWeightsReqOutput(success=False, message=f"{e}")
 
     def save_remote_model(self, params):

@@ -1724,6 +1724,8 @@ def get_mm_http_session() -> requests.Session:
 # Raised by the loaders below when client-supplied media cannot be fetched or
 # decoded. ValueError is in the set because invalid base64 raises binascii.Error.
 CLIENT_MEDIA_EXCEPTIONS = (
+    OSError,
+    Image.DecompressionBombError,
     ValueError,
     UnidentifiedImageError,
     requests.exceptions.RequestException,
@@ -3454,6 +3456,8 @@ def set_uvicorn_logging_configs(server_args=None):
     LOGGING_CONFIG["formatters"]["access"]["datefmt"] = "%Y-%m-%d %H:%M:%S"
 
     _configure_uvicorn_access_log_filter(LOGGING_CONFIG, server_args)
+    from sglang.srt.utils.framework_log_privacy import configure_framework_log_privacy
+    configure_framework_log_privacy()
 
 
 def _configure_uvicorn_access_log_filter(
@@ -3546,6 +3550,8 @@ def launch_dummy_health_check_server(host, port, enable_metrics):
         add_prometheus_middleware(app)
         enable_func_timer()
 
+    from sglang.srt.utils.framework_log_privacy import configure_framework_log_privacy
+    configure_framework_log_privacy()
     config = uvicorn.Config(
         app,
         host=host,
@@ -3690,7 +3696,7 @@ def retry(
             # NOT retry, just propagate so unittest handles it.
             raise
         except Exception as e:
-            traceback.print_exc()
+            print('Runtime exception (details redacted)')
 
             if try_index >= max_retry:
                 raise Exception(f"retry() exceed maximum number of retries.")

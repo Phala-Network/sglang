@@ -2567,6 +2567,8 @@ def _run_granian_server(
         granian_kwargs["workers"] = tokenizer_worker_num
         granian_kwargs["loop"] = Loops.uvloop
 
+    from sglang.srt.utils.framework_log_privacy import configure_granian_log_privacy
+    granian_kwargs['log_dictconfig'] = configure_granian_log_privacy()
     server = Server(**granian_kwargs)
 
     if tokenizer_worker_num == 1:
@@ -2702,6 +2704,8 @@ def _setup_and_run_http_server(
                 )
             elif get_serving().enable_ssl_refresh:
                 # Use Config/Server API for access to the SSLContext.
+                from sglang.srt.utils.framework_log_privacy import configure_framework_log_privacy
+                configure_framework_log_privacy()
                 config = uvicorn.Config(
                     app,
                     host=get_serving().host,
@@ -2744,6 +2748,8 @@ def _setup_and_run_http_server(
             else:
                 # Default case, one tokenizer process.
                 # A Server rather than uvicorn.run(), so shutdown can ask it to stop.
+                from sglang.srt.utils.framework_log_privacy import configure_framework_log_privacy
+                configure_framework_log_privacy()
                 server = uvicorn.Server(
                     uvicorn.Config(
                         app,
@@ -2805,6 +2811,8 @@ def _setup_and_run_http_server(
                     ssl_keyfile_password=get_serving().ssl_keyfile_password,
                 )
             else:
+                from sglang.srt.utils.framework_log_privacy import configure_framework_log_privacy
+                configure_framework_log_privacy()
                 uvicorn.run(
                     "sglang.srt.entrypoints.http_server:app",
                     host=get_serving().host,

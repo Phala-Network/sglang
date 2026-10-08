@@ -93,6 +93,14 @@ def parse_cuda_graph_config(server_args: Any):
         for key, value in phase_config.items():
             _set(phase, key, value)
 
+    max_seq_len = config.prefill.max_seq_len
+    if max_seq_len is not None and (
+        isinstance(max_seq_len, bool)
+        or not isinstance(max_seq_len, int)
+        or max_seq_len <= 0
+    ):
+        raise ValueError("cuda_graph_max_seq_len_prefill must be a positive integer")
+
     declare_resolution(
         server_args,
         "_parse_cuda_graph_config",

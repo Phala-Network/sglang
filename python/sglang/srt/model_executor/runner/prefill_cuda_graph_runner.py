@@ -89,7 +89,12 @@ from sglang.srt.model_executor.forward_batch_info import (
     enable_num_token_non_padded,
     prefill_graph_tolerates_sum_len,
 )
-from sglang.srt.model_executor.forward_context import ForwardContext, forward_context
+from sglang.srt.model_executor.forward_context import (
+    ForwardContext,
+    forward_context,
+    get_req_to_token_pool,
+    get_token_to_kv_pool,
+)
 from sglang.srt.model_executor.runner.base_cuda_graph_runner import (
     BaseCudaGraphRunner,
     freeze_gc,
@@ -382,6 +387,8 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
                     "attention backend's default; longer contexts run eager prefill.",
                     self.max_seq_len,
                 )
+        # Replay eligibility reads the host mirror only; see _batch_max_seq_len_cpu.
+        self.max_seq_len_prefill = self.max_seq_len
         self._validate_max_context_capacity(
             max_context_size=self.max_context_size,
             table_width=model_runner.req_to_token_pool.req_to_token.shape[1],
@@ -1027,6 +1034,25 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
         self.max_context_size = None
 
     @staticmethod
+    def _batch_max_seq_len_cpu(seq_lens_cpu, batch_size: int) -> Optional[int]:
+        """Eligibility-only cap: fail closed without a complete host mirror.
+
+        Do not synchronize GPU lengths just to choose graph replay vs eager.
+        Keep this independent from context-shaped capture metadata sizing.
+        """
+        if seq_lens_cpu is None:
+            return None
+        device = getattr(seq_lens_cpu, "device", None)
+        if device is not None and device.type != "cpu":
+            return None
+        if len(seq_lens_cpu) < batch_size:
+            return None
+        values = seq_lens_cpu[:batch_size]
+        if hasattr(values, "tolist"):
+            values = values.tolist()
+        return max((int(value) for value in values), default=0)
+
+    @staticmethod
     def _batch_max_context_len(forward_batch: ForwardBatch) -> Optional[int]:
         seq_lens_cpu = forward_batch.seq_lens_cpu
         if seq_lens_cpu is not None:
@@ -1231,6 +1257,33 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
             capture_batch, in_capture=False
         )
 
+    def _plan_dcp_metadata(self, forward_batch: ForwardBatch):
+        """DCP prefill metadata (gather buffer and KV indices), planned per batch
+        as the eager runner does before every extend; None without DCP."""
+        model = self.model_runner.model
+        if (
+            get_parallel().attn_dcp_size <= 1
+            or not hasattr(model, "prepare_context_parallel_metadata_for_dcp")
+            or forward_batch.extend_prefix_lens is None
+        ):
+            return None
+        with forward_context(
+            ForwardContext(attn_backend=self.model_runner.attn_backend)
+        ):
+            return model.prepare_context_parallel_metadata_for_dcp(
+                forward_batch.seq_lens,
+                forward_batch.extend_prefix_lens,
+                forward_batch.extend_prefix_lens_cpu,
+                forward_batch.extend_seq_lens,
+                forward_batch.req_pool_indices,
+                get_req_to_token_pool().req_to_token,
+                forward_batch.seq_lens_sum,
+                get_token_to_kv_pool().get_kv_buffer_shape()[0],
+                self.model_runner.kv_cache_dtype,
+                self.model_runner.device,
+                create_chunked_prefix_cache_kv_indices,
+            )
+
     def _init_forward_metadata_for_capture(
         self, forward_batch: ForwardBatch, shape_key: ShapeKey
     ) -> None:
@@ -1403,10 +1456,15 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
             return False
         if return_logprob and not self._uses_eager_prefill_tail():
             return False
-        # Vote on both bounds so DP ranks agree on graph versus eager.
-        for context_limit in (self.max_context_size, self.max_seq_len):
-            if context_limit is not None and (
-                batch_max_context_len is None or batch_max_context_len > context_limit
+        max_seq_len = getattr(self, "max_seq_len_prefill", None)
+        if max_seq_len is not None and (
+            batch_max_context_len is None or batch_max_context_len > max_seq_len
+        ):
+            return False
+        if self.max_context_size is not None:
+            if (
+                batch_max_context_len is None
+                or batch_max_context_len > self.max_context_size
             ):
                 return False
         if num_tokens is None:
@@ -1442,11 +1500,16 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
             return False
 
         # Non-DP local check (sole decision for tp-only).
-        batch_max_context_len = (
-            self._batch_max_context_len(forward_batch)
-            if self.max_context_size is not None or self.max_seq_len is not None
-            else None
-        )
+        if getattr(self, "max_seq_len_prefill", None) is not None:
+            batch_max_context_len = self._batch_max_seq_len_cpu(
+                forward_batch.seq_lens_cpu, forward_batch.batch_size
+            )
+        else:
+            batch_max_context_len = (
+                self._batch_max_context_len(forward_batch)
+                if self.max_context_size is not None
+                else None
+            )
         if not self.can_replay_locally(
             batch_size=forward_batch.batch_size,
             num_tokens=len(forward_batch.input_ids),
@@ -1678,6 +1741,7 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
                 )
             forward_batch = self.model_runner.prepare_dummy_forward_batch(forward_batch)
             self.tbo_plugin.capture_one_batch_size(forward_batch, num_tokens=num_tokens)
+        forward_batch.attn_dcp_metadata = self._plan_dcp_metadata(forward_batch)
         return forward_batch, self.model_runner.attn_backend
 
     def capture(self) -> None:
@@ -2130,6 +2194,14 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
                 capture=False,
             )
             metadata_forward_batch = static_forward_batch
+
+        dcp_metadata = self._plan_dcp_metadata(forward_batch)
+        if dcp_metadata is not None:
+            forward_batch.attn_dcp_metadata = dcp_metadata
+            static_forward_batch.attn_dcp_metadata = dcp_metadata
+        # Eager breaks that run a whole attention module (Kimi-K3's MLA) need
+        # the unpadded batch the attention metadata is planned on.
+        static_forward_batch.live_forward_batch = forward_batch
 
         shape_key = self._shape_key(static_num_tokens, forward_batch)
         shared_read_ends = self._prepare_forward_metadata_for_replay(

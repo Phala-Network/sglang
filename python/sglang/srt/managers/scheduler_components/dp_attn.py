@@ -469,14 +469,17 @@ def _local_prefill_cuda_graph_vote(
         lora_ineligible=prefill_graph_runner.enable_lora,
         is_mixed=mode == ForwardMode.MIXED,
         batch_max_context_len=(
-            int(local_batch.seq_lens_cpu.max().item())
-            if (
-                prefill_graph_runner.max_context_size is not None
-                or prefill_graph_runner.max_seq_len is not None
+            prefill_graph_runner._batch_max_seq_len_cpu(
+                local_batch.seq_lens_cpu, local_batch.batch_size()
             )
-            and local_batch.seq_lens_cpu is not None
-            and local_batch.seq_lens_cpu.numel() > 0
-            else None
+            if getattr(prefill_graph_runner, "max_seq_len_prefill", None) is not None
+            else (
+                int(local_batch.seq_lens_cpu.max().item())
+                if prefill_graph_runner.max_context_size is not None
+                and local_batch.seq_lens_cpu is not None
+                and local_batch.seq_lens_cpu.numel() > 0
+                else None
+            )
         ),
     )
 

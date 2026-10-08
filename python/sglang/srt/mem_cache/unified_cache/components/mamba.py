@@ -1065,7 +1065,8 @@ class MambaComponent(TreeComponent):
         cache_actions: list[CacheAction | ComponentAction],
     ) -> None:
         cd = node.component_data[self.component_type]
-        if cd.host_value is not None and cd.host_lock_ref == 0:
+        # Host-only and unlocked, as in the host LRU that host eviction walks.
+        if cd.value is None and cd.host_value is not None and cd.host_lock_ref == 0:
             self._evict_host_node(
                 node, tracker, device_frees, host_frees, cache_actions=cache_actions
             )

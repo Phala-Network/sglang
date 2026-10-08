@@ -556,7 +556,7 @@ class UnifiedTreeCoreInterface(ABC):
         self, node_id: NodeId, component_type: ComponentType
     ) -> DriveHostEvictionResult:
         """Drop one node's host copy of a component that the host tier can no
-        longer load back, so a later backup stores it afresh. Default no-op."""
+        longer load back. Default no-op."""
         return DriveHostEvictionResult()
 
     @abstractmethod

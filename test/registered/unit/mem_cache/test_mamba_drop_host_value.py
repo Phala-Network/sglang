@@ -99,6 +99,14 @@ class TestMambaDropHostValue(unittest.TestCase):
         self.assertFalse(host_frees)
         self.assertEqual(core.cascaded, [])
 
+    def test_a_state_still_on_device_stays(self):
+        # Its D->H backup may still be in flight into the host slot.
+        component, core, node = _mamba_with_host_state()
+        node.component_data[ComponentType.MAMBA].value = torch.tensor([9])
+        _, host_frees = _drop(component, node)
+        self.assertIsNotNone(node.component_data[ComponentType.MAMBA].host_value)
+        self.assertFalse(host_frees)
+
 
 if __name__ == "__main__":
     unittest.main()

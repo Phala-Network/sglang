@@ -243,6 +243,10 @@ def _split_hicache_size(
     """Split the host budget in proportion to the device pools, or give the last pool
     `last_share` of it and split the rest that way."""
     if last_share is not None:
+        if not 0 < last_share < 1:
+            raise ValueError(
+                f"SGLANG_HICACHE_MAMBA_SHARE must be in (0, 1), got {last_share}"
+            )
         rest = _split_hicache_size(hicache_size * (1 - last_share), kv_pools[:-1])
         return (*rest, hicache_size * last_share)
     device_pool_sizes = []

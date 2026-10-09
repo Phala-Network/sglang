@@ -719,6 +719,10 @@ class BasePrefixCache(ABC, PrefixCacheTrait):
     def supports_mamba(self) -> bool:
         return False
 
+    def get_session_kv(self, req: Req) -> Optional[ReqKvInfo]:
+        """Return KV already owned by a resumable session, if any."""
+        return None
+
     def release_session(self, session_id: str) -> None:
         pass
 

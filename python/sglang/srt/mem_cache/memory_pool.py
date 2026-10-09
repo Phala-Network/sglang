@@ -101,7 +101,7 @@ from sglang.srt.utils.torch_memory_saver_adapter import TorchMemorySaverAdapter
 
 if TYPE_CHECKING:
     from sglang.srt.managers.cache_controller import LayerDoneCounter
-    from sglang.srt.managers.schedule_batch import Req
+    from sglang.srt.managers.schedule_batch import Req, ReqKvInfo
     from sglang.srt.mem_cache.device_pool_info import DevicePoolInfo, MHABufferInfo
 
 
@@ -1567,12 +1567,72 @@ class HybridReqToTokenPool(ReqToTokenPool):
     def register_layer_transfer_counter(self, layer_transfer_counter: LayerDoneCounter):
         self.layer_transfer_counter = layer_transfer_counter
 
+    def mamba_admission_slots(self, kv: ReqKvInfo) -> int:
+        """Immediately required Mamba slots for admitting a KV record.
+
+        This is exact for the slots allocated by ``alloc``. It does not include
+        lazy-mode tracking slots allocated later during decode; those paths
+        already degrade in place when a transient slot is unavailable.
+        """
+        slots = 0
+        if not kv.holds_mamba:
+            slots += 1
+        if self.enable_mamba_extra_buffer and kv.mamba_ping_pong_track_buffer is None:
+            slots += self.mamba_initial_tracking_slots
+        return slots
+
+    def _init_mamba_ping_pong_buffer(self, req: Req, slots: torch.Tensor) -> None:
+        buf = torch.full(
+            (self.mamba_ping_pong_track_buffer_size,),
+            -1,
+            dtype=slots.dtype,
+            device=slots.device,
+        )
+        n = slots.numel()
+        buf[:n] = slots
+        req.kv.mamba_ping_pong_track_buffer = buf
+        req.kv.mamba_ping_pong_empty = [False] * n + [True] * (
+            self.mamba_ping_pong_track_buffer_size - n
+        )
+        req.kv.mamba_prev_track_seqlen = None
+        req.kv.mamba_next_track_idx = 0
+        req.kv.mamba_last_track_idx = (
+            0
+            if self.enable_mamba_extra_buffer_lazy
+            else self.get_mamba_ping_pong_other_idx(0)
+        )
+
     # For chunk prefill req, we do not need to allocate mamba cache,
     # We could use allocated mamba cache instead.
     def alloc(self, reqs: List[Req]) -> Optional[List[int]]:
         fresh_req_rows = [req.kv.req_pool_idx is None for req in reqs]
+
+        slot_plan = []
+        total_mamba_slots = 0
+        for req in reqs:
+            need_main = not req.kv.holds_mamba
+            need_ping_pong = (
+                self.enable_mamba_extra_buffer
+                and req.kv.mamba_ping_pong_track_buffer is None
+            )
+            ping_pong_slots = (
+                self.mamba_initial_tracking_slots if need_ping_pong else 0
+            )
+            slot_plan.append((req, need_main, ping_pong_slots))
+            total_mamba_slots += int(need_main) + ping_pong_slots
+
+        reserved_mamba = (
+            self.mamba_allocator.alloc(total_mamba_slots)
+            if total_mamba_slots > 0
+            else None
+        )
+        if total_mamba_slots > 0 and reserved_mamba is None:
+            return None
+
         select_index = super().alloc(reqs)
         if select_index is None:
+            if reserved_mamba is not None:
+                self.mamba_allocator.free(reserved_mamba)
             return None
 
         spec_write_pos = self.mamba_pool.replayssm_spec_write_pos
@@ -1588,43 +1648,33 @@ class HybridReqToTokenPool(ReqToTokenPool):
                 self.mamba_pool.replayssm_cache_base.index_fill_(0, fresh_rows, 0)
                 self.mamba_pool.replayssm_is_flush.index_fill_(0, fresh_rows, 0)
 
-        mamba_indices: list[torch.Tensor] = []
-        mamba_ping_pong_track_buffers: list[torch.Tensor] = []
-        for req in reqs:
-            if req.kv.holds_mamba:  # for radix cache / continuing chunked
-                pass
-            else:
-                mid = self.mamba_allocator.alloc(1)
-                assert mid is not None, (
-                    f"Not enough space for mamba cache, try to increase --mamba-full-memory-ratio or --max-mamba-cache-size. {mid=}, {self.mamba_pool.size=}, {self.mamba_allocator.available_size()=}, {len(reqs)=}"
-                )
-                req.kv.mamba_pool_idx = mid[0]
+        offset = 0
+        for req, need_main, ping_pong_slots in slot_plan:
+            if need_main:
+                req.kv.mamba_pool_idx = reserved_mamba[offset]
                 req.kv.mamba_needs_clear = True
+                offset += 1
                 # GDN ReplaySSM: a freshly (re)assigned slot starts an empty
                 # ring. write_pos=0 means "ring empty", so the decode kernel
                 # ignores ring contents and reads only the checkpoint state
                 # (the post-prefill state that prefill wrote into this slot).
                 if self.mamba_pool.replayssm_write_pos is not None:
                     self.mamba_pool.replayssm_write_pos[req.kv.mamba_pool_idx] = 0
-            mamba_indices.append(req.kv.mamba_pool_idx)
-            if self.enable_mamba_extra_buffer:
-                if req.kv.mamba_ping_pong_track_buffer is None:
-                    self._alloc_ping_pong_buffer(req)
-                mamba_ping_pong_track_buffers.append(
-                    req.kv.mamba_ping_pong_track_buffer
+            if ping_pong_slots:
+                self._init_mamba_ping_pong_buffer(
+                    req, reserved_mamba[offset : offset + ping_pong_slots]
                 )
-        assert len(select_index) == len(mamba_indices), (
-            "Not enough space for mamba cache, try to increase --mamba-full-memory-ratio or --max-mamba-cache-size."
-        )
-        if self.enable_mamba_extra_buffer:
-            assert len(select_index) == len(mamba_ping_pong_track_buffers), (
-                "Not enough space for mamba ping pong idx, try to increase --mamba-full-memory-ratio."
-            )
+                offset += ping_pong_slots
+
+        mamba_indices = [req.kv.mamba_pool_idx for req in reqs]
         # Device rows: indexing a device tensor with a Python list syncs the host.
         rows = async_h2d(select_index, dtype=torch.int64, device=self.device)
         mamba_index_tensor = torch.stack(mamba_indices).to(dtype=torch.int32)
         self.req_index_to_mamba_index_mapping[rows] = mamba_index_tensor
         if self.enable_mamba_extra_buffer:
+            mamba_ping_pong_track_buffers = [
+                req.kv.mamba_ping_pong_track_buffer for req in reqs
+            ]
             ping_pong_tensor = torch.stack(mamba_ping_pong_track_buffers)
             self.req_index_to_mamba_ping_pong_track_buffer_mapping[rows] = (
                 ping_pong_tensor
@@ -1762,24 +1812,7 @@ class HybridReqToTokenPool(ReqToTokenPool):
             "Not enough space for mamba ping pong idx, "
             "try to increase --mamba-full-memory-ratio."
         )
-        buf = torch.full(
-            (self.mamba_ping_pong_track_buffer_size,),
-            -1,
-            dtype=slots.dtype,
-            device=slots.device,
-        )
-        buf[:n] = slots
-        req.kv.mamba_ping_pong_track_buffer = buf
-        req.kv.mamba_ping_pong_empty = [False] * n + [True] * (
-            self.mamba_ping_pong_track_buffer_size - n
-        )
-        req.kv.mamba_prev_track_seqlen = None
-        req.kv.mamba_next_track_idx = 0
-        req.kv.mamba_last_track_idx = (
-            0
-            if self.enable_mamba_extra_buffer_lazy
-            else self.get_mamba_ping_pong_other_idx(0)
-        )
+        self._init_mamba_ping_pong_buffer(req, slots)
 
     def set_mamba_ping_pong_slot(self, req: Req, idx: int, value):
         """Update a ping-pong slot value and sync the device-side mapping.

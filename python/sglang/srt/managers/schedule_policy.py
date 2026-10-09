@@ -71,6 +71,7 @@ from sglang.srt.mem_cache.base_prefix_cache import (
     zero_match_result,
 )
 from sglang.srt.mem_cache.common import match_kv_cache, touch_waiting_prefix
+from sglang.srt.mem_cache.memory_pool import HybridReqToTokenPool
 from sglang.srt.mem_cache.radix_cache import RadixCache, RadixKey, TreeNode
 from sglang.srt.mem_cache.unified_cache.components import (
     CacheTransferPhase,
@@ -838,11 +839,20 @@ class PrefillAdder:
         Admission includes the host checkpoint before load-back binds the
         request slot. Continuing chunks only need the request-state budget;
         their host-hit metadata may still describe an already consumed hit.
-        Tracking buffers and radix CoW headroom are not included here.
+
+        The shared-memory allocator accounts in Full-token equivalents, while
+        ``HybridReqToTokenPool.alloc`` may still need a main state and the
+        initial tracking (ping-pong) states. Charge the exact outstanding count
+        so Full-KV admission cannot consume their backing bytes. Radix CoW
+        headroom is not included here.
         """
         if not self._mamba_slot_cost:
             return 0
-        slots = int(not req.kv.holds_mamba)
+        req_pool = self.tree_cache.req_to_token_pool
+        if isinstance(req_pool, HybridReqToTokenPool):
+            slots = req_pool.mamba_admission_slots(req.kv)
+        else:
+            slots = int(not req.kv.holds_mamba)
         if include_host_hit:
             slots += req.mamba_host_hit_length
         return slots * self._mamba_slot_cost

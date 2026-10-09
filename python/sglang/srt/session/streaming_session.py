@@ -66,6 +66,13 @@ class StreamingSession:
         self.cache = cache
         self.slots: Dict[str, SessionSlot] = {}
 
+    def get_session_kv(self, req: Req) -> Optional[ReqKvInfo]:
+        """Return reusable session KV without mutating the incoming request."""
+        if not _is_streaming(req) or req.to_finish is not None:
+            return None
+        slot = self.slots.get(req.session.session_id)
+        return slot.kv if slot is not None and slot.kv.holds_kv else None
+
     def any_holding_kv(self) -> bool:
         return any(s.kv.holds_kv for s in self.slots.values())
 

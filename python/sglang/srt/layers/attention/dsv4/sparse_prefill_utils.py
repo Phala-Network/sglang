@@ -78,7 +78,7 @@ def use_dsv4_q8kv8_sparse_prefill(dsv4_prefill_backend: str = "auto") -> bool:
 class SparsePrefillWorkspace:
     """Backend-owned scratch storage for sparse prefill KV dequantization.
 
-    The workspace contents are fully overwritten before every attention call,
+    The workspace contents are initialized before every attention call,
     so token buckets and compression ratios can safely share one buffer. Sparse
     prefill executes eagerly and serially on the supported paths, which makes it
     safe to replace the scratch allocation when a larger extent is needed.
@@ -87,6 +87,9 @@ class SparsePrefillWorkspace:
     def __init__(self, device: torch.device):
         self.device = device
         self._buffer: Optional[torch.Tensor] = None
+        # One entry owned by the shared scratch buffer, not by a chunk. Keep
+        # source/gather/chunk alive so allocator address reuse cannot hit it.
+        self.compressed_dequant = None
 
     def get(
         self,
@@ -97,6 +100,7 @@ class SparsePrefillWorkspace:
         current_capacity = self._buffer.shape[0] if self._buffer is not None else 0
         current_dtype = self._buffer.dtype if self._buffer is not None else None
         if num_tokens > current_capacity or dtype != current_dtype:
+            self.compressed_dequant = None
             self._buffer = torch.empty(
                 (num_tokens, 1, WORKSPACE_DIM),
                 dtype=dtype,

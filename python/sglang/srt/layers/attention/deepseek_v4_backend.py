@@ -3543,6 +3543,7 @@ class DeepseekV4AttnBackend(
             combined_indices = cache.c0_combined_indices
             combined_lens = cache.c0_combined_lens
             swa_slice = workspace
+            self.sparse_prefill_workspace.compressed_dequant = None
         else:
             extra_page_size = token_to_kv_pool.get_extra_key_page_size(layer_id)
             extra_k_cache = token_to_kv_pool.get_extra_key_buffer(layer_id)
@@ -3557,12 +3558,41 @@ class DeepseekV4AttnBackend(
             swa_slice = workspace[n_compressed:]
 
         if compressed_slice is not None:
-            dequantize_k_cache_paged(
-                extra_k_cache,
-                flat_token_ids,
-                page_size=extra_page_size,
-                out=compressed_slice,
-                layout=token_to_kv_pool.get_extra_key_layout(layer_id),
+            extra_layout = token_to_kv_pool.get_extra_key_layout(layer_id)
+            source_layer = token_to_kv_pool.source_layer_of(layer_id)
+            key = (
+                source_layer,
+                extra_k_cache.data_ptr(),
+                tuple(extra_k_cache.shape),
+                tuple(extra_k_cache.stride()),
+                extra_k_cache.dtype,
+                extra_page_size,
+                extra_layout,
+            )
+            memo = self.sparse_prefill_workspace.compressed_dequant
+            reuse = (
+                compress_ratio in (1, 2)
+                and layer_id > source_layer
+                and memo is not None
+                and memo[0] is cache
+                and memo[2] is flat_token_ids
+                and memo[3] == key
+                and memo[4] < layer_id
+            )
+            # Only source layers write c1/c2, before attention; HiCache also
+            # transfers them once at the source layer. Never reuse on a source
+            # layer or a non-monotonic replay, even with identical pointers.
+            if not reuse:
+                self.sparse_prefill_workspace.compressed_dequant = None
+                dequantize_k_cache_paged(
+                    extra_k_cache,
+                    flat_token_ids,
+                    page_size=extra_page_size,
+                    out=compressed_slice,
+                    layout=extra_layout,
+                )
+            self.sparse_prefill_workspace.compressed_dequant = (
+                cache, extra_k_cache, flat_token_ids, key, layer_id
             )
         dequantize_k_cache_paged(
             token_to_kv_pool.get_swa_key_buffer_radix(layer_id),

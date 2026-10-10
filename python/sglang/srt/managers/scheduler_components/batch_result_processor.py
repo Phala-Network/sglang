@@ -357,9 +357,16 @@ class SchedulerBatchResultProcessor:
                         # req output_ids are set here
                         req.output_ids.append(next_token_id)
 
-                        self._maybe_update_reasoning_tokens(req, next_token_id)
-
                         req.update_finish_state()
+                        if req.require_reasoning:
+                            self._maybe_update_reasoning_tokens(
+                                req,
+                                list(
+                                    req.output_ids[
+                                        len(req.output_ids) - 1 : req.finished_len
+                                    ]
+                                ),
+                            )
                     # A mixed spec tail committed its pending bonus token; advance
                     # so the next spec prepare_for_decode reserves from the right base.
                     if (
@@ -1014,8 +1021,15 @@ class SchedulerBatchResultProcessor:
             else:
                 req.output_ids.extend(next_token_id)
                 new_accept_len = len(next_token_id)
-                self._maybe_update_reasoning_tokens(req, next_token_id)
             req.update_finish_state(new_accept_len)
+            if new_accept_len and req.require_reasoning:
+                # Account only for this step's retained tokens, after stop/length
+                # resolution (and vocabulary sanitization). Do not advance the
+                # reasoning terminator matcher through speculative overshoot.
+                retained_tokens = req.output_ids[
+                    len(req.output_ids) - new_accept_len : req.finished_len
+                ]
+                self._maybe_update_reasoning_tokens(req, list(retained_tokens))
 
             if sampling_mask_finish_reason is not None:
                 self._handle_sampling_mask_abort(req)

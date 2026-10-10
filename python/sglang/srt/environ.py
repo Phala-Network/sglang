@@ -1563,6 +1563,8 @@ class Envs:
     SGLANG_OPT_USE_FLASHINFER_MHC = EnvBool(False)
     SGLANG_OPT_FUSE_MHC_POST_PRE = EnvBool(True)
     SGLANG_OPT_USE_TILELANG_INDEXER = EnvBool(False)
+    # Shard eager low-ratio indexer query rows across attention TP.
+    SGLANG_OPT_DSV4_INDEXER_TP_SHARD = EnvBool(False)
     SGLANG_OPT_DSV4_NONPAGED_INDEXER = EnvBool(True)
     # Per-rank local query rows (after DP-attention sharding when enabled),
     # not request ISL.

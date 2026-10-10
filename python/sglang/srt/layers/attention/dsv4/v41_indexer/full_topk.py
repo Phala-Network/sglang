@@ -21,6 +21,7 @@ from .scoring import (
     get_index_k_cache,
     prefill_requests,
     quantize_index_q,
+    sharded_dense_prefill_topk,
     write_decode,
     write_prefill,
 )
@@ -72,7 +73,12 @@ class FullTopKIndexer:
         kv = self.token_to_kv_pool.get_low_ratio_index_k_fp4(
             inputs.layer_id, data.k_slots
         )
-        selected = dense_prefill_topk(data, kv, topk=inputs.indexer.index_topk)
+        if inputs.row_shard is None:
+            selected = dense_prefill_topk(data, kv, topk=inputs.indexer.index_topk)
+        else:
+            selected = sharded_dense_prefill_topk(
+                data, kv, topk=inputs.indexer.index_topk, shard=inputs.row_shard
+            )
         data.write_selection(selected=selected, out=out)
 
     def _torch_prefill(self, inputs: PrefillInputs, out: Selection) -> None:

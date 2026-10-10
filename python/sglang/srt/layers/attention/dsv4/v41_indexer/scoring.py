@@ -15,6 +15,7 @@ from sglang.kernels.ops.attention.dsv4.index_logits import flat_index_logits_til
 from .types import (
     DecodeInputs,
     PrefillInputs,
+    RowShard,
     Selection,
 )
 
@@ -194,13 +195,16 @@ def score_tiles(
     kv: Tuple[torch.Tensor, torch.Tensor],
     *,
     width_align: int,
+    rows: Optional[slice] = None,
 ) -> Generator[Tuple[slice, torch.Tensor], None, None]:
+    """Score a row range; yielded tile slices are relative to that range."""
+    rows = slice(0, data.num_rows) if rows is None else rows
     yield from flat_index_logits_tiles(
-        q=(data.q_fp4, data.q_sf),
+        q=(data.q_fp4[rows], data.q_sf[rows]),
         kv=kv,
-        weights=data.weights,
-        starts=data.request_starts,
-        lengths=data.compress_lens,
+        weights=data.weights[rows],
+        starts=data.request_starts[rows],
+        lengths=data.compress_lens[rows],
         context_lengths=data.lens_per_request,
         budget_bytes=_DEEP_GEMM_SCORE_BUDGET_BYTES,
         width_align=width_align,
@@ -212,21 +216,41 @@ def dense_prefill_topk(
     kv: Tuple[torch.Tensor, torch.Tensor],
     *,
     topk: int,
+    rows: Optional[slice] = None,
 ) -> torch.Tensor:
-    """Flattened-K columns, ``-1`` padded, unordered."""
+    """Flattened-K columns for the selected rows, -1 padded and unordered."""
     from sglang.kernels.ops.attention.dsv4 import topk_transform_ragged_v2
 
-    selected = data.empty_selection(topk)
-    for tile, logits in score_tiles(data, kv, width_align=4):
+    rows = slice(0, data.num_rows) if rows is None else rows
+    lens = data.compress_lens[rows]
+    starts = data.request_starts[rows]
+    selected = starts.new_full((rows.stop - rows.start, topk), -1, dtype=torch.int32)
+    for tile, logits in score_tiles(data, kv, width_align=4, rows=rows):
         topk_transform_ragged_v2(
             logits,
-            data.compress_lens[tile],
-            out_offsets=data.request_starts[tile],
+            lens[tile],
+            out_offsets=starts[tile],
             out_indices=selected[tile],
         )
-        # Free this tile's logits before the generator scores the next one.
         del logits
     return selected
+
+
+def sharded_dense_prefill_topk(
+    data: DeepGEMMPrefillData,
+    kv: Tuple[torch.Tensor, torch.Tensor],
+    *,
+    topk: int,
+    shard: RowShard,
+) -> torch.Tensor:
+    rows = shard.local_rows(data.num_rows)
+    local = data.request_starts.new_full(
+        (shard.rows_per_rank(data.num_rows), topk), -1, dtype=torch.int32
+    )
+    local[: rows.stop - rows.start].copy_(
+        dense_prefill_topk(data, kv, topk=topk, rows=rows)
+    )
+    return shard.gather(local, data.num_rows)
 
 
 # ---------- torch ----------
@@ -346,9 +370,9 @@ def decode_scores(
     req, pos = inputs.req_rows, inputs.positions
     out.reset()
     bs = req.shape[0]
-    assert pos.shape[0] == bs, (
-        f"decode expects one token per request, {pos.shape=} {bs=}"
-    )
+    assert (
+        pos.shape[0] == bs
+    ), f"decode expects one token per request, {pos.shape=} {bs=}"
     if bs == 0:
         return None
     lens = (pos + 1) // ratio

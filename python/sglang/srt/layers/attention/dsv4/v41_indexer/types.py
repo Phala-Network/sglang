@@ -7,7 +7,10 @@ from typing import TYPE_CHECKING, List, Optional, Protocol, TypeVar
 import msgspec
 import torch
 
+from sglang.srt.utils.common import ceil_align, ceil_div
+
 if TYPE_CHECKING:
+    from sglang.srt.distributed.parallel_state import GroupCoordinator
     from sglang.srt.layers.attention.dsv4.dsv41_sparse import DeepseekV41Indexer
     from sglang.srt.layers.attention.dsv4.metadata import PagedIndexerMetadata
 
@@ -44,6 +47,38 @@ class Selection(msgspec.Struct, frozen=True):
             self.raw_indices.fill_(-1)
 
 
+class RowShard(msgspec.Struct, frozen=True, kw_only=True):
+    """This rank's share of a prefill chunk's query rows across a group whose
+    ranks all hold the same rows.
+
+    The indexer is replicated, so every rank of the attention-TP group would
+    score every row identically. Each rank scores a contiguous share instead and
+    the selections are all-gathered. A dense score depends only on its own query
+    row, so the gathered selection is bitwise the replicated one."""
+
+    group: GroupCoordinator
+    rank: int
+    world: int
+    # The score kernel groups 128 // heads consecutive rows into one MMA tile;
+    # aligned shares keep every tile's row set the same as unsharded.
+    row_align: int
+
+    def rows_per_rank(self, num_rows: int) -> int:
+        return ceil_align(ceil_div(num_rows, self.world), self.row_align)
+
+    def local_rows(self, num_rows: int) -> slice:
+        per = self.rows_per_rank(num_rows)
+        start = min(self.rank * per, num_rows)
+        return slice(start, min(start + per, num_rows))
+
+    def gather(self, local: torch.Tensor, num_rows: int) -> torch.Tensor:
+        """``[num_rows, ...]`` from every rank's ``[rows_per_rank, ...]`` share;
+        the last share's padding rows fall past ``num_rows`` and are dropped."""
+        gathered = local.new_empty((self.world * local.shape[0], *local.shape[1:]))
+        self.group.all_gather_into_tensor(gathered, local.contiguous())
+        return gathered[:num_rows]
+
+
 class PrefillInputs(msgspec.Struct, frozen=True, kw_only=True):
     """An eager extend: the backend projects the queries and gathers the index K."""
 
@@ -67,6 +102,7 @@ class PrefillInputs(msgspec.Struct, frozen=True, kw_only=True):
     seq_lens_cpu: Optional[List[int]]
     rows_per_request: Optional[List[int]]
     rows_per_request_device: Optional[torch.Tensor]
+    row_shard: Optional[RowShard] = None
 
 
 class DecodeInputs(msgspec.Struct, frozen=True, kw_only=True):

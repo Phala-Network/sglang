@@ -1083,11 +1083,36 @@ def _direct_prefix_per_row(*, in_prefill_graph: bool) -> int:
     return _SM100_DIRECT_PREFIX_PER_ROW
 
 
+def _prefill_direct_layout_supported(token_to_kv_pool: DeepSeekV4TokenToKVPool) -> bool:
+    # The current FlashMLA shim cannot disambiguate V41 from V32_NO_ROPE.
+    # Limit the new prefill heuristic to actual V4 buffers, including every
+    # compressed pool this stage may read. Preserve the legacy OPT=False route.
+    if (
+        token_to_kv_pool.get_swa_key_layout() is not KVLayout.V4
+        or token_to_kv_pool.get_swa_key_bytes_per_token() != KVLayout.V4.bytes_per_token
+    ):
+        return False
+    for layer_id, item in enumerate(token_to_kv_pool.layer_mapping):
+        if item is not None and item[2] is not None:
+            if (
+                token_to_kv_pool.get_extra_key_layout(layer_id) is not KVLayout.V4
+                or token_to_kv_pool.get_extra_key_bytes_per_token(layer_id)
+                != KVLayout.V4.bytes_per_token
+            ):
+                return False
+    return True
+
+
 def _prefill_reads_fp8_direct(
-    forward_batch: ForwardBatch, *, in_prefill_graph: bool
+    forward_batch: ForwardBatch,
+    *,
+    in_prefill_graph: bool,
+    layout_supported: bool,
 ) -> bool:
     if not envs.SGLANG_OPT_FLASHMLA_SPARSE_PREFILL.get():
         return True
+    if not layout_supported:
+        return False
     per_row = _direct_prefix_per_row(in_prefill_graph=in_prefill_graph)
     prefix = forward_batch.extend_prefix_lens_cpu
     if per_row <= 0 or prefix is None:
@@ -1149,6 +1174,10 @@ class DeepseekV4AttnBackend(
 
         self.req_to_token_pool = model_runner.req_to_token_pool
         self.token_to_kv_pool: DeepSeekV4TokenToKVPool = model_runner.token_to_kv_pool
+        # Pool layouts and layer mapping are fixed at pool construction.
+        self._prefill_direct_layout_supported = _prefill_direct_layout_supported(
+            self.token_to_kv_pool
+        )
         # The C4 state ring is addressed per SWA page, so a page holds whole windows.
         assert self.token_to_kv_pool.swa_page_size % SWA_WINDOW == 0
         self.hisparse_coordinator = model_runner.hisparse_coordinator
@@ -2577,7 +2606,9 @@ class DeepseekV4AttnBackend(
                 forward_batch=forward_batch,
             )
             metadata.sparse_prefill_direct = _prefill_reads_fp8_direct(
-                forward_batch, in_prefill_graph=use_prefill_cuda_graph
+                forward_batch,
+                in_prefill_graph=use_prefill_cuda_graph,
+                layout_supported=self._prefill_direct_layout_supported,
             )
         else:
             raise NotImplementedError(f"unsupported mode {forward_batch.forward_mode=}")
@@ -2650,7 +2681,9 @@ class DeepseekV4AttnBackend(
         assert isinstance(capture_metadata, DSV4Metadata)
         capture_metadata.refresh_for_breakable_cuda_graph_replay_(static_metadata)
         capture_metadata.sparse_prefill_direct = _prefill_reads_fp8_direct(
-            forward_batch, in_prefill_graph=True
+            forward_batch,
+            in_prefill_graph=True,
+            layout_supported=self._prefill_direct_layout_supported,
         )
         self.forward_metadata = capture_metadata
 

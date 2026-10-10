@@ -228,10 +228,13 @@ def _maybe_precompute_flashmla_sched_meta(
     from sglang.kernels.ops.attention.dsv4.flashmla_sched_meta import (
         META_INTS,
         flashmla_sched_meta,
+        sched_meta_fits,
     )
 
     b, s_q = q.shape[0], q.shape[1]
     num_sm_parts = max(_num_sms(q.device.index) // s_q, 1)
+    if not sched_meta_fits(batch_size=b, num_sm_parts=num_sm_parts):
+        return
     meta = torch.empty((num_sm_parts, META_INTS), dtype=torch.int32, device=q.device)
     num_splits = torch.empty((b + 1,), dtype=torch.int32, device=q.device)
     flashmla_sched_meta(
@@ -952,6 +955,8 @@ class DSV4Metadata:
     # Set only on the metadata built for the late layers under bounded SWA replay.
     late_layer_tail: Optional[LateLayerTail] = None
 
+    sparse_prefill_direct: bool = False
+
     @property
     def core_metadata(self) -> DSV4AttnMetadata:
         return self.core_attn_metadata
@@ -1057,6 +1062,38 @@ class _GraphBucket(enum.Enum):
         if forward_mode.is_draft_extend_v2():
             return cls.DRAFT_EXTEND
         raise NotImplementedError(f"unsupported {forward_mode=}")
+
+
+_SM100_DIRECT_PREFIX_PER_ROW = 5
+_SM100_DIRECT_PREFIX_PER_ROW_GRAPH = 8
+
+
+def _direct_prefix_per_row(*, in_prefill_graph: bool) -> int:
+    per_row = (
+        envs.SGLANG_DSV4_SPARSE_PREFILL_DIRECT_PREFIX_PER_ROW_GRAPH
+        if in_prefill_graph
+        else envs.SGLANG_DSV4_SPARSE_PREFILL_DIRECT_PREFIX_PER_ROW
+    ).get()
+    if per_row is not None:
+        return per_row
+    if not get_platform().is_sm100:
+        return 0
+    if in_prefill_graph:
+        return _SM100_DIRECT_PREFIX_PER_ROW_GRAPH
+    return _SM100_DIRECT_PREFIX_PER_ROW
+
+
+def _prefill_reads_fp8_direct(
+    forward_batch: ForwardBatch, *, in_prefill_graph: bool
+) -> bool:
+    if not envs.SGLANG_OPT_FLASHMLA_SPARSE_PREFILL.get():
+        return True
+    per_row = _direct_prefix_per_row(in_prefill_graph=in_prefill_graph)
+    prefix = forward_batch.extend_prefix_lens_cpu
+    if per_row <= 0 or prefix is None:
+        return False
+    # Workspace cost grows with cached tokens, direct-read cost with query rows.
+    return sum(prefix) >= per_row * sum(forward_batch.extend_seq_lens_cpu)
 
 
 class DeepseekV4AttnBackend(
@@ -2329,6 +2366,10 @@ class DeepseekV4AttnBackend(
             and forward_batch.forward_mode.is_extend_without_speculative()
             else None
         )
+        if self.tail_forward_metadata is not None:
+            self.tail_forward_metadata.sparse_prefill_direct = (
+                self.forward_metadata.sparse_prefill_direct
+            )
 
         if self.token_to_kv_pool.request_window is not None:
             self.token_to_kv_pool.request_window.activate(
@@ -2362,7 +2403,7 @@ class DeepseekV4AttnBackend(
             and metadata.late_layer_tail is None
             and (
                 num_qo_tokens > _LARGE_INDEXER_QUERY_THRESHOLD
-                or envs.SGLANG_OPT_FLASHMLA_SPARSE_PREFILL.get()
+                or not metadata.sparse_prefill_direct
             )
         )
         if use_sparse_prefill:
@@ -2535,6 +2576,9 @@ class DeepseekV4AttnBackend(
                 use_prefill_cuda_graph=use_prefill_cuda_graph,
                 forward_batch=forward_batch,
             )
+            metadata.sparse_prefill_direct = _prefill_reads_fp8_direct(
+                forward_batch, in_prefill_graph=use_prefill_cuda_graph
+            )
         else:
             raise NotImplementedError(f"unsupported mode {forward_batch.forward_mode=}")
 
@@ -2605,6 +2649,9 @@ class DeepseekV4AttnBackend(
         )
         assert isinstance(capture_metadata, DSV4Metadata)
         capture_metadata.refresh_for_breakable_cuda_graph_replay_(static_metadata)
+        capture_metadata.sparse_prefill_direct = _prefill_reads_fp8_direct(
+            forward_batch, in_prefill_graph=True
+        )
         self.forward_metadata = capture_metadata
 
     def init_cuda_graph_state(self, max_bs: int, max_num_tokens: int) -> None:
@@ -3386,7 +3433,7 @@ class DeepseekV4AttnBackend(
                 and token_to_kv_pool.request_window is None
                 and (
                     q.shape[0] > _LARGE_INDEXER_QUERY_THRESHOLD
-                    or envs.SGLANG_OPT_FLASHMLA_SPARSE_PREFILL.get()
+                    or not self.forward_metadata.sparse_prefill_direct
                 )
             ):
                 if use_dsv4_q8kv8_sparse_prefill(self.dsv4_prefill_backend):

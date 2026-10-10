@@ -1576,6 +1576,9 @@ class Envs:
     SGLANG_DSV41_TORCH_PREFILL_INDEXER = EnvBool(False)
     SGLANG_FP8_PAGED_MQA_LOGITS_TORCH = EnvBool(False)
     SGLANG_OPT_FLASHMLA_SPARSE_PREFILL = EnvBool(True)
+    # Long-prefix eager FP8 reads; graph remains disabled in this candidate.
+    SGLANG_DSV4_SPARSE_PREFILL_DIRECT_PREFIX_PER_ROW = EnvInt(None)
+    SGLANG_DSV4_SPARSE_PREFILL_DIRECT_PREFIX_PER_ROW_GRAPH = EnvInt(None)
 
     # cache, GEMM, and distributed
     SGLANG_OPT_FP8_WO_A_GEMM = EnvBool(True)

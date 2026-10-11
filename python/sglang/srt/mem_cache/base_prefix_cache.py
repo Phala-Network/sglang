@@ -264,6 +264,8 @@ class InitLoadBackParams:
     host_hit_length: int
     mem_quota: Optional[int] = None
     req: Optional[Req] = None
+    # Outstanding live/request-buffer slots for the entire selected batch.
+    mamba_slots_to_reserve: int = 0
 
 
 class MatchResult(NamedTuple):

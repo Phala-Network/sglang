@@ -1822,6 +1822,7 @@ class UnifiedRadixCache(BasePrefixCache):
         node_id: NodeId,
         mem_quota: Optional[int] = None,
         req=None,
+        mamba_slots_to_reserve: int = 0,
     ) -> bool:
         """Load evicted KV data from host back to device (H→D)."""
         if self.cache_controller is None:
@@ -1840,7 +1841,23 @@ class UnifiedRadixCache(BasePrefixCache):
             for comp in self._components_tuple
         }
         success = False
+        reserved_mamba = None
         try:
+            # prepare_load_back may already have allocated this request's main
+            # state. Protect the remaining live/ping-pong demand, including
+            # earlier selected requests, from cache checkpoint/FULL restoration.
+            prepared_slots = sum(
+                prep.allocated_mamba_slot.numel()
+                for prep in preps.values()
+                if prep.allocated_mamba_slot is not None
+            )
+            reserve = max(0, mamba_slots_to_reserve - prepared_slots)
+            if reserve:
+                reserved_mamba = self.req_to_token_pool.mamba_allocator.alloc(reserve)
+                if reserved_mamba is None:
+                    self.dec_lock_ref(node_id, ancestor_lock_params)
+                    self.dec_host_lock_ref(node_id, host_anchor_params)
+                    return False
             success = self._load_back_transfers(
                 node_id=node_id,
                 mem_quota=mem_quota,
@@ -1851,6 +1868,8 @@ class UnifiedRadixCache(BasePrefixCache):
             )
             return success
         finally:
+            if reserved_mamba is not None:
+                self.req_to_token_pool.mamba_allocator.free(reserved_mamba)
             for comp in self._components_tuple:
                 comp.finalize_load_back(req, preps[comp.component_type], success)
 
@@ -3607,7 +3626,12 @@ class UnifiedRadixCache(BasePrefixCache):
                 and (req.swa_host_hit_length > 0 or req.mamba_host_hit_length > 0)
             )
         ):
-            if self.load_back(best_match_node_id, mem_quota, req=req):
+            if self.load_back(
+                best_match_node_id,
+                mem_quota,
+                req=req,
+                mamba_slots_to_reserve=params.mamba_slots_to_reserve,
+            ):
                 new_indices = self.tree_core.collect_full_device_indices(
                     best_match_node_id, last_best_match_device_node_id
                 )
@@ -3620,6 +3644,11 @@ class UnifiedRadixCache(BasePrefixCache):
                     best_match_node_id,
                 )
                 return len(new_indices), best_match_node_id
+            if params.mamba_slots_to_reserve:
+                # The batch reservation can intentionally prevent a cache
+                # restore. Retry admission instead of accepting a prefix whose
+                # promised auxiliary state has not reached the device.
+                return None
 
         return 0, last_best_match_device_node_id
 

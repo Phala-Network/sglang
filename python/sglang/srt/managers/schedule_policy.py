@@ -1529,6 +1529,19 @@ class PrefillAdder:
                             best_match_node=req.best_match_node,
                             host_hit_length=req.host_hit_length,
                             req=req,
+                            mamba_slots_to_reserve=(
+                                sum(
+                                    self.tree_cache.req_to_token_pool.mamba_admission_slots(
+                                        candidate.kv
+                                    )
+                                    for candidate in [*self.can_run_list, req]
+                                )
+                                if isinstance(
+                                    self.tree_cache.req_to_token_pool,
+                                    HybridReqToTokenPool,
+                                )
+                                else 0
+                            ),
                         )
                     )
                 if loaded is None:

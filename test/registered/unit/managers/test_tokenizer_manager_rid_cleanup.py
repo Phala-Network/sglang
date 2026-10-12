@@ -292,6 +292,7 @@ class TestEngineResponseWait(unittest.IsolatedAsyncioTestCase):
 
     async def test_http_timeout_still_checks_disconnection(self):
         request = Mock()
+        request.state.sglang_response_disconnect_watched = False
         request.is_disconnected = AsyncMock(return_value=True)
         self.tm.abort_request = Mock()
         stream = self.tm._wait_one_response(self.state.obj, request)

@@ -1,7 +1,7 @@
 {
   "schema": "phala.srt-log-privacy-source-policy.v1",
-  "reviewed_source": "50ef850a9",
-  "migration_baseline": "50ef850a9",
+  "reviewed_source": "92e543896436461c6dd9fae05b87867cf9087ae8",
+  "migration_baseline": "92e543896436461c6dd9fae05b87867cf9087ae8",
   "approved_import_removals": {},
   "scope": "Reviewed diagnostic evaluations only; unknown removals block migration. CLI business output remains unchanged.",
   "business_print_files": [

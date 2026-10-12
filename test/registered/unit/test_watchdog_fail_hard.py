@@ -87,4 +87,3 @@ class TestWatchdogFailHard(CustomTestCase):
         raw.parent_process.wait.assert_not_called()
         raw.parent_process.kill.assert_not_called()
         dump_info.assert_called_once_with()
-

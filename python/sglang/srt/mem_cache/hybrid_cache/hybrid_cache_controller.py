@@ -1289,34 +1289,55 @@ class HybridCacheController(BaseHiCacheController):
         # (IO failure, timeout, TP mismatch), skip extra IO entirely to avoid
         # data misalignment.
         pool_hits: dict[str, int] = {}
-        if not operation.is_terminated() and kv_completed_pages == len(
-            operation.hash_value
-        ):
-            # KV-derived sidecar pools are handled in CacheController._page_transfer_kv_batch.
-            # Only handle non-KV-derived sidecar pools here.
-            transfers_nonkv = [
-                transfer
-                for transfer in operation.pool_transfers
-                if transfer.indices_from_pool != PoolName.KV
-            ]
-            sidecar_hashes = operation.sidecar_hash_values or operation.hash_value
-            sidecar_hit_pages = (
-                operation.sidecar_hit_pages
-                if operation.sidecar_hash_values is not None
-                else kv_completed_pages
-            )
-            self._sync_trailing_keys(transfers_nonkv, sidecar_hashes, sidecar_hit_pages)
-            self._resolve_sidecar_nonkv_derived_pool_transfers(operation)
-            results = {}
-            for extra_info, transfers in _trailing_chain_groups(
-                operation.prefix_keys,
-                sidecar_hashes,
-                transfers_nonkv,
+        try:
+            if not operation.is_terminated() and kv_completed_pages == len(
+                operation.hash_value
             ):
-                results.update(
-                    self.storage_backend.batch_get_v2(transfers, extra_info=extra_info)
+                # KV-derived sidecar pools are handled in CacheController._page_transfer_kv_batch.
+                # Only handle non-KV-derived sidecar pools here.
+                transfers_nonkv = [
+                    transfer
+                    for transfer in operation.pool_transfers
+                    if transfer.indices_from_pool != PoolName.KV
+                ]
+                sidecar_hashes = operation.sidecar_hash_values or operation.hash_value
+                sidecar_hit_pages = (
+                    operation.sidecar_hit_pages
+                    if operation.sidecar_hash_values is not None
+                    else kv_completed_pages
                 )
-            pool_hits = count_pool_hits(results)
+                self._sync_trailing_keys(
+                    transfers_nonkv, sidecar_hashes, sidecar_hit_pages
+                )
+                self._resolve_sidecar_nonkv_derived_pool_transfers(operation)
+                # Deferred transfers are legal at query time, but no nonempty
+                # sidecar may reach I/O without its staging allocation. Never
+                # skip such a required pool and advertise a false cache hit.
+                if any(
+                    transfer.keys and transfer.host_indices is None
+                    for transfer in transfers_nonkv
+                ):
+                    raise ValueError("Required prefetch sidecar staging is missing")
+                results = {}
+                for extra_info, transfers in _trailing_chain_groups(
+                    operation.prefix_keys,
+                    sidecar_hashes,
+                    transfers_nonkv,
+                ):
+                    results.update(
+                        self.storage_backend.batch_get_v2(
+                            transfers, extra_info=extra_info
+                        )
+                    )
+                pool_hits = count_pool_hits(results)
+        except Exception as exc:
+            # Empty pool hits fail the hybrid all-or-nothing check. Always
+            # publish this slot, even when only one TP rank's I/O failed.
+            logger.error(
+                "HiCache sidecar prefetch failed (%s); discarding this prefetch.",
+                type(exc).__name__,
+            )
+            pool_hits = {}
         # Emit PrefetchAck to prefetch_sync_queue, even the operation has been canceled by the
         # scheduler thread.  The prefetch sync thread expects the same number of PrefetchAck objects
         # to perform all_reduce.

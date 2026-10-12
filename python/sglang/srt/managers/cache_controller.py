@@ -1089,27 +1089,37 @@ class HiCacheController:
             if all_success and operation.is_terminated():
                 all_success = False
             if all_success:
-                batch_hashes = operation.hash_value[i : i + STORAGE_BATCH_SIZE]
-                batch_host_indices = operation.host_indices[
-                    i * self.page_size : (i + len(batch_hashes)) * self.page_size
-                ]
+                try:
+                    batch_hashes = operation.hash_value[i : i + STORAGE_BATCH_SIZE]
+                    batch_host_indices = operation.host_indices[
+                        i * self.page_size : (i + len(batch_hashes)) * self.page_size
+                    ]
 
-                # Get one batch token, and update the completed_tokens if succeed
-                extra_info = HiCacheStorageExtraInfo(prefix_keys=prefix_keys)
+                    # Get one batch token, and update the completed_tokens if succeed
+                    extra_info = HiCacheStorageExtraInfo(prefix_keys=prefix_keys)
 
-                hit_pages = self._page_transfer_kv_batch(
-                    operation,
-                    batch_hashes,
-                    batch_host_indices,
-                    extra_info,
-                    kv_derived_transfers,
-                )
-                # Check termination
-                if hit_pages != len(batch_hashes):
+                    hit_pages = self._page_transfer_kv_batch(
+                        operation,
+                        batch_hashes,
+                        batch_host_indices,
+                        extra_info,
+                        kv_derived_transfers,
+                    )
+                    # Check termination
+                    if hit_pages != len(batch_hashes):
+                        all_success = False
+                    if prefix_keys is not None:
+                        prefix_keys = prefix_keys + batch_hashes
+                    completed_pages += hit_pages
+                except Exception as exc:
+                    # Do not let one failed batch kill the consumer or skip
+                    # the remaining TP collective slots. The valid prefix is
+                    # retained; later batches publish the same short count.
+                    logger.error(
+                        "HiCache KV prefetch batch failed (%s); keeping ACK order.",
+                        type(exc).__name__,
+                    )
                     all_success = False
-                if prefix_keys is not None:
-                    prefix_keys = prefix_keys + batch_hashes
-                completed_pages += hit_pages
             ack = PrefetchAck(
                 rid=operation.request_id,
                 completed_tokens=completed_pages * self.page_size,

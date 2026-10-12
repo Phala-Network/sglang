@@ -455,12 +455,15 @@ class TestAbortRequests(unittest.TestCase):
         abort_req.rid = ""
         mgr.abort_requests(abort_req)  # Should not raise
 
-    def test_abort_prefix_match(self):
-        """rid.startswith means prefix matching, not exact matching."""
+    def test_abort_decimal_child_preserves_unrelated_prefix(self):
+        """Only a decimal-index child belongs to the named parent."""
         mgr = self._make_mgr_with_queue()
-        req = _make_req(rid="req-123-suffix")
+        req = _make_req(rid="req-123_0")
         req.grammar = MagicMock(spec=Future)
         mgr.grammar_queue.append(req)
+        unrelated = _make_req(rid="req-123-suffix")
+        unrelated.grammar = MagicMock(spec=Future)
+        mgr.grammar_queue.append(unrelated)
 
         abort_req = MagicMock()
         abort_req.abort_all = False
@@ -468,6 +471,7 @@ class TestAbortRequests(unittest.TestCase):
 
         mgr.abort_requests(abort_req)
         req.set_finish_with_abort.assert_called_once()
+        unrelated.set_finish_with_abort.assert_not_called()
 
 
 class TestGetReadyGrammarRequests(unittest.TestCase):

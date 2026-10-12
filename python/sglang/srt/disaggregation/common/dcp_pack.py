@@ -58,15 +58,7 @@ def try_pack_dcp_src(
     if (
         pack_capacity_bytes is not None and required > pack_capacity_bytes
     ) or not pack_buffer.fits(required_end):
-        logger.warning(
-            "PD DCP pack buffer too small for byte range [%s, %s) "
-            "(have %s, region capacity %s); "
-            "falling back to per-token RDMA",
-            pack_offset_bytes,
-            required_end,
-            pack_buffer.get_size(),
-            pack_capacity_bytes,
-        )
+        logger.warning('PD DCP pack buffer too small for byte range [<redacted>, <redacted>) (have <redacted>, region capacity <redacted>); falling back to per-token RDMA')
         return None
 
     pack = pack_buffer.buffer.narrow(0, pack_offset_bytes, required)

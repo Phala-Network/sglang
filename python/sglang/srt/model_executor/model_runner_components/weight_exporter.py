@@ -70,7 +70,7 @@ class WeightExporter:
             message = f"Succeeded to init group through {na.to_host_port_str()} group."
         except Exception as e:
             message = f"Failed to init group: {e}."
-            logger.error(message)
+            logger.error('Request-path diagnostic redacted')
 
         current_platform.empty_cache()
         return success, message
@@ -97,7 +97,7 @@ class WeightExporter:
             send_group = self._weights_send_group[group_name]
         else:
             message = f"Group {group_name} not in _weights_send_group list. Please call `init_weights_send_group_for_remote_instance` first."
-            logger.error(message)
+            logger.error('Request-path diagnostic redacted')
             return False, message
 
         current_platform.empty_cache()
@@ -115,7 +115,7 @@ class WeightExporter:
             message = f"Succeeded to send weights through {na.to_host_port_str()} {group_name}."
         except Exception as e:
             message = f"Failed to send weights: {e}."
-            logger.error(message)
+            logger.error('Request-path diagnostic redacted')
 
         # destroy the process group after sending weights
         del self._weights_send_group[group_name]
@@ -126,7 +126,7 @@ class WeightExporter:
     def save_remote_model(self: WeightExporter, url: str):
         from sglang.srt.model_loader.loader import RemoteModelLoader
 
-        logger.info(f"Saving model to {url}")
+        logger.info('Saving model to <redacted>')
         RemoteModelLoader.save_model(self.get_model(), self.get_model_path(), url)
 
     def save_sharded_model(
@@ -156,5 +156,5 @@ class WeightExporter:
                 name, truncate_size, tp_size=self.tp_size
             )
         except Exception as e:
-            logger.error(f"Error when getting parameter {name}: {e}")
+            logger.error('Error when getting parameter <redacted>: <redacted>')
             return None

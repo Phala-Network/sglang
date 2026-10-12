@@ -247,7 +247,7 @@ class HiCacheNixl(HiCacheStorage):
                 direction, host_descs, storage_descs, self.agent_name
             )
         except Exception as e:
-            logger.error(f"Failed to create transfer request: {e}")
+            logger.error('Failed to create transfer request: <redacted>')
             return False
 
         try:
@@ -262,10 +262,10 @@ class HiCacheNixl(HiCacheStorage):
                 time.sleep(0.0001)
             return True
         except Exception as e:
-            logger.error(f"Failed to execute transfer: {e}")
+            logger.error('Failed to execute transfer: <redacted>')
             import traceback
 
-            logger.error(f"Traceback: {traceback.format_exc()}")
+            logger.error('Traceback: <redacted>')
             return False
         finally:
             self.agent.release_xfer_handle(xfer_req)
@@ -500,24 +500,14 @@ class HiCacheNixl(HiCacheStorage):
         ptr_list, size_list = ctx.host_pool.get_page_buffer_meta(transfer.host_indices)
         page_num = len(transfer.keys or [])
         if page_num == 0 or len(ptr_list) % page_num != 0:
-            logger.error(
-                "HiCacheNixl: hybrid pool %s metadata mismatch: pages=%s ptrs=%s",
-                transfer.name,
-                page_num,
-                len(ptr_list),
-            )
+            logger.error('HiCacheNixl: hybrid pool <redacted> metadata mismatch: pages=<redacted> ptrs=<redacted>')
             return [], [], 0
         key_multiplier = len(ptr_list) // page_num
         key_strs = self._get_hybrid_component_keys(
             transfer.keys or [], transfer.name, key_multiplier
         )
         if len(key_strs) != len(ptr_list):
-            logger.error(
-                "HiCacheNixl: hybrid pool %s key/meta mismatch: keys=%s ptrs=%s",
-                transfer.name,
-                len(key_strs),
-                len(ptr_list),
-            )
+            logger.error('HiCacheNixl: hybrid pool <redacted> key/meta mismatch: keys=<redacted> ptrs=<redacted>')
             return [], [], 0
         return key_strs, list(zip(ptr_list, size_list)), key_multiplier
 
@@ -526,7 +516,7 @@ class HiCacheNixl(HiCacheStorage):
     ) -> tuple[Optional[HostKVCache], List[str], List[tuple], List[int], int]:
         ctx = self._hybrid_pool_ctx.get(transfer.name)
         if ctx is None:
-            logger.error("Host pool %s is not registered in HiCacheNixl", transfer.name)
+            logger.error('Host pool <redacted> is not registered in HiCacheNixl')
             return None, [], [], [], 0
 
         host_pool = ctx.host_pool
@@ -535,12 +525,7 @@ class HiCacheNixl(HiCacheStorage):
         page_size = getattr(host_pool, "page_size", 1) or 1
         expected = len(keys) * page_size
         if host_indices is None or host_indices.numel() != expected:
-            logger.error(
-                "Pool %s indices length mismatch: expected %s, got %s",
-                transfer.name,
-                expected,
-                host_indices.numel() if host_indices is not None else 0,
-            )
+            logger.error('Pool <redacted> indices length mismatch: expected <redacted>, got <redacted>')
             return host_pool, [], [], [], 0
 
         if ctx.is_zero_copy:
@@ -553,20 +538,13 @@ class HiCacheNixl(HiCacheStorage):
             return host_pool, key_strs, host_buffers, page_offsets, key_multiplier
 
         if len(keys) > STORAGE_BATCH_SIZE:
-            logger.error(
-                "HiCacheNixl: hybrid pool %s batch size %s exceeds bounce buffer capacity %s",
-                transfer.name,
-                len(keys),
-                STORAGE_BATCH_SIZE,
-            )
+            logger.error('HiCacheNixl: hybrid pool <redacted> batch size <redacted> exceeds bounce buffer capacity <redacted>')
             return host_pool, [], [], [], 0
 
         page_offsets = [host_indices[i * page_size].item() for i in range(len(keys))]
         bounce = ctx.bounce_set if for_write else ctx.bounce_get
         if bounce is None:
-            logger.error(
-                "Hybrid pool %s bounce buffer is not registered", transfer.name
-            )
+            logger.error('Hybrid pool <redacted> bounce buffer is not registered')
             return host_pool, [], [], [], 0
 
         if for_write:
@@ -620,7 +598,7 @@ class HiCacheNixl(HiCacheStorage):
             try:
                 self.agent.deregister_memory(reg)
             except Exception as e:
-                logger.debug("deregister of pre-registered host region failed: %s", e)
+                logger.debug('deregister of pre-registered host region failed: <redacted>')
         self._bounce_set = None
         self._bounce_get = None
         self._bounce_page_bytes = None
@@ -678,9 +656,7 @@ class HiCacheNixl(HiCacheStorage):
         key_list = self._get_key_list_from_meta(keys)
 
         if len(key_list) != len(ptr_list):
-            logger.error(
-                f"HiCacheNixl: mismatch between number of keys and number of buffer meta entries, keys: {len(keys)}, key_list: {len(key_list)}, buffer meta entries: {len(ptr_list)}"
-            )
+            logger.error('HiCacheNixl: mismatch between number of keys and number of buffer meta entries, keys: <redacted>, key_list: <redacted>, buffer meta entries: <redacted>')
             return [], [], []
 
         return key_list, ptr_list, element_size_list
@@ -723,9 +699,7 @@ class HiCacheNixl(HiCacheStorage):
             return key_list, host_buffers
 
         if page_num > STORAGE_BATCH_SIZE:
-            logger.error(
-                f"HiCacheNixl: batch size {page_num} exceeds bounce buffer capacity {STORAGE_BATCH_SIZE}"
-            )
+            logger.error('HiCacheNixl: batch size <redacted> exceeds bounce buffer capacity <redacted>')
             return [], []
 
         bounce = self._bounce_set if op == "set" else self._bounce_get

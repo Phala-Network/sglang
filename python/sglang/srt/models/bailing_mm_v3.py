@@ -309,16 +309,8 @@ class BailingMoeV3VLForConditionalGeneration(nn.Module):
                 f"{sorted(missing_router_weights)[:20]}"
             )
         if unexpected_non_text:
-            logger.warning(
-                "Skipped %d non-text Bailing checkpoint tensors; examples: %s",
-                len(unexpected_non_text),
-                unexpected_non_text[:10],
-            )
-        logger.info(
-            "Loaded Bailing VL weights: %d text tensors and %d vision/projection tensors",
-            len(loaded_text),
-            len(loaded_non_text),
-        )
+            logger.warning('Skipped <redacted> non-text Bailing checkpoint tensors; examples: <redacted>')
+        logger.info('Loaded Bailing VL weights: <redacted> text tensors and <redacted> vision/projection tensors')
         return set(loaded_text) | loaded_non_text
 
 

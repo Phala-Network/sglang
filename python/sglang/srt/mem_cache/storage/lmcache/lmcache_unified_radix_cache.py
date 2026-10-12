@@ -285,10 +285,7 @@ class LMCacheUnifiedRadixCache(UnifiedRadixCache):
             if cancelled or not success:
                 self._finish_failed_load(flow)
                 if not cancelled:
-                    logger.warning(
-                        "LMCache retrieve failed after admission for request %s",
-                        flow.lookup.request_id,
-                    )
+                    logger.warning('LMCache retrieve failed after admission for request <redacted>')
             elif flow.retire_requested:
                 self._finalize_retired_flow(flow)
             else:
@@ -511,7 +508,7 @@ class LMCacheUnifiedRadixCache(UnifiedRadixCache):
                 allocator.swa_attn_allocator.alloc_with_virtual(virtual_pages)
             except Exception:
                 full_allocator.free(full_indices)
-                logger.exception("Failed to allocate unified SWA slots for LMCache")
+                logger.exception('Failed to allocate unified SWA slots for LMCache', exc_info=False)
                 return None
         else:
             swa_indices = swa_allocator.alloc(swa_tail_tokens)
@@ -574,12 +571,7 @@ class LMCacheUnifiedRadixCache(UnifiedRadixCache):
             if allocated_request_mamba_for_load and request_mamba_value is not None:
                 self.req_to_token_pool.mamba_allocator.free(request_mamba_value)
             self._release_flow_anchor(flow)
-            logger.debug(
-                "LMCache retrieve declined for %s: a parallel rank cannot allocate "
-                "%d GPU slots",
-                flow.lookup.request_id,
-                num_tokens,
-            )
+            logger.debug('LMCache retrieve declined for <redacted>: a parallel rank cannot allocate <redacted> GPU slots')
             return None
         assert device_indices is not None
         flow.mamba_value = mamba_value
@@ -630,9 +622,7 @@ class LMCacheUnifiedRadixCache(UnifiedRadixCache):
             flow.load_req = None
             flow.free_mamba_after_load = False
             self._release_flow_anchor(flow)
-            logger.exception(
-                "LMCache retrieve submission failed for %s", flow.lookup.request_id
-            )
+            logger.exception('LMCache retrieve submission failed for <redacted>', exc_info=False)
             flow.load = None
             return None
         return device_indices[flow.loaded_skip_tokens :]
@@ -752,9 +742,7 @@ class LMCacheUnifiedRadixCache(UnifiedRadixCache):
             cancelled = flow.cancelled
             self._finish_failed_load(flow)
             if not cancelled:
-                logger.warning(
-                    "LMCache retrieve failed after admission for request %s", rid
-                )
+                logger.warning('LMCache retrieve failed after admission for request <redacted>')
 
     def _prepare_external_slots_for_insert(self, req: Req) -> None:
         """Restore tree ownership and mark the missing SWA prefix as evicted."""
@@ -888,36 +876,16 @@ class LMCacheUnifiedRadixCache(UnifiedRadixCache):
         )
         store_start = self.lmcache_connector.get_store_start(req.rid, len(key))
         if resident_len <= store_start:
-            logger.debug(
-                "LMCache store skipped for %s: no new resident chunk "
-                "after token %d (%d/%d tokens)",
-                req.rid,
-                store_start,
-                resident_len,
-                len(key),
-            )
+            logger.debug('LMCache store skipped for <redacted>: no new resident chunk after token <redacted> (<redacted>/<redacted> tokens)')
             return
         if resident_len < len(key):
-            logger.debug(
-                "LMCache store for %s is limited to the common resident prefix: "
-                "%d/%d tokens",
-                req.rid,
-                resident_len,
-                len(key),
-            )
+            logger.debug('LMCache store for <redacted> is limited to the common resident prefix: <redacted>/<redacted> tokens')
             key = key[:resident_len]
             # Re-match so the lock and Mamba state use the shortened boundary.
             matched = super().match_prefix(MatchPrefixParams(key=key))
         store_indices = matched.device_indices[store_start : len(key)]
         if len(store_indices) != len(key) - store_start:
-            logger.debug(
-                "LMCache store skipped for %s: store indices length: %d, "
-                "store start: %d, key length: %d",
-                req.rid,
-                len(store_indices),
-                store_start,
-                len(key),
-            )
+            logger.debug('LMCache store skipped for <redacted>: store indices length: <redacted>, store start: <redacted>, key length: <redacted>')
             return
         lock_params = self.inc_lock_ref(matched.last_device_node).to_dec_params()
         mamba_value = (
@@ -937,11 +905,7 @@ class LMCacheUnifiedRadixCache(UnifiedRadixCache):
         )
         if not mamba_is_resident.item():
             self.dec_lock_ref(matched.last_device_node, lock_params)
-            logger.debug(
-                "LMCache store skipped for %s: no Mamba checkpoint at token %d",
-                req.rid,
-                len(key),
-            )
+            logger.debug('LMCache store skipped for <redacted>: no Mamba checkpoint at token <redacted>')
             return
         try:
             operation = self.lmcache_connector.submit_store(
@@ -958,7 +922,7 @@ class LMCacheUnifiedRadixCache(UnifiedRadixCache):
             )
         except Exception:
             self.dec_lock_ref(matched.last_device_node, lock_params)
-            logger.exception("LMCache store submission failed for %s", req.rid)
+            logger.exception('LMCache store submission failed for <redacted>', exc_info=False)
             return
         if operation is None:
             self.dec_lock_ref(matched.last_device_node, lock_params)

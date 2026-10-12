@@ -441,10 +441,7 @@ class IpcModelLoader(BaseModelLoader):
         # VA mappings that must stay mapped while tensors are in use).
         model._weight_cache_transport_backend = self._transport_backend
 
-        logger.info(
-            f"[IpcModelLoader] Zero-copy: mapped {imported_count} tensors "
-            f"({new_params_count} new post-quant), time={map_elapsed:.3f}s"
-        )
+        logger.info('[IpcModelLoader] Zero-copy: mapped <redacted> tensors (<redacted> new post-quant), time=<redacted>s')
 
         return model
 
@@ -467,9 +464,7 @@ class IpcModelLoader(BaseModelLoader):
         try:
             st = os.lstat(self.socket_path)
         except FileNotFoundError:
-            logger.info(
-                f"[IpcModelLoader] Daemon socket not found at {self.socket_path}."
-            )
+            logger.info('[IpcModelLoader] Daemon socket not found at <redacted>.')
             return None
         if not stat.S_ISSOCK(st.st_mode) or st.st_uid != os.getuid():
             raise RuntimeError(

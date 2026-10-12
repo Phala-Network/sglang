@@ -417,9 +417,7 @@ class ModelRunner:
         except Exception:
             import os
 
-            logger.warning(
-                f"Context: {self.device=} {get_device().gpu_id=} {os.environ.get('CUDA_VISIBLE_DEVICES')=} {get_parallel().tp_rank=} {get_parallel().tp_size=}"
-            )
+            logger.warning("Context: self.device=<redacted> get_device().gpu_id=<redacted> os.environ.get('CUDA_VISIBLE_DEVICES')=<redacted> get_parallel().tp_rank=<redacted> get_parallel().tp_size=<redacted>")
             raise
 
         # Get available memory before model loading.
@@ -2309,7 +2307,7 @@ class ModelRunner:
                 ElasticEPStateManager.fail_recovery(error)
                 self._report_elastic_scale_failure(error, effective_size)
                 if self.tp_rank == 0 and not get_exec().moe.is_ep_scale_joiner:
-                    logger.error("[Elastic EP] %s", error)
+                    logger.error('[Elastic EP] <redacted>')
                 return
 
             recovered = maybe_recover_ep_ranks(
@@ -2335,7 +2333,7 @@ class ModelRunner:
             self._reset_eplb_after_elastic_scale_failure()
             self._report_elastic_scale_failure(error, effective_size)
             if self.tp_rank == 0 and not get_exec().moe.is_ep_scale_joiner:
-                logger.error("[Elastic EP] %s", error)
+                logger.error('[Elastic EP] <redacted>')
             return
 
         if state.scale_phase == "waiting_for_cohort":
@@ -2351,7 +2349,7 @@ class ModelRunner:
                 self._reset_eplb_after_elastic_scale_failure()
                 self._report_elastic_scale_failure(error, effective_size)
                 if self.tp_rank == 0 and not get_exec().moe.is_ep_scale_joiner:
-                    logger.error("[Elastic EP] %s", error)
+                    logger.error('[Elastic EP] <redacted>')
                 return
             cuda_graph_enabled = self._elastic_cuda_graph_enabled()
             if cohort.cuda_graph_enabled != cuda_graph_enabled:
@@ -2363,7 +2361,7 @@ class ModelRunner:
                 self._reset_eplb_after_elastic_scale_failure()
                 self._report_elastic_scale_failure(error, effective_size)
                 if self.tp_rank == 0 and not get_exec().moe.is_ep_scale_joiner:
-                    logger.error("[Elastic EP] %s", error)
+                    logger.error('[Elastic EP] <redacted>')
                 return
             try:
                 self._validate_elastic_cuda_graph_recapture()
@@ -2373,7 +2371,7 @@ class ModelRunner:
                 self._reset_eplb_after_elastic_scale_failure()
                 self._report_elastic_scale_failure(error, effective_size)
                 if self.tp_rank == 0 and not get_exec().moe.is_ep_scale_joiner:
-                    logger.error("[Elastic EP] %s", error)
+                    logger.error('[Elastic EP] <redacted>')
                 return
             if not ElasticEPStateManager.begin_scale():
                 return

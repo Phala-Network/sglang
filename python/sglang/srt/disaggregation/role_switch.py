@@ -34,10 +34,7 @@ def run_event_loop_supervisor(
         try:
             return dispatch_once(scheduler)
         except PdRoleSwitchRestart:
-            logger.info(
-                "Re-dispatching event loop after PD role switch -> %s",
-                scheduler.disaggregation_mode.value,
-            )
+            logger.info('Re-dispatching event loop after PD role switch -> <redacted>')
 
 
 def handle_pd_role_switch(
@@ -123,13 +120,7 @@ def handle_pd_role_switch(
             scheduler._sync_disaggregation_mode_to_subcomponents()
         except Exception as e:
             scheduler._pd_role_switch_unhealthy = True
-            logger.critical(
-                "PD role switch (%s -> %s) failed during teardown/rebuild; "
-                "instance unhealthy: %s",
-                old_role,
-                new_role,
-                e,
-            )
+            logger.critical('PD role switch (<redacted> -> <redacted>) failed during teardown/rebuild; instance unhealthy: <redacted>')
             return _fail(
                 f"role switch failed; instance unhealthy, restart required: {e}"
             )
@@ -141,7 +132,7 @@ def handle_pd_role_switch(
                     recv_req.decode_cuda_graph_bs
                 )
             except Exception:
-                logger.exception("Decode CUDA graph capture on role switch failed")
+                logger.exception('Decode CUDA graph capture on role switch failed', exc_info=False)
 
         # Break out of the old-role event loop so the supervisor re-dispatches.
         scheduler._event_loop_should_restart = True
@@ -150,7 +141,7 @@ def handle_pd_role_switch(
             success=True, message="ok", old_role=old_role, new_role=new_role
         )
     except Exception as e:
-        logger.exception("PD role switch failed")
+        logger.exception('PD role switch failed', exc_info=False)
         return _fail(f"role switch raised: {e}")
     finally:
         scheduler._pd_role_switch_in_progress = False
@@ -278,7 +269,7 @@ def _release_prefix_cache_for_role_switch(scheduler: Scheduler) -> None:
             try:
                 clear_storage()
             except Exception:
-                logger.exception("hicache storage release on role switch failed")
+                logger.exception('hicache storage release on role switch failed', exc_info=False)
         tree_cache.reset()
     scheduler.req_to_token_pool.clear()
     scheduler.token_to_kv_pool_allocator.clear()

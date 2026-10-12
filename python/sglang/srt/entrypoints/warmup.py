@@ -32,9 +32,9 @@ async def execute_warmups(
 ):
     for warmup_name in warmup_names:
         if warmup_name not in _warmup_registry:
-            logger.warning(f"Could not find custom warmup {warmup_name}")
+            logger.warning('Could not find custom warmup <redacted>')
             continue
-        logger.info(f"Running warmup {warmup_name}")
+        logger.info('Running warmup <redacted>')
         await _warmup_registry[warmup_name](disaggregation_mode, tokenizer_manager)
 
 
@@ -74,10 +74,7 @@ async def whisper_autodetect(
         ("notimestamps", WHISPER_AUTODETECT_REGEX),
         ("timestamps", WHISPER_AUTODETECT_TS_REGEX),
     ):
-        logger.info(
-            "Compiling Whisper auto-detect regex FSM (%s, one-time, ~15-20s)...",
-            variant_name,
-        )
+        logger.info('Compiling Whisper auto-detect regex FSM (<redacted>, one-time, ~15-20s)...')
         req = GenerateReqInput(
             text="",
             audio_data=audio_data_uri,

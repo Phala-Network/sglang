@@ -53,9 +53,7 @@ class DeepseekV41ImageProcessor(BaseMultimodalProcessor):
                 )
                 resize_patchify = extension.dsv41.resize_patchify
             except (ImportError, OSError, RuntimeError, AttributeError) as error:
-                logger.warning(
-                    "V4.1 Rust image processor unavailable; using PIL: %s", error
-                )
+                logger.warning('V4.1 Rust image processor unavailable; using PIL: <redacted>')
             else:
                 self.preprocess_backend = "rust"
                 self.cpu_patchify = partial(

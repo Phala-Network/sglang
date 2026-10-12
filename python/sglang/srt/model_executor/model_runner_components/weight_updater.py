@@ -133,7 +133,7 @@ class WeightUpdater:
             return True, "Succeeded to initialize custom process group."
         except Exception as e:
             message = f"Failed to initialize custom process group: {e}."
-            logger.error(message)
+            logger.error('Request-path diagnostic redacted')
             return False, message
 
     def destroy_weights_update_group(self, group_name):
@@ -146,7 +146,7 @@ class WeightUpdater:
                 return False, "The group to be destroyed does not exist."
         except Exception as e:
             message = f"Failed to destroy custom process group: {e}."
-            logger.error(message)
+            logger.error('Request-path diagnostic redacted')
             return False, message
 
     def _assert_weight_cache_inactive(self: WeightUpdater, op: str) -> None:
@@ -332,7 +332,7 @@ class WeightUpdater:
                 f"The full weights of the ModelRunner are partially updated. "
                 f"Please discard the whole weights."
             )
-            logger.error(error_msg)
+            logger.error('Request-path diagnostic redacted')
             return False, error_msg
         return True, "Succeeded to update parameter online."
 
@@ -423,7 +423,7 @@ class WeightUpdater:
         except ImportError as e:
             return False, f"IPC weight update failed: ImportError {e}"
         except Exception as e:
-            logger.error(f"IPC weight update failed: {e}")
+            logger.error('IPC weight update failed: <redacted>')
             return False, str(e)
 
 

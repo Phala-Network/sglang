@@ -145,12 +145,7 @@ def load_extension_with_recovery(
             if not _is_recoverable_load_error(exc, name, build_directory):
                 raise
 
-            logger.warning(
-                "Detected a stale or broken JIT extension for %s at %s; clearing "
-                "its cache and retrying once.",
-                name,
-                build_directory,
-            )
+            logger.warning('Detected a stale or broken JIT extension for <redacted> at <redacted>; clearing its cache and retrying once.')
             sys.modules.pop(name, None)
             if build_directory.exists():
                 shutil.rmtree(build_directory)

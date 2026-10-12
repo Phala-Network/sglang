@@ -506,7 +506,7 @@ class GroupCoordinator:
                     cpu_group=self.cpu_group,
                 )
             except Exception as e:
-                logger.warning(f"Setup FlashInfer PCIe-IPC allreduce failed with {e}.")
+                logger.warning('Setup FlashInfer PCIe-IPC allreduce failed with <redacted>.')
         if use_custom_allreduce and self.world_size > 1:
             # Initialize a custom fast all-reduce implementation.
             try:
@@ -519,10 +519,7 @@ class GroupCoordinator:
                     device=self.device,
                 )
             except Exception as e:
-                logger.warning(
-                    f"Setup Custom allreduce failed with {e}. To silence this "
-                    "warning, specify --disable-custom-all-reduce explicitly."
-                )
+                logger.warning('Setup Custom allreduce failed with <redacted>. To silence this warning, specify --disable-custom-all-reduce explicitly.')
 
             if is_hip():
                 try:
@@ -535,7 +532,7 @@ class GroupCoordinator:
                             group=self.cpu_group, device=self.device
                         )
                 except Exception as e:
-                    logger.warning(f"Failed to initialize QuickAllReduce: {e}")
+                    logger.warning('Failed to initialize QuickAllReduce: <redacted>')
         elif self.world_size > 1 and is_hip():
             logger.info("[AR] All-reduce call path: NCCL (custom AR disabled)")
 
@@ -2442,13 +2439,7 @@ def _create_global_tcp_store(
             is_master,
         )
     except Exception as e:
-        logger.warning(
-            "Failed to create global TCPStore at %s:%d: %s. "
-            "Components requiring TCPStore (like NIXL) may not work.",
-            master_ip,
-            base_store_port,
-            e,
-        )
+        logger.warning('Failed to create global TCPStore at <redacted>:<redacted>: <redacted>. Components requiring TCPStore (like NIXL) may not work.')
 
 
 def init_distributed_environment(
@@ -3338,7 +3329,7 @@ def abort_distributed_environment() -> None:
         # No argument aborts every group, the default one included.
         abort()
     except Exception as e:
-        logger.warning(f"NCCL abort on shutdown failed, {type(e).__name__}: {e}")
+        logger.warning('NCCL abort on shutdown failed, <redacted>: <redacted>')
 
 
 def cleanup_dist_env_and_memory(shutdown_ray: bool = False):
@@ -3422,7 +3413,7 @@ def in_the_same_node_as(pg: ProcessGroup, source_rank: int = 0) -> List[bool]:
                 if shm.buf[: len(magic_message)] == magic_message:
                     is_in_the_same_node[rank] = 1
     except Exception as e:
-        logger.error("Error ignored in is_in_the_same_node: %s", e)
+        logger.error('Error ignored in is_in_the_same_node: <redacted>')
     finally:
         if shm:
             shm.close()

@@ -171,9 +171,7 @@ class TemplateManager:
                     self._jinja_template_content_format = (
                         detect_jinja_template_content_format(hf_template)
                     )
-                    logger.info(
-                        f"Using default HuggingFace chat template with detected content format: {self._jinja_template_content_format}"
-                    )
+                    logger.info('Using default HuggingFace chat template with detected content format: <redacted>')
                 else:
                     # Default to string content format if no template was found
                     self._jinja_template_content_format = "string"
@@ -285,9 +283,7 @@ class TemplateManager:
         self._jinja_template_content_format = detect_jinja_template_content_format(
             chat_template
         )
-        logger.info(
-            f"Detected user specified Jinja chat template with content format: {self._jinja_template_content_format}"
-        )
+        logger.info('Detected user specified Jinja chat template with content format: <redacted>')
 
     def _load_json_chat_template(self, template_path: str) -> None:
         """Load a JSON chat template file."""
@@ -372,7 +368,7 @@ class TemplateManager:
             return template
 
         except Exception as e:
-            logger.warning(f"Error getting chat template: {e}")
+            logger.warning('Error getting chat template: <redacted>')
             return None
 
     def _select_named_template(

@@ -141,11 +141,7 @@ def alloc_mmap(dims: tuple, dtype: torch.dtype) -> torch.Tensor:
 
     if extra_flags:
         if _libc is None:
-            logger.error(
-                "Hugepage mmap requested but libc.so.6 could not be loaded; "
-                "falling back to plain mmap. SGLANG_HUGEPAGE_SIZE=%s will be ignored.",
-                hugepage_size,
-            )
+            logger.error('Hugepage mmap requested but libc.so.6 could not be loaded; falling back to plain mmap. SGLANG_HUGEPAGE_SIZE=<redacted> will be ignored.')
         else:
             try:
                 array = _alloc_hugepage(n_bytes, alloc_bytes, extra_flags)
@@ -153,12 +149,7 @@ def alloc_mmap(dims: tuple, dtype: torch.dtype) -> torch.Tensor:
                     array, dtype=dtype, count=math.prod(dims)
                 ).reshape(dims)
             except OSError as e:
-                logger.error(
-                    "Hugepage mmap via libc failed (%s); falling back to plain mmap. "
-                    "SGLANG_HUGEPAGE_SIZE=%s will be ignored.",
-                    e,
-                    hugepage_size,
-                )
+                logger.error('Hugepage mmap via libc failed (<redacted>); falling back to plain mmap. SGLANG_HUGEPAGE_SIZE=<redacted> will be ignored.')
         alloc_bytes = math.ceil(n_bytes / mmap.PAGESIZE) * mmap.PAGESIZE
 
     # Plain mmap path -- used directly when no hugepages requested, or as fallback.

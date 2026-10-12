@@ -282,7 +282,7 @@ class FlexKVConnector:
             try:
                 res = self.kv_manager.get_match(token_ids=tids_np, token_mask=mask_np)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("[FlexKV] get_match raised: %s", exc)
+                logger.warning('[FlexKV] get_match raised: <redacted>')
                 res = None
             if res is None:
                 fkv_task_id = -1
@@ -448,7 +448,7 @@ class FlexKVConnector:
         try:
             self.kv_manager.try_wait(task_ids=list(self._launched_load_tids))
         except Exception as exc:  # noqa: BLE001
-            logger.debug("[FlexKV] drain_launched_loads try_wait: %s", exc)
+            logger.debug('[FlexKV] drain_launched_loads try_wait: <redacted>')
         self._launched_load_tids.clear()
 
     # ------------------------------------------------------------------
@@ -496,7 +496,7 @@ class FlexKVConnector:
             try:
                 res = self.kv_manager.put_match(token_ids=token_ids_np, token_mask=None)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("[FlexKV] put_match raised: %s", exc)
+                logger.warning('[FlexKV] put_match raised: <redacted>')
                 res = None
             if res is None:
                 self._send_pp_put_meta(-1, [])
@@ -553,7 +553,7 @@ class FlexKVConnector:
                         task_ids=list(fk_to_handle.keys())
                     )
                 except Exception as exc:  # noqa: BLE001
-                    logger.debug("[FlexKV] check_completed_stores: %s", exc)
+                    logger.debug('[FlexKV] check_completed_stores: <redacted>')
                     completed_dict = {}
                 for fk_tid in completed_dict:
                     handle = fk_to_handle[fk_tid]
@@ -601,7 +601,7 @@ class FlexKVConnector:
                     token_ids=np.asarray(token_ids, dtype=np.int64)
                 )
             except Exception as exc:  # noqa: BLE001
-                logger.debug("[FlexKV] prefetch_async: %s", exc)
+                logger.debug('[FlexKV] prefetch_async: <redacted>')
                 task_id = -1
         if self._sync_ctx.needs_sync:
             payload = self._sync_ctx.scatter({"task_id": task_id})
@@ -665,7 +665,7 @@ class FlexKVConnector:
                 try:
                     self.kv_manager.cancel(pending)
                 except Exception as exc:  # noqa: BLE001
-                    logger.debug("[FlexKV] reset cancel: %s", exc)
+                    logger.debug('[FlexKV] reset cancel: <redacted>')
         self._pending_lookups.clear()
         self._ongoing_prefetches.clear()
         self._inflight_loads.clear()
@@ -687,7 +687,7 @@ class FlexKVConnector:
             try:
                 self.kv_manager.shutdown()
             except Exception as exc:  # noqa: BLE001
-                logger.warning("[FlexKV] kv_manager.shutdown: %s", exc)
+                logger.warning('[FlexKV] kv_manager.shutdown: <redacted>')
         if self._remote_process is not None:
             try:
                 self._remote_process.terminate()
@@ -696,7 +696,7 @@ class FlexKVConnector:
                     self._remote_process.kill()
                     self._remote_process.join()
             except Exception as exc:  # noqa: BLE001
-                logger.warning("[FlexKV] remote process shutdown: %s", exc)
+                logger.warning('[FlexKV] remote process shutdown: <redacted>')
             self._remote_process = None
 
     # ------------------------------------------------------------------
@@ -747,13 +747,7 @@ class FlexKVConnector:
                 if attempt == max_retries - 1:
                     raise
                 if attempt % 30 == 0:
-                    logger.info(
-                        "[FlexKV] GPU register retry %s attempt=%d/%d error=%s",
-                        self._label,
-                        attempt + 1,
-                        max_retries,
-                        exc,
-                    )
+                    logger.info('[FlexKV] GPU register retry <redacted> attempt=<redacted>/<redacted> error=<redacted>')
                 time.sleep(1.0)
 
     def _register_to_server(
@@ -897,12 +891,7 @@ class FlexKVConnector:
                 return
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
-                logger.warning(
-                    "[FlexKV] Eventfd handshake send_attempt=%d/%d failed: %s",
-                    send_attempt + 1,
-                    max_send_retries,
-                    exc,
-                )
+                logger.warning('[FlexKV] Eventfd handshake send_attempt=<redacted>/<redacted> failed: <redacted>')
             finally:
                 if sock is not None:
                     sock.close()

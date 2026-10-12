@@ -2252,7 +2252,7 @@ def attach_hybrid_pool_to_unified_cache(
         )
         _apply_stack_result(cache, kvcache, params, result)
     except Exception:
-        logger.exception("attach_hybrid_pool_to_unified_cache failed")
+        logger.exception('attach_hybrid_pool_to_unified_cache failed', exc_info=False)
         raise
 
 

@@ -118,7 +118,7 @@ def _probe_wo_a_weight_dtype(model_config: Any, download_dir: str | None) -> str
         )
         return getattr(metadata.tensors.get(name), "dtype", None)
     except Exception:
-        logger.debug("Unable to inspect the checkpoint wo_a dtype", exc_info=True)
+        logger.debug('Unable to inspect the checkpoint wo_a dtype', exc_info=False)
         return None
 
 

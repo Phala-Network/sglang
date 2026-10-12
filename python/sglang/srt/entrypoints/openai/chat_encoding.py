@@ -40,11 +40,7 @@ def _detect_dsv4_reasoning_effort_profile(
             return None
         tree = ast.parse(encoder_path.read_text(encoding="utf-8"))
     except Exception as error:
-        logger.debug(
-            "Could not inspect DeepSeek-V4 checkpoint encoder at %s: %s",
-            encoder_path,
-            error,
-        )
+        logger.debug('Could not inspect DeepSeek-V4 checkpoint encoder at <redacted>: <redacted>')
         return None
 
     assignments = {}

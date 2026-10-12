@@ -932,7 +932,7 @@ class HybridCacheController(BaseHiCacheController):
                 _, rank_hit_count = self._storage_hit_query(operation, pp_rank=pp_rank)
                 storage_hit_count = min(storage_hit_count, rank_hit_count)
         except Exception:
-            logger.exception("PP HiCache hit query failed for req=%s.", rid)
+            logger.exception('PP HiCache hit query failed for req=<redacted>.', exc_info=False)
             storage_hit_count = 0
 
         pp_group_ranks = set(torch.distributed.get_process_group_ranks(self.pp_group))
@@ -1158,7 +1158,7 @@ class HybridCacheController(BaseHiCacheController):
                     operation.mark_terminate()
                 self.prefetch_buffer.put(operation)
             except Exception:
-                logger.exception("PP HiCache ticket processing failed.")
+                logger.exception('PP HiCache ticket processing failed.', exc_info=False)
                 if operation is None or not operation.hash_value:
                     # Without a received ticket/ACK schedule, continuing is unsafe.
                     return

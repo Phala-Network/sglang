@@ -129,13 +129,7 @@ def init_parallel_runtime(
     try:
         torch.get_device_module(device).set_device(get_device().gpu_id)
     except Exception:
-        logger.warning(
-            "Context: device=%s gpu_id=%s CUDA_VISIBLE_DEVICES=%s tp_rank=%s",
-            device,
-            get_device().gpu_id,
-            os.environ.get("CUDA_VISIBLE_DEVICES"),
-            get_parallel().tp_rank,
-        )
+        logger.warning('Context: device=<redacted> gpu_id=<redacted> CUDA_VISIBLE_DEVICES=<redacted> tp_rank=<redacted>')
         raise
     maybe_init_shared_mooncake_transfer_engine(gpu_id=get_device().gpu_id)
 

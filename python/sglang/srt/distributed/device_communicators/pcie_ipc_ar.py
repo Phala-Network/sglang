@@ -284,12 +284,7 @@ class PcieIpcCommunicator:
                 tune_cache=_tune_cache_path(self._world_size),
             )
         except Exception as e:
-            logger.warning(
-                "FlashInfer PCIe-IPC workspace (max_numel=%d) failed: %s; "
-                "reductions stay on NCCL",
-                max_numel,
-                e,
-            )
+            logger.warning('FlashInfer PCIe-IPC workspace (max_numel=<redacted>) failed: <redacted>; reductions stay on NCCL')
             self._build_failed = True
             self.disabled = True
             return False
@@ -361,10 +356,7 @@ class PcieIpcCommunicator:
                 [hidden], dtype=torch.bfloat16, tune_group=self._cpu_group
             )
         except Exception as e:
-            logger.warning(
-                "FlashInfer PCIe-IPC autotune failed (%s); keeping the seed policy.",
-                e,
-            )
+            logger.warning('FlashInfer PCIe-IPC autotune failed (<redacted>); keeping the seed policy.')
             return
         # Report what tune() covered, not that it returned: it declines shapes
         # silently, and a log line that only proves no exception was raised is

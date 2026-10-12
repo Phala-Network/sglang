@@ -841,7 +841,7 @@ class Scheduler(
                 publish_interval=get_observability().load_snapshot_publish_interval,
             )
         except Exception as e:
-            logger.warning("load snapshot writer init failed: %s", e)
+            logger.warning('load snapshot writer init failed: <redacted>')
 
     def init_idle_sleeper(self) -> None:
         if (
@@ -877,7 +877,7 @@ class Scheduler(
             writer.write(load)
             return load
         except Exception as e:
-            logger.warning("load snapshot publish failed: %s", e)
+            logger.warning('load snapshot publish failed: <redacted>')
             return None
 
     def init_tokenizer(self):
@@ -2206,7 +2206,7 @@ class Scheduler(
                     f"rank {rank}: {rank_errors[rank]}" for rank in failed_ranks
                 )
                 error_msg = f"Multimodal feature reconstruction failed ({details})"
-                logger.error(error_msg)
+                logger.error('Request-path diagnostic redacted')
                 tokenized_req.mm_inputs = None
                 request_errors.append(error_msg)
             else:
@@ -2537,11 +2537,7 @@ class Scheduler(
         )
         if self.max_new_tokens_limit is not None and self.max_new_tokens_limit > 0:
             if max_new_tokens > self.max_new_tokens_limit:
-                logger.warning(
-                    f"Capping max_new_tokens of request {req.rid} to "
-                    f"SGLANG_MAX_NEW_TOKENS_LIMIT={self.max_new_tokens_limit} "
-                    f"(requested: {req.sampling_params.max_new_tokens})."
-                )
+                logger.warning('Capping max_new_tokens of request <redacted> to SGLANG_MAX_NEW_TOKENS_LIMIT=<redacted> (requested: <redacted>).')
             max_new_tokens = min(max_new_tokens, self.max_new_tokens_limit)
 
         # Keep this bound consistent with PrefillAdder's admission budget.
@@ -2613,9 +2609,7 @@ class Scheduler(
                     group=self.dp_tp_cpu_group
                 )
         except Exception as e:
-            logger.warning(
-                f"Failed to get world size in mm_inputs handling with {e}, fallback to 1."
-            )
+            logger.warning('Failed to get world size in mm_inputs handling with <redacted>, fallback to 1.')
 
         # In case tp size > 1, all the Scheduler TP ranks runs the duplicated computing
         # process in CPU which occupies the main thread CPU cycle. This computing logic
@@ -2844,7 +2838,7 @@ class Scheduler(
             if is_beam:
                 error_msg = self.beam_coordinator.validate_and_init(req, recv_req)
                 if error_msg:
-                    logger.error(error_msg)
+                    logger.error('Request-path diagnostic redacted')
                     prepare_abort(req, error_msg, status_code=HTTPStatus.BAD_REQUEST)
                     self.output_streamer.stream_output([req], req.return_logprob)
                     return
@@ -2859,7 +2853,7 @@ class Scheduler(
                         f"Invalid request: Disaggregated request received without "
                         f"bootstrap room id. {req.rid=}"
                     )
-                    logger.error(error_msg)
+                    logger.error('Request-path diagnostic redacted')
                     if not envs.SGLANG_RUST_SERVER.get():
                         recv_req.time_stats.trace_ctx.abort(
                             abort_info={"reason": error_msg}
@@ -3136,7 +3130,7 @@ class Scheduler(
         recv_req: BatchTokenizedGenerateReqInput,
     ):
         """Handle optimized batch generate request."""
-        logger.debug(f"Processing batch generate request with {len(recv_req)} requests")
+        logger.debug('Processing batch generate request with <redacted> requests')
 
         # Process each request in the batch
         for tokenized_req in recv_req:
@@ -3212,18 +3206,9 @@ class Scheduler(
         req.storage_prefetch_retry_attempts += 1
         max_attempts = get_memory().hicache_storage_prefetch_retry_max_attempts
         if req.storage_prefetch_retry_attempts >= max_attempts:
-            logger.warning(
-                "HiCache storage prefetch reissue cap reached req=%s attempts=%d; "
-                "the request is admitted without further L3 lookups",
-                req.rid,
-                req.storage_prefetch_retry_attempts,
-            )
+            logger.warning('HiCache storage prefetch reissue cap reached req=<redacted> attempts=<redacted>; the request is admitted without further L3 lookups')
         else:
-            logger.debug(
-                "HiCache storage prefetch re-issue req=%s attempt=%d",
-                req.rid,
-                req.storage_prefetch_retry_attempts,
-            )
+            logger.debug('HiCache storage prefetch re-issue req=<redacted> attempt=<redacted>')
         self._prefetch_kvcache(req, storage_hit_end)
 
     def _prefetch_after_device_hit_loss(self, req: Req) -> bool:
@@ -3245,13 +3230,7 @@ class Scheduler(
             # Past the re-issue cap the shorter live match is admitted as is.
             req.storage_prefetch_last_match_len = current_match_len
             return False
-        logger.warning(
-            "HiCache device prefix shrank before admission req=%s "
-            "lookup_match=%d current_match=%d; reissuing storage lookup",
-            req.rid,
-            previous_match_len,
-            current_match_len,
-        )
+        logger.warning('HiCache device prefix shrank before admission req=<redacted> lookup_match=<redacted> current_match=<redacted>; reissuing storage lookup')
         self._retry_storage_prefetch(req)
         return True
 
@@ -3312,7 +3291,7 @@ class Scheduler(
 
     def _reject_sampling_mask_request(self, req: Req, error_msg: str) -> None:
         """Return a sampling-mask validation error without running the model."""
-        logger.error(f"{error_msg}, {req.rid=}")
+        logger.error('<redacted>, req.rid=<redacted>')
         req.time_stats.trace_ctx.abort(abort_info={"reason": error_msg})
         prepare_abort(req, error_msg, status_code=HTTPStatus.BAD_REQUEST)
         self.output_streamer.stream_output([req], req.return_logprob)
@@ -3536,9 +3515,7 @@ class Scheduler(
         recv_req: BatchTokenizedEmbeddingReqInput,
     ):
         """Handle optimized batch embedding request."""
-        logger.debug(
-            f"Processing batch embedding request with {len(recv_req)} requests"
-        )
+        logger.debug('Processing batch embedding request with <redacted> requests')
 
         # Process each request in the batch
         for tokenized_req in recv_req:
@@ -3600,7 +3577,7 @@ class Scheduler(
         self.chunked_req = None
         self._pending_chunked_abort_req = None
         self.ipc_channels.send_to_tokenizer.send_output(_make_abort_req(req), req)
-        logger.debug(f"Abort chunked prefill request. {req.rid=}")
+        logger.debug('Abort chunked prefill request. req.rid=<redacted>')
 
     def _build_hisparse_decode_batch(self, reqs):
         """Build a ScheduleBatch for hisparse requests transitioning from staging to decode."""
@@ -5195,7 +5172,7 @@ class Scheduler(
                 hicache_write_policy=recv_req.hicache_write_policy,
             )
         except Exception as e:
-            logger.exception("Attach HiCache storage backend failed with exception.")
+            logger.exception('Attach HiCache storage backend failed with exception.', exc_info=False)
             return AttachHiCacheStorageReqOutput(success=False, message=str(e))
         if ok:
             self.enable_hicache_storage = True
@@ -5213,9 +5190,7 @@ class Scheduler(
             if recv_req.hicache_write_policy is not None:
                 hicache_fields["hicache_write_policy"] = recv_req.hicache_write_policy
             get_context().override("scheduler.attach_hicache", **hicache_fields)
-            logger.info(
-                f"Attached HiCache storage backend: {recv_req.hicache_storage_backend}"
-            )
+            logger.info('Attached HiCache storage backend: <redacted>')
         return AttachHiCacheStorageReqOutput(success=ok, message=msg)
 
     def detach_hicache_storage_wrapped(
@@ -5247,7 +5222,7 @@ class Scheduler(
         try:
             ok, msg = self.tree_cache.detach_storage_backend()
         except Exception as e:
-            logger.exception("Detach HiCache storage backend failed with exception.")
+            logger.exception('Detach HiCache storage backend failed with exception.', exc_info=False)
             return DetachHiCacheStorageReqOutput(success=False, message=str(e))
 
         if ok or (not self.enable_hicache_storage):
@@ -5469,9 +5444,7 @@ class Scheduler(
 
     def handle_rpc_request(self, recv_req: RpcReqInput):
         # Handle RPC requests
-        logger.info(
-            f"handle_rpc_request: {recv_req.method}, param: {recv_req.parameters}"
-        )
+        logger.info('handle_rpc_request: <redacted>, param: <redacted>')
 
         success = True
         exec = None
@@ -5484,7 +5457,7 @@ class Scheduler(
         except Exception as e:
             success = False
             exec = e
-            logger.error(f"Failed to call rpc {recv_req.method}: {str(e)}")
+            logger.error('Failed to call rpc <redacted>: <redacted>')
 
         barrier(group=self.tp_group.cpu_group)
         return RpcReqOutput(success=success, message="" if not exec else str(exec))
@@ -5571,7 +5544,7 @@ class Scheduler(
                 DisaggregationMode.DECODE,
             ):
                 release_kv_cache(req, self.tree_cache, is_insert=False)
-            logger.debug(f"Abort queued request. {req.rid=}")
+            logger.debug('Abort queued request. req.rid=<redacted>')
 
         if self.dllm_config is not None:
             for req in self.dllm_manager.pop_aborted_reqs(
@@ -5583,7 +5556,7 @@ class Scheduler(
                 )
                 if req.kv.holds_kv or req.kv.holds_mamba:
                     release_kv_cache(req, self.tree_cache, is_insert=False)
-                logger.debug(f"Abort dLLM queued request. {req.rid=}")
+                logger.debug('Abort dLLM queued request. req.rid=<redacted>')
 
         # Delete the requests in the grammar queue
         # Abort method 2: call `set_finish_with_abort`
@@ -5596,7 +5569,7 @@ class Scheduler(
             # Abort requests that have not yet been bootstrapped
             for req in self.disagg_prefill_bootstrap_queue.queue:
                 if recv_req.abort_all or req.rid.startswith(recv_req.rid):
-                    logger.debug(f"Abort bootstrap queue request. {req.rid=}")
+                    logger.debug('Abort bootstrap queue request. req.rid=<redacted>')
                     self._release_aborted_request(req)
 
                     if hasattr(req.disagg_kv_sender, "abort"):
@@ -5607,7 +5580,7 @@ class Scheduler(
             # Abort in-flight requests
             for req in self.disagg_prefill_inflight_queue:
                 if recv_req.abort_all or req.rid.startswith(recv_req.rid):
-                    logger.debug(f"Abort inflight queue request. {req.rid=}")
+                    logger.debug('Abort inflight queue request. req.rid=<redacted>')
                     if hasattr(req.disagg_kv_sender, "abort"):
                         req.disagg_kv_sender.abort()
 
@@ -5615,7 +5588,7 @@ class Scheduler(
             # Abort requests that have not yet finished preallocation
             for decode_req in self.disagg_decode_prealloc_queue.queue:
                 if recv_req.abort_all or decode_req.req.rid.startswith(recv_req.rid):
-                    logger.debug(f"Abort prealloc queue request. {decode_req.req.rid=}")
+                    logger.debug('Abort prealloc queue request. decode_req.req.rid=<redacted>')
                     decode_req.kv_receiver.abort()
                     if get_parallel().pp_size > 1:
                         prepare_abort(decode_req.req, "Aborted by AbortReq.")
@@ -5623,7 +5596,7 @@ class Scheduler(
             # Abort requests waiting for kvcache to release tree cache
             for decode_req in self.disagg_decode_transfer_queue.queue:
                 if recv_req.abort_all or decode_req.req.rid.startswith(recv_req.rid):
-                    logger.debug(f"Abort transfer queue request. {decode_req.req.rid=}")
+                    logger.debug('Abort transfer queue request. decode_req.req.rid=<redacted>')
                     if decode_req.host_staged:
                         # Keep the host destination alive until prefill stops writing.
                         prepare_abort(decode_req.req, "Aborted by AbortReq.")
@@ -5658,7 +5631,7 @@ class Scheduler(
                 # Abort method 3: set `to_finish`
                 # The request will still run one decode forward pass.
                 # Then we reuse all existing code to clean up the KV cache allocation.
-                logger.debug(f"Abort running request. {req.rid=}")
+                logger.debug('Abort running request. req.rid=<redacted>')
                 if recv_req.abort_message:
                     # Timeout aborts carry an SLA message + 503 for the client.
                     req.to_finish = FINISH_ABORT(
@@ -6000,7 +5973,7 @@ class Scheduler(
                 DumperControlReqOutput(success=True, response=response), recv_req
             )
         except Exception as e:
-            print(f"[Scheduler] handle_dumper_control error: {e}", flush=True)
+            print('[Scheduler] handle_dumper_control error: <redacted>', flush=True)
             self.ipc_channels.send_to_tokenizer.send_output(
                 DumperControlReqOutput(success=False, response=[], error=str(e)),
                 recv_req,
@@ -6173,7 +6146,7 @@ def run_scheduler_process(
 
     except Exception:
         traceback = get_exception_traceback()
-        logger.error(f"Scheduler hit an exception: {traceback}")
+        logger.error('Scheduler hit an exception: <redacted>')
         parent_process.send_signal(signal.SIGQUIT)
         # Opt-in: SIGKILL the pgroup so sibling ranks don't spew thousands
         # of NCCL/TCPStore tracebacks before they finally die.

@@ -163,9 +163,7 @@ class RustServer:
                 try:
                     os.sched_setaffinity(0, set(server_cores))
                 except OSError as e:
-                    logger.warning(
-                        "rust server: cannot confine mm threads to server cores: %s", e
-                    )
+                    logger.warning('rust server: cannot confine mm threads to server cores: <redacted>')
             instance._start_multimodal(scheduler)
             instance._multimodal_enabled = True
 
@@ -175,7 +173,7 @@ class RustServer:
                 # pid 0 == this thread (the scheduler event-loop / launch thread).
                 os.sched_setaffinity(0, set(launch_cores))
             except OSError as e:
-                logger.warning("rust server: cannot pin scheduler launch thread: %s", e)
+                logger.warning('rust server: cannot pin scheduler launch thread: <redacted>')
 
         # Under DP every rank runs its own server on its own port, so the rank is
         # what tells two otherwise identical startup lines apart.
@@ -257,21 +255,14 @@ class RustServer:
             obj = msgpack_decode_explained(header)
         except MsgpackDecodeError as e:
             # Return 400 for malformed request field (e.g. token_ids_logprob=[[0]].
-            logger.warning(
-                "rust ingress: dropping undecodable request %s: %s", e.rid, e.reason
-            )
+            logger.warning('rust ingress: dropping undecodable request <redacted>: <redacted>')
             if e.rid is not None:
                 self.server.push_error(e.rid, f"invalid request: {e.reason}")
             raise
         try:
             self._attach_buffers(obj, buffers)
         except Exception as e:
-            logger.warning(
-                "rust ingress: rejecting request %s: %s: %s",
-                obj.rid,
-                type(e).__name__,
-                e,
-            )
+            logger.warning('rust ingress: rejecting request <redacted>: <redacted>: <redacted>')
             self.server.push_error(obj.rid, f"invalid request: {e}")
             raise
         return obj

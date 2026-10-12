@@ -119,7 +119,7 @@ class GigaChat35Detector(BaseFormatDetector):
             m = matches[i]
             name = m.group("name")
             if name not in self._tool_indices:
-                logger.warning(f"[GigaChat35] undefined function call: {name}")
+                logger.warning('[GigaChat35] undefined function call: <redacted>')
                 continue
             args = _parse_gcml_invoke_body(m.group("body"))
             args_json = json.dumps(args, ensure_ascii=False)

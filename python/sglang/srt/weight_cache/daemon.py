@@ -538,11 +538,7 @@ class WeightCacheDaemon:
                     try:
                         self._handle_connection(conn)
                     except Exception as e:
-                        logger.error(
-                            f"[WeightCacheDaemon gpu={self.gpu_id}] "
-                            f"Error handling connection: {e}",
-                            exc_info=True,
-                        )
+                        logger.error('[WeightCacheDaemon gpu=<redacted>] Error handling connection: <redacted>', exc_info=False)
                     finally:
                         conn.close()
                 except socket.timeout:
@@ -796,10 +792,7 @@ def launch_weight_cache_daemons(
             while not os.path.exists(ready_path):
                 time.sleep(check_interval)
                 if time.time() - start_time > timeout:
-                    logger.error(
-                        f"Weight cache daemon pp_rank={pp_rank} tp_rank={tp_rank} "
-                        f"did not become ready within {timeout}s"
-                    )
+                    logger.error('Weight cache daemon pp_rank=<redacted> tp_rank=<redacted> did not become ready within <redacted>s')
                     for p in procs:
                         p.terminate()
                     raise TimeoutError(
@@ -809,10 +802,7 @@ def launch_weight_cache_daemons(
                 # Check if any daemon exited prematurely
                 for p in procs:
                     if not p.is_alive():
-                        logger.error(
-                            f"Weight cache daemon exited prematurely "
-                            f"with code {p.exitcode}"
-                        )
+                        logger.error('Weight cache daemon exited prematurely with code <redacted>')
                         for other in procs:
                             if other.is_alive():
                                 other.terminate()

@@ -243,7 +243,7 @@ class DecodeKVCacheOffloadManager:
             extra_pools=pool_transfers,
         )
         if host_indices is None:
-            logger.error(f"Not enough host memory for request {req.rid}")
+            logger.error('Not enough host memory for request <redacted>')
             return False
 
         self._mark_offload_started(req)
@@ -368,9 +368,7 @@ class DecodeKVCacheOffloadManager:
                 )
             self.decode_host_mem_pool.free(host_indices)
 
-            logger.debug(
-                f"Finished backup request {req_id}, free host memory, len:{len(host_indices)}, cost time:{time.time() - start_time:.2f} seconds."
-            )
+            logger.debug('Finished backup request <redacted>, free host memory, len:<redacted>, cost time:<redacted> seconds.')
 
     def _trigger_backup(
         self,

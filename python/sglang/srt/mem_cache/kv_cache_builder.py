@@ -99,11 +99,7 @@ def prepare_hicache_staging(
                 page_capacity=page_capacity,
             )
             if staging is not None:
-                logger.info(
-                    "HiCache staging prepared before KV sizing: %.1f MiB, %d layers",
-                    sum(buffer.nbytes for buffer in staging) / (1 << 20),
-                    pool.layer_num + len(packed_drafts),
-                )
+                logger.info('HiCache staging prepared before KV sizing: <redacted> MiB, <redacted> layers')
 
     runner = tp_worker.model_runner
     prepare(runner.token_to_kv_pool, runner.mtp_draft_device_pools)

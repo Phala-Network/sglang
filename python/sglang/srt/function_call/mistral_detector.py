@@ -73,9 +73,7 @@ class MistralDetector(BaseFormatDetector):
                     function_call_arr = [function_call_arr]
                 calls = self.parse_base_json(function_call_arr, tools)
             except json.JSONDecodeError as e:
-                logger.warning(
-                    f"Failed to parse JSON part: {json_array_str}, JSON parse error: {str(e)}"
-                )
+                logger.warning('Failed to parse JSON part: <redacted>, JSON parse error: <redacted>')
             json_pos = tool_part.find(json_array_str) if json_array_str else -1
             trailing_text = (
                 tool_part[json_pos + len(json_array_str) :].strip()

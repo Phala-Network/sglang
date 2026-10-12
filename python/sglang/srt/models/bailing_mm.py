@@ -247,16 +247,8 @@ class BailingMMNativeForConditionalGeneration(nn.Module):
                 f"{sorted(missing_non_text)[:20]}"
             )
         if unexpected_non_text:
-            logger.warning(
-                "Skipped %d Bailing checkpoint tensors; examples: %s",
-                len(unexpected_non_text),
-                unexpected_non_text[:10],
-            )
-        logger.info(
-            "Loaded Bailing weights: %d text tensors and %d multimodal tensors",
-            len(loaded_text),
-            len(loaded_non_text),
-        )
+            logger.warning('Skipped <redacted> Bailing checkpoint tensors; examples: <redacted>')
+        logger.info('Loaded Bailing weights: <redacted> text tensors and <redacted> multimodal tensors')
         return set(loaded_text) | loaded_non_text
 
 

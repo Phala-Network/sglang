@@ -64,9 +64,7 @@ def check_sglang_ready(
                 break
             except (httpx.ConnectError, httpx.HTTPStatusError) as e:
                 if retry_num % 10 == 0:
-                    logger.warning(
-                        f"fail to check sglang ready, retry {retry_num} times, error: {e}"
-                    )
+                    logger.warning('fail to check sglang ready, retry <redacted> times, error: <redacted>')
                 retry_num += 1
                 time.sleep(0.1)
 

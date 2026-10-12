@@ -436,7 +436,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         try:
             callback()
         except Exception:
-            logger.exception("Engine-state change callback failed")
+            logger.exception('Engine-state change callback failed', exc_info=False)
 
     def _set_engine_state_field(self, name: str, value: Any) -> None:
         if value == getattr(self, name, None):
@@ -890,9 +890,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         if isinstance(obj, GenerateReqInput) and obj.routed_dp_rank is not None:
             dp_size = self.elastic_worker_count
             if dp_size <= 1 and obj.routed_dp_rank == 0:
-                logger.debug(
-                    f"routed_dp_rank={obj.routed_dp_rank} is ignored because dp_size={dp_size}"
-                )
+                logger.debug('routed_dp_rank=<redacted> is ignored because dp_size=<redacted>')
             elif obj.routed_dp_rank < 0 or obj.routed_dp_rank >= dp_size:
                 raise ValueError(
                     f"routed_dp_rank={obj.routed_dp_rank} out of range [0, {dp_size})"
@@ -1028,7 +1026,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 else None
             )
         else:
-            logger.debug(f"Using regular tokenizer for {len(tokenizer_input)} inputs")
+            logger.debug('Using regular tokenizer for <redacted> inputs')
 
             if not is_cross_encoder and (not getattr(self.tokenizer, "is_fast", False)):
                 input_ids = [self.tokenizer.encode(t) for t in tokenizer_input]
@@ -1229,11 +1227,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                         try:
                             item.set_hash(int(hex_hash, 16))
                         except (TypeError, ValueError):
-                            logger.warning(
-                                "Ignoring malformed mm_hashes entry %r; "
-                                "this item will fall back to hash_feature().",
-                                hex_hash,
-                            )
+                            logger.warning('Ignoring malformed mm_hashes entry <redacted>; this item will fall back to hash_feature().')
             if (
                 envs.SGLANG_MM_PRECOMPUTE_HASH.get()
                 and mm_inputs
@@ -1313,11 +1307,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         # Validate input length
         if input_token_num >= self.context_len:
             if self.allow_auto_truncate:
-                logger.warning(
-                    f"The input ({input_token_num} tokens) is longer than the "
-                    f"model's context length ({self.context_len} tokens). "
-                    "Truncating the input."
-                )
+                logger.warning("The input (<redacted> tokens) is longer than the model's context length (<redacted> tokens). Truncating the input.")
                 del input_ids[_max_req_len:]
                 input_token_num = len(input_ids)
             else:
@@ -1334,11 +1324,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             and (max_new_tokens + input_token_num) > _max_req_len
         ):
             if self.allow_auto_truncate:
-                logger.warning(
-                    f"Requested token count ({input_token_num} input + {max_new_tokens} new) "
-                    f"exceeds the model's context length ({self.context_len} tokens). "
-                    "Truncating max_new_tokens."
-                )
+                logger.warning("Requested token count (<redacted> input + <redacted> new) exceeds the model's context length (<redacted> tokens). Truncating max_new_tokens.")
                 obj.sampling_params["max_new_tokens"] = max(
                     0, _max_req_len - input_token_num
                 )
@@ -1807,12 +1793,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         all other fields (meta_info, etc.) are taken from the last chunk.
         """
         if len(out_list) >= 20:
-            logger.warning(
-                "Streaming backlog: rid=%s, coalescing %d queued chunks into one. "
-                "This may inflate P99 ITL for affected requests.",
-                rid,
-                len(out_list),
-            )
+            logger.warning('Streaming backlog: rid=<redacted>, coalescing <redacted> queued chunks into one. This may inflate P99 ITL for affected requests.')
         out = dict(out_list[-1])
         if "output_ids" in out:
             out["output_ids"] = [id for chunk in out_list for id in chunk["output_ids"]]
@@ -2220,7 +2201,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
 
         if obj.load_format is None:
             obj.load_format = self.config_value("load_format")
-        logger.info("Start update_weights. Load format=%s", obj.load_format)
+        logger.info('Start update_weights. Load format=<redacted>')
 
         if obj.abort_all_requests:
             self.abort_request(abort_all=True)
@@ -2275,7 +2256,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 self.resolved_config_dict(self.server_args.resolved_dict())
             )
         except Exception as e:
-            logger.error(f"Failed to snapshot the resolved config for the dump: {e!r}")
+            logger.error('Failed to snapshot the resolved config for the dump: <redacted>')
             return None
 
     def resolved_config_dict(self, base: Dict[str, Any]) -> Dict[str, Any]:
@@ -2338,7 +2319,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             # Only legal requests will be sent to scheduler.
             logging.getLogger().setLevel(obj.log_level.upper())
             self._dispatch_to_scheduler(obj)
-        logging.info(f"Config logging: {obj=}")
+        logging.info('Config logging: obj=<redacted>')
 
     async def freeze_gc(self):
         """Send a freeze_gc message to the scheduler first, then freeze locally."""
@@ -2445,9 +2426,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 # Known race: /health_generate pops its rid as soon as ANY message bumps last_receive_tstamp.
                 if rid.startswith(HEALTH_CHECK_RID_PREFIX):
                     continue
-                logger.warning(
-                    f"Received output for {rid=} but the state was deleted in TokenizerManager."
-                )
+                logger.warning('Received output for rid=<redacted> but the state was deleted in TokenizerManager.')
                 continue
 
             # Build meta_info and return value
@@ -2832,11 +2811,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                         # A raise here would disrupt unrelated requests in the
                         # shared batch-output loop; degrade to nested instead.
                         state.input_top_logprobs_flat_fields = None
-                        logger.error(
-                            "Falling back to nested input top logprobs for rid=%s: %s",
-                            meta_info.get("id"),
-                            e,
-                        )
+                        logger.error('Falling back to nested input top logprobs for rid=<redacted>: <redacted>')
                     state.input_top_logprobs_flat_num_rows = len(
                         state.input_top_logprobs_val
                     )
@@ -3255,10 +3230,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     # When the server is launched with --trust-remote-code,
                     # server_args sometimes fails to pickle. Retry without
                     # server_args so the request data still gets persisted.
-                    logger.error(
-                        f"Failed to pickle dump with server_args: {e!r}; "
-                        "retrying without server_args"
-                    )
+                    logger.error('Failed to pickle dump with server_args: <redacted>; retrying without server_args')
                     f.seek(0)
                     f.truncate()
                     to_dump_with_server_args["server_args"] = None
@@ -3287,7 +3259,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
 
         # Dump requests info
         if self.crash_dump_folder:
-            logger.error(f"Dumping requests before crash. {self.crash_dump_folder=}")
+            logger.error('Dumping requests before crash. self.crash_dump_folder=<redacted>')
 
             # Add finished requests from crash_dump_request_list
             data_to_dump = []
@@ -3338,19 +3310,14 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                         # When the server is launched with --trust-remote-code,
                         # server_args sometimes fails to pickle. Retry without
                         # server_args so the request data still gets persisted.
-                        logger.error(
-                            f"Failed to pickle dump with server_args: {e!r}; "
-                            "retrying without server_args"
-                        )
+                        logger.error('Failed to pickle dump with server_args: <redacted>; retrying without server_args')
                         f.seek(0)
                         f.truncate()
                         data_to_dump_with_server_args["server_args"] = None
                         # The snapshot copies the same object field by field.
                         data_to_dump_with_server_args["resolved_config"] = None
                         pickle.dump(data_to_dump_with_server_args, f)
-                logger.error(
-                    f"Dumped {len(self.crash_dump_request_list)} finished and {len(unfinished_requests)} unfinished requests before crash to {filename}"
-                )
+                logger.error('Dumped <redacted> finished and <redacted> unfinished requests before crash to <redacted>')
 
         # Dump pyspy and cuda coredump
         if should_dump_diagnostics:
@@ -3406,9 +3373,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 self.force_exit_handler()
                 break
 
-            logger.info(
-                f"Gracefully exiting... Remaining number of requests {remain_num_req}. Remaining requests {remaining_rids=}."
-            )
+            logger.info('Gracefully exiting... Remaining number of requests <redacted>. Remaining requests remaining_rids=<redacted>.')
             if remain_num_req > 0:
                 await asyncio.sleep(5)
             else:
@@ -3459,11 +3424,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         # disconnects, amplified by prefix / abort_all fan-out.
         state = self.rid_to_state.get(recv_obj.rid)
         if state is None:
-            logger.info(
-                "Abort request for rid=%s not found in rid_to_state; "
-                "likely already finished/removed.",
-                recv_obj.rid,
-            )
+            logger.info('Abort request for rid=<redacted> not found in rid_to_state; likely already finished/removed.')
             return
         state.finished = True
         state.time_stats.set_finished_time()
@@ -3574,10 +3535,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
     def _handle_open_session_req_output(self, recv_obj):
         future = self.session_futures.get(recv_obj.session_id)
         if future is None:
-            logger.warning(
-                "Open session response arrived after waiter cleanup: %s",
-                recv_obj.session_id,
-            )
+            logger.warning('Open session response arrived after waiter cleanup: <redacted>')
             return
         if not future.done():
             future.set_result(recv_obj.session_id if recv_obj.success else None)
@@ -3759,9 +3717,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     try:
                         self.abort_request(rid)
                     except Exception:
-                        logger.exception(
-                            "Failed to abort request %s during cleanup", rid
-                        )
+                        logger.exception('Failed to abort request <redacted> during cleanup', exc_info=False)
                 else:
                     del self.rid_to_state[rid]
             dispatch_ready = self.encoder_dispatch_ready.pop(rid, None)
@@ -3781,10 +3737,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         self, obj: Union[GenerateReqInput, EmbeddingReqInput]
     ) -> bool:
         if obj.batch_size > 1:
-            logger.warning(
-                "Batch request (batch_size=%d) is not supported in EPD disaggregation mode; skipping encoder dispatch.",
-                obj.batch_size,
-            )
+            logger.warning('Batch request (batch_size=<redacted>) is not supported in EPD disaggregation mode; skipping encoder dispatch.')
             return False
         if not isinstance(obj, GenerateReqInput) or not obj.contains_mm_input():
             return False
@@ -3930,7 +3883,7 @@ async def print_exception_wrapper(func):
         await func()
     except Exception:
         traceback = get_exception_traceback()
-        logger.error(f"TokenizerManager hit an exception: {traceback}")
+        logger.error('TokenizerManager hit an exception: <redacted>')
         if hasattr(func, "__self__") and isinstance(func.__self__, TokenizerManager):
             func.__self__.dump_requests_before_crash()
         kill_process_tree(os.getpid(), include_parent=True)
@@ -3960,9 +3913,7 @@ class SignalHandler:
         self.tokenizer_manager.gracefully_exit = True
 
     def running_phase_sigquit_handler(self, signum=None, frame=None):
-        logger.error(
-            f"SIGQUIT received. {signum=}, {frame=}. It usually means one child failed."
-        )
+        logger.error('SIGQUIT received. signum=<redacted>, frame=<redacted>. It usually means one child failed.')
         # Stop subprocess watchdog before killing processes to prevent false-positive
         # crash detection during normal shutdown
         if self.tokenizer_manager._subprocess_watchdog is not None:

@@ -130,10 +130,7 @@ class WeightChecker:
         *,
         role: str,
     ) -> Optional[Dict]:
-        logger.info(
-            f"[WeightChecker] handle action={action} "
-            f"allow_quant_error={allow_quant_error} skip_tensor_list={skip_tensor_list}"
-        )
+        logger.info('[WeightChecker] handle action=<redacted> allow_quant_error=<redacted> skip_tensor_list=<redacted>')
         if action == "snapshot":
             return self._snapshot()
         elif action == "reset_tensors":

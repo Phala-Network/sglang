@@ -138,7 +138,7 @@ def _get_flashinfer_gdn_kernels():
             if _flashinfer_gdn_available:
                 logger.info("FlashInfer GDN kernels loaded successfully")
         except (ImportError, RuntimeError) as e:
-            logger.warning(f"FlashInfer GDN kernels not available: {e}")
+            logger.warning('FlashInfer GDN kernels not available: <redacted>')
             _flashinfer_gdn_available = False
             _flashinfer_gated_delta_rule_decode = None
     return (
@@ -325,13 +325,7 @@ class FlashInferGDNKernel(LinearAttnKernelBase):
             if tensor is None or tensor.data_ptr() % _FLASHINFER_GDN_ALIGNMENT == 0:
                 continue
             if not self._alignment_fallback_warned:
-                logger.warning(
-                    "FlashInfer GDN mutable buffer %r has data_ptr %d "
-                    "(mod 32 = %d); falling back to Triton for this call.",
-                    name,
-                    tensor.data_ptr(),
-                    tensor.data_ptr() % _FLASHINFER_GDN_ALIGNMENT,
-                )
+                logger.warning('FlashInfer GDN mutable buffer <redacted> has data_ptr <redacted> (mod 32 = <redacted>); falling back to Triton for this call.')
                 self._alignment_fallback_warned = True
             return False
         return True

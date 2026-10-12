@@ -181,14 +181,7 @@ class DecodeStagingHandler:
         # mismatch instead of raising, which would kill the prefill scheduler.
         page_size = self.kv_buffer_info["page_size"]
         if decode_req.req.kv.cache_protected_len % page_size != 0:
-            logger.error(
-                "[STAGING] decode prefix length %s is not page-aligned "
-                "(page_size=%s); failing room=%s (staging scatter offsets "
-                "would be wrong).",
-                decode_req.req.kv.cache_protected_len,
-                page_size,
-                room,
-            )
+            logger.error('[STAGING] decode prefix length <redacted> is not page-aligned (page_size=<redacted>); failing room=<redacted> (staging scatter offsets would be wrong).')
             decode_req._staging_failed = True
 
     def unregister_decode_req(self, room: int) -> None:
@@ -375,12 +368,7 @@ class DecodeStagingHandler:
             return
         elapsed = time.monotonic() - decode_req._staging_success_ts
         if elapsed > self.completion_timeout:
-            logger.error(
-                "[STAGING] room=%s not complete %.0fs after all-ranks Success "
-                "(a scatter never arrived); failing the request.",
-                room,
-                elapsed,
-            )
+            logger.error('[STAGING] room=<redacted> not complete <redacted>s after all-ranks Success (a scatter never arrived); failing the request.')
             decode_req._staging_failed = True
 
     # ------------------------------------------------------------------
@@ -517,12 +505,7 @@ def handle_staging_rsp(msg_parts, transfer_infos: dict) -> None:
             tinfo.staging = StagingTransferInfo()
         tinfo.staging.set_chunk(stg_chunk_idx, stg_offset, stg_round, stg_end)
     else:
-        logger.warning(
-            "STAGING_RSP RECV but tinfo=None room=%s chunk=%d session=%s",
-            stg_room,
-            stg_chunk_idx,
-            stg_session,
-        )
+        logger.warning('STAGING_RSP RECV but tinfo=None room=<redacted> chunk=<redacted> session=<redacted>')
 
 
 # ======================================================================
@@ -792,12 +775,7 @@ def handle_staging_req(
 
     receiver = room_receivers.get(room)
     if receiver is None:
-        logger.warning(
-            "STAGING_REQ dropped: no receiver for room=%s chunk=%s session=%s",
-            room,
-            chunk_idx,
-            session_id,
-        )
+        logger.warning('STAGING_REQ dropped: no receiver for room=<redacted> chunk=<redacted> session=<redacted>')
         return
     infos = receiver.chunk_staging_infos
 
@@ -835,14 +813,7 @@ def handle_staging_req(
         )
         result = staging_allocator.assign(required)
         if result is None:
-            logger.error(
-                "[STAGING_REQ] alloc failed room=%s chunk=%d (need %d bytes, "
-                "buffer total=%d bytes). Increase SGLANG_DISAGG_STAGING_POOL_SIZE_MB.",
-                room,
-                chunk_idx,
-                required,
-                staging_allocator.total_size,
-            )
+            logger.error('[STAGING_REQ] alloc failed room=<redacted> chunk=<redacted> (need <redacted> bytes, buffer total=<redacted> bytes). Increase SGLANG_DISAGG_STAGING_POOL_SIZE_MB.')
             offset, rnd, end = StagingAllocator.ALLOC_OVERSIZED, 0, -1
             while len(infos) <= chunk_idx:
                 infos.append((-1, -1, 0, -1, 0))

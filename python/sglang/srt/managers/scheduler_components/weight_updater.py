@@ -144,7 +144,7 @@ class SchedulerWeightUpdaterManager:
             if success:
                 self.record_weight_version_after_update(recv_req.weight_version)
             else:
-                logger.error(message)
+                logger.error('Request-path diagnostic redacted')
             return UpdateWeightFromDiskReqOutput(
                 success=success, message=message, num_paused_requests=0
             )
@@ -195,7 +195,7 @@ class SchedulerWeightUpdaterManager:
                 )
             except Exception as e:
                 success, message = False, f"Failed to receive weights: {e}"
-                logger.error(message)
+                logger.error('Request-path diagnostic redacted')
             else:
                 success, message = True, "Succeeded to update parameter online."
                 for _, runner in self._select_runners(recv_req.selector):
@@ -241,7 +241,7 @@ class SchedulerWeightUpdaterManager:
                 self.flush_cache_after_weight_update(recv_req)
                 self.record_weight_version_after_update(recv_req.weight_version)
             else:
-                logger.error(message)
+                logger.error('Request-path diagnostic redacted')
             torch.distributed.barrier(group=self.tp_cpu_group)
             return UpdateWeightsFromTensorReqOutput(success=success, message=message)
 
@@ -263,7 +263,7 @@ class SchedulerWeightUpdaterManager:
             if success:
                 self.record_weight_version_after_update(recv_req.weight_version)
             else:
-                logger.error(message)
+                logger.error('Request-path diagnostic redacted')
             torch.distributed.barrier(group=self.tp_cpu_group)
             return UpdateWeightsFromIPCReqOutput(success=success, message=message)
 
@@ -432,8 +432,8 @@ class SchedulerWeightUpdaterManager:
                 success=True, message="Success.", payload=payload
             )
         except Exception as e:
-            logger.warning(f"check_weights see error: {e}")
-            traceback.print_exc()
+            logger.warning('check_weights see error: <redacted>')
+            traceback.print_exception(RuntimeError('Exception details redacted'), chain=False)
             return CheckWeightsReqOutput(success=False, message=f"{e}")
 
     def save_remote_model(self, params):

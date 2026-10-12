@@ -327,42 +327,15 @@ class TensorcastStore(HiCacheStorage):
             return
         if isinstance(error, RegionSessionFailedError):
             failure = error.failure
-            logger.error(
-                "TensorCast L3 unavailable: category=session_failed "
-                "exception_type=RegionSessionFailedError adapter_operation=%s "
-                "failure_code=%s session_operation=%s operation_id=%s message=%s",
-                operation,
-                failure.code.value,
-                failure.operation_kind.value,
-                failure.operation_id,
-                failure.message,
-            )
+            logger.error('TensorCast L3 unavailable: category=session_failed exception_type=RegionSessionFailedError adapter_operation=<redacted> failure_code=<redacted> session_operation=<redacted> operation_id=<redacted> message=<redacted>')
             return
         if isinstance(error, RegionArtifactInputError):
-            logger.error(
-                "TensorCast L3 unavailable: category=adapter_input_failure "
-                "exception_type=RegionArtifactInputError adapter_operation=%s "
-                "message=%s",
-                operation,
-                error,
-            )
+            logger.error('TensorCast L3 unavailable: category=adapter_input_failure exception_type=RegionArtifactInputError adapter_operation=<redacted> message=<redacted>')
             return
         if isinstance(error, RegionSessionTerminatedError):
-            logger.error(
-                "TensorCast L3 unavailable: category=unexpected_terminated "
-                "exception_type=RegionSessionTerminatedError adapter_operation=%s "
-                "message=%s",
-                operation,
-                error,
-            )
+            logger.error('TensorCast L3 unavailable: category=unexpected_terminated exception_type=RegionSessionTerminatedError adapter_operation=<redacted> message=<redacted>')
             return
-        logger.exception(
-            "TensorCast L3 unavailable: category=adapter_exception "
-            "exception_type=%s adapter_operation=%s message=%s",
-            type(error).__name__,
-            operation,
-            error,
-        )
+        logger.exception('TensorCast L3 unavailable: category=adapter_exception exception_type=<redacted> adapter_operation=<redacted> message=<redacted>', exc_info=False)
 
     def close(self) -> None:
         with self._availability_lock:

@@ -99,12 +99,7 @@ class OpenAIServingDecisions(OpenAIServingBase):
                     model_type=parser, tokenizer=tokenizer
                 ).detector
             except ValueError as e:
-                logger.warning(
-                    "No reasoning block check for %s with parser '%s': %s",
-                    self.route,
-                    parser,
-                    e,
-                )
+                logger.warning("No reasoning block check for <redacted> with parser '<redacted>': <redacted>")
             else:
                 mode = detector.reasoning_default
                 if config is None and mode in _PARSER_TOGGLE_MODES:

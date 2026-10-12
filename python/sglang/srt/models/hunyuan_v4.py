@@ -119,10 +119,7 @@ class HYV4HCPreLayer(nn.Module):
                     )
                 except Exception:
                     self._fused_ihc_pre_disabled = True
-                    logger.warning(
-                        "fused_hy4_ihc_pre failed, disabling fused path",
-                        exc_info=True,
-                    )
+                    logger.warning('fused_hy4_ihc_pre failed, disabling fused path', exc_info=False)
         shape = hidden_states.shape
         flat = hidden_states.flatten(1).float()
         scale = torch.rsqrt(flat.square().mean(-1, keepdim=True) + self.rms_norm_eps)
@@ -206,10 +203,7 @@ class HYV4HCLayer(nn.Module):
                     return fused_hy4_ihc_post(output, residual, post)
                 except Exception:
                     self._fused_ihc_post_disabled = True
-                    logger.warning(
-                        "fused_hy4_ihc_post failed, disabling fused path",
-                        exc_info=True,
-                    )
+                    logger.warning('fused_hy4_ihc_post failed, disabling fused path', exc_info=False)
         result = post.float().unsqueeze(-1) * output.float().unsqueeze(1)
         return (result + residual.float()).to(output.dtype)
 
@@ -243,10 +237,7 @@ class HYV4HCLayer(nn.Module):
                     return reduced, next_post, next_residual
                 except Exception:
                     self._fused_ihc_post_pre_disabled = True
-                    logger.warning(
-                        "fused_hy4_ihc_post_pre failed, disabling fused path",
-                        exc_info=True,
-                    )
+                    logger.warning('fused_hy4_ihc_post_pre failed, disabling fused path', exc_info=False)
         next_residual = self.post(output, residual, post)
         next_residual = next_layer.prepare_input(next_residual)
         return next_layer.pre(next_residual, norm)
@@ -295,10 +286,7 @@ class HYV4HCHeadLayer(nn.Module):
                     )
                 except Exception:
                     self._fused_ihc_head_disabled = True
-                    logger.warning(
-                        "fused_hy4_ihc_head failed, disabling fused path",
-                        exc_info=True,
-                    )
+                    logger.warning('fused_hy4_ihc_head failed, disabling fused path', exc_info=False)
         shape = hidden_states.shape
         flat = hidden_states.flatten(1).float()
         scale = torch.rsqrt(

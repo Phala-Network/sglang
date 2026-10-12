@@ -227,14 +227,12 @@ class DeepSeekV32Detector(BaseFormatDetector):
                         invoke_match
                     )
                     if not is_complete:
-                        logger.warning(
-                            f"Dropping unclosed DeepSeek invoke '{func_name}'"
-                        )
+                        logger.warning("Dropping unclosed DeepSeek invoke '<redacted>'")
                         continue
                     try:
                         func_args = self._parse_parameters_from_xml(invoke_content)
                     except ValueError as e:
-                        logger.warning(f"Dropping malformed DeepSeek invoke: {e}")
+                        logger.warning('Dropping malformed DeepSeek invoke: <redacted>')
                         continue
                     # construct match_result for parse_base_json
                     match_result = {
@@ -245,7 +243,7 @@ class DeepSeekV32Detector(BaseFormatDetector):
 
             return StreamingParseResult(normal_text=normal_text, calls=calls)
         except Exception as e:
-            logger.error(f"Error in detect_and_parse: {e}")
+            logger.error('Error in detect_and_parse: <redacted>')
             # Fail closed: keep the prose, never surface DSML as content.
             return StreamingParseResult(normal_text=normal_text, calls=calls)
 
@@ -328,7 +326,7 @@ class DeepSeekV32Detector(BaseFormatDetector):
                     current_params = self._parse_parameters_from_xml(invoke_content)
                 except ValueError as e:
                     # Fail closed: drop this invoke, keep going for the next one.
-                    logger.warning(f"Dropping malformed DeepSeek invoke: {e}")
+                    logger.warning('Dropping malformed DeepSeek invoke: <redacted>')
                     self._buffer = current_text[invoke_match.end() :]
                     current_text = self._buffer
                     continue
@@ -363,7 +361,7 @@ class DeepSeekV32Detector(BaseFormatDetector):
             return StreamingParseResult(normal_text=preamble, calls=all_calls)
 
         except Exception as e:
-            logger.error(f"Error in parse_streaming_increment: {e}")
+            logger.error('Error in parse_streaming_increment: <redacted>')
             # Fail closed: drop the buffer, keep any prose ahead of the DSML,
             # and never surface DSML as content.
             self._buffer = ""

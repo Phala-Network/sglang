@@ -402,11 +402,7 @@ def dispatch_custom_allreduce(
                 enable_register_for_capturing=not tms_cudagraph,
             )
         except ImportError as e:
-            logger.warning(
-                "[AR] Aiter custom all-reduce not available; "
-                "falling back to sglang CustomAllreduce. Details: %s",
-                e,
-            )
+            logger.warning('[AR] Aiter custom all-reduce not available; falling back to sglang CustomAllreduce. Details: <redacted>')
             return CustomAllreduce
 
     return CustomAllreduce

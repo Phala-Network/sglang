@@ -512,9 +512,7 @@ class DataParallelController:
             try:
                 client_rank = sock_recv(rep_socket)
             except Exception:
-                logger.exception(
-                    "Failed to recv/decode handshake in reply thread; continue"
-                )
+                logger.exception('Failed to recv/decode handshake in reply thread; continue', exc_info=False)
                 continue
             logger.debug(f"Received handshake from node {client_rank}")
 
@@ -849,10 +847,8 @@ def run_data_parallel_controller_process(
             controller.event_loop()
         for proc in controller.scheduler_procs:
             proc.join()
-            logger.error(
-                f"Scheduler or DataParallelController {proc.pid} terminated with {proc.exitcode}"
-            )
+            logger.error('Scheduler or DataParallelController <redacted> terminated with <redacted>')
     except Exception:
         traceback = get_exception_traceback()
-        logger.error(f"DataParallelController hit an exception: {traceback}")
+        logger.error('DataParallelController hit an exception: <redacted>')
         parent_process.send_signal(signal.SIGQUIT)

@@ -131,5 +131,5 @@ class SchedulerActor:
             torch.cuda.set_device(get_device().gpu_id)
             self.scheduler.run_event_loop()
         except Exception as e:
-            logger.error(f"Scheduler PP{self._pp_rank} TP{self._tp_rank} crashed: {e}")
+            logger.error('Scheduler PP<redacted> TP<redacted> crashed: <redacted>')
             raise

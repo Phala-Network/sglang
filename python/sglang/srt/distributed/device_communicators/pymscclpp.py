@@ -1049,10 +1049,7 @@ class PyMscclppCommunicator:
             self.mscclpp_ext = importlib.import_module("mscclpp.ext")
             self.def_algo = importlib.import_module("mscclpp.default_algos")
         except ImportError as exc:
-            logger.warning(
-                "PyMscclpp is unavailable because its dependencies failed to import: %s",
-                exc,
-            )
+            logger.warning('PyMscclpp is unavailable because its dependencies failed to import: <redacted>')
             self.mscclpp = None
             return
 
@@ -1111,7 +1108,7 @@ class PyMscclppCommunicator:
             self._create_algorithms()
             self.executor.reset()
         except Exception:
-            logger.exception("Failed to initialize MSCCL++ collectives")
+            logger.exception('Failed to initialize MSCCL++ collectives', exc_info=False)
             raise
         self.available = bool(
             self._best_configs["allreduce"] or self._best_configs["allgather"]

@@ -151,9 +151,7 @@ class Apertus2509Detector(BaseFormatDetector):
                     name not in self._tool_indices
                     and not envs.SGLANG_FORWARD_UNKNOWN_TOOLS.get()
                 ):
-                    logger.warning(
-                        f"Model attempted to call undefined function: {name}"
-                    )
+                    logger.warning('Model attempted to call undefined function: <redacted>')
                     continue
 
                 tool_id = self.current_tool_id
@@ -236,7 +234,7 @@ class Apertus2509Detector(BaseFormatDetector):
                 name not in self._tool_indices
                 and not envs.SGLANG_FORWARD_UNKNOWN_TOOLS.get()
             ):
-                logger.warning(f"Model attempted to call undefined function: {name}")
+                logger.warning('Model attempted to call undefined function: <redacted>')
                 continue
 
             calls.append(

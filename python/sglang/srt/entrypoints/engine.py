@@ -213,14 +213,9 @@ def init_tokenizer_manager(
             tokenizer_manager.record_config_updates(
                 "template-detection", **{attr: suggested}
             )
-            logger.info(
-                f"Auto-detected --{attr.replace('_', '-')} as '{suggested}' from chat template"
-            )
+            logger.info("Auto-detected --<redacted> as '<redacted>' from chat template")
         else:
-            logger.warning(
-                f"--{attr.replace('_', '-')}=auto specified but could not detect "
-                f"{label} from chat template. Disabling {label}."
-            )
+            logger.warning('--<redacted>=auto specified but could not detect <redacted> from chat template. Disabling <redacted>.')
             tokenizer_manager.record_config_updates(
                 "template-detection", **{attr: None}
             )
@@ -287,7 +282,7 @@ class Engine(EngineScoreMixin, EngineBase):
                 "Engine(" + ", ".join(f"{k}={v!r}" for k, v in redact_auth_config(kwargs).items()) + ")",
             )
         self.server_args = server_args
-        logger.info(f"server_args={server_args.diagnostic_dict()}")
+        logger.info('server_args=<redacted>')
 
         # Rust Server is not supported with the offline Engine API
         if envs.SGLANG_RUST_SERVER.get():
@@ -397,16 +392,14 @@ class Engine(EngineScoreMixin, EngineBase):
         if routed_dp_rank is not None:
             dp_size = get_parallel().dp_size
             if dp_size <= 1 and routed_dp_rank == 0:
-                logger.debug(
-                    f"routed_dp_rank={routed_dp_rank} is ignored because dp_size={dp_size}"
-                )
+                logger.debug('routed_dp_rank=<redacted> is ignored because dp_size=<redacted>')
                 return None
             if routed_dp_rank < 0 or routed_dp_rank >= dp_size:
                 raise ValueError(
                     f"routed_dp_rank={routed_dp_rank} out of range [0, {dp_size})"
                 )
 
-        logger.debug(f"routed_dp_rank: {routed_dp_rank}")
+        logger.debug('routed_dp_rank: <redacted>')
         return routed_dp_rank
 
     def generate(
@@ -750,13 +743,7 @@ class Engine(EngineScoreMixin, EngineBase):
 
         num_daemons = len(pp_rank_range) * len(tp_rank_range)
         daemon_procs = []
-        logger.info(
-            f"Launching {num_daemons} weight cache daemon(s) on node "
-            f"{get_parallel().node_rank} for model={get_model().model_path}, "
-            f"pp_ranks={pp_rank_range.start}..{pp_rank_range.stop - 1}, "
-            f"tp_ranks={tp_rank_range.start}..{tp_rank_range.stop - 1}, "
-            f"dist_init_method={dist_init_method}"
-        )
+        logger.info('Launching <redacted> weight cache daemon(s) on node <redacted> for model=<redacted>, pp_ranks=<redacted>..<redacted>, tp_ranks=<redacted>..<redacted>, dist_init_method=<redacted>')
 
         # Validate and clean up stale .ready/.sock files from prior runs.
         # If a daemon is still alive at this GPU, raise instead of clobbering.
@@ -828,18 +815,12 @@ class Engine(EngineScoreMixin, EngineBase):
                                     f"Weight cache daemon (pid={p.pid}) exited prematurely "
                                     f"with code {p.exitcode}"
                                 )
-                    logger.info(
-                        f"Weight cache daemon for pp_rank={pp_rank} "
-                        f"tp_rank={tp_rank} is ready"
-                    )
+                    logger.info('Weight cache daemon for pp_rank=<redacted> tp_rank=<redacted> is ready')
         except BaseException:
             cls._terminate_weight_cache_daemons(daemon_procs)
             raise
 
-        logger.info(
-            f"All {num_daemons} weight cache daemons on node "
-            f"{get_parallel().node_rank} are ready"
-        )
+        logger.info('All <redacted> weight cache daemons on node <redacted> are ready')
         return daemon_procs
 
     @staticmethod
@@ -862,10 +843,7 @@ class Engine(EngineScoreMixin, EngineBase):
         for p in procs:
             p.join(timeout=timeout)
             if p.is_alive():
-                logger.warning(
-                    f"Weight cache daemon (pid={p.pid}) did not exit within "
-                    f"{timeout}s of SIGTERM; sending SIGKILL."
-                )
+                logger.warning('Weight cache daemon (pid=<redacted>) did not exit within <redacted>s of SIGTERM; sending SIGKILL.')
                 p.kill()
                 p.join()
 
@@ -961,10 +939,7 @@ class Engine(EngineScoreMixin, EngineBase):
         def block_until_scheduler_exits():
             for proc in scheduler_procs:
                 proc.join()
-                logger.error(
-                    f"Scheduler or DataParallelController {proc.pid} "
-                    f"terminated with {proc.exitcode}"
-                )
+                logger.error('Scheduler or DataParallelController <redacted> terminated with <redacted>')
 
         return (
             SchedulerInitResult(
@@ -1051,16 +1026,7 @@ class Engine(EngineScoreMixin, EngineBase):
             f"{phase}={duration:.2f}"
             for phase, duration in startup_time["cuda_graph"].items()
         )
-        logger.info(
-            "Engine startup timings (s): load_weight=%.2f, "
-            "kv_cache_allocation=%.2f, scheduler_e2e=%.2f, "
-            "cuda_graph={%s}, tokenizer_e2e=%.2f",
-            startup_time["load_weight"],
-            startup_time["kv_cache_allocation"],
-            startup_time["scheduler_e2e"],
-            cuda_graph_timings,
-            startup_time["tokenizer_e2e"],
-        )
+        logger.info('Engine startup timings (s): load_weight=<redacted>, kv_cache_allocation=<redacted>, scheduler_e2e=<redacted>, cuda_graph={<redacted>}, tokenizer_e2e=<redacted>')
 
     @classmethod
     def _launch_subprocesses(
@@ -1121,7 +1087,7 @@ class Engine(EngineScoreMixin, EngineBase):
             # Allocate ports for inter-process communications
             if port_args is None:
                 port_args = PortArgs.init_new(server_args)
-            logger.info(f"server_args={server_args.diagnostic_dict()}")
+            logger.info('server_args=<redacted>')
 
             # Start the engine info bootstrap server if per-rank info is needed.
             engine_info_bootstrap_server = None
@@ -1191,11 +1157,7 @@ class Engine(EngineScoreMixin, EngineBase):
             if threading.current_thread() is threading.main_thread():
 
                 def sigterm_handler(signum, frame):
-                    logger.warning(
-                        f"SIGTERM received on node_rank {get_parallel().node_rank}; "
-                        "waiting for the rank-0 ShutdownReq broadcast to stop "
-                        "the schedulers."
-                    )
+                    logger.warning('SIGTERM received on node_rank <redacted>; waiting for the rank-0 ShutdownReq broadcast to stop the schedulers.')
 
                 signal.signal(signal.SIGTERM, sigterm_handler)
 
@@ -1878,7 +1840,7 @@ def _set_envs_and_config(server_args: ServerArgs):
             signal.signal(signal.SIGQUIT, launch_phase_sigquit_handler)
         else:
             # Allow users to register a custom SIGQUIT handler for things like crash dump
-            logger.error(f"Using custom SIGQUIT handler: {cfg.custom_sigquit_handler}")
+            logger.error('Using custom SIGQUIT handler: <redacted>')
             signal.signal(signal.SIGQUIT, cfg.custom_sigquit_handler)
     else:
         logger.warning(

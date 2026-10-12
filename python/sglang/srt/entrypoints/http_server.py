@@ -248,10 +248,7 @@ async def init_multi_tokenizer() -> ServerArgs:
     port_args.tokenizer_ipc_name = (
         f"ipc://{tempfile.NamedTemporaryFile(delete=False).name}"
     )
-    logger.info(
-        f"Start multi-tokenizer worker process {os.getpid()}, "
-        f"ipc_name={port_args.tokenizer_ipc_name}"
-    )
+    logger.info('Start multi-tokenizer worker process <redacted>, ipc_name=<redacted>')
 
     # Launch multi-tokenizer manager process
     tokenizer_worker_class = get_tokenizer_worker_class(server_args)
@@ -389,13 +386,8 @@ async def lifespan(fast_api_app: FastAPI):
         # Optional endpoint; a load failure (e.g. the gpt-oss harmony vocab
         # download) must not look like a fatal error. One-line WARNING, full
         # traceback at DEBUG.
-        logger.warning(
-            f"OpenAI Responses API (/v1/responses) disabled: "
-            f"OpenAIServingResponses init failed ({type(e).__name__}: {e})"
-        )
-        logger.debug(
-            f"OpenAIServingResponses init traceback:\n{get_exception_traceback()}"
-        )
+        logger.warning('OpenAI Responses API (/v1/responses) disabled: OpenAIServingResponses init failed (<redacted>: <redacted>)')
+        logger.debug('OpenAIServingResponses init traceback:\n<redacted>')
 
     # Execute custom warmups
     if get_serving().warmups is not None:
@@ -442,7 +434,7 @@ async def lifespan(fast_api_app: FastAPI):
             try:
                 sidecar.stop()
             except Exception:
-                logger.exception("Failed to stop sidecar")
+                logger.exception('Failed to stop sidecar', exc_info=False)
         _shutdown_native_grpc_server(grpc_handle)
         if tool_server is not None and hasattr(tool_server, "aclose"):
             await tool_server.aclose()
@@ -783,11 +775,7 @@ async def health_generate(request: Request) -> Response:
             "%H:%M:%S",
             time.localtime(_global_state.tokenizer_manager.last_receive_tstamp),
         )
-        logger.error(
-            f"Health check failed. Server couldn't get a response from detokenizer for last "
-            f"{HEALTH_CHECK_TIMEOUT} seconds. tic start time: {tic_time}. "
-            f"last_heartbeat time: {last_receive_time}"
-        )
+        logger.error("Health check failed. Server couldn't get a response from detokenizer for last <redacted> seconds. tic start time: <redacted>. last_heartbeat time: <redacted>")
         _global_state.tokenizer_manager.server_status = ServerStatus.UnHealthy
         return Response(status_code=503)
     finally:
@@ -964,7 +952,7 @@ async def generate_request(obj: GenerateReqInput, request: Request):
                 # stop (the request was already aborted upstream) instead of
                 # emitting a 400.
                 if request is not None and await request.is_disconnected():
-                    logger.info(f"[http_server] Client disconnected: {e}")
+                    logger.info('[http_server] Client disconnected: <redacted>')
                     return
                 out = {
                     "error": {
@@ -974,7 +962,7 @@ async def generate_request(obj: GenerateReqInput, request: Request):
                         "retryable": False,
                     }
                 }
-                logger.error(f"[http_server] Error: {e}")
+                logger.error('[http_server] Error: <redacted>')
                 yield b"data: " + dumps_json(out) + b"\n\n"
             yield b"data: [DONE]\n\n"
 
@@ -990,7 +978,7 @@ async def generate_request(obj: GenerateReqInput, request: Request):
             ).__anext__()
             return orjson_response(ret)
         except ValueError as e:
-            logger.error(f"[http_server] Error: {e}")
+            logger.error('[http_server] Error: <redacted>')
             return _create_error_response(e)
 
 
@@ -1369,7 +1357,7 @@ async def remote_instance_transfer_engine_info(rank: int = None):
         if resp.status_code == 200:
             return resp.json()
     except (requests.exceptions.RequestException, ValueError) as e:
-        logger.warning(f"Failed to get transfer engine info for rank {rank}: {e}")
+        logger.warning('Failed to get transfer engine info for rank <redacted>: <redacted>')
 
     return ORJSONResponse(
         {"error": {"message": f"Failed to get transfer engine info for rank {rank}"}},
@@ -2316,7 +2304,7 @@ def _execute_server_warmup(server_args: ServerArgs):
             pass
 
     if not success:
-        logger.error(f"Initialization failed. warmup error: {last_traceback}")
+        logger.error('Initialization failed. warmup error: <redacted>')
         kill_process_tree(os.getpid())
         return success
 
@@ -2423,7 +2411,7 @@ def _execute_server_warmup(server_args: ServerArgs):
                 _global_state.tokenizer_manager.server_status = ServerStatus.Up
 
         else:
-            logger.info(f"Start of pd disaggregation warmup ...")
+            logger.info('Start of pd disaggregation warmup ...')
             status_codes = asyncio.run(
                 _send_disaggregation_warmup_requests(
                     url=url,
@@ -2434,17 +2422,10 @@ def _execute_server_warmup(server_args: ServerArgs):
             )
             failed_status_codes = [code for code in status_codes if code != 200]
             if not failed_status_codes:
-                logger.info(
-                    "Disaggregation warmup requests completed for all %s DP ranks",
-                    get_parallel().dp_size,
-                )
+                logger.info('Disaggregation warmup requests completed for all <redacted> DP ranks')
                 logger.info("End of disaggregation warmup")
             else:
-                logger.info(
-                    "Disaggregation warmup failed (mode=%s), status codes: %s",
-                    get_disagg().disaggregation_mode,
-                    failed_status_codes,
-                )
+                logger.info('Disaggregation warmup failed (mode=<redacted>), status codes: <redacted>')
             # In rust-server mode there is no TokenizerManager (readiness is
             # the Rust server's own /health), so skip the status update.
             if not envs.SGLANG_RUST_SERVER.get():
@@ -2456,7 +2437,7 @@ def _execute_server_warmup(server_args: ServerArgs):
 
     except Exception:
         last_traceback = get_exception_traceback()
-        logger.error(f"Initialization failed. warmup error: {last_traceback}")
+        logger.error('Initialization failed. warmup error: <redacted>')
         kill_process_tree(os.getpid())
         return False
 
@@ -2479,7 +2460,7 @@ def _freeze_gc_after_server_warmup(server_args: ServerArgs):
         )
         res.raise_for_status()
     except requests.exceptions.RequestException:
-        logger.warning("post-warmup freeze_gc failed", exc_info=True)
+        logger.warning('post-warmup freeze_gc failed', exc_info=False)
 
 
 def _wait_and_warmup(
@@ -2493,10 +2474,7 @@ def _wait_and_warmup(
     # Joiner schedulers are served through the primary after adoption.
     skip_elastic_joiner_warmup = get_exec().moe.is_ep_scale_joiner
     if skip_elastic_joiner_warmup:
-        logger.debug(
-            "[Elastic EP] Skipping server warmup for elastic joiner (ep_join_mode=%s)",
-            get_exec().moe.ep_join_mode,
-        )
+        logger.debug('[Elastic EP] Skipping server warmup for elastic joiner (ep_join_mode=<redacted>)')
 
     if not get_serving().skip_server_warmup and not skip_elastic_joiner_warmup:
         if not execute_warmup_func(server_args):
@@ -2526,18 +2504,12 @@ def _wait_weights_ready():
 
     for _ in range(timeout):
         if _global_state.tokenizer_manager.initial_weights_loaded:
-            logger.info(
-                f"Weights are ready after {time.time() - start_time:.2f} seconds"
-            )
+            logger.info('Weights are ready after <redacted> seconds')
             return
         time.sleep(1)
 
     # Timeout reached without weights being ready
-    logger.error(
-        f"Weights are not ready after waiting {timeout} seconds. "
-        f"Consider increasing SGLANG_WAIT_WEIGHTS_READY_TIMEOUT environment variable. "
-        f"Current status: initial_weights_loaded={_global_state.tokenizer_manager.initial_weights_loaded}"
-    )
+    logger.error('Weights are not ready after waiting <redacted> seconds. Consider increasing SGLANG_WAIT_WEIGHTS_READY_TIMEOUT environment variable. Current status: initial_weights_loaded=<redacted>')
 
 
 def _run_granian_server(
@@ -2707,18 +2679,12 @@ def _setup_and_run_http_server(
         set_uvicorn_logging_configs(server_args)
 
         if get_serving().ssl_certfile:
-            logger.info(
-                f"SSL enabled: certfile={get_serving().ssl_certfile}, "
-                f"keyfile={get_serving().ssl_keyfile}"
-            )
+            logger.info('SSL enabled: certfile=<redacted>, keyfile=<redacted>')
 
         # Listen for HTTP requests
         if get_serving().tokenizer_worker_num == 1:
             if get_serving().enable_http2:
-                logger.info(
-                    f"Starting embedded Granian HTTP/2 server on "
-                    f"{get_serving().host}:{get_serving().port}"
-                )
+                logger.info('Starting embedded Granian HTTP/2 server on <redacted>:<redacted>')
                 _run_granian_server(
                     host=get_serving().host,
                     port=get_serving().port,
@@ -2820,10 +2786,7 @@ def _setup_and_run_http_server(
                 )
 
             if get_serving().enable_http2:
-                logger.info(
-                    f"Starting embedded Granian HTTP/2 server on "
-                    f"{get_serving().host}:{get_serving().port}"
-                )
+                logger.info('Starting embedded Granian HTTP/2 server on <redacted>:<redacted>')
                 _run_granian_server(
                     host=get_serving().host,
                     port=get_serving().port,
@@ -2892,7 +2855,7 @@ def _start_native_grpc_server_for_runtime(
         worker_threads=get_serving().grpc_worker_threads,
         response_timeout_secs=get_serving().grpc_response_timeout_secs,
     )
-    logger.info(f"Native gRPC server started on {get_serving().host}:{grpc_port}")
+    logger.info('Native gRPC server started on <redacted>:<redacted>')
     return grpc_handle
 
 
@@ -2902,7 +2865,7 @@ def _shutdown_native_grpc_server(grpc_handle) -> None:
     try:
         grpc_handle.shutdown()
     except Exception as e:
-        logger.warning(f"Failed to shut down native gRPC server: {e}")
+        logger.warning('Failed to shut down native gRPC server: <redacted>')
 
 
 def launch_server(

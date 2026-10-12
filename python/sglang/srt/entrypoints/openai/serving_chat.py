@@ -349,11 +349,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 )
                 self._reasoning_detector = rp.detector
             except ValueError as e:
-                logger.warning(
-                    "Failed to initialize reasoning detector for parser '%s': %s",
-                    self.reasoning_parser,
-                    e,
-                )
+                logger.warning("Failed to initialize reasoning detector for parser '<redacted>': <redacted>")
 
         # Get default sampling parameters from model's generation config
         self.default_sampling_params = (
@@ -363,9 +359,7 @@ class OpenAIServingChat(OpenAIServingBase):
             self.default_sampling_params
             and not OpenAIServingChat._default_sampling_params_logged
         ):
-            logger.info(
-                f"Using default chat sampling params from model generation config: {self.default_sampling_params}",
-            )
+            logger.info('Using default chat sampling params from model generation config: <redacted>')
             OpenAIServingChat._default_sampling_params_logged = True
 
         # Check if the model is a GPT-OSS model
@@ -953,11 +947,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 "high",
                 "max",
             ):
-                logger.warning(
-                    "Kimi K3 does not support reasoning_effort=%r; using the "
-                    "encoder default.",
-                    request.reasoning_effort,
-                )
+                logger.warning('Kimi K3 does not support reasoning_effort=<redacted>; using the encoder default.')
 
             effective_tools = self._effective_tools(request)
             effective_tool_choice = self._effective_tool_choice(request)
@@ -1056,13 +1046,7 @@ class OpenAIServingChat(OpenAIServingBase):
         if effort is not None:
             return effort
         if value is not None and value != "none":
-            logger.warning(
-                "DeepSeek-V4.1 does not support reasoning_effort=%r; using the "
-                "default %r (low/high/xhigh/max, a float in [0, 0.99], or an "
-                "integer budget in [1, 100] via chat_template_kwargs are accepted).",
-                value,
-                self._dsv41_default_reasoning_effort,
-            )
+            logger.warning('DeepSeek-V4.1 does not support reasoning_effort=<redacted>; using the default <redacted> (low/high/xhigh/max, a float in [0, 0.99], or an integer budget in [1, 100] via chat_template_kwargs are accepted).')
         return self._dsv41_default_reasoning_effort
 
     @staticmethod
@@ -2014,12 +1998,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 if request.reasoning_effort == "low":
                     extra_template_kwargs.setdefault(rc.effort_kwarg, True)
                 elif request.reasoning_effort in ("medium", "high", "max"):
-                    logger.warning(
-                        "Model '%s' supports only 'low' reasoning effort; "
-                        "requested '%s' treated as default thinking",
-                        self.tokenizer_manager.served_model_name,
-                        request.reasoning_effort,
-                    )
+                    logger.warning("Model '<redacted>' supports only 'low' reasoning effort; requested '<redacted>' treated as default thinking")
 
             # Split apply_chat_template(tokenize=True) into render + encode so we
             # can skip add_special_tokens=False on tokenizers that don't auto-add
@@ -2703,7 +2682,7 @@ class OpenAIServingChat(OpenAIServingBase):
                     )
                     reasoning_text, text = parser.parse_non_stream(text)
                 except Exception as e:
-                    logger.error(f"Reasoning parsing error: {e}")
+                    logger.error('Reasoning parsing error: <redacted>')
                     return self.create_error_response(
                         "Failed to parse reasoning content",
                         err_type="InternalServerError",
@@ -2901,9 +2880,7 @@ class OpenAIServingChat(OpenAIServingBase):
             f"functions.{call_item.name}:"
             f"{history_tool_calls_cnt + call_item.tool_index}"
         )
-        logger.debug(
-            f"Process tool call idx, parser: {self.tool_call_parser}, tool_call_id: {tool_call_id}, history_cnt: {history_tool_calls_cnt}"
-        )
+        logger.debug('Process tool call idx, parser: <redacted>, tool_call_id: <redacted>, history_cnt: <redacted>')
         return tool_call_id
 
     def _process_tool_calls(
@@ -2934,16 +2911,8 @@ class OpenAIServingChat(OpenAIServingBase):
                 try:
                     text, call_info_list = parser.parse_non_stream(text)
                     if not call_info_list:
-                        logger.warning(
-                            "Tool call marker present but no complete call parsed "
-                            "from %s output; dropping the incomplete call",
-                            self.tool_call_parser,
-                        )
-                        logger.debug(
-                            "Unparsed tool call output (%d chars): %r",
-                            len(text),
-                            text[:2000],
-                        )
+                        logger.warning('Tool call marker present but no complete call parsed from <redacted> output; dropping the incomplete call')
+                        logger.debug('Unparsed tool call output (<redacted> chars): <redacted>')
                         return ToolCallProcessingResult(None, text, finish_reason)
 
                     tool_calls = []
@@ -2968,16 +2937,12 @@ class OpenAIServingChat(OpenAIServingBase):
                         finish_reason["matched"] = None
                     return ToolCallProcessingResult(tool_calls, text, finish_reason)
                 except Exception as e:
-                    logger.error(f"Tool call parsing error: {e}")
+                    logger.error('Tool call parsing error: <redacted>')
                     return ToolCallProcessingResult(None, text, finish_reason)
 
             if is_required and detector_owns_format:
-                logger.warning(
-                    "Required tool call missing from %s output (%d chars)",
-                    self.tool_call_parser,
-                    len(text),
-                )
-                logger.debug("Unparsed required tool call output: %r", text[:2000])
+                logger.warning('Required tool call missing from <redacted> output (<redacted> chars)')
+                logger.debug('Unparsed required tool call output: <redacted>')
                 return ToolCallProcessingResult(None, text, finish_reason)
 
         # json_schema constraint → JSON array output for required/named
@@ -3026,8 +2991,8 @@ class OpenAIServingChat(OpenAIServingBase):
                     )
                 return ToolCallProcessingResult(tool_calls, "", finish_reason)
             except Exception as e:
-                logger.error(f"Tool call parsing error: {e}")
-                logger.debug("Unparsed required tool call output: %r", text[:2000])
+                logger.error('Tool call parsing error: <redacted>')
+                logger.debug('Unparsed required tool call output: <redacted>')
                 finish_reason["type"] = original_finish_type
                 return ToolCallProcessingResult(None, text, finish_reason)
 
@@ -3319,10 +3284,7 @@ class OpenAIServingChat(OpenAIServingBase):
                     request.chat_template_kwargs is not None
                     and request.chat_template_kwargs.get(toggle) is True
                 )
-            logger.warning(
-                "Unknown reasoning_default mode '%s', defaulting to reasoning disabled",
-                mode,
-            )
+            logger.warning("Unknown reasoning_default mode '<redacted>', defaulting to reasoning disabled")
             return False
 
         if config.special_case == "always":
@@ -3473,12 +3435,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 function_name = call_item.name
             else:
                 if not has_tool_calls.get(index, False):
-                    logger.warning(
-                        "Dropping orphan tool-call delta before a valid function "
-                        "name (choice=%d, tool_index=%s)",
-                        index,
-                        call_item.tool_index,
-                    )
+                    logger.warning('Dropping orphan tool-call delta before a valid function name (choice=<redacted>, tool_index=<redacted>)')
                     continue
                 # Subsequent chunks: null ID and name for argument deltas
                 tool_call_id = None

@@ -128,9 +128,7 @@ class WatchdogRaw:
             while True:
                 self._watchdog_once()
         except Exception as e:
-            logger.error(
-                f"{self.debug_name} watchdog thread crashed: {e}", exc_info=True
-            )
+            logger.error('<redacted> watchdog thread crashed: <redacted>', exc_info=False)
 
     def _watchdog_once(self):
         watchdog_last_counter = 0
@@ -156,28 +154,19 @@ class WatchdogRaw:
             try:
                 info_msg = self.dump_info()
             except Exception as e:
-                logger.error(
-                    f"{self.debug_name} failed to dump watchdog debug info: {e}",
-                    exc_info=True,
-                )
+                logger.error('<redacted> failed to dump watchdog debug info: <redacted>', exc_info=False)
             else:
                 if info_msg:
-                    logger.error(f"{self.debug_name} debug info:\n{info_msg}")
+                    logger.error('<redacted> debug info:\n<redacted>')
 
         try:
             pyspy_dump_schedulers()
         except Exception as e:
-            logger.error(
-                f"{self.debug_name} failed to dump scheduler stacks: {e}",
-                exc_info=True,
-            )
+            logger.error('<redacted> failed to dump scheduler stacks: <redacted>', exc_info=False)
 
     def _handle_timeout(self):
         """Handle a detected timeout without letting diagnostics block recovery."""
-        logger.error(
-            f"{self.debug_name} watchdog timeout "
-            f"({self.watchdog_timeout=}, {self.soft=})"
-        )
+        logger.error('<redacted> watchdog timeout (self.watchdog_timeout=<redacted>, self.soft=<redacted>)')
         sys.stderr.flush()
         sys.stdout.flush()
 
@@ -190,10 +179,7 @@ class WatchdogRaw:
         except psutil.NoSuchProcess:
             return
         except psutil.Error as e:
-            logger.error(
-                f"{self.debug_name} failed to send SIGQUIT to parent: {e}",
-                exc_info=True,
-            )
+            logger.error('<redacted> failed to send SIGQUIT to parent: <redacted>', exc_info=False)
 
         try:
             self.parent_process.wait(timeout=HARD_WATCHDOG_GRACE_SECONDS)
@@ -201,26 +187,16 @@ class WatchdogRaw:
         except psutil.NoSuchProcess:
             return
         except psutil.TimeoutExpired:
-            logger.error(
-                f"{self.debug_name} parent did not exit within "
-                f"{HARD_WATCHDOG_GRACE_SECONDS}s after SIGQUIT; sending SIGKILL"
-            )
+            logger.error('<redacted> parent did not exit within <redacted>s after SIGQUIT; sending SIGKILL')
         except psutil.Error as e:
-            logger.error(
-                f"{self.debug_name} failed while waiting for parent exit: {e}; "
-                "sending SIGKILL",
-                exc_info=True,
-            )
+            logger.error('<redacted> failed while waiting for parent exit: <redacted>; sending SIGKILL', exc_info=False)
 
         try:
             self.parent_process.kill()
         except psutil.NoSuchProcess:
             pass
         except psutil.Error as e:
-            logger.error(
-                f"{self.debug_name} failed to send SIGKILL to parent: {e}",
-                exc_info=True,
-            )
+            logger.error('<redacted> failed to send SIGKILL to parent: <redacted>', exc_info=False)
 
 
 class SubprocessWatchdog:
@@ -266,18 +242,14 @@ class SubprocessWatchdog:
                 if self._check_processes():
                     return
         except Exception as e:
-            logger.error(f"SubprocessWatchdog thread crashed: {e}", exc_info=True)
+            logger.error('SubprocessWatchdog thread crashed: <redacted>', exc_info=False)
 
     def _check_processes(self) -> bool:
         for proc, name in zip(self._processes, self._names):
             if proc.is_alive() or proc.exitcode == 0:
                 continue
 
-            logger.error(
-                f"Subprocess {name} (pid={proc.pid}) crashed "
-                f"with exit code {proc.exitcode}. "
-                f"Triggering SIGQUIT for cleanup..."
-            )
+            logger.error('Subprocess <redacted> (pid=<redacted>) crashed with exit code <redacted>. Triggering SIGQUIT for cleanup...')
             os.kill(os.getpid(), signal.SIGQUIT)
             return True
         return False

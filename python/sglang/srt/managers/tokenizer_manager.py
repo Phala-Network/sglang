@@ -940,11 +940,9 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     f"routed_dp_rank={obj.routed_dp_rank} out of range [0, {num_dp_ranks})"
                 )
 
-        self._init_req_state(obj, request)
-        request_states = {
-            rid: self.rid_to_state[rid]
-            for rid in ([obj.rid] if obj.is_single else obj.rid)
-        }
+        # Track only states this handler actually registered. Expanded sampling
+        # RIDs may name unrelated requests; a RID alone is never ownership.
+        request_states = self._init_req_state(obj, request)
         try:
             if get_disagg().language_only:
                 self._handle_epd_disaggregation_encode_request(obj)
@@ -2195,8 +2193,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 tokenized_obj.sampling_params = copy.copy(tokenized_obj.sampling_params)
                 tokenized_obj.sampling_params.max_new_tokens = 0
                 tokenized_obj.stream = False
-                self._init_req_state(tmp_obj)
-                request_states[tmp_obj.rid] = self.rid_to_state[tmp_obj.rid]
+                request_states.update(self._init_req_state(tmp_obj))
                 await self._send_one_request(tokenized_obj)
                 async with aclosing(
                     self._wait_one_response(tmp_obj, request)
@@ -2206,9 +2203,14 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             # Retain initial states until all warmups succeed so errors can
             # release their LoRA references. Sampling requests take ownership below.
             initial_req_states = {}
-            for initial_rid in obj.rid if isinstance(obj.rid, list) else [obj.rid]:
-                initial_state = request_states[initial_rid]
-                if self.rid_to_state.get(initial_rid) is initial_state:
+            # Parallel sampling may already expand obj.rid; only the parents
+            # registered by this handler are initial states.
+            for initial_rid in (parent.rid for parent in objs):
+                initial_state = request_states.get(initial_rid)
+                if (
+                    initial_state is not None
+                    and self.rid_to_state.get(initial_rid) is initial_state
+                ):
                     del self.rid_to_state[initial_rid]
                     initial_state.lora_released = True
                     initial_req_states[initial_rid] = initial_state
@@ -2225,9 +2227,8 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                             copy.copy(item) for item in tokenized_obj.mm_inputs.mm_items
                         ]
                     tokenized_obj.rid = tmp_obj.regenerate_rid()
-                    self._init_req_state(tmp_obj)
+                    request_states.update(self._init_req_state(tmp_obj))
                     state = self.rid_to_state[tmp_obj.rid]
-                    request_states[tmp_obj.rid] = state
                     tokenized_obj.time_stats = state.time_stats
                     if tmp_obj.return_prompt_token_ids:
                         state.prompt_token_ids = list(tokenized_objs[i].input_ids)
@@ -2505,8 +2506,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     or not isinstance(rids, list)
                     or len(rids) < batch_size
                     or any(
-                        not isinstance(rid, str) or not rid
-                        for rid in rids[:batch_size]
+                        not isinstance(rid, str) or not rid for rid in rids[:batch_size]
                     )
                 ):
                     return
@@ -3882,7 +3882,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         self,
         obj: Union[GenerateReqInput, EmbeddingReqInput],
         request: Optional[fastapi.Request] = None,
-    ):
+    ) -> Dict[str, ReqState]:
         created_time = obj.received_time
 
         external_trace_header = None
@@ -3948,6 +3948,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             new_states[rid] = state
 
         self.rid_to_state.update(new_states)
+        return new_states
 
     def request_state_summary(self) -> Dict[str, int]:
         """Read existing local ownership without exposing RIDs or request data.

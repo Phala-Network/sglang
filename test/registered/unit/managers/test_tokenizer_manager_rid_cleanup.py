@@ -889,15 +889,19 @@ class TestRequestStateSummary(CustomTestCase):
         tm.startup_time = 0.0
         tm.rid_to_state["private-request-id"] = _make_req_state("private-request-id")
         state = SimpleNamespace(tokenizer_manager=tm, scheduler_info={})
-        with patch.object(http_server, "_global_state", state), patch.object(
-            http_server, "describe_kv_events_publisher", return_value=None
+        with (
+            patch.object(http_server, "_global_state", state),
+            patch.object(
+                http_server, "describe_kv_events_publisher", return_value=None
+            ),
         ):
             result = asyncio.run(http_server.server_info())
             self.assertEqual(result["tokenizer_request_states"]["total"], 1)
             self.assertNotIn("private-request-id", str(result))
             state.tokenizer_manager = SimpleNamespace(
                 get_internal_state=AsyncMock(return_value=[]),
-                server_args=tm.server_args, startup_time=0.0,
+                server_args=tm.server_args,
+                startup_time=0.0,
             )
             result = asyncio.run(http_server.server_info())
             self.assertIsNone(result["tokenizer_request_states"])
@@ -912,20 +916,41 @@ class TestRequestStateSummary(CustomTestCase):
         ready = asyncio.Event()
         tm.encoder_dispatch_ready[waiting.obj.rid] = ready
         before = tm.request_state_summary()
-        self.assertEqual(before, {
-            "total": 2, "undelivered": 1, "dispatched": 1,
-            "abort_pending": 0, "finished": 0, "encoder_dispatch_pending": 1,
-        })
+        self.assertEqual(
+            before,
+            {
+                "total": 2,
+                "undelivered": 1,
+                "dispatched": 1,
+                "abort_pending": 0,
+                "finished": 0,
+                "encoder_dispatch_pending": 1,
+            },
+        )
         self.assertIs(tm.rid_to_state[running.obj.rid], running)
         self.assertFalse(ready.is_set())
-        tm._release_req_states_on_failure([waiting.obj.rid, running.obj.rid])
+        tm._release_req_states_on_failure(
+            {
+                rid: tm.rid_to_state.get(rid)
+                for rid in [waiting.obj.rid, running.obj.rid]
+            }
+        )
         self.assertTrue(ready.is_set())
-        self.assertEqual(tm.request_state_summary(), {
-            "total": 1, "undelivered": 0, "dispatched": 1,
-            "abort_pending": 1, "finished": 0, "encoder_dispatch_pending": 0,
-        })
+        self.assertEqual(
+            tm.request_state_summary(),
+            {
+                "total": 1,
+                "undelivered": 0,
+                "dispatched": 1,
+                "abort_pending": 1,
+                "finished": 0,
+                "encoder_dispatch_pending": 0,
+            },
+        )
         tm._handle_abort_req(_make_abort_req(running.obj.rid))
-        self.assertTrue(all(value == 0 for value in tm.request_state_summary().values()))
+        self.assertTrue(
+            all(value == 0 for value in tm.request_state_summary().values())
+        )
         self.assertEqual(before["total"], 2, "snapshot must not be a live mutable view")
 
 
@@ -1204,9 +1229,7 @@ class TestParallelSampleParentStateLifecycle(CustomTestCase):
         self.assertIs(tm.rid_to_state[obj.rid[1]].obj, obj[1])
 
     def test_explicit_parent_rids_keep_existing_batch_behavior(self):
-        obj = self._parallel_obj(
-            ["first", "second"], rid=["parent-a", "parent-b"], n=2
-        )
+        obj = self._parallel_obj(["first", "second"], rid=["parent-a", "parent-b"], n=2)
         self.assertEqual(obj.batch_size, 2)
         self.assertEqual(obj.rid, ["parent-a", "parent-b"])
 
@@ -1361,6 +1384,82 @@ class TestGenerateRequestCleanupOnDispatchFailure(CustomTestCase):
             asyncio.run(drive())
 
         self.assertFalse(tm.rid_to_state)
+
+
+class TestHandlerOwnedStateIsolation(CustomTestCase):
+    def test_real_n2_overlength_failure_does_not_abort_unowned_expanded_rid(self):
+        tm = _make_tm_for_generate(self)
+        tm.context_len = 4
+        tm.num_reserved_tokens = 0
+        tm.mm_processor = None
+        tm.model_config = Mock()
+        tm.model_config.hf_config.architectures = []
+        tm.abort_request = Mock()
+        unrelated = _make_req_state("job_1")
+        unrelated.dispatched = True
+        tm.rid_to_state["job_1"] = unrelated
+        unrelated_ready = asyncio.Event()
+        tm.encoder_dispatch_ready["job_1"] = unrelated_ready
+        obj = GenerateReqInput(
+            input_ids=[1, 2, 3, 4, 5], rid="job", sampling_params={"n": 2}
+        )
+
+        async def drive():
+            await tm.generate_request(obj).__anext__()
+
+        # Real normalization, parent registration, batch tokenization and
+        # production token-budget validation all run; no method-body extraction.
+        with self.assertRaisesRegex(ValueError, "context length"):
+            asyncio.run(drive())
+        self.assertEqual(obj.rid, ["job_0", "job_1"])
+        self.assertEqual(tm.rid_to_state, {"job_1": unrelated})
+        self.assertIs(tm.encoder_dispatch_ready["job_1"], unrelated_ready)
+        self.assertFalse(unrelated_ready.is_set())
+        tm.abort_request.assert_not_called()
+
+    def test_old_handler_close_does_not_touch_reused_rid_or_encoder_event(self):
+        tm = _make_tm_for_generate(self)
+        obj = GenerateReqInput(input_ids=[1], rid="reused", sampling_params={})
+        tm._tokenize_one_request = AsyncMock(return_value=Mock())
+        tm._send_one_request = AsyncMock()
+        tm.abort_request = Mock()
+
+        async def responses(*_):
+            yield {"text": "first"}
+            await asyncio.Event().wait()
+
+        tm._wait_one_response = responses
+
+        async def drive():
+            generator = tm.generate_request(obj)
+            await generator.__anext__()
+            original = tm.rid_to_state["reused"]
+            replacement = _make_req_state("reused")
+            replacement.request_owner = obj  # even reuse of the same API object
+            replacement.dispatched = True
+            tm.rid_to_state["reused"] = replacement
+            ready = asyncio.Event()
+            tm.encoder_dispatch_ready["reused"] = ready
+            await generator.aclose()
+            self.assertIsNot(original, replacement)
+            self.assertIs(tm.rid_to_state["reused"], replacement)
+            self.assertIs(tm.encoder_dispatch_ready["reused"], ready)
+            self.assertFalse(ready.is_set())
+
+        asyncio.run(drive())
+        tm.abort_request.assert_not_called()
+
+    def test_parent_registration_is_atomic_on_later_duplicate(self):
+        tm = _make_tokenizer_manager(self)
+        unrelated = _make_req_state("taken")
+        tm.rid_to_state["taken"] = unrelated
+        obj = GenerateReqInput(
+            input_ids=[[1], [2]], rid=["new", "taken"], sampling_params={}
+        )
+        obj.normalize_batch_and_arguments()
+        with self.assertRaisesRegex(ValueError, "Duplicate request ID"):
+            tm._init_req_state(obj)
+        self.assertEqual(tm.rid_to_state, {"taken": unrelated})
 
 
 class TestWaitOneResponseAfterStateFreed(CustomTestCase):

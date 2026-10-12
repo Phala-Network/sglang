@@ -46,8 +46,7 @@ class TestParallelSamplingOwnerLifecycle(CustomTestCase):
                     ):
                         if rid_kind == "list":
                             supplied_rid = [
-                                f"client-rid-{index}"
-                                for index in range(prompt_count)
+                                f"client-rid-{index}" for index in range(prompt_count)
                             ]
                         obj = GenerateReqInput(
                             text=text,
@@ -122,7 +121,7 @@ class TestParallelSamplingOwnerLifecycle(CustomTestCase):
                             return [
                                 output
                                 async for output in manager._handle_batch_request(
-                                    obj, request_rids=set(obj.rid)
+                                    obj, request_states=dict(manager.rid_to_state)
                                 )
                             ]
 

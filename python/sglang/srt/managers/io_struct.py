@@ -83,6 +83,25 @@ else:
 logger = logging.getLogger(__name__)
 
 
+def matches_abort_rid(req_rid: str, abort_rid: str) -> bool:
+    """Match an explicit RID or its normalized decimal-index children.
+
+    Adapted from upstream PR43476 (2494e57d545007e3733a3d2e66556a558700b060).
+    The historical parent-child naming convention is retained; this does not
+    establish ownership for arbitrary client IDs that collide with that scheme.
+    Empty targets and nonnumeric suffixes never expand an abort's scope.
+    """
+    if not abort_rid:
+        return False
+    if req_rid == abort_rid:
+        return True
+    prefix = abort_rid + "_"
+    if not req_rid.startswith(prefix):
+        return False
+    suffix = req_rid[len(prefix):]
+    return bool(suffix) and suffix.isascii() and suffix.isdecimal()
+
+
 class BaseReq(msgspec.Struct, tag=True, kw_only=True, array_like=True):
     """Base for single-request IPC payloads."""
 

@@ -129,6 +129,7 @@ from sglang.srt.lora.lora_overlap_loader import LoRAOverlapLoader
 from sglang.srt.managers.disagg_service import maybe_create_ascend_config_store
 from sglang.srt.managers.hisparse_coordinator import HiSparseCoordinator
 from sglang.srt.managers.io_struct import (
+    matches_abort_rid,
     AbortReq,
     ActiveRanksOutput,
     AddExternalCorpusReqInput,
@@ -5495,7 +5496,7 @@ class Scheduler(
 
     def abort_request(self, recv_req: AbortReq):
         if (chunked_req := self.chunked_req) is not None:
-            if recv_req.abort_all or chunked_req.rid.startswith(recv_req.rid):
+            if recv_req.abort_all or matches_abort_rid(chunked_req.rid, recv_req.rid):
                 self._pending_chunked_abort_req = chunked_req
 
         # todo hisparse, release resources for abort requests in hisparse coordinator
@@ -5506,7 +5507,7 @@ class Scheduler(
         # Delete requests in the waiting queue
         to_del = []
         for i, req in enumerate(self.waiting_queue):
-            if recv_req.abort_all or req.rid.startswith(recv_req.rid):
+            if recv_req.abort_all or matches_abort_rid(req.rid, recv_req.rid):
                 to_del.append(i)
 
         # Sort in reverse order to avoid index issues when deleting
@@ -5563,7 +5564,7 @@ class Scheduler(
         if self.disaggregation_mode == DisaggregationMode.PREFILL:
             # Abort requests that have not yet been bootstrapped
             for req in self.disagg_prefill_bootstrap_queue.queue:
-                if recv_req.abort_all or req.rid.startswith(recv_req.rid):
+                if recv_req.abort_all or matches_abort_rid(req.rid, recv_req.rid):
                     logger.debug('Abort bootstrap queue request. req.rid=<redacted>')
                     self._release_aborted_request(req)
 
@@ -5574,7 +5575,7 @@ class Scheduler(
 
             # Abort in-flight requests
             for req in self.disagg_prefill_inflight_queue:
-                if recv_req.abort_all or req.rid.startswith(recv_req.rid):
+                if recv_req.abort_all or matches_abort_rid(req.rid, recv_req.rid):
                     logger.debug('Abort inflight queue request. req.rid=<redacted>')
                     if hasattr(req.disagg_kv_sender, "abort"):
                         req.disagg_kv_sender.abort()
@@ -5582,7 +5583,7 @@ class Scheduler(
         elif self.disaggregation_mode == DisaggregationMode.DECODE:
             # Abort requests that have not yet finished preallocation
             for decode_req in self.disagg_decode_prealloc_queue.queue:
-                if recv_req.abort_all or decode_req.req.rid.startswith(recv_req.rid):
+                if recv_req.abort_all or matches_abort_rid(decode_req.req.rid, recv_req.rid):
                     logger.debug('Abort prealloc queue request. decode_req.req.rid=<redacted>')
                     decode_req.kv_receiver.abort()
                     if get_parallel().pp_size > 1:
@@ -5590,7 +5591,7 @@ class Scheduler(
 
             # Abort requests waiting for kvcache to release tree cache
             for decode_req in self.disagg_decode_transfer_queue.queue:
-                if recv_req.abort_all or decode_req.req.rid.startswith(recv_req.rid):
+                if recv_req.abort_all or matches_abort_rid(decode_req.req.rid, recv_req.rid):
                     logger.debug('Abort transfer queue request. decode_req.req.rid=<redacted>')
                     if decode_req.host_staged:
                         # Keep the host destination alive until prefill stops writing.
@@ -5605,7 +5606,7 @@ class Scheduler(
             if self.disagg_decode_prealloc_queue.retracted_queue:
                 remaining_retracted = []
                 for decode_req in self.disagg_decode_prealloc_queue.retracted_queue:
-                    if recv_req.abort_all or decode_req.rid.startswith(recv_req.rid):
+                    if recv_req.abort_all or matches_abort_rid(decode_req.rid, recv_req.rid):
                         discard_kv_cache_backup(
                             decode_req,
                             self.tree_cache,
@@ -5621,7 +5622,7 @@ class Scheduler(
         # Delete requests in the running batch
         for req in self.collect_inflight_reqs():
             if not req.finished() and (
-                recv_req.abort_all or req.rid.startswith(recv_req.rid)
+                recv_req.abort_all or matches_abort_rid(req.rid, recv_req.rid)
             ):
                 # Abort method 3: set `to_finish`
                 # The request will still run one decode forward pass.

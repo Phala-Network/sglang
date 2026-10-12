@@ -31,6 +31,7 @@ from sglang.srt.distributed.parallel_state import (
 )
 from sglang.srt.environ import envs
 from sglang.srt.managers.io_struct import (
+    matches_abort_rid,
     EncoderDispatchErrorReq,
     GenerateReqInput,
     TokenizedGenerateReqInput,
@@ -1991,7 +1992,7 @@ class MMReceiverBase(ABC):
         existing FAIL channel. AbortReq is broadcast, so every TP rank does
         this and the status all-reduce stays consistent."""
         for waiting_req in self.waiting_list:
-            if not (recv_req.abort_all or waiting_req.rid.startswith(recv_req.rid)):
+            if not (recv_req.abort_all or matches_abort_rid(waiting_req.rid, recv_req.rid)):
                 continue
             if waiting_req.status in (
                 WaitingMMRequestStatus.PENDING,

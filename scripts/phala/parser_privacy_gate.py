@@ -37,11 +37,8 @@ def main():
     args = parser.parse_args()
     if args.report.exists():
         parser.error("Report exists")
-    from sglang_simulator.simulation.sglang.hook_bootstrap import (
-        install_simulator_hooks,
-    )
-
-    install_simulator_hooks()
+    # Exercise the installed/source engine dependencies directly. Simulator
+    # hooks are not an input to the official v0.5.21 runtime candidate.
     from sglang.srt.entrypoints.openai.protocol import Tool
     from sglang.srt.entrypoints.openai.serving_base import OpenAIServingBase
     from sglang.srt.function_call import mimo_detector as mimo

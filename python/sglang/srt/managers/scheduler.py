@@ -3844,12 +3844,7 @@ class Scheduler(
         if available_slots >= needed_slots:
             return True
 
-        logger.debug(
-            "Mamba admission deferred for rid=%s: needed_slots=%d available_slots=%d",
-            req.rid,
-            needed_slots,
-            available_slots,
-        )
+        logger.debug('Mamba admission deferred for rid=<redacted>: needed_slots=<redacted> available_slots=<redacted>')
         return False
 
     def get_new_batch_prefill(self, running_batch: ScheduleBatch) -> NextBatchPlan:

@@ -3303,10 +3303,14 @@ class OpenAIServingChat(OpenAIServingBase):
                 and self._tool_call_parsing_active(request)
                 and not answer_started
             ):
+                allowed_names = self._allowed_tool_names(request)
+                # Recognize declared historical tools before enforcing the output
+                # subset; filtering parser definitions would silently drop them.
+                output_tools = request.tools if allowed_names is not None else effective_tools
                 history_tool_calls_cnt = self._get_history_tool_calls_cnt(request)
                 tool_calls, text, finish_reason = self._process_tool_calls(
                     text,
-                    effective_tools,
+                    output_tools,
                     finish_reason,
                     self._effective_tool_choice(request),
                     history_tool_calls_cnt,
@@ -3316,7 +3320,6 @@ class OpenAIServingChat(OpenAIServingBase):
                         request._response_parser_grammar_start,
                     ),
                 )
-                allowed_names = self._allowed_tool_names(request)
                 if allowed_names is not None and any(
                     call.function.name not in allowed_names for call in tool_calls or []
                 ):
@@ -3973,7 +3976,11 @@ class OpenAIServingChat(OpenAIServingBase):
         With flush=True (the terminal delta), the parser also drains text it
         held back waiting for a marker that can no longer arrive.
         """
-        effective_tools = self._effective_tools(request)
+        effective_tools = (
+            request.tools
+            if self._allowed_tool_names(request) is not None
+            else self._effective_tools(request)
+        )
         if index not in parser_dict:
             effective_tool_choice = self._effective_tool_choice(request)
             is_required = effective_tool_choice == "required" or isinstance(

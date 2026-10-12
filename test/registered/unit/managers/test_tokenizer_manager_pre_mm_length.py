@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from sglang.srt.managers.io_struct import GenerateReqInput
 from sglang.srt.managers.tokenizer_manager import TokenizerManager
+from sglang.srt.runtime_context import get_context
 from sglang.test.test_utils import CustomTestCase
 
 
@@ -69,6 +70,13 @@ def _run_tokenize(manager, request):
 
 
 class TestPreMultimodalLengthValidation(CustomTestCase):
+    def setUp(self):
+        override = get_context().override_server_args(
+            enable_encoder_swa_bounded_replay=False
+        )
+        override.install()
+        self.addCleanup(override.restore)
+
     def test_text_budget_at_context_rejects_before_media_decode(self):
         manager = _make_manager()
         request = _make_request(input_tokens=7)

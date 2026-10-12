@@ -17,6 +17,16 @@ import torch
 SOURCE_ROOT = Path(__file__).resolve().parents[4] / "python/sglang/srt"
 BASELINE_ROOT = None
 VARIANT_ROOTS = {}
+
+# These production definitions are installed into globals by load_source().
+HybridReqToTokenPool: type
+MambaSlotAllocator: type
+UnifiedRadixCache: type
+MambaComponent: type
+HybridCacheController: type
+PrefillAdder: type
+Scheduler: type
+alloc_req_slots: object
 g = globals()
 logger = logging.getLogger(__name__)
 contextmanager = contextlib.contextmanager

@@ -1,3 +1,4 @@
+import copy
 import json
 import logging
 import re
@@ -23,6 +24,69 @@ from sglang.srt.function_call.utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _preserve_xml_parameter_schema(structural_tag: StructuralTag) -> StructuralTag:
+    """Preserve top-level XML required/empty contracts with stock XGrammar."""
+    value = structural_tag.model_dump()
+
+    def visit(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "json_schema" and node.get("style") == "qwen_xml":
+                schema = node.get("json_schema")
+                if not isinstance(schema, dict):
+                    return
+                properties = schema.get("properties") or {}
+                required = schema.get("required") or []
+                missing = [name for name in required if name not in properties]
+                if len(set(required)) > schema.get("maxProperties", float("inf")):
+                    raise ValueError("Required XML parameters exceed maxProperties")
+                if missing:
+                    if schema.get("patternProperties") or schema.get("propertyNames"):
+                        raise ValueError(
+                            "Undeclared required XML parameters have complex key constraints"
+                        )
+                    additional = schema.get(
+                        "additionalProperties",
+                        schema.get("unevaluatedProperties", True),
+                    )
+                    if additional is False:
+                        raise ValueError(
+                            "Undeclared required XML parameters are forbidden"
+                        )
+                    properties = dict(properties)
+                    for name in missing:
+                        properties[name] = (
+                            copy.deepcopy(additional)
+                            if isinstance(additional, dict)
+                            else {}
+                        )
+                    schema["properties"] = properties
+                empty = schema.get("maxProperties") == 0 or (
+                    not properties
+                    and not required
+                    and not schema.get("patternProperties")
+                    and not any(
+                        key in schema for key in ("$ref", "allOf", "anyOf", "oneOf")
+                    )
+                    and schema.get("additionalProperties", False) is False
+                )
+                if empty:
+                    if schema.get("minProperties", 0) > 0:
+                        raise ValueError(
+                            "Empty XML parameters cannot satisfy minProperties"
+                        )
+                    node.clear()
+                    node.update(type="const_string", value="")
+                return
+            for child in node.values():
+                visit(child)
+        elif isinstance(node, list):
+            for child in node:
+                visit(child)
+
+    visit(value)
+    return StructuralTag.model_validate(value)
 
 
 def _align_required_tool_call_repetition(
@@ -169,7 +233,9 @@ class Qwen3CoderDetector(BaseFormatDetector):
 
         if param_name not in param_config:
             if param_config != {}:
-                logger.warning("Parsed parameter '<redacted>' is not defined in the tool parameters for tool '<redacted>', directly returning the string value.")
+                logger.warning(
+                    "Parsed parameter '<redacted>' is not defined in the tool parameters for tool '<redacted>', directly returning the string value."
+                )
             return param_value
 
         param_type = self._get_param_type(param_config[param_name])
@@ -185,7 +251,9 @@ class Qwen3CoderDetector(BaseFormatDetector):
             try:
                 param_value = int(param_value)
             except Exception:
-                logger.warning("Parsed value '<redacted>' of parameter '<redacted>' is not an integer in tool '<redacted>', degenerating to string.")
+                logger.warning(
+                    "Parsed value '<redacted>' of parameter '<redacted>' is not an integer in tool '<redacted>', degenerating to string."
+                )
             return param_value
         elif param_type.startswith("num") or param_type.startswith("float"):
             try:
@@ -196,12 +264,16 @@ class Qwen3CoderDetector(BaseFormatDetector):
                 if maybe_convert and param_value.is_integer():
                     param_value = int(param_value)
             except Exception:
-                logger.warning("Parsed value '<redacted>' of parameter '<redacted>' is not a float in tool '<redacted>', degenerating to string.")
+                logger.warning(
+                    "Parsed value '<redacted>' of parameter '<redacted>' is not a float in tool '<redacted>', degenerating to string."
+                )
             return param_value
         elif param_type in ["boolean", "bool", "binary"]:
             param_value = param_value.lower()
             if param_value not in ["true", "false"]:
-                logger.warning("Parsed value '<redacted>' of parameter '<redacted>' is not a boolean (`true` of `false`) in tool '<redacted>', degenerating to false.")
+                logger.warning(
+                    "Parsed value '<redacted>' of parameter '<redacted>' is not a boolean (`true` of `false`) in tool '<redacted>', degenerating to false."
+                )
             return param_value == "true"
         else:
             if (
@@ -213,11 +285,15 @@ class Qwen3CoderDetector(BaseFormatDetector):
                     param_value = json.loads(param_value)
                     return param_value
                 except Exception:
-                    logger.warning("Parsed value '<redacted>' of parameter '<redacted>' cannot be parsed with json.loads in tool '<redacted>', will try other methods to parse it.")
+                    logger.warning(
+                        "Parsed value '<redacted>' of parameter '<redacted>' cannot be parsed with json.loads in tool '<redacted>', will try other methods to parse it."
+                    )
             try:
                 param_value = safe_literal_eval(param_value)
             except Exception:
-                logger.warning("Parsed value '<redacted>' of parameter '<redacted>' cannot be converted via Python `ast.literal_eval()` in tool '<redacted>', degenerating to string.")
+                logger.warning(
+                    "Parsed value '<redacted>' of parameter '<redacted>' cannot be converted via Python `ast.literal_eval()` in tool '<redacted>', degenerating to string."
+                )
             return param_value
 
     def detect_and_parse(self, text: str, tools: List[Tool]) -> StreamingParseResult:
@@ -298,7 +374,9 @@ class Qwen3CoderDetector(BaseFormatDetector):
                 ):
                     if self.tool_call_start_token.startswith(self._buffer[-size:]):
                         keep = size
-                normal_text_chunks.append(self._buffer[:-keep] if keep else self._buffer)
+                normal_text_chunks.append(
+                    self._buffer[:-keep] if keep else self._buffer
+                )
                 self._buffer = self._buffer[-keep:] if keep else ""
                 break
             if start:
@@ -348,7 +426,10 @@ class Qwen3CoderDetector(BaseFormatDetector):
             thinking_mode=thinking_mode,
             parallel_tool_calls=parallel_tool_calls,
         )
-        if structural_tag is None or tool_choice != "required":
+        if structural_tag is None:
+            return None
+        structural_tag = _preserve_xml_parameter_schema(structural_tag)
+        if tool_choice != "required":
             return structural_tag
         return _align_required_tool_call_repetition(
             structural_tag, parallel_tool_calls=parallel_tool_calls

@@ -42,6 +42,7 @@ from .common import (
     check_gguf_file,
     get_hf_text_config,
     gguf_sidecar_dir,
+    resolve_local_gguf_directory,
     resolve_runai_obj_uri,
 )
 from .gguf_native import build_gguf_config, has_native_gguf_support
@@ -283,6 +284,7 @@ def get_config(
     model_config_parser: str = "auto",
     **kwargs,
 ):
+    model = resolve_local_gguf_directory(model) or model
     is_gguf = check_gguf_file(model)
     gguf_has_sidecar_config = False
     if is_gguf:
@@ -296,7 +298,14 @@ def get_config(
         if not gguf_has_sidecar_config and has_native_gguf_support(model):
             config = build_gguf_config(model)
             if model_override_args:
-                config.update(model_override_args)
+                # Match the standard config path: preserve nested config objects.
+                # In particular YaRN must reach the VLM text_config, not replace it.
+                for key, value in model_override_args.items():
+                    current = getattr(config, key, None)
+                    if isinstance(value, dict) and isinstance(current, PretrainedConfig):
+                        current.update(value)
+                    else:
+                        setattr(config, key, value)
             return config
         if not gguf_has_sidecar_config:
             kwargs["gguf_file"] = model

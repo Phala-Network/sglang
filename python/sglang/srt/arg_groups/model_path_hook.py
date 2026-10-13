@@ -43,11 +43,16 @@ def handle_model_source_paths(server_args: Any):
 
 
 def resolve_hf_gguf_model_path(server_args: Any):
-    """Turn a Hub reference to a .gguf into a local file path."""
+    """Turn a Hub reference or local GGUF directory into a file path."""
     cfg = resolving_view(server_args)
-    from sglang.srt.utils.hf_transformers_utils import resolve_hf_gguf_reference
+    from sglang.srt.utils.hf_transformers_utils import (
+        resolve_hf_gguf_reference,
+        resolve_local_gguf_directory,
+    )
 
-    resolved = resolve_hf_gguf_reference(cfg.model_path, revision=cfg.revision)
+    resolved = resolve_local_gguf_directory(cfg.model_path)
+    if resolved is None:
+        resolved = resolve_hf_gguf_reference(cfg.model_path, revision=cfg.revision)
     if resolved is not None:
         logger.info("Resolved GGUF %s -> %s", cfg.model_path, resolved)
         if cfg.tokenizer_path == cfg.model_path:
@@ -65,10 +70,12 @@ def resolve_hf_gguf_model_path(server_args: Any):
     # A speculative draft can be a .gguf too, and it is loaded by path, so it
     # needs the same Hub-reference resolution as the target.
     if cfg.speculative_draft_model_path:
-        resolved_draft = resolve_hf_gguf_reference(
-            cfg.speculative_draft_model_path,
-            revision=cfg.speculative_draft_model_revision,
-        )
+        resolved_draft = resolve_local_gguf_directory(cfg.speculative_draft_model_path)
+        if resolved_draft is None:
+            resolved_draft = resolve_hf_gguf_reference(
+                cfg.speculative_draft_model_path,
+                revision=cfg.speculative_draft_model_revision,
+            )
         if resolved_draft is not None:
             logger.info(
                 "Resolved draft GGUF %s -> %s",

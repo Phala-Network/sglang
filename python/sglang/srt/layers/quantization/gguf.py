@@ -178,6 +178,10 @@ IMATRIX_QUANT_TYPES = {
 DEQUANT_TYPES = STANDARD_QUANT_TYPES | KQUANT_TYPES | IMATRIX_QUANT_TYPES
 MMVQ_QUANT_TYPES = STANDARD_QUANT_TYPES | KQUANT_TYPES | IMATRIX_QUANT_TYPES
 MMQ_QUANT_TYPES = STANDARD_QUANT_TYPES | KQUANT_TYPES
+# Upstream PR43626 (fdae9010): transient dense GEMM for large batches.
+# Keep short prefill on its original numerical path; expanded weights are not cached.
+DEQUANT_MIN_ROWS = 1024
+DEQUANT_MIN_WORK = 1 << 29
 
 
 def dequantize_gguf_weight(
@@ -206,6 +210,14 @@ def fused_mul_mat_gguf(
     # enable MMVQ in contiguous batching with batch_size=1
     if x.shape[0] <= mmvq_safe and qweight_type in MMVQ_QUANT_TYPES:
         y = ggml_mul_mat_vec_a8(qweight, x, qweight_type, qweight.shape[0])
+    # Large batches: transient dequantization and dense GEMM (upstream PR43626).
+    elif (
+        x.shape[0] >= DEQUANT_MIN_ROWS
+        and x.shape[0] * qweight.shape[0] * x.shape[1] >= DEQUANT_MIN_WORK
+        and qweight_type in DEQUANT_TYPES
+    ):
+        weight = dequantize_gguf_weight(qweight, qweight_type, x.dtype)
+        y = x @ weight.T
     # Use MMQ Kernel if it's available (standard + k-quants)
     elif qweight_type in MMQ_QUANT_TYPES:
         y = ggml_mul_mat_a8(qweight, x, qweight_type, qweight.shape[0])

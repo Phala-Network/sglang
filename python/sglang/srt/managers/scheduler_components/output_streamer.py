@@ -187,6 +187,20 @@ class SchedulerOutputStreamer:
             acc.accept(req=req)
             self._maybe_log_time_stats(req=req)
 
+        if any(
+            getattr(req, "rope_profile", None) is not None for req in acc.output_reqs
+        ):
+            acc.customized_info["yarn_profile"] = [
+                {
+                    "factor": req.rope_profile.factor,
+                    "id": req.rope_profile.profile_id,
+                    "budget": req.rope_profile.budget,
+                }
+                if req.rope_profile is not None
+                else None
+                for req in acc.output_reqs
+            ]
+
         if (
             self.has_additional_customized_info
             and self.should_build_additional_customized_info()

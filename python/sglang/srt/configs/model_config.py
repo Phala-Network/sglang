@@ -508,6 +508,11 @@ class ModelConfig:
         rope_scaling = getattr(self.hf_text_config, "rope_parameters", None) or getattr(
             self.hf_text_config, "rope_scaling", {}
         )
+        from sglang.srt.configs.request_static_yarn import RequestStaticYarnConfig
+
+        self.request_static_yarn_config = RequestStaticYarnConfig.from_hf_config(
+            self.hf_text_config
+        )
         # Text-only serving comes from either the checkpoint's own declaration
         # or the --language-model-only flag; every capability flag below
         # (is_multimodal, is_*_understandable_model) must see both sources,
@@ -556,6 +561,13 @@ class ModelConfig:
                 )
             else:
                 enable_multimodal = True
+
+        if self.request_static_yarn_config is not None:
+            # Check the source wrapper before embedded MTP rewrites its arch.
+            self.request_static_yarn_config.validate_model_support(
+                self.hf_config.architectures,
+                enable_multimodal and not self.is_lm_only,
+            )
 
         # Config draft model
         self._config_draft_model()

@@ -1386,6 +1386,41 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
         )
 
         self.mrope_positions = next_input_positions
+        self._apply_request_static_yarn_offsets(model_runner, batch, uniform=True)
+
+    def _apply_request_static_yarn_offsets(self, model_runner, batch, *, uniform=False):
+        if getattr(model_runner.model_config, "request_static_yarn_config", None) is None:
+            return
+        num_tokens = self.mrope_positions.shape[-1]
+        if not num_tokens:
+            return
+        profiles = [req.rope_profile for req in batch.reqs]
+        if any(profile is None for profile in profiles):
+            raise RuntimeError("Request-static YaRN profile missing at model forward")
+        batch_size = len(profiles)
+        if uniform:
+            if num_tokens % batch_size:
+                raise RuntimeError(
+                    "Request-static YaRN speculative token layout is not uniform"
+                )
+            repeats = [num_tokens // batch_size] * batch_size
+        else:
+            repeats = batch.extend_lens
+            if sum(repeats) != num_tokens:
+                raise RuntimeError("Request-static YaRN extend token layout mismatch")
+        offsets = torch.tensor(
+            [profile.offset for profile in profiles],
+            dtype=torch.int64,
+            device=model_runner.device,
+        )
+        token_offsets = torch.repeat_interleave(
+            offsets,
+            torch.tensor(repeats, dtype=torch.int64, device=model_runner.device),
+            output_size=num_tokens,
+        )
+        # Keep physical positions, lengths and KV indices untouched. These
+        # model-only positions are copied into the existing CUDA graph slot.
+        self.mrope_positions = self.mrope_positions + token_offsets.unsqueeze(0)
 
     def _expand_mrope_from_input(
         self,
@@ -1419,6 +1454,7 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
 
         if forward_mode.is_decode():
             self._compute_mrope_positions_decode(model_runner, batch)
+            self._apply_request_static_yarn_offsets(model_runner, batch, uniform=True)
             return
 
         if not forward_mode.is_extend(include_draft_extend_v2=True):
@@ -1429,6 +1465,7 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
             )
 
         self._compute_mrope_positions_extend(model_runner, batch)
+        self._apply_request_static_yarn_offsets(model_runner, batch)
 
     def _compute_mrope_positions_decode(
         self, model_runner: ModelRunner, batch: ScheduleBatch

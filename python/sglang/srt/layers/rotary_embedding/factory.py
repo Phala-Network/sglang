@@ -351,7 +351,7 @@ def get_rope(
                     original_max_position,
                     base,
                     is_neox_style,
-                    scaling_factor,
+                    rope_scaling.get("request_static_factors", scaling_factor),
                     dtype,
                     mrope_section=rope_scaling["mrope_section"],
                     mrope_interleaved=rope_scaling.get("mrope_interleaved", False),

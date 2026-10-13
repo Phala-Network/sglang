@@ -1120,6 +1120,7 @@ class Req(ReqDllmMixin):
 
         self.extra_key = extra_key
         self.cache_salt = cache_salt or None
+        self.rope_profile = None
         self.lora_id = lora_id
         self.routing_key = routing_key
 

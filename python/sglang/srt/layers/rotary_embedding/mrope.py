@@ -436,7 +436,7 @@ class YaRNScalingMRotaryEmbedding(MRotaryEmbedding):
         max_position_embeddings: int,
         base: int,
         is_neox_style: bool,
-        scaling_factor: float,
+        scaling_factor: float | list[float] | tuple[float, ...],
         dtype: torch.dtype,
         *,
         mrope_section: Optional[List[int]] = None,
@@ -447,7 +447,14 @@ class YaRNScalingMRotaryEmbedding(MRotaryEmbedding):
         beta_slow: int = 1,
         truncate: bool = True,
     ) -> None:
-        self.scaling_factor = scaling_factor
+        self.scaling_factors = (
+            tuple(float(f) for f in scaling_factor)
+            if isinstance(scaling_factor, (list, tuple))
+            else None
+        )
+        self.scaling_factor = (
+            self.scaling_factors[-1] if self.scaling_factors else scaling_factor
+        )
         self.extrapolation_factor = extrapolation_factor
         self.attn_factor = attn_factor
         self.beta_fast = beta_fast
@@ -490,6 +497,12 @@ class YaRNScalingMRotaryEmbedding(MRotaryEmbedding):
         return inv_freq
 
     def _ensure_cos_sin_cache_length(self, needed_max_pos: int):
+        if self.scaling_factors is not None:
+            if needed_max_pos >= self.cos_sin_cache.shape[0]:
+                raise ValueError(
+                    "Immutable request-static YaRN tables cannot be extended"
+                )
+            return
         self.cos_sin_cache, _ = _extend_yarn_cache(
             cache=self.cos_sin_cache,
             compute_inv_freq=lambda: self._compute_inv_freq(self.scaling_factor),
@@ -498,6 +511,33 @@ class YaRNScalingMRotaryEmbedding(MRotaryEmbedding):
         )
 
     def _compute_cos_sin_cache(self) -> torch.Tensor:
+        if self.scaling_factors is not None:
+            caches = []
+            self.scaling_factor_to_offset = {}
+            offset = 0
+            for factor in self.scaling_factors:
+                # Factor 1 uses exactly the native frequencies and magnitude.
+                inv_freq = (
+                    RotaryEmbedding._compute_inv_freq(self, self.base)
+                    if factor == 1
+                    else self._compute_inv_freq(factor)
+                )
+                t = torch.arange(
+                    int(4 * self.max_position_embeddings * factor), dtype=torch.float32
+                )
+                freqs = torch.einsum("i,j -> ij", t, inv_freq)
+                magnitude = (
+                    1.0
+                    if factor == 1
+                    else yarn_get_mscale_simple(factor) * self.attn_factor
+                )
+                cache = torch.cat(
+                    (freqs.cos() * magnitude, freqs.sin() * magnitude), dim=-1
+                )
+                self.scaling_factor_to_offset[factor] = offset
+                caches.append(cache)
+                offset += cache.shape[0]
+            return torch.cat(caches, dim=0)
         inv_freq = self._compute_inv_freq(self.scaling_factor)
         t = torch.arange(
             self.max_position_embeddings * self.scaling_factor, dtype=torch.float32

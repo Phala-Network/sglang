@@ -123,6 +123,10 @@ class Qwen3_5ForCausalLMMTP(nn.Module):
         quant_config = _mtp_quant_config(quant_config)
 
         self.config = config
+        rope = getattr(config, "rope_parameters", None) or getattr(
+            config, "rope_scaling", {}
+        )
+        self.is_mrope_enabled = "request_static_factors" in rope
         self.tp_size = get_parallel().tp_size
         self.quant_config = quant_config
         self.pp_group = get_parallel().pp_group
@@ -195,6 +199,8 @@ class Qwen3_5ForCausalLMMTP(nn.Module):
         input_embeds: Optional[torch.Tensor] = None,
         **kwargs,
     ):
+        if self.is_mrope_enabled:
+            positions = forward_batch.mrope_positions
         exit_stack = ExitStack()
         if (
             is_npu()

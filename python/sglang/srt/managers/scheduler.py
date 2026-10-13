@@ -110,6 +110,7 @@ from sglang.srt.disaggregation.utils import (
     ReqToMetadataIdxAllocator,
     TransferBackend,
     get_dsa_seed_metadata_dim,
+    is_unadmitted_reject,
     prepare_abort,
     unified_memory_disagg_move_gate,
 )
@@ -3256,6 +3257,23 @@ class Scheduler(
                 self._add_request_to_queue(req)
                 return
 
+        # Admission sees the expanded multimodal prompt and the requested
+        # output budget, before init_req_max_new_tokens can clip that budget.
+        from sglang.srt.configs.request_static_yarn import admit_request_static_yarn
+
+        try:
+            admit_request_static_yarn(
+                req,
+                getattr(self.model_config, "request_static_yarn_config", None),
+                self.model_config.context_len,
+            )
+        except ValueError as error:
+            req.set_finish_with_abort(
+                str(error), status_code=HTTPStatus.BAD_REQUEST
+            )
+            self.retire_unadmitted_request(req)
+            return
+
         # initialize before returning
         self.init_req_max_new_tokens(req)
 
@@ -3263,7 +3281,8 @@ class Scheduler(
         error_msg = validate_input_length(
             req,
             self.max_req_input_len,
-            get_serving().allow_auto_truncate,
+            get_serving().allow_auto_truncate
+            and getattr(self.model_config, "request_static_yarn_config", None) is None,
         )
         if error_msg:
             req.set_finish_with_abort(error_msg)
@@ -3495,6 +3514,13 @@ class Scheduler(
         self.output_streamer.stream_output([req], req.return_logprob)
 
     def _add_request_to_queue(self, req: Req, is_retracted: bool = False):
+        # Validation can fail before a request-static profile is assigned.
+        if (
+            getattr(self.model_config, "request_static_yarn_config", None) is not None
+            and is_unadmitted_reject(req)
+        ):
+            self.retire_unadmitted_request(req)
+            return
         if not self._set_or_validate_priority(req):
             self._release_aborted_request(req)
             return

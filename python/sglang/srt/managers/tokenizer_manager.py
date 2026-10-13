@@ -1353,12 +1353,16 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         # truncation below could cut the prompt.
         self._validate_joint_schema_request(obj, input_ids)
         _max_req_len = self.context_len
+        allow_auto_truncate = (
+            self.allow_auto_truncate
+            and getattr(self.model_config, "request_static_yarn_config", None) is None
+        )
         input_token_num = len(input_ids) if input_ids is not None else 0
         input_token_num += self.num_reserved_tokens
 
         # Validate input length
         if input_token_num >= self.context_len:
-            if self.allow_auto_truncate:
+            if allow_auto_truncate:
                 logger.warning(
                     f"The input ({input_token_num} tokens) is longer than the "
                     f"model's context length ({self.context_len} tokens). "
@@ -1379,7 +1383,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             and max_new_tokens is not None
             and (max_new_tokens + input_token_num) > _max_req_len
         ):
-            if self.allow_auto_truncate:
+            if allow_auto_truncate:
                 logger.warning(
                     f"Requested token count ({input_token_num} input + {max_new_tokens} new) "
                     f"exceeds the model's context length ({self.context_len} tokens). "
@@ -1602,6 +1606,21 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
 
         # Build return object
         if isinstance(obj, GenerateReqInput):
+            if (
+                getattr(self.model_config, "request_static_yarn_config", None)
+                is not None
+            ):
+                if obj.session_id is not None or obj.session_params:
+                    raise ValueError(
+                        "Request-static YaRN does not support session continuation"
+                    )
+                if (
+                    self.server_args.enable_lmcache
+                    or self.server_args.disaggregation_mode != "null"
+                ):
+                    raise ValueError(
+                        "Request-static YaRN does not support LMCache or disaggregated serving"
+                    )
             session_params = (
                 SessionParams(**obj.session_params) if obj.session_params else None
             )
@@ -2913,6 +2932,9 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
     ) -> None:
         """Accumulate metadata; subclasses may use finish_reason for terminal data."""
         for key, values in customized_info.items():
+            if key == "yarn_profile":
+                meta_info[key] = values[index]
+                continue
             self._accumulate_request_meta_info(
                 meta_info,
                 state,

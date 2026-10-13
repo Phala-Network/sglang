@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+ARG SGLANG_BASE
+FROM ${SGLANG_BASE}
+
+ARG SGLANG_BASE
+ARG ENGINE_COMMIT
+ARG PATCHES_COMMIT
+ARG GOVERNOR_COMMIT
+ARG GOVERNOR_VERSION
+ARG GOVERNOR_ABI
+LABEL org.opencontainers.image.source="https://github.com/Phala-Network/sglang" \
+      org.opencontainers.image.revision="${ENGINE_COMMIT}" \
+      org.phala.serving-patches.revision="${PATCHES_COMMIT}" \
+      org.phala.governor.revision="${GOVERNOR_COMMIT}" \
+      org.phala.governor.version="${GOVERNOR_VERSION}" \
+      org.phala.governor.abi="${GOVERNOR_ABI}"
+
+# Avoid the upstream editable checkout shadowing the installed unified wheel.
+ENV PYTHONPATH="" \
+    PIG_GOVERNOR_LIBRARY="/opt/phala/governor/libpig_governor_core.so"
+WORKDIR /opt/phala/runtime
+COPY runtime-context.json source-verification.json ./
+COPY kernel-wrapper.py install_unified_kernel_wrapper.py install_unified_runtime.py ./
+COPY runtime-assets/muse-glimmer-chat-template.jinja /opt/muse-glimmer-chat-template.jinja
+COPY runtime-assets/nemotron-lightning-chat-template.jinja /opt/phala/nemotron-lightning-chat-template.jinja
+COPY governor/ /opt/phala/governor/
+RUN --mount=type=bind,source=wheels,target=/opt/phala-build-wheels,ro \
+    python install_unified_runtime.py \
+      --context runtime-context.json \
+      --wheel-dir /opt/phala-build-wheels \
+      --base-image "${SGLANG_BASE}" \
+      --engine-commit "${ENGINE_COMMIT}" \
+      --patches-commit "${PATCHES_COMMIT}" \
+      --governor-commit "${GOVERNOR_COMMIT}" \
+      --governor-version "${GOVERNOR_VERSION}" \
+      --governor-abi "${GOVERNOR_ABI}"
+
+ENTRYPOINT ["sglang", "serve"]

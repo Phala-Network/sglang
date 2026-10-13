@@ -1,0 +1,61 @@
+{
+  "base": "ghcr.io/phala-network/sglang:0.5.21-phala-dspark-usage-1@sha256:9c0e466dfc37b666c13b719b2428c48240709d98a8a600dfc92775d8a68a1f78",
+  "base_image": "ghcr.io/phala-network/sglang:0.5.21-phala-dspark-usage-1@sha256:9c0e466dfc37b666c13b719b2428c48240709d98a8a600dfc92775d8a68a1f78",
+  "base_patches_commit": "2cfe0a3b8c3d848c9aa0b853f85d18f598cac167",
+  "base_source_commit": "3a693c66f5578879b8b859ed3fc193fe6638d057",
+  "build_count": 1,
+  "builder": "CPU201 / 10.80.10.201",
+  "files": [
+    [
+      "python/sglang/srt/managers/cache_controller.py",
+      "439819917ec76e3088b309170cf90ada4b57717524b9ddc52824fb0e4b23b0ef",
+      "1cd9ea1517019337857b5e4b8cbe878d67634bb83122ed0a169cecdacb54782d"
+    ],
+    [
+      "python/sglang/srt/mem_cache/hybrid_cache/hybrid_cache_controller.py",
+      "c9c3be8ce5fd22cca7ee1ad4325fb92f8ce071c6e02206201ab3fac1d0a772e3",
+      "833cda7d522069f5f6b839283cdd04df9342eac18f2341240132b1a6a2fc8402"
+    ],
+    [
+      "python/sglang/srt/mem_cache/unified_radix_cache.py",
+      "c6f1764166c371cf050f05c966daed8ded366365163a69f066569cc74e2575c3",
+      "ab8b179542d7a8250c2adffec2104d1e995799c6be53f71151589a114c41399e"
+    ]
+  ],
+  "patches": "1c6a70ea402332288614eb54ed968bab13442682",
+  "patches_commit": "1c6a70ea402332288614eb54ed968bab13442682",
+  "patches_repository": "https://github.com/Phala-Network/sglang-serving-patches",
+  "publication": "published",
+  "regression_test": "test/registered/unit/mem_cache/test_prefetch_io_failures.py",
+  "release_tag": "0.5.21-phala-offload-fix-20261012",
+  "release_url": "https://github.com/Phala-Network/sglang/releases/tag/v0.5.21-phala-offload-fix-20261012",
+  "runtime_files": [
+    {
+      "after_sha256": "1cd9ea1517019337857b5e4b8cbe878d67634bb83122ed0a169cecdacb54782d",
+      "before_sha256": "439819917ec76e3088b309170cf90ada4b57717524b9ddc52824fb0e4b23b0ef",
+      "installed_sha256": "1cd9ea1517019337857b5e4b8cbe878d67634bb83122ed0a169cecdacb54782d",
+      "runtime_path": "python/sglang/srt/managers/cache_controller.py",
+      "staged_name": "cache_controller.py"
+    },
+    {
+      "after_sha256": "833cda7d522069f5f6b839283cdd04df9342eac18f2341240132b1a6a2fc8402",
+      "before_sha256": "c9c3be8ce5fd22cca7ee1ad4325fb92f8ce071c6e02206201ab3fac1d0a772e3",
+      "installed_sha256": "833cda7d522069f5f6b839283cdd04df9342eac18f2341240132b1a6a2fc8402",
+      "runtime_path": "python/sglang/srt/mem_cache/hybrid_cache/hybrid_cache_controller.py",
+      "staged_name": "hybrid_cache_controller.py"
+    },
+    {
+      "after_sha256": "ab8b179542d7a8250c2adffec2104d1e995799c6be53f71151589a114c41399e",
+      "before_sha256": "c6f1764166c371cf050f05c966daed8ded366365163a69f066569cc74e2575c3",
+      "installed_sha256": "ab8b179542d7a8250c2adffec2104d1e995799c6be53f71151589a114c41399e",
+      "runtime_path": "python/sglang/srt/mem_cache/unified_radix_cache.py",
+      "staged_name": "unified_radix_cache.py"
+    }
+  ],
+  "schema": "phala.sglang.offload-repair-build.v1",
+  "source": "53c8f4e63f11887a398b727dd6bc30dbe4aad73c",
+  "source_commit": "53c8f4e63f11887a398b727dd6bc30dbe4aad73c",
+  "source_repository": "https://github.com/Phala-Network/sglang",
+  "version": "0.5.21-phala-offload-fix-20261012",
+  "image": "ghcr.io/phala-network/sglang:0.5.21-phala-offload-fix-20261012@sha256:9619a8004cbeda15ce999ab89d96b1e89b5476bd0507936253876621cc616f9e"
+}

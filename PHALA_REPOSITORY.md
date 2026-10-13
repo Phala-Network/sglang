@@ -14,6 +14,10 @@ through the existing export/replay process. Avoid a second hand-edited
 implementation or a full patch system per model. Deployment configuration
 consumes fixed complete engine and component identities.
 
+Image build recipes, scripts and tests live under `docker/` in this repository.
+`phala-models-compose` owns only Compose and related deployment files, and links
+to fixed build/source commits rather than carrying copies of image code.
+
 ## Main and release tags
 
 `main` integrates downstream serving/model changes and Governor hooks; it is not

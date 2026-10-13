@@ -60,3 +60,7 @@ final-image and deployment checks remain distinct from source lint.
 
 [Apache License 2.0](LICENSE). Preserve upstream attribution and applicable
 third-party notices when redistributing the engine and its dependencies.
+
+## Phala image builds
+
+Image recipes and build tools belong in this engine repository; Compose and deployment records remain in [phala-models-compose](https://github.com/Phala-Network/phala-models-compose). See the [unified image builder](docker/phala/README.unified.md), [Kimi recovery recipe](docker/phala/kimi-recovery-3/README.md), and [DeepSeek offload repair recipe](docker/phala-offload-fix-20261012/README.md). Published image digests are unchanged by this source relocation.

@@ -1,0 +1,20 @@
+{
+  "engine_base": "b9e5cc4de1c139318fe6c6a5deb680cb4daedf1c",
+  "engine_commit": "e9a40ece22f8539d434ccc138336019ddbf2e06c",
+  "mooncake_commit": "2214a3ca04e165ced3cab3cf604918d2ec22ed0f",
+  "patches_commit": "a09c9f546e839cd3cedded5dea7c29145249ceff",
+  "files": {
+    "python/sglang/srt/managers/schedule_policy.py": {
+      "before": "08d17d836b9dbb0c643556b5b5f2f8c613316e7b2e37b44196d792769b8d6b9c",
+      "after": "c005a2b84c6bf04275e036422c3a5f551f5ff8ea970188906f2de2e4fde47715"
+    },
+    "python/sglang/srt/mem_cache/base_prefix_cache.py": {
+      "before": "d586d33d0c49742b96fa2da50f441ad4afa23351134fd5778a76d7079be3a2a9",
+      "after": "c9e52e07569843cb1e7fa12c6f031aad6ab8329db25357bebf118795e5c228f4"
+    },
+    "python/sglang/srt/mem_cache/unified_radix_cache.py": {
+      "before": "a99092dbbab4ff3103be84eee7ff3ae0bd3a2c171f024513fb65deaa7a869ef5",
+      "after": "6ce29d9429800dc3ddab04f6da99830a6070d4867da7a0ce6b929500bf4a758a"
+    }
+  }
+}

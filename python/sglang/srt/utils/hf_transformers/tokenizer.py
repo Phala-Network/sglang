@@ -26,6 +26,8 @@ from transformers import (
 )
 
 from sglang.srt.connector import create_remote_connector
+from sglang.srt.configs.xing4_0 import Xing4_0Config
+from sglang.srt.tokenizer.xing4_0 import Xing4_0Tokenizer
 from sglang.srt.utils import is_remote_url, logger
 from sglang.srt.utils.patch_tokenizer import patch_tokenizer
 
@@ -43,6 +45,12 @@ from .mistral_utils import (
     is_bare_tekken_checkpoint,
     patch_mistral_common_tokenizer,
     retry_without_mistral_common_kwargs,
+)
+
+# Resolve the checkpoint's custom tokenizer locally even when its HF auto_map
+# requests remote code. The class is frozen in the runtime, never model mounts.
+AutoTokenizer.register(
+    Xing4_0Config, slow_tokenizer_class=Xing4_0Tokenizer, exist_ok=True
 )
 
 # A fast LLaMA tokenizer with the pre-processed `tokenizer.json` file.

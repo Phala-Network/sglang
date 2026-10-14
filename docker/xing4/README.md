@@ -22,3 +22,16 @@ image identity without source mounts or startup installation. Direct `hf --help`
 The focused CPU checks are in `test/registered/unit/models/test_xing4_native.py`;
 CUDA attention, TileLang, real checkpoint loading, FP8 storage and model quality
 still require scoped B300 qualification. No embedded Governor is selected.
+
+The official SentencePiece `Xing4_0Tokenizer` is installed and registered in
+the image. Model mounts need only fixed weights, JSON, `tokenizer.model` and
+Jinja data; loading uses `trust_remote_code=False` and never imports Python
+from the model mount. Tokenizer reconstruction and real vocabulary probes are
+in `test_xing4_tokenizer.py`; the latter take `XING4_TOKENIZER_ASSETS` pointing
+to fixed BF16/FP8 data assets on the CPU builder.
+
+For protected backend authentication, set `PIG_AUTH_FROM_TOKEN=1` and supply
+`TOKEN` through the protected process environment. Do not put keys in CLI
+arguments. The maintained resolution pipeline uses that environment for API
+and admin authentication and redacts diagnostics. Backend health/metrics
+probes are exempt, so public ingress must enforce authentication on every path.

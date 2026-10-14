@@ -2412,6 +2412,27 @@ class OpenAIServingChat(OpenAIServingBase):
                     template_tool_parser = parser
                 if self.chat_encoding_spec == "kimi_k3":
                     tool_call_stop = parser.detector.eot_token
+                # Kimi K3 owns its native structural-tag format.  When schema
+                # compilation fails, the generic JSON fallback is intentionally
+                # skipped below; silently continuing would turn a required or
+                # strict tool request into unconstrained generation.  Surface a
+                # ValueError so the OpenAI handler returns a request error before
+                # any tokens are generated.
+                if (
+                    tool_call_constraint is None
+                    and self.chat_encoding_spec == "kimi_k3"
+                    and self.tool_call_parser == "kimi_k3"
+                    and not required_parsed_natively
+                    and (
+                        request.tool_choice == "required"
+                        or isinstance(request.tool_choice, ToolChoice)
+                        or any(tool.function.strict for tool in effective_tools)
+                    )
+                ):
+                    raise ValueError(
+                        "Unable to build a Kimi K3 tool-call constraint for the "
+                        "requested schema; refusing unconstrained generation."
+                    )
             if (
                 tool_call_constraint is None
                 and not required_parsed_natively

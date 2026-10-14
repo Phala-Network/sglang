@@ -47,11 +47,16 @@ _CHAT_TEMPLATE_CLIENT_ERRORS: tuple[type[BaseException], ...] = (
 ) + _MISTRAL_COMMON_ERRORS
 from fastapi.responses import ORJSONResponse, StreamingResponse
 from jsonschema import Draft202012Validator, SchemaError
+from referencing import Registry
 
+from sglang.srt.constrained.reasoner_grammar_backend import (
+    KIMIK3_REQUIRED_NATIVE_BOUNDARY,
+)
 from sglang.srt.entrypoints.openai import (
     chat_encoding,
     chat_encoding_adapters,
     encoding_dsv32,
+    encoding_k3,
 )
 from sglang.srt.entrypoints.openai.parallel_prompt_encode import (
     encode_prompt_segments,
@@ -105,6 +110,7 @@ from sglang.srt.environ import ToolStrictLevel, envs
 from sglang.srt.function_call.core_types import ToolCallItem
 from sglang.srt.function_call.function_call_parser import FunctionCallParser
 from sglang.srt.function_call.json_array_parser import JsonArrayParser
+from sglang.srt.function_call.kimik3_format import MESSAGE_CLOSE, TOOLS_CLOSE
 from sglang.srt.function_call.utils import (
     get_json_schema_constraint,
     normalize_json_schema_types,
@@ -209,6 +215,14 @@ _CHAT_TEMPLATE_CACHE_MAX_SIZE = 128
 def _incomplete_tool_call_indices(parser) -> set[int]:
     detector = getattr(parser, "detector", parser)
     return getattr(detector, "incomplete_tool_call_indices", set())
+class _KimiK3ToolCallValidationError(Exception):
+    def __init__(self):
+        super().__init__("Kimi K3 generated tool output is invalid.")
+
+
+def _reject_non_json_constant(_: str):
+    raise ValueError("Non-finite constants are not JSON")
+
 
 
 class _AllowedToolsOutputError(ValueError):
@@ -1237,7 +1251,8 @@ class OpenAIServingChat(OpenAIServingBase):
             request_tools = (
                 self._request_tools_for_prompt(request, exclude_unset=True) or None
             )
-            prompt_ids = self.tokenizer_manager.tokenizer.apply_chat_template(
+            prompt_ids = encoding_k3.apply_chat_template(
+                self.tokenizer_manager.tokenizer,
                 messages,
                 tokenize=True,
                 add_generation_prompt=True,
@@ -1833,6 +1848,48 @@ class OpenAIServingChat(OpenAIServingBase):
                 # Keep its native constraint type through to_sampling_params so
                 # response_format/tool-choice precedence stays unchanged.
                 sampling_params.pop("ebnf_full_assistant", None)
+        # This ownership marker comes from the generated K3 tool constraint;
+        # a client's custom_params must not grant it to another grammar.
+        custom_params = dict(sampling_params.get("custom_params") or {})
+        custom_params.pop(KIMIK3_REQUIRED_NATIVE_BOUNDARY, None)
+        if (
+            self.chat_encoding_spec == "kimi_k3"
+            and self.tool_call_parser == "kimi_k3"
+            and self.reasoning_parser == "kimi_k3"
+            and (
+                self._effective_tool_choice(request) == "required"
+                or isinstance(self._effective_tool_choice(request), ToolChoice)
+                or (
+                    self._effective_tool_choice(request) == "auto"
+                    and any(
+                        tool.function.strict
+                        or envs.SGLANG_TOOL_STRICT_LEVEL.get()
+                        >= ToolStrictLevel.PARAMETER
+                        for tool in self._effective_tools(request)
+                    )
+                )
+            )
+            and processed_messages.tool_call_constraint is not None
+            and processed_messages.tool_call_constraint[0] == "structural_tag"
+            and sampling_params.get("structural_tag") is not None
+        ):
+            custom_params[KIMIK3_REQUIRED_NATIVE_BOUNDARY] = True
+            # Native grammar owns the complete native suffix and its EOS.
+            # These renderer stops can also occur inside a legal argument;
+            # retain them only when the client explicitly requested them.
+            explicit_stops = (
+                [request.stop] if isinstance(request.stop, str) else request.stop or []
+            )
+            if sampling_params["stop"]:
+                stops = sampling_params["stop"]
+                stops = [stops] if isinstance(stops, str) else stops
+                sampling_params["stop"] = [
+                    stop
+                    for stop in stops
+                    if stop not in (TOOLS_CLOSE, MESSAGE_CLOSE)
+                    or stop in explicit_stops
+                ]
+        sampling_params["custom_params"] = custom_params or None
 
         # Handle single vs multiple requests
         if request.input_ids is not None or self._can_reuse_prompt_ids(
@@ -2424,11 +2481,11 @@ class OpenAIServingChat(OpenAIServingBase):
                     and self.tool_call_parser == "kimi_k3"
                     and not required_parsed_natively
                     and (
-                        request.tool_choice == "required"
-                        or isinstance(request.tool_choice, ToolChoice)
+                        effective_tool_choice == "required"
+                        or isinstance(effective_tool_choice, ToolChoice)
                         or any(tool.function.strict for tool in effective_tools)
                         or (
-                            request.tool_choice == "auto"
+                            effective_tool_choice == "auto"
                             and parser.tool_strict_level >= ToolStrictLevel.FUNCTION
                         )
                     )
@@ -3176,6 +3233,12 @@ class OpenAIServingChat(OpenAIServingBase):
                 ):
                     yield chunk
 
+                self._validate_kimi_k3_tool_call_completion(
+                    self._effective_tool_choice(request),
+                    finish_reason_type,
+                    has_tool_calls.get(index, False),
+                )
+
             # Send finish_reason chunks for each index that completed
             for idx, finish_reason_data in finish_reasons.items():
                 finish_reason_type = finish_reason_data["type"]
@@ -3335,6 +3398,13 @@ class OpenAIServingChat(OpenAIServingBase):
                 yield f"data: {usage_chunk.model_dump_json()}\n\n"
 
         except _AllowedToolsOutputError as e:
+            error = self.create_streaming_error_response(
+                str(e), err_type="InternalServerError", status_code=500
+            )
+            yield f"data: {error}\n\n"
+        except _KimiK3ToolCallValidationError as e:
+            if not stream_started:
+                raise
             error = self.create_streaming_error_response(
                 str(e), err_type="InternalServerError", status_code=500
             )
@@ -3512,18 +3582,28 @@ class OpenAIServingChat(OpenAIServingBase):
                     request.tools if allowed_names is not None else effective_tools
                 )
                 history_tool_calls_cnt = self._get_history_tool_calls_cnt(request)
-                tool_calls, text, finish_reason = self._process_tool_calls(
-                    text,
-                    output_tools,
-                    finish_reason,
-                    self._effective_tool_choice(request),
-                    history_tool_calls_cnt,
-                    request._response_parser_prefix,
-                    grammar_holds_calls(
-                        request._response_parser_tool_grammar,
-                        request._response_parser_grammar_start,
-                    ),
-                )
+                try:
+                    tool_calls, text, finish_reason = self._process_tool_calls(
+                        text,
+                        output_tools,
+                        finish_reason,
+                        self._effective_tool_choice(request),
+                        history_tool_calls_cnt,
+                        request._response_parser_prefix,
+                        grammar_holds_calls(
+                            request._response_parser_tool_grammar,
+                            request._response_parser_grammar_start,
+                        ),
+                    )
+                    self._validate_kimi_k3_tool_call_completion(
+                        self._effective_tool_choice(request),
+                        finish_reason["type"] if finish_reason else None,
+                        bool(tool_calls),
+                    )
+                except _KimiK3ToolCallValidationError as e:
+                    return self.create_error_response(
+                        str(e), err_type="InternalServerError", status_code=500
+                    )
                 if allowed_names is not None and any(
                     call.function.name not in allowed_names for call in tool_calls or []
                 ):
@@ -3709,6 +3789,57 @@ class OpenAIServingChat(OpenAIServingBase):
         )
         return tool_call_id
 
+    def _validate_kimi_k3_tool_call_completion(
+        self,
+        tool_choice: str | ToolChoice | None,
+        finish_reason_type: str | None,
+        has_tool_call: bool,
+    ) -> None:
+        if (
+            self.tool_call_parser == "kimi_k3"
+            and finish_reason_type == "stop"
+            and not has_tool_call
+            and (tool_choice == "required" or isinstance(tool_choice, ToolChoice))
+        ):
+            raise _KimiK3ToolCallValidationError()
+
+    def _validate_kimi_k3_tool_call(
+        self,
+        call: ToolCallItem,
+        tools: list[Tool],
+        strict_level: ToolStrictLevel,
+    ) -> None:
+        """Check a complete K3 call against its original strict tool schema."""
+        if self.tool_call_parser != "kimi_k3":
+            return
+        force_strict = strict_level >= ToolStrictLevel.PARAMETER
+        if not force_strict and not any(tool.function.strict for tool in tools):
+            return
+        matches = [tool for tool in tools if tool.function.name == call.name]
+        if len(matches) != 1:
+            raise _KimiK3ToolCallValidationError()
+        function = matches[0].function
+        if not function.strict and not force_strict:
+            return
+        # K3's native strict format treats omitted parameters as no arguments.
+        schema = (
+            {"type": "object", "maxProperties": 0}
+            if function.parameters is None
+            else function.parameters
+        )
+        try:
+            arguments = json.loads(
+                call.parameters, parse_constant=_reject_non_json_constant
+            )
+            # An explicit empty registry allows local refs without permitting
+            # jsonschema's default remote-resource retrieval on an output path.
+            validator = Draft202012Validator(schema, registry=Registry())
+            if not isinstance(arguments, dict) or not validator.is_valid(arguments):
+                raise _KimiK3ToolCallValidationError()
+        except Exception:
+            # Schema/instance/ref error messages may contain tool arguments.
+            raise _KimiK3ToolCallValidationError() from None
+
     def _process_tool_calls(
         self,
         text: str,
@@ -3755,6 +3886,9 @@ class OpenAIServingChat(OpenAIServingBase):
 
                     tool_calls = []
                     for index, call_info in enumerate(call_info_list):
+                        self._validate_kimi_k3_tool_call(
+                            call_info, tools, parser.tool_strict_level
+                        )
                         tool_id = self._process_tool_call_id(
                             call_info, history_tool_calls_cnt
                         )
@@ -3774,6 +3908,8 @@ class OpenAIServingChat(OpenAIServingBase):
                         finish_reason["type"] = "tool_calls"
                         finish_reason["matched"] = None
                     return ToolCallProcessingResult(tool_calls, text, finish_reason)
+                except _KimiK3ToolCallValidationError:
+                    raise
                 except Exception as e:
                     logger.error(f"Tool call parsing error: {e}")
                     return ToolCallProcessingResult(None, text, finish_reason)
@@ -4319,6 +4455,9 @@ class OpenAIServingChat(OpenAIServingBase):
                     # Another call in this choice does not authorize this
                     # index's arguments before its own valid named first chunk.
                     continue
+            self._validate_kimi_k3_tool_call(
+                call_item, effective_tools, envs.SGLANG_TOOL_STRICT_LEVEL.get()
+            )
             # Tool call ID should be generated only once per tool call
             if call_item.name:
                 # Mark only a valid named first chunk as a tool call.

@@ -11,7 +11,10 @@ from sglang.srt.constrained.base_grammar_backend import (
     InvalidGrammarObject,
     create_grammar_backend,
 )
-from sglang.srt.constrained.reasoner_grammar_backend import ReasonerGrammarObject
+from sglang.srt.constrained.reasoner_grammar_backend import (
+    KIMIK3_REQUIRED_NATIVE_BOUNDARY,
+    ReasonerGrammarObject,
+)
 from sglang.srt.distributed.communication_tags import P2PTag
 from sglang.srt.environ import envs
 from sglang.srt.managers.io_struct import matches_abort_rid
@@ -132,6 +135,39 @@ class GrammarManager:
         )
 
     def _apply_request_reasoning_config(self, req: Req) -> None:
+        custom_params = req.sampling_params.custom_params
+        native_k3 = (
+            isinstance(custom_params, dict)
+            and custom_params.get(KIMIK3_REQUIRED_NATIVE_BOUNDARY) is True
+        )
+        if native_k3 and not isinstance(req.grammar, InvalidGrammarObject):
+            try:
+                if (
+                    not isinstance(req.grammar, ReasonerGrammarObject)
+                    or get_serving().reasoning_parser != "kimi_k3"
+                    or req.sampling_params.structural_tag is None
+                ):
+                    raise ValueError(
+                        "K3 native boundary requires its reasoning/tool grammar"
+                    )
+                tokenizer = self.scheduler.tokenizer
+                model_eos = self.scheduler.model_config.hf_eos_token_id
+                stop_ids = (
+                    {model_eos} if isinstance(model_eos, int) else set(model_eos or [])
+                )
+                if tokenizer.eos_token_id is not None:
+                    stop_ids.add(tokenizer.eos_token_id)
+                stop_ids.update(
+                    getattr(tokenizer, "additional_stop_token_ids", None) or []
+                )
+                req.grammar.enable_kimik3_required_native_boundary(
+                    tokenizer, list(stop_ids)
+                )
+            except (ValueError, RuntimeError) as exc:
+                req.set_finish_with_abort(
+                    f"Unable to configure K3 native boundary: {exc}"
+                )
+                return
         if not isinstance(req.grammar, ReasonerGrammarObject):
             return
         think_end_ids = get_request_reasoning_end_token_ids(

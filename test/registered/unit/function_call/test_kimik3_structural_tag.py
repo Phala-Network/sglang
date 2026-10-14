@@ -86,6 +86,10 @@ def _argument(key, argument_type, value):
     )
 
 
+def _json_string_argument(key, value):
+    return _argument(key, "json-string", json.dumps(value))
+
+
 def _call(name, index, *arguments):
     return (
         f'<|open|>call tool="{name}" index="{index}"<|sep|>'
@@ -136,9 +140,9 @@ def _valid_weather_call(index=1):
     return _call(
         "weather",
         index,
-        _argument("city", "string", "San Francisco"),
+        _json_string_argument("city", "San Francisco"),
         _argument("days", "number", "3"),
-        _argument("unit", "string", "celsius"),
+        _json_string_argument("unit", "celsius"),
         _argument("metadata", "object", '{"source":"forecast"}'),
         _argument("tags", "array", '["coastal","windy"]'),
     )
@@ -154,7 +158,7 @@ def test_strict_schema_accepts_native_xtml_values():
             _call(
                 "weather",
                 1,
-                _argument("city", "string", "Paris"),
+                _json_string_argument("city", "Paris"),
                 _argument("days", "number", "1"),
             )
         ),
@@ -164,9 +168,9 @@ def test_strict_schema_accepts_native_xtml_values():
 @pytest.mark.parametrize(
     "arguments",
     [
-        (_argument("city", "string", "paris"), _argument("days", "number", "3")),
+        (_json_string_argument("city", "paris"), _argument("days", "number", "3")),
         (
-            _argument("city", "string", "Paris"),
+            _json_string_argument("city", "Paris"),
             _argument("days", "number", "11"),
         ),
         (
@@ -174,17 +178,17 @@ def test_strict_schema_accepts_native_xtml_values():
             _argument("days", "number", "3"),
         ),
         (
-            _argument("city", "string", "Paris"),
+            _json_string_argument("city", "Paris"),
             _argument("days", "number", "3"),
-            _argument("unit", "string", "kelvin"),
+            _json_string_argument("unit", "kelvin"),
         ),
         (
-            _argument("city", "string", "Paris"),
+            _json_string_argument("city", "Paris"),
             _argument("days", "number", "3"),
             _argument("tags", "array", "[coastal]"),
         ),
         (
-            _argument("city", "string", "Paris"),
+            _json_string_argument("city", "Paris"),
             _argument("days", "number", "3"),
             _argument("unknown", "string", "value"),
         ),
@@ -273,8 +277,8 @@ def test_constrained_strings_keep_their_schema():
             _call(
                 "annotate",
                 1,
-                _argument("mode", "string", "fast"),
-                _argument("code", "string", "ABC"),
+                _json_string_argument("mode", "fast"),
+                _json_string_argument("code", "ABC"),
             )
         ),
     )
@@ -284,8 +288,8 @@ def test_constrained_strings_keep_their_schema():
             _call(
                 "annotate",
                 1,
-                _argument("mode", "string", "medium"),
-                _argument("code", "string", "ABC"),
+                _json_string_argument("mode", "medium"),
+                _json_string_argument("code", "ABC"),
             )
         ),
     )
@@ -310,7 +314,7 @@ def test_auto_allows_plain_response_or_multiple_tool_calls():
         _call(
             "forecast",
             2,
-            _argument("city", "string", "London"),
+            _json_string_argument("city", "London"),
             _argument("days", "number", "2"),
         ),
     )
@@ -327,7 +331,7 @@ def test_named_tool_choice_forces_only_the_selected_tool():
     forecast_call = _call(
         "forecast",
         1,
-        _argument("city", "string", "London"),
+        _json_string_argument("city", "London"),
         _argument("days", "number", "2"),
     )
 
@@ -345,7 +349,7 @@ def test_function_call_parser_uses_native_tag_for_named_tool_choice():
     forecast_call = _call(
         "forecast",
         1,
-        _argument("city", "string", "London"),
+        _json_string_argument("city", "London"),
         _argument("days", "number", "2"),
     )
 
@@ -406,7 +410,7 @@ def test_strict_schema_supports_refs_and_mixed_unions():
             _call(
                 "convert",
                 1,
-                _argument("mode", "string", "fast"),
+                _json_string_argument("mode", "fast"),
                 _argument("value", "number", "2"),
             )
         ),
@@ -417,7 +421,7 @@ def test_strict_schema_supports_refs_and_mixed_unions():
             _call(
                 "convert",
                 1,
-                _argument("mode", "string", "unsafe"),
+                _json_string_argument("mode", "unsafe"),
                 _argument("value", "number", "1"),
             )
         ),
@@ -516,7 +520,7 @@ def test_strict_root_ref_additional_properties_use_original_definitions():
         },
     }
     grammar = _grammar([tool], tool_choice="required")
-    label = _argument("label", "string", "sample")
+    label = _json_string_argument("label", "sample")
     assert _accepts(
         grammar,
         _tools_section(_call("lookup", 1, label, _argument("extra", "number", "2"))),
@@ -844,7 +848,7 @@ def test_strict_additional_properties_do_not_relax_declared_keys(
     integer was accepted as a string and ``label`` could be repeated. JSON
     Schema applies additionalProperties only to undeclared keys (#38587)."""
     grammar = _grammar([_annotate_tool(additional_properties)], tool_choice="required")
-    label = _argument("label", "string", "sample")
+    label = _json_string_argument("label", "sample")
 
     assert _accepts(
         grammar,
@@ -863,7 +867,7 @@ def test_strict_additional_properties_do_not_relax_declared_keys(
     assert not _accepts(
         grammar,
         _tools_section(
-            _call("annotate", 1, label, _argument("label", "string", "again"))
+            _call("annotate", 1, label, _json_string_argument("label", "again"))
         ),
     )
 
@@ -953,6 +957,14 @@ def test_tool_strict_level_controls_native_tag_parameter_schema():
         )
     )
     empty_call = _tools_section(_call("weather", 264))
+    invalid_encoded_call = _tools_section(
+        _call(
+            "weather",
+            264,
+            _json_string_argument("city", "paris"),
+            _argument("days", "number", "99"),
+        )
+    )
 
     with envs.SGLANG_TOOL_STRICT_LEVEL.override(ToolStrictLevel.OFF.value):
         constraint = FunctionCallParser(
@@ -978,6 +990,9 @@ def test_tool_strict_level_controls_native_tag_parameter_schema():
         assert constraint is not None
         assert not _accepts(
             xgr.Grammar.from_structural_tag(constraint[1]), invalid_call
+        )
+        assert not _accepts(
+            xgr.Grammar.from_structural_tag(constraint[1]), invalid_encoded_call
         )
 
 
@@ -1057,7 +1072,7 @@ def test_auto_hook_does_not_swallow_parser_visible_closes():
 
     parsed = KimiK3Detector().detect_and_parse(output, [_tool(strict=False)])
 
-    assert json.loads(parsed.calls[0].parameters) == {"city": "Paris", "days": ""}
+    assert parsed.calls == []  # An incomplete JSON number must not become a string.
     assert not _token_accepts(structural_tag, output)
 
 
@@ -1075,16 +1090,22 @@ def test_parallel_tool_calls_false_rejects_second_call(tool_strict_level):
             [_tool(strict=False)], "kimi_k3"
         ).get_structure_constraint("auto", parallel_tool_calls=False)
     assert constraint is not None
+
+    def string_argument(key, value):
+        if tool_strict_level == ToolStrictLevel.PARAMETER:
+            return _json_string_argument(key, value)
+        return _argument(key, "string", value)
+
     first = _call(
         "weather",
         165,
-        _argument("city", "string", "Paris"),
+        string_argument("city", "Paris"),
         _argument("days", "number", "3"),
     )
     second = _call(
         "weather",
         166,
-        _argument("city", "string", "London"),
+        string_argument("city", "London"),
         _argument("days", "number", "2"),
     )
 
@@ -1125,13 +1146,13 @@ def test_parameter_level_constrains_every_parallel_call():
     valid_second = _call(
         "weather",
         49,
-        _argument("city", "string", "London"),
+        _json_string_argument("city", "London"),
         _argument("days", "number", "2"),
     )
     invalid_second = _call(
         "weather",
         49,
-        _argument("city", "string", "london"),
+        _json_string_argument("city", "london"),
         _argument("days", "number", "99"),
     )
 
@@ -1303,9 +1324,7 @@ def test_reasoning_prefix_is_owned_by_exactly_one_layer():
 def test_required_prefix_cannot_emit_external_stop_before_call(strict, marker, named):
     tool = _tool(strict=strict)
     choice = (
-        ToolChoice(function=ToolChoiceFuncName(name="weather"))
-        if named
-        else "required"
+        ToolChoice(function=ToolChoiceFuncName(name="weather")) if named else "required"
     )
     tag = get_kimik3_structural_tag([tool], tool_choice=choice)
     good = _tools_section(_valid_weather_call())

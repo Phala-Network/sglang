@@ -96,7 +96,6 @@ class XGrammarGrammar(BaseGrammarObject):
 
     def accept_token(self, token: int):
         if not self.is_terminated():
-            self.current_token = token
             accepted = self.matcher.accept_token(token)
             if not accepted:
                 # log for debugging
@@ -106,11 +105,36 @@ class XGrammarGrammar(BaseGrammarObject):
                     f"Key string: {self.key_string}"
                 )
             else:
+                self.current_token = token
                 self.accepted_tokens.append(token)
 
     def rollback(self, k: int):
+        if type(k) is not int or not 0 <= k <= len(self.accepted_tokens):
+            raise ValueError("Rollback requires an accepted-token count")
+        if not k:
+            return
         self.matcher.rollback(k)
-        self.accepted_tokens = self.accepted_tokens[:-k]
+        del self.accepted_tokens[-k:]
+
+    def set_stop_token_ids_before_decoding(self, stop_token_ids: List[int]) -> None:
+        """Add request-local scheduler EOS tokens without changing compilation."""
+        if self.current_token is not None or self.accepted_tokens:
+            raise ValueError("Stop tokens must be configured before decoding")
+        previous = self.override_stop_tokens
+        if isinstance(previous, int):
+            previous = [previous]
+        token_ids = sorted(set(stop_token_ids) | set(previous or []))
+        if not token_ids or any(
+            type(token_id) is not int or not 0 <= token_id < self.vocab_size
+            for token_id in token_ids
+        ):
+            raise ValueError("Request stop tokens must be vocabulary-bounded IDs")
+        self.matcher = GrammarMatcher(
+            self.ctx,
+            max_rollback_tokens=MAX_ROLLBACK_TOKENS,
+            override_stop_tokens=token_ids,
+        )
+        self.override_stop_tokens = token_ids
 
     def is_terminated(self):
         return self.matcher.is_terminated()

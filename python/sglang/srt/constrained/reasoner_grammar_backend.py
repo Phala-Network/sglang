@@ -39,6 +39,9 @@ _THINK_BUDGET_VARIANT = "think_budget="
 # Arbitrary bound; budgets are a per-request knob, so only recent variants stay cached.
 _BUDGET_VARIANT_CACHE_SIZE = 32
 
+# Set by the chat renderer, never inferred from a user-provided grammar.
+KIMIK3_REQUIRED_NATIVE_BOUNDARY = "__sglang_kimik3_required_native_boundary"
+
 
 class ReasonerGrammarObject(BaseGrammarObject):
     """Defers grammar constraints until the reasoning end sequence is complete."""
@@ -85,16 +88,58 @@ class ReasonerGrammarObject(BaseGrammarObject):
         self._opening: List[int] = []
         self._opening_text = ""
         self._generated = 0
+        self._kimik3_token_bytes = None
+        self._kimik3_boundary_matchers = ()
+        self._kimik3_boundary_next_tokens = ()
+        self._kimik3_boundary_matches = (0, 0)
+        self._kimik3_thinking_history = []
 
     def maybe_init_reasoning(self, reasoning: bool):
         self._matched_think_end_tokens = 0
         self._thinking_match_history.clear()
+        self._kimik3_boundary_matches = (0,) * len(self._kimik3_boundary_matchers)
+        self._kimik3_thinking_history.clear()
         if reasoning:
             self.tokens_in_think = 0
             self.tokens_after_end = -1
         else:
             self.tokens_in_think = -1
             self.tokens_after_end = 0
+
+    def enable_kimik3_required_native_boundary(self, tokenizer, stop_token_ids):
+        """Keep generated required/strict-auto K3 constraints active while thinking."""
+        from sglang.srt.function_call.kimik3_format import (
+            RESPONSE_OPEN,
+            THINK_CLOSE,
+            TOOLS_OPEN,
+        )
+
+        from .xgrammar_backend import XGrammarGrammar
+
+        if self.current_token is not None or self._thinking_match_history:
+            raise ValueError("K3 native boundary must be configured before decoding")
+        token_bytes = getattr(
+            getattr(tokenizer, "model", None), "decode_single_token_bytes", None
+        )
+        if not isinstance(self.grammar, XGrammarGrammar) or not callable(token_bytes):
+            raise ValueError("K3 native boundary requires XGrammar and K3 token bytes")
+        self.grammar.set_stop_token_ids_before_decoding(stop_token_ids)
+        self._kimik3_token_bytes = token_bytes
+        self._kimik3_boundary_matchers = tuple(
+            TokenSequenceMatcher(marker.encode())
+            for marker in (THINK_CLOSE, TOOLS_OPEN, RESPONSE_OPEN)
+        )
+        self._kimik3_boundary_matches = (0,) * len(self._kimik3_boundary_matchers)
+        # Only encode the short ASCII markers' suffixes, never the vocabulary.
+        # This also completes an alias-tokenized or partial tools opener when the
+        # thinking budget expires, rather than restarting a canonical think end.
+        self._kimik3_boundary_next_tokens = tuple(
+            tuple(
+                tokenizer.encode(marker[offset:], add_special_tokens=False)[0]
+                for offset in range(len(marker))
+            )
+            for marker in (THINK_CLOSE, TOOLS_OPEN, RESPONSE_OPEN)
+        )
 
     def set_request_think_end_ids(self, think_end_ids: Sequence[int]) -> None:
         """Select one request-specific reasoning terminator before decoding."""
@@ -161,6 +206,32 @@ class ReasonerGrammarObject(BaseGrammarObject):
         return self.grammar is None and self._is_generation()
 
     def transfer_state(self, token: int) -> None:
+        if self._kimik3_token_bytes is not None:
+            if self._is_thinking():
+                self._kimik3_thinking_history.append(
+                    (
+                        self.tokens_in_think,
+                        self._matched_think_end_tokens,
+                        self._kimik3_boundary_matches,
+                    )
+                )
+                previous = self._matched_think_end_tokens
+                matched = self._think_end_matcher.advance(previous, token)
+                self.tokens_in_think += previous + 1 - matched
+                self._matched_think_end_tokens = matched
+                matches = list(self._kimik3_boundary_matches)
+                for byte in self._kimik3_token_bytes(token):
+                    for index, matcher in enumerate(self._kimik3_boundary_matchers):
+                        matches[index] = matcher.advance(matches[index], byte)
+                        if matches[index] == len(matcher):
+                            self._matched_think_end_tokens = 0
+                            self.tokens_after_end = 0
+                            self._kimik3_boundary_matches = (0,) * len(matches)
+                            return
+                self._kimik3_boundary_matches = tuple(matches)
+            elif self._is_generation():
+                self.tokens_after_end += 1
+            return
         if self._is_thinking():
             previous_match = self._matched_think_end_tokens
             self._thinking_match_history.append(previous_match)
@@ -175,6 +246,17 @@ class ReasonerGrammarObject(BaseGrammarObject):
             self.tokens_after_end += 1
 
     def rollback_state(self):
+        if self._kimik3_token_bytes is not None:
+            if self.tokens_after_end > 0:
+                self.tokens_after_end -= 1
+            elif self._kimik3_thinking_history:
+                (
+                    self.tokens_in_think,
+                    self._matched_think_end_tokens,
+                    self._kimik3_boundary_matches,
+                ) = self._kimik3_thinking_history.pop()
+                self.tokens_after_end = -1
+            return
         if self._is_thinking():
             if self._thinking_match_history:
                 previous_match = self._thinking_match_history.pop()
@@ -191,6 +273,13 @@ class ReasonerGrammarObject(BaseGrammarObject):
                 self.tokens_after_end -= 1
 
     def accept_token(self, token: int):
+        if self._kimik3_token_bytes is not None:
+            if self.grammar.is_terminated():
+                return
+            self.grammar.accept_token(token)
+            self.current_token = token
+            self.transfer_state(token)
+            return
         # Track the last accepted token on the wrapper itself (mirroring
         # XGrammarGrammar.accept_token). Disaggregation's process_prebuilt uses
         # `grammar.current_token is None` to detect a retracted request whose
@@ -213,11 +302,26 @@ class ReasonerGrammarObject(BaseGrammarObject):
         self.transfer_state(token)
 
     def is_terminated(self):
+        if self._kimik3_token_bytes is not None:
+            return self.grammar.is_terminated()
         if self._grammar_active():
             return self.grammar.is_terminated()
         return False
 
     def rollback(self, k):
+        if self._kimik3_token_bytes is not None:
+            if type(k) is not int or not 0 <= k <= len(self.grammar.accepted_tokens):
+                raise ValueError("K3 native rollback requires an accepted-token count")
+            if k:
+                self.grammar.rollback(k)
+            for _ in range(k):
+                self.rollback_state()
+            self.current_token = (
+                self.grammar.accepted_tokens[-1]
+                if self.grammar.accepted_tokens
+                else None
+            )
+            return
         if self.grammar is not None:
             if self.reasoning_in_grammar:
                 steps_after = k
@@ -276,6 +380,37 @@ class ReasonerGrammarObject(BaseGrammarObject):
             self._do_token_filter(vocab_mask, [token], idx, is_allowed=True)
 
     def fill_vocab_mask(self, vocab_mask: torch.Tensor, idx: int) -> None:
+        if self._kimik3_token_bytes is not None:
+            self.grammar.fill_vocab_mask(vocab_mask, idx)
+            if self._is_thinking() and self.enable_token_filter:
+                if self._can_think_more():
+                    if self.think_excluded_token_ids:
+                        self.token_filter_fn(
+                            vocab_mask,
+                            self.think_excluded_token_ids,
+                            idx,
+                            is_allowed=False,
+                            reset_vocab_mask=False,
+                        )
+                else:
+                    # An allow-list filter ORs bits when reset=False; intersect
+                    # a separate allowed-only row with the native mask instead.
+                    allowed = torch.zeros_like(vocab_mask[idx : idx + 1])
+                    boundary = max(
+                        range(len(self._kimik3_boundary_matchers)),
+                        key=lambda index: self._kimik3_boundary_matches[index],
+                    )
+                    next_token = self._kimik3_boundary_next_tokens[boundary][
+                        self._kimik3_boundary_matches[boundary]
+                    ]
+                    self.token_filter_fn(
+                        allowed,
+                        [next_token],
+                        0,
+                        is_allowed=True,
+                    )
+                    vocab_mask[idx].bitwise_and_(allowed[0])
+            return
         if self.reasoning_in_grammar and self.grammar is not None:
             self.grammar.fill_vocab_mask(vocab_mask, idx)
             if (
@@ -362,6 +497,17 @@ class ReasonerGrammarObject(BaseGrammarObject):
         new_obj._opening = list(self._opening)
         new_obj._opening_text = self._opening_text
         new_obj._generated = self._generated
+        if self._kimik3_token_bytes is not None:
+            new_obj._kimik3_token_bytes = self._kimik3_token_bytes
+            new_obj._kimik3_boundary_matchers = self._kimik3_boundary_matchers
+            new_obj._kimik3_boundary_next_tokens = self._kimik3_boundary_next_tokens
+            new_obj._kimik3_boundary_matches = self._kimik3_boundary_matches
+            new_obj._kimik3_thinking_history = list(self._kimik3_thinking_history)
+            # XGrammar.copy creates a fresh matcher, so restore native progress
+            # for a midstream copy as well as preserving wrapper counters.
+            for token in self.grammar.accepted_tokens:
+                new_obj.grammar.accept_token(token)
+            new_obj.grammar.finished = self.grammar.finished
         return new_obj
 
     @property
@@ -388,6 +534,16 @@ class ReasonerGrammarObject(BaseGrammarObject):
         return None
 
     def jump_and_retokenize(self, old_output_ids, new_output_ids, next_state):
+        if self._kimik3_token_bytes is not None:
+            common = 0
+            for old, new in zip(old_output_ids, new_output_ids):
+                if old != new:
+                    break
+                common += 1
+            self.rollback(len(old_output_ids) - common)
+            for token in new_output_ids[common:]:
+                self.accept_token(token)
+            return
         if self._is_generation() and self.grammar is not None:
             return self.grammar.jump_and_retokenize(
                 old_output_ids, new_output_ids, next_state

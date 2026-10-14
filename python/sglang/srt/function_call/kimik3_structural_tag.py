@@ -153,8 +153,7 @@ def _dereference_schema(
         unsupported = set(schema).difference(_SCHEMA_METADATA_KEYWORDS, {"$ref"})
         if unsupported:
             raise ValueError(
-                "Kimi K3 schema has unsupported $ref siblings: "
-                f"{sorted(unsupported)!r}"
+                f"Kimi K3 schema has unsupported $ref siblings: {sorted(unsupported)!r}"
             )
         ref = schema["$ref"]
         if not isinstance(ref, str):
@@ -252,9 +251,7 @@ def _with_root_definitions(
         if key in result and result[key] != root_schema.get(key, {}):
             # Each XTML value becomes a separate JSON-schema document. Its own
             # definitions could retarget pointers from the original parameters.
-            raise ValueError(
-                "Kimi K3 argument schema has unsupported definition scope"
-            )
+            raise ValueError("Kimi K3 argument schema has unsupported definition scope")
         if key in root_schema and key not in result:
             result[key] = root_schema[key]
     return result
@@ -330,14 +327,7 @@ def _is_free_text(schema: Union[bool, Dict[str, Any]]) -> bool:
 def _value_format(
     schema: Union[bool, Dict[str, Any]],
     json_type: str,
-    loose_string: bool = False,
 ) -> Format:
-    if json_type == "string" and (loose_string or _is_free_text(schema)):
-        # AnyTextFormat stops at the enclosing tag's end marker. A qwen_xml
-        # string schema does not: the value could contain
-        # "<|close|>argument<|sep|>" and smuggle in further arguments that the
-        # detector then splits off, bypassing the strict argument schema.
-        return AnyTextFormat()
     # XGrammar 0.2.1 miscompiles a one-sided negative integer lower bound:
     # {"type": "integer", "minimum": -N} accepts the incomplete value "-"
     # and rejects every valid negative integer. Splitting the range at zero
@@ -365,27 +355,37 @@ def _value_format(
             nonnegative.pop("exclusiveMinimum", None)
             nonnegative["minimum"] = 0
             schema = {"anyOf": [negative, nonnegative]}
-    return JSONSchemaFormat(
-        json_schema=schema,
-        style="qwen_xml" if json_type == "string" else "json",
-    )
+    return JSONSchemaFormat(json_schema=schema, style="json")
 
 
 def _argument_value_variants(
     schema: Union[bool, Dict[str, Any]],
     root_schema: Dict[str, Any],
     loose_strings: bool = False,
-) -> List[Tuple[str, Format]]:
+) -> List[Tuple[str, str, Format]]:
     schema = _dereference_schema(schema, root_schema)
-    return [
-        (
-            json_type,
-            _value_format(restricted, json_type, loose_string=loose_strings),
-        )
-        for json_type in _schema_types(schema, root_schema)
-        if (restricted := _restrict_schema_type(schema, json_type, root_schema))
-        is not False
-    ]
+    variants = []
+    for json_type in _schema_types(schema, root_schema):
+        restricted = _restrict_schema_type(schema, json_type, root_schema)
+        if restricted is False:
+            continue
+        if json_type == "string":
+            if loose_strings or _is_free_text(restricted):
+                # Raw strings remain delimiter-framed. JSON strings provide an
+                # unambiguous alternative for every value, including the end tag.
+                variants.append((json_type, "string", AnyTextFormat()))
+            variants.append(
+                (json_type, "json-string", _value_format(restricted, json_type))
+            )
+        else:
+            variants.append(
+                (
+                    json_type,
+                    _JSON_TO_XTML_TYPE[json_type],
+                    _value_format(restricted, json_type),
+                )
+            )
+    return variants
 
 
 def _known_argument_format(
@@ -396,14 +396,13 @@ def _known_argument_format(
     escaped_key = _escape_attr(key)
     variants = [
         TagFormat(
-            begin=(
-                f'<|open|>argument key="{escaped_key}" '
-                f'type="{_JSON_TO_XTML_TYPE[json_type]}"<|sep|>'
-            ),
+            begin=(f'<|open|>argument key="{escaped_key}" type="{wire_type}"<|sep|>'),
             content=value_format,
             end=ARGUMENT_CLOSE,
         )
-        for json_type, value_format in _argument_value_variants(schema, root_schema)
+        for _json_type, wire_type, value_format in _argument_value_variants(
+            schema, root_schema
+        )
     ]
     if not variants:
         return None
@@ -480,13 +479,11 @@ def _dynamic_argument_format(
         SequenceFormat(
             elements=[
                 RegexFormat(pattern=_dynamic_key_pattern(excluded_keys)),
-                ConstStringFormat(
-                    value=(f'" type="{_JSON_TO_XTML_TYPE[json_type]}"<|sep|>')
-                ),
+                ConstStringFormat(value=(f'" type="{wire_type}"<|sep|>')),
                 value_format,
             ]
         )
-        for json_type, value_format in _argument_value_variants(
+        for _json_type, wire_type, value_format in _argument_value_variants(
             schema, root_schema, loose_strings=loose_strings
         )
     ]

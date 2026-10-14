@@ -25,6 +25,10 @@ from sglang.srt.layers.dcp import (
 from sglang.srt.layers.layer_boundary import get_attn_tp_context
 from sglang.srt.layers.logits_processor import get_in_autotune_dummy_run
 from sglang.srt.layers.radix_attention import unified_attention_with_output
+from sglang.srt.layers.rotary_embedding.request_static_yarn import (
+    request_static_yarn_positions,
+    scale_request_static_yarn_query,
+)
 from sglang.srt.lora.deepseek_mla_correction import (
     apply_q_correction as apply_kv_b_lora_q_correction,
 )
@@ -293,6 +297,8 @@ class DeepseekMLAForwardMixin:
         prev_topk_indices: Optional[torch.Tensor] = None,
     ):
         from sglang.srt.model_executor.runner import get_is_capture_mode
+
+        positions = request_static_yarn_positions(forward_batch, positions)
 
         # Q8KV8 q-prep/indexer overlap handshake (see the fork site below):
         # True between the alt-stream fork and its consumption in the born
@@ -684,6 +690,8 @@ class DeepseekMLAForwardMixin:
         fusion_plan: Optional[MlaBmmFusionPlan] = None,
         attention_output_gate: Optional[torch.Tensor] = None,
     ):
+        q_nope_out = scale_request_static_yarn_query(q_nope_out, forward_batch, self)
+        q_pe = scale_request_static_yarn_query(q_pe, forward_batch, self)
         save_kv_cache = True
 
         if self.current_attention_backend in FORWARD_ABSORB_CORE_ATTENTION_BACKENDS:

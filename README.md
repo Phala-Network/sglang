@@ -1,3 +1,6 @@
+Phala v0.5.21 compatibility maintenance: [Xing4 source and image contract](docker/xing4/README.md).
+The linked entrypoint records scoped validation and the maintained ordered patch stack.
+
 <div align="center" id="sglangtop">
 <img src="https://raw.githubusercontent.com/sgl-project/sglang/main/assets/logo.png" alt="logo" width="400" margin="10px"></img>
 

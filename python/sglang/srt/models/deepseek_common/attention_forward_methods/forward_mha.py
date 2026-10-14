@@ -14,6 +14,10 @@ from sglang.srt.layers.dcp import (
     filter_dcp_local_kv_indices,
 )
 from sglang.srt.layers.layer_boundary import get_attn_tp_context
+from sglang.srt.layers.rotary_embedding.request_static_yarn import (
+    request_static_yarn_positions,
+    scale_request_static_yarn_query,
+)
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 from sglang.srt.model_executor.forward_context import (
     get_attn_backend,
@@ -183,6 +187,7 @@ class DeepseekMHAForwardMixin:
         forward_batch: ForwardBatch,
         zero_allocator: BumpAllocator,
     ):
+        positions = request_static_yarn_positions(forward_batch, positions)
         if self.q_lora_rank is not None:
             q, latent_cache = (
                 get_attn_tp_context()
@@ -219,6 +224,7 @@ class DeepseekMHAForwardMixin:
             )
             latent_cache = self.kv_a_proj_with_mqa(hidden_states)[0]
 
+        q = scale_request_static_yarn_query(q, forward_batch, self)
         _, q_pe = q.split([self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
         kv_a, _ = latent_cache.split([self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
         latent_cache = latent_cache.unsqueeze(1)

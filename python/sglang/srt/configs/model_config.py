@@ -2470,6 +2470,11 @@ def compute_mla_mscale_scaling(rope_scaling: dict, base_scaling: float) -> float
             "rope_scaling missing 'factor', defaulting to 1.0. Check model accuracy.",
         )
     scaling_factor = rope_scaling.get("factor", 1.0)
+    # Dynamic Xing uses a fixed native (64) backend scalar. The model scales
+    # long-profile Q before any attention quantization, never mutable global
+    # RadixAttention/backend state. Static configurations retain their scalar.
+    if "request_static_factors" in rope_scaling:
+        scaling_factor = min(rope_scaling["request_static_factors"])
     mscale = yarn_get_mscale(scaling_factor, float(mscale_all_dim))
     return base_scaling * mscale * mscale
 

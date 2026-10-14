@@ -123,6 +123,7 @@ class DecodeInputBuffers(ForwardInputBuffers):
     ngram_embedding_info: Optional[NgramEmbeddingInfo]
     rids_int: Optional[torch.Tensor]
     bootstrap_room_ids_int: Optional[torch.Tensor]
+    rope_positions: Optional[torch.Tensor] = None
 
     @classmethod
     def create(
@@ -148,6 +149,7 @@ class DecodeInputBuffers(ForwardInputBuffers):
         pp_proxy_topk_size: Optional[int] = None,
         pp_proxy_residual_num_blocks: Optional[int] = None,
         pp_proxy_dspark_hidden_size: int = 0,
+        enable_request_static_yarn: bool = False,
     ) -> DecodeInputBuffers:
         with torch.device(device):
             input_ids = torch.zeros((max_num_token,), dtype=torch.int64)
@@ -156,6 +158,10 @@ class DecodeInputBuffers(ForwardInputBuffers):
             seq_lens = torch.full((max_bs,), seq_len_fill_value, dtype=torch.int64)
             out_cache_loc = torch.zeros((max_num_token,), dtype=cache_loc_dtype)
             positions = torch.zeros((max_num_token,), dtype=torch.int64)
+            rope_positions = (
+                torch.zeros((max_num_token,), dtype=torch.int64)
+                if enable_request_static_yarn else None
+            )
             mrope_positions = torch.zeros((3, max_num_token), dtype=torch.int64)
             # Refreshed at replay only under expert parallelism.
             num_token_non_padded = (
@@ -243,6 +249,7 @@ class DecodeInputBuffers(ForwardInputBuffers):
             out_cache_loc=out_cache_loc,
             positions=positions,
             mrope_positions=mrope_positions,
+            rope_positions=rope_positions,
             num_token_non_padded=num_token_non_padded,
             custom_mask=custom_mask,
             next_token_logits_buffer=next_token_logits_buffer,
@@ -270,6 +277,7 @@ class PrefillInputBuffers(ForwardInputBuffers):
     input_embeds: Optional[torch.Tensor]
     mrope_positions: Optional[torch.Tensor]
     pp_proxy_tensors: Optional[Dict[str, torch.Tensor]]
+    rope_positions: Optional[torch.Tensor] = None
 
     @classmethod
     def create(
@@ -289,7 +297,10 @@ class PrefillInputBuffers(ForwardInputBuffers):
         pp_proxy_topk_size: Optional[int] = None,
         pp_proxy_residual_num_blocks: Optional[int] = None,
         pp_proxy_dspark_hidden_size: int = 0,
+        enable_request_static_yarn: bool = False,
     ) -> PrefillInputBuffers:
+        # These optional table addresses also participate in shared graph
+        # buffer ownership and index reset through ForwardInputBuffers.
         with torch.device(device):
             input_ids = torch.zeros((max_num_tokens,), dtype=torch.int64)
             out_cache_loc = torch.zeros((max_num_tokens,), dtype=cache_loc_dtype)
@@ -308,6 +319,10 @@ class PrefillInputBuffers(ForwardInputBuffers):
                 else None
             )
             positions = torch.zeros((max_num_tokens,), dtype=torch.int64)
+            rope_positions = (
+                torch.zeros((max_num_tokens,), dtype=torch.int64)
+                if enable_request_static_yarn else None
+            )
 
             if is_multimodal:
                 input_embeds = torch.zeros((max_num_tokens, hidden_size), dtype=dtype)
@@ -342,4 +357,5 @@ class PrefillInputBuffers(ForwardInputBuffers):
             input_embeds=input_embeds,
             mrope_positions=mrope_positions,
             pp_proxy_tensors=pp_proxy_tensors,
+            rope_positions=rope_positions,
         )

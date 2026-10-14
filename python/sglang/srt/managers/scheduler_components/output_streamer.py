@@ -191,11 +191,7 @@ class SchedulerOutputStreamer:
             getattr(req, "rope_profile", None) is not None for req in acc.output_reqs
         ):
             acc.customized_info["yarn_profile"] = [
-                {
-                    "factor": req.rope_profile.factor,
-                    "id": req.rope_profile.profile_id,
-                    "budget": req.rope_profile.budget,
-                }
+                req.rope_profile.metadata()
                 if req.rope_profile is not None
                 else None
                 for req in acc.output_reqs

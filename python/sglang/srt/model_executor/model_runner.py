@@ -26,6 +26,7 @@ from typing import Callable, List, Optional, Union
 import torch
 import torch.distributed as dist
 
+from sglang.srt.arg_groups.model_override_base import resolved_view
 from sglang.srt.configs.load_config import LoadConfig
 from sglang.srt.configs.model_config import (
     AttentionArch,
@@ -345,6 +346,11 @@ class ModelRunner:
         self.model_config = model_config
         self.dist_port = nccl_port
         self.server_args = server_args
+        yarn_config = getattr(model_config, "request_static_yarn_config", None)
+        if yarn_config is not None:
+            yarn_config.validate_runtime_support(resolved_view(server_args))
+            if yarn_config.position_kind == "mla" and model_config.dtype != torch.bfloat16:
+                raise ValueError("Xing request-static YaRN requires BF16 activations")
         self.is_draft_worker = is_draft_worker
         # The process entry published; a draft runner is not one (it must not
         # clobber the target's config), so only the target checks.

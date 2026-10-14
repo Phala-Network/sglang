@@ -136,6 +136,10 @@ class EagerRunner(BaseRunner):
             max_bs=max_bs,
             max_num_token=max_num_token,
             cache_loc_dtype=torch.int64,
+            enable_request_static_yarn=(
+                getattr(getattr(mr.model_config, "request_static_yarn_config", None),
+                        "position_kind", None) == "mla"
+            ),
             enable_mamba_track=(
                 get_exec().mamba.enable_mamba_extra_buffer
                 and mr.spec_algorithm.is_none()

@@ -2532,30 +2532,50 @@ class Scheduler(
 
     def init_req_max_new_tokens(self, req):
         input_len = len(req.origin_input_ids)
+        yarn_profile = getattr(req, "rope_profile", None)
+        xing_yarn = (
+            yarn_profile is not None
+            and getattr(
+                getattr(self.model_config, "request_static_yarn_config", None),
+                "position_kind", None,
+            ) == "mla"
+        )
         max_new_tokens = (
             req.sampling_params.max_new_tokens
             if req.sampling_params.max_new_tokens is not None
             else 1 << 30
         )
+        if xing_yarn:
+            max_new_tokens = yarn_profile.budget - input_len
+            if (
+                self.max_new_tokens_limit is not None
+                and self.max_new_tokens_limit > 0
+                and max_new_tokens > self.max_new_tokens_limit
+            ):
+                req.set_finish_with_abort(
+                    "Requested output budget exceeds SGLANG_MAX_NEW_TOKENS_LIMIT; "
+                    "request-static YaRN does not clip the admitted budget",
+                    status_code=HTTPStatus.BAD_REQUEST,
+                )
+                return
         if self.max_new_tokens_limit is not None and self.max_new_tokens_limit > 0:
             if max_new_tokens > self.max_new_tokens_limit:
                 logger.warning('Capping max_new_tokens of request <redacted> to SGLANG_MAX_NEW_TOKENS_LIMIT=<redacted> (requested: <redacted>).')
             max_new_tokens = min(max_new_tokens, self.max_new_tokens_limit)
 
         # Keep this bound consistent with PrefillAdder's admission budget.
-        max_new_tokens = max(
-            0,
-            min(
-                max_new_tokens,
-                self.max_req_len - input_len - 1,
-            ),
-        )
+        if not xing_yarn:
+            max_new_tokens = max(
+                0,
+                min(max_new_tokens, self.max_req_len - input_len - 1),
+            )
         # PrefillAdder reserves one page per shard; the allocator reserves one.
         # Subtract the other N - 1 pages to keep queue admission schedulable.
         token_capacity = (
             self.max_total_num_tokens * self.kv_shard_widening
             - self.page_size * (self.kv_shard_widening - 1)
         )
+        requested_new_tokens = max_new_tokens
         max_new_tokens = self.token_to_kv_pool_allocator.max_new_tokens_for_memory(
             input_len,
             max_new_tokens,
@@ -2563,6 +2583,16 @@ class Scheduler(
             sliding_window_size=self.sliding_window_size,
             chunk_size=self.chunked_prefill_size,
         )
+        if xing_yarn and (
+            max_new_tokens is None or max_new_tokens < requested_new_tokens
+        ):
+            req.set_finish_with_abort(
+                "Requested input plus output budget does not fit the KV pool "
+                "including independent page padding/headroom; request-static "
+                "YaRN does not clip the admitted budget",
+                status_code=HTTPStatus.BAD_REQUEST,
+            )
+            return
         if max_new_tokens is None:
             req.set_finish_with_abort(
                 f"Request prompt exceeds the KV memory budget: input_len={input_len}."
@@ -3043,10 +3073,19 @@ class Scheduler(
         from sglang.srt.configs.request_static_yarn import admit_request_static_yarn
 
         try:
+            yarn_config = getattr(self.model_config, "request_static_yarn_config", None)
+            yarn_reserved_tokens = 0
+            if yarn_config is not None and yarn_config.position_kind == "mla":
+                input_len = len(req.origin_input_ids)
+                page_size = self.token_to_kv_pool_allocator.page_size
+                yarn_reserved_tokens = (
+                    -(-input_len // page_size) * page_size - input_len + page_size + 1
+                )
             admit_request_static_yarn(
                 req,
-                getattr(self.model_config, "request_static_yarn_config", None),
+                yarn_config,
                 self.model_config.context_len,
+                reserved_tokens=yarn_reserved_tokens,
             )
         except ValueError as error:
             req.set_finish_with_abort(
@@ -3057,6 +3096,13 @@ class Scheduler(
 
         # initialize before returning
         self.init_req_max_new_tokens(req)
+        if (
+            getattr(getattr(self.model_config, "request_static_yarn_config", None),
+                    "position_kind", None) == "mla"
+            and req.to_finish is not None
+        ):
+            self.retire_unadmitted_request(req)
+            return
 
         # Validate prompt length
         error_msg = validate_input_length(

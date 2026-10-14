@@ -356,11 +356,29 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbedding):
         mscale_all_dim: float = 0,
         device: Optional[str] = None,
     ) -> None:
-        self.scaling_factor = scaling_factor
+        self.scaling_factors = (
+            tuple(scaling_factor)
+            if isinstance(scaling_factor, (list, tuple))
+            else (scaling_factor,)
+        )
+        self.scaling_factor = self.scaling_factors[-1]
+        self.scaling_factor_to_offset = {}
+        offset = 0
+        for factor in self.scaling_factors:
+            self.scaling_factor_to_offset[factor] = offset
+            offset += int(max_position_embeddings * factor)
         self.extrapolation_factor = extrapolation_factor
         self.attn_factor = attn_factor
         self.beta_fast = beta_fast
         self.beta_slow = beta_slow
+        self.mscale_by_factor = {
+            factor: float(
+                yarn_get_mscale(factor, float(mscale))
+                / yarn_get_mscale(factor, float(mscale_all_dim))
+                * attn_factor
+            )
+            for factor in self.scaling_factors
+        }
         self.mscale = float(
             yarn_get_mscale(self.scaling_factor, float(mscale))
             / yarn_get_mscale(self.scaling_factor, float(mscale_all_dim))
@@ -404,6 +422,24 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbedding):
         return inv_freq
 
     def _compute_cos_sin_cache(self) -> torch.Tensor:
+        if len(self.scaling_factors) > 1:
+            # Build each table from physical positions starting at zero and
+            # the original correction bound. Concatenation is addressing only;
+            # no second YaRN transform is applied to a native table.
+            tables = []
+            for factor in self.scaling_factors:
+                inv_freq = self._compute_inv_freq(factor)
+                t = torch.arange(
+                    int(self.max_position_embeddings * factor),
+                    device=self.device,
+                    dtype=torch.float32,
+                )
+                freqs = torch.einsum("i,j -> ij", t, inv_freq)
+                mscale = self.mscale_by_factor[factor]
+                tables.append(
+                    torch.cat((freqs.cos() * mscale, freqs.sin() * mscale), dim=-1)
+                )
+            return torch.cat(tables, dim=0)
         inv_freq = self._compute_inv_freq(self.scaling_factor)
         t = torch.arange(
             self.max_position_embeddings * self.scaling_factor,
@@ -421,6 +457,10 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbedding):
         return cache
 
     def _ensure_cos_sin_cache_length(self, needed_max_pos: int):
+        if len(self.scaling_factors) > 1:
+            if needed_max_pos >= self.cos_sin_cache.shape[0]:
+                raise ValueError("Request-static MLA YaRN table capacity exceeded")
+            return
         self.cos_sin_cache, rows = _extend_yarn_cache(
             cache=self.cos_sin_cache,
             compute_inv_freq=lambda: self._compute_inv_freq(self.scaling_factor),

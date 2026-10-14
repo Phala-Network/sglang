@@ -48,6 +48,7 @@ INDEX_SEMANTIC_BUFFERS = frozenset(
     {
         "positions",
         "mrope_positions",
+        "rope_positions",
         "out_cache_loc",
         "req_pool_indices",
         "mamba_track_indices",

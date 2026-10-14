@@ -2131,6 +2131,21 @@ class DeepseekV2AttentionMLA(
         else:
             self.rotary_emb = None
         self.use_deepseek_yarn_rope = rope_scaling is not None
+        self.request_static_yarn_scale_ratio = None
+        if rope_scaling and "request_static_factors" in rope_scaling:
+            # The backend/module scalar is native factor 64. Long Q receives
+            # scale128/scale64 without changing any shared attention object.
+            static_long_rope = {
+                k: v for k, v in rope_scaling.items() if k != "request_static_factors"
+            }
+            self.request_static_yarn_scale_ratio = (
+                compute_mla_mscale_scaling(static_long_rope, self.qk_head_dim**-0.5)
+                / self.scaling
+            )
+            self.request_static_yarn_long_offset = int(
+                rope_scaling["original_max_position_embeddings"]
+                * rope_scaling["request_static_factors"][0]
+            )
 
         self.attn_mqa = RadixAttention(
             self.num_local_heads,

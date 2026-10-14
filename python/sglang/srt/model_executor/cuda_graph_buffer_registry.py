@@ -521,6 +521,7 @@ def build_decode_registry(
     seq_len_fill_value: int,
     cache_loc_dtype: torch.dtype,
     enable_mamba_track: bool = False,
+    enable_request_static_yarn: bool = False,
     is_encoder_decoder: bool = False,
     encoder_len_fill_value: int = 0,
     encoder_lens_dtype: torch.dtype = torch.int32,
@@ -618,6 +619,13 @@ def build_decode_registry(
             padding_policy=PaddingPolicy.ZERO,
         ),
     ]
+    if enable_request_static_yarn:
+        slots.append(
+            GraphSlot(
+                "rope_positions", _tokens, torch.int64, axis="tokens",
+                padding_policy=PaddingPolicy.ZERO,
+            )
+        )
     if enable_mamba_track:
         slots.append(
             GraphSlot(
@@ -829,6 +837,7 @@ def build_prefill_registry(
     max_num_token: int,
     cache_loc_dtype: torch.dtype,
     is_multimodal: bool = False,
+    enable_request_static_yarn: bool = False,
     hidden_size: int = 0,
     embed_dtype: Optional[torch.dtype] = None,
     enable_mamba_track: bool = False,
@@ -899,6 +908,13 @@ def build_prefill_registry(
             padding_policy=PaddingPolicy.ZERO,
         ),
     ]
+    if enable_request_static_yarn:
+        slots.append(
+            GraphSlot(
+                "rope_positions", _tokens, torch.int64, axis="tokens",
+                padding_policy=PaddingPolicy.ZERO,
+            )
+        )
     if is_multimodal:
         slots.append(
             GraphSlot(
@@ -1015,6 +1031,7 @@ def build_eager_registry(
     max_num_token: int,
     cache_loc_dtype: torch.dtype,
     enable_mamba_track: bool = False,
+    enable_request_static_yarn: bool = False,
     is_encoder_decoder: bool = False,
     encoder_len_fill_value: int = 0,
     encoder_lens_dtype: torch.dtype = torch.int32,
@@ -1041,6 +1058,7 @@ def build_eager_registry(
         seq_len_fill_value=0,
         cache_loc_dtype=cache_loc_dtype,
         enable_mamba_track=enable_mamba_track,
+        enable_request_static_yarn=enable_request_static_yarn,
         is_encoder_decoder=is_encoder_decoder,
         encoder_len_fill_value=encoder_len_fill_value,
         encoder_lens_dtype=encoder_lens_dtype,

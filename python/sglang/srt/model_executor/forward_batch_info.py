@@ -719,6 +719,8 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
 
     # For Qwen2-VL
     mrope_positions: torch.Tensor = None
+    # Xing YaRN table addresses only; positions / KV indices stay physical.
+    rope_positions: Optional[torch.Tensor] = None
 
     # For two-batch overlap
     tbo_parent_token_range: Optional[Tuple[int, int]] = None
@@ -1135,6 +1137,8 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
         if model_runner.ngram_embedding_manager.enabled:
             ret._init_ngram_embedding_info(batch, device)
 
+        ret._init_request_static_yarn_mla(model_runner, batch)
+
         if model_runner.model_config.model_is_mrope:
             if (
                 ret.spec_info is not None
@@ -1421,6 +1425,38 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
         # Keep physical positions, lengths and KV indices untouched. These
         # model-only positions are copied into the existing CUDA graph slot.
         self.mrope_positions = self.mrope_positions + token_offsets.unsqueeze(0)
+
+    def _init_request_static_yarn_mla(self, model_runner, batch):
+        config = getattr(model_runner.model_config, "request_static_yarn_config", None)
+        if config is None or config.position_kind != "mla":
+            return
+        if self.forward_mode.is_idle():
+            self.rope_positions = self.positions
+            return
+        if not (self.forward_mode.is_decode() or self.forward_mode.is_extend()):
+            raise RuntimeError("Xing request-static YaRN forward mode is unsupported")
+        profiles = [req.rope_profile for req in batch.reqs]
+        if any(profile is None for profile in profiles):
+            raise RuntimeError("Xing request-static YaRN profile missing at model forward")
+        repeats = (
+            [1] * len(profiles)
+            if self.forward_mode.is_decode()
+            else batch.extend_lens
+        )
+        num_tokens = self.positions.numel()
+        if len(repeats) != len(profiles) or sum(repeats) != num_tokens:
+            raise RuntimeError("Xing request-static YaRN token layout mismatch")
+        offsets = torch.tensor(
+            [profile.offset for profile in profiles],
+            dtype=torch.int64,
+            device=model_runner.device,
+        )
+        token_offsets = torch.repeat_interleave(
+            offsets,
+            torch.tensor(repeats, dtype=torch.int64, device=model_runner.device),
+            output_size=num_tokens,
+        )
+        self.rope_positions = self.positions + token_offsets
 
     def _expand_mrope_from_input(
         self,
@@ -1857,6 +1893,8 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
         if self.encoder_lens is not None:
             self.encoder_lens = self._pad_tensor_to_size(self.encoder_lens, bs)
         self.positions = self._pad_tensor_to_size(self.positions, num_tokens)
+        if self.rope_positions is not None:
+            self.rope_positions = self._pad_tensor_to_size(self.rope_positions, num_tokens)
         if self.mamba_track_indices is not None:
             self.mamba_track_indices = self._pad_tensor_to_size(
                 self.mamba_track_indices, bs

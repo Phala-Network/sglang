@@ -57,6 +57,9 @@ from sglang.srt.layers.attention.kv_shard_hooks import (
 from sglang.srt.layers.attention.verify_mask import VerifyMask, maybe_create_verify_mask
 from sglang.srt.layers.dcp.layout import get_dcp_lens
 from sglang.srt.layers.logits_processor import get_in_autotune_dummy_run
+from sglang.srt.layers.rotary_embedding.request_static_yarn import (
+    request_static_yarn_positions,
+)
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode
 from sglang.srt.model_executor.runner_backend_utils.breakable_cuda_graph import (
     is_in_breakable_cuda_graph,
@@ -1307,7 +1310,7 @@ class TRTLLMMLABackend(FlashInferMLAAttnBackend):
                     q_rope,
                     k.squeeze(1),
                     k_rope.squeeze(1),
-                    forward_batch.positions,
+                    request_static_yarn_positions(forward_batch, forward_batch.positions),
                     cos_sin_cache,
                     is_neox,
                     self.kv_lora_rank,
@@ -1535,7 +1538,7 @@ class TRTLLMMLABackend(FlashInferMLAAttnBackend):
                     q_rope,
                     k.squeeze(1),
                     k_rope.squeeze(1),
-                    forward_batch.positions,
+                    request_static_yarn_positions(forward_batch, forward_batch.positions),
                     cos_sin_cache,
                     is_neox,
                     self.kv_lora_rank,

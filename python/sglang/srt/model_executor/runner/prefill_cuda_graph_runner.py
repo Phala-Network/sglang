@@ -387,6 +387,10 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
             hidden_size=input_embeds_hidden_size,
             dtype=self.model_runner.dtype,
             enable_mamba_track=self.mamba_track_enabled,
+            enable_request_static_yarn=(
+                getattr(getattr(model_runner.model_config, "request_static_yarn_config", None),
+                        "position_kind", None) == "mla"
+            ),
             pp_size=self.pp_size,
             is_first_pp_rank=self.model_runner.pp_group.is_first_rank,
             hc_hidden_size=getattr(
@@ -422,6 +426,7 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
             enable_prefill_cp=(is_dsa_enable_prefill_cp() or is_mla_cp_enabled()),
             attn_tp_sharded_fn=self.model_runner.attn_tp_sequence_sharded,
             source=self.buffers,
+            enable_request_static_yarn=self.buffers.rope_positions is not None,
         )
 
         self.attention_layers = self.model_runner.attention_layers
@@ -1550,6 +1555,9 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
                     if registry.has_slot("mrope_positions")
                     else None
                 ),
+                rope_positions=(
+                    _slot("rope_positions") if registry.has_slot("rope_positions") else None
+                ),
                 spec_algorithm=None,
                 spec_info=self._build_capture_spec_info(num_tokens),
                 # Use self.capture_hidden_mode so dflash spec (which needs
@@ -1885,6 +1893,9 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
             dp_padding_mode=forward_batch.dp_padding_mode,
             global_dp_buffer_len=forward_batch.global_dp_buffer_len,
             mrope_positions=mrope_positions,
+            rope_positions=(
+                _slot("rope_positions") if registry.has_slot("rope_positions") else None
+            ),
             spec_algorithm=forward_batch.spec_algorithm,
             spec_info=padded_spec_info,
             capture_hidden_mode=forward_batch.capture_hidden_mode,

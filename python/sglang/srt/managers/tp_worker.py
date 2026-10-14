@@ -546,6 +546,14 @@ class TpModelWorker(BaseTpWorker):
             kv_capacity - 1,
         )
         max_req_input_len = max_req_len - 5
+        if getattr(
+            getattr(self.model_config, "request_static_yarn_config", None),
+            "position_kind", None,
+        ) == "mla":
+            # Public RoPE capacity is independent of paged-KV headroom. Intake
+            # checks the raw budget and the allocator checks its own padding.
+            max_req_len = self.model_config.context_len
+            max_req_input_len = max_req_len
         if self.dllm_algorithm is not None:
             max_req_input_len -= self.dllm_algorithm.block_size
         return (

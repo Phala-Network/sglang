@@ -395,7 +395,7 @@ def get_rope(
                 original_max_position,
                 base,
                 is_neox_style,
-                scaling_factor,
+                rope_scaling.get("request_static_factors", scaling_factor),
                 dtype,
                 **extra_kwargs,
             )

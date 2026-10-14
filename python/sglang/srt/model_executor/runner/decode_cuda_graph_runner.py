@@ -422,6 +422,10 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
             seq_len_fill_value=self.seq_len_fill_value,
             encoder_len_fill_value=self.encoder_len_fill_value,
             num_tokens_per_req=self.captured_req_width,
+            enable_request_static_yarn=(
+                getattr(getattr(model_runner.model_config, "request_static_yarn_config", None),
+                        "position_kind", None) == "mla"
+            ),
             cache_loc_dtype=self._cache_loc_dtype(),
             enable_mamba_track=enable_mamba_track,
             ne_token_table=(
@@ -460,6 +464,7 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
             attn_tp_sharded_fn=self.model_runner.attn_tp_sequence_sharded,
             dp_size=self.dp_size,
             source=self.buffers,
+            enable_request_static_yarn=self.buffers.rope_positions is not None,
         )
 
         # Captures the per-replay attention-metadata prep into a small CUDA
@@ -997,6 +1002,9 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
             global_num_tokens_cpu=global_num_tokens_cpu,
             can_run_decode_cuda_graph=True,
             mrope_positions=mrope_positions,
+            rope_positions=(
+                _slot("rope_positions") if registry.has_slot("rope_positions") else None
+            ),
             spec_algorithm=self.model_runner.spec_algorithm,
             spec_info=spec_info,
             capture_hidden_mode=self.capture_hidden_mode,

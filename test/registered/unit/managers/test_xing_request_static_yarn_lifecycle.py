@@ -93,6 +93,28 @@ def test_insufficient_empty_pool_and_output_limit_reject_without_clipping():
         scheduler.tree_cache.finish.assert_called_once()
 
 
+def test_zero_output_still_requires_input_padding_and_empty_pool_headroom():
+    scheduler, recv, req = intake(524032, 0, pool_capacity=524032)
+    handle(scheduler, recv, req)
+    assert req.finished() and "KV pool" in req.finished_reason.message
+    assert req.sampling_params.max_new_tokens == 0
+    assert req.rope_profile.budget == 524032
+    assert req.rope_profile.reserved_tokens == 65
+    assert scheduler.waiting_queue == []
+    scheduler.grammar_manager.process_req_with_grammar.assert_not_called()
+    req.init_next_round_input.assert_not_called()
+    scheduler.tree_cache.finish.assert_called_once()
+
+    # The same public request can be admitted with sufficient total capacity.
+    # Current free capacity is deliberately absent from this intake fixture;
+    # ordinary memory pressure remains a queue/scheduling decision.
+    legal_scheduler, legal_recv, legal = intake(524032, 0, pool_capacity=524160)
+    handle(legal_scheduler, legal_recv, legal)
+    assert not legal.finished() and legal_scheduler.waiting_queue == [legal]
+    assert legal.sampling_params.max_new_tokens == 0
+    assert legal.rope_profile.budget == req.rope_profile.budget
+
+
 def test_null_budget_fills_public_context_and_real_retraction_keeps_profile():
     scheduler, recv, req = intake(32, None)
     handle(scheduler, recv, req)

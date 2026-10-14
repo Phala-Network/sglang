@@ -2584,7 +2584,9 @@ class Scheduler(
             chunk_size=self.chunked_prefill_size,
         )
         if xing_yarn and (
-            max_new_tokens is None or max_new_tokens < requested_new_tokens
+            yarn_profile.budget + yarn_profile.reserved_tokens > token_capacity
+            or max_new_tokens is None
+            or max_new_tokens < requested_new_tokens
         ):
             req.set_finish_with_abort(
                 "Requested input plus output budget does not fit the KV pool "

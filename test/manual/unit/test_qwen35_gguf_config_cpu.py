@@ -1,6 +1,7 @@
 """CPU contracts for local Qwen3.5 GGUF selection and native config loading."""
 
 import ast
+import importlib.util
 import logging
 import sys
 import tempfile
@@ -338,12 +339,38 @@ class TestQwenGGUFConfig(unittest.TestCase):
         rope = {"rope_type": "yarn", "factor": 4.0,
                 "original_max_position_embeddings": 262144,
                 "rope_theta": 10000000, "partial_rotary_factor": 0.25,
-                "mrope_section": [11, 11, 10], "mrope_interleaved": True}
+                "mrope_section": [11, 11, 10], "mrope_interleaved": True,
+                "request_static_factors": [1, 2, 4]}
         result = load("model.gguf", False,
                       model_override_args={"text_config": {"rope_parameters": rope}})
         self.assertIs(result.text_config, text)
         self.assertEqual(result.text_config.hidden_size, 5120)
         self.assertEqual(result.text_config.rope_parameters, rope)
+
+        # Exercise the actual admission policy against the GGUF early-return
+        # config. Losing the nested object or opt-in factors must fail here.
+        spec = importlib.util.spec_from_file_location(
+            "gguf_yarn_policy_under_test", SRT / "configs/request_static_yarn.py"
+        )
+        policy_module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = policy_module
+        spec.loader.exec_module(policy_module)
+        policy = policy_module.RequestStaticYarnConfig.from_hf_config(
+            result.text_config
+        )
+        policy.validate_model_support(["Qwen3_5ForConditionalGeneration"], True)
+        for budget, expected in [(262144, 1), (262145, 2), (524289, 4), (1048576, 4)]:
+            req = SimpleNamespace(
+                origin_input_ids=[1],
+                sampling_params=SimpleNamespace(
+                    max_new_tokens=budget - 1, custom_params=None
+                ),
+                extra_key=None, rope_profile=None, multimodal_inputs=None,
+            )
+            policy_module.admit_request_static_yarn(req, policy, 1048576)
+            selected = req.rope_profile
+            self.assertEqual(selected.factor, expected)
+            self.assertEqual(selected.budget, budget)
 
     def test_missing_geometry_fails_closed(self):
         del FakeReader.records[str(self.weight)][0]["qwen35.ssm.group_count"]

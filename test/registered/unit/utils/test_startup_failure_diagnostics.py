@@ -46,3 +46,20 @@ def test_framework_privacy_does_not_mask_safe_worker_diagnostics():
                                "SCHEDULER_FAILURE %s", ('{"exception_type":"builtins.KeyError"}',), None)
     assert FrameworkPrivacyFilter().filter(record)
     assert "builtins.KeyError" in record.getMessage()
+
+
+def test_empty_loader_assertion_keeps_only_parameter_name_shape_and_dtype():
+    import torch
+
+    namespace = {"__name__": "sglang.srt.model_loader.weight_utils"}
+    exec("def loader(name, param, loaded_weight):\n    assert False", namespace)
+    try:
+        namespace["loader"]("model.layers.0.attn_hc.hc_fn", torch.nn.Parameter(torch.zeros(4, 8)),
+                            torch.full((8, 4), 387442243.0))
+    except AssertionError as error:
+        rendered = scheduler_exception_diagnostic(error, startup=True)
+    context = json.loads(rendered)["weight_context"]
+    assert context == {"name": "model.layers.0.attn_hc.hc_fn", "param_shape": [4, 8],
+                       "param_dtype": "torch.float32", "loaded_weight_shape": [8, 4],
+                       "loaded_weight_dtype": "torch.float32"}
+    assert "387442243" not in rendered

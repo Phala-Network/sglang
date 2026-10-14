@@ -146,24 +146,14 @@ def test_native_model_api_import():
     assert "Xing4_0ForCausalLM" in inspect.getsource(ModelConfig._derive_model_shapes)
 
 
-@pytest.mark.parametrize("kind", ["bf16", "fp8"])
-@pytest.mark.parametrize("dense_tp_size", [1, 2])
-def test_actual_full_constructor_uses_stable_layer_boundary_api(
-    kind, dense_tp_size, monkeypatch
-):
-    """Execute every official decoder constructor without GPU weight storage.
-
-    Module storage and distributed stage binding are stubbed with their real
-    signatures. The Xing constructors, local imports, reduction enums, FFN
-    declarations, mHC operands and attention-context initialization run for real.
-    """
+def _construct_cpu_xing_model(kind, dense_tp_size, monkeypatch, *, config_changes=None):
     from sglang.srt.layers import logits_processor
-    from sglang.srt.layers.layer_boundary import HandoffRows, ProducerReduction
     from sglang.srt.layers.layer_boundary import layout
     from sglang.srt.layers.layer_boundary.adapters import attention
     from sglang.srt.models import deepseek_v2, xing4_0
 
     source = json.loads((FIXTURES / f"{kind}.json").read_text())
+    source.update(config_changes or {})
     config = Xing4_0Config(**source)
     parallel = SimpleNamespace(
         tp_size=1, moe_dense_tp_size=dense_tp_size,
@@ -227,6 +217,21 @@ def test_actual_full_constructor_uses_stable_layer_boundary_api(
     model = Xing4_0ForCausalLM(
         config, quant_config=quant_config if kind == "fp8" else None
     )
+    return model, stage_calls, context
+
+
+@pytest.mark.parametrize("kind", ["bf16", "fp8"])
+@pytest.mark.parametrize("dense_tp_size", [1, 2])
+def test_actual_full_constructor_uses_stable_layer_boundary_api(
+    kind, dense_tp_size, monkeypatch
+):
+    """Run every official constructor with signature-constrained GPU storage."""
+    from sglang.srt.layers.layer_boundary import HandoffRows, ProducerReduction
+
+    model, stage_calls, context = _construct_cpu_xing_model(
+        kind, dense_tp_size, monkeypatch
+    )
+    config = model.config
 
     assert len(model.model.layers) == config.num_hidden_layers
     assert len(stage_calls) == config.num_hidden_layers
@@ -246,3 +251,152 @@ def test_actual_full_constructor_uses_stable_layer_boundary_api(
             assert stages[1][0].handoff_rows is HandoffRows.TBO_SPLIT
         assert kwargs["terminal"] is (idx == config.num_hidden_layers - 1)
     assert context.allow_input_scattered is False
+
+
+@pytest.mark.parametrize("kind", ["bf16", "fp8"])
+@pytest.mark.parametrize("profile", ["native64", "dynamic64_128"])
+@pytest.mark.parametrize("tokens", [0, 3])
+def test_actual_full_forward_uses_stable_compute_and_terminal_api(
+    kind, profile, tokens, monkeypatch
+):
+    """Run the full official stack and real attention/MLP/MoE forward methods.
+
+    GPU compute is replaced at its boundaries and bound to the actual production
+    signatures. Real mHC shape handling, RMSNorm, residual lifecycle and terminal
+    normalization execute on CPU; this does not qualify CUDA kernels or weights.
+    """
+    from contextlib import nullcontext
+
+    from sglang.srt.layers.logits_processor import LogitsProcessor
+    from sglang.srt.layers.moe import mega_moe
+    from sglang.srt.models import deepseek_v2, xing4_0
+
+    attention_cls = deepseek_v2.DeepseekV2AttentionMLA
+    dense_cls = deepseek_v2.DeepseekV2MLP
+    moe_cls = deepseek_v2.DeepseekV2MoE
+    pre_signature = inspect.signature(xing4_0._mhc_pre_orig)
+    post_signature = inspect.signature(xing4_0._mhc_post_orig)
+    prepare_signature = inspect.signature(attention_cls.forward_prepare)
+    moe_compute_signature = inspect.signature(moe_cls.forward_normal)
+    mega_signature = inspect.signature(mega_moe.should_use_mega_moe)
+    logits_signature = inspect.signature(LogitsProcessor.forward)
+    decode_scope_signature = inspect.signature(attention_cls.maybe_use_decode_attn_tp)
+    calls = {"attention": [], "dense": [], "moe": [], "mhc_pre": [], "mhc_post": []}
+
+    changes = None
+    if profile == "dynamic64_128":
+        changes = {"max_position_embeddings": 524288, "rope_scaling": {
+            "rope_type": "yarn", "factor": 128, "request_static_factors": [64, 128],
+            "original_max_position_embeddings": 4096, "beta_fast": 32,
+            "beta_slow": 1, "mscale": 1, "mscale_all_dim": 1,
+        }}
+    owner, _, _ = _construct_cpu_xing_model(
+        kind, 1, monkeypatch, config_changes=changes
+    )
+    config = owner.config
+
+    def mhc_pre(*args, **kwargs):
+        bound = pre_signature.bind(*args, **kwargs).arguments
+        residual = bound["residual"]
+        rows, streams, width = residual.shape
+        assert (streams, width) == (config.hc_mult, config.hidden_size)
+        assert bound["fn"].shape == (streams * streams + 2 * streams, streams * width)
+        assert bound["n_splits_pre"] == 8
+        calls["mhc_pre"].append(tuple(residual.shape))
+        return (
+            torch.zeros(rows, streams, 1, dtype=torch.float32),
+            torch.eye(streams, dtype=torch.float32).expand(rows, streams, streams),
+            residual.mean(dim=1),
+        )
+
+    def mhc_post(*args, **kwargs):
+        bound = post_signature.bind(*args, **kwargs).arguments
+        residual = bound["residual"]
+        assert bound["x"].shape == (tokens, config.hidden_size)
+        assert bound["post_layer_mix"].shape == (tokens, config.hc_mult, 1)
+        assert bound["comb_res_mix"].shape == (tokens, config.hc_mult, config.hc_mult)
+        calls["mhc_post"].append(tuple(residual.shape))
+        return residual.clone()
+
+    def forward_prepare(self, *args, **kwargs):
+        bound = prepare_signature.bind(self, *args, **kwargs).arguments
+        assert bound["input_on_attention_tp_slices"] is False
+        assert bound["hidden_states"].shape == (tokens, config.hidden_size)
+        calls["attention"].append(self.layer_id)
+        return bound["hidden_states"], None, bound["forward_batch"], None
+
+    def forward_normal(self, *args, **kwargs):
+        bound = moe_compute_signature.bind(self, *args, **kwargs).arguments
+        calls["moe"].append(self.layer_id)
+        return bound["hidden_states"]
+
+    def no_mega(*args, **kwargs):
+        mega_signature.bind(*args, **kwargs)
+        return False
+
+    class Projection(nn.Module):
+        def forward(self, value):
+            return value, None
+
+    def logits_forward(self, *args, **kwargs):
+        bound = logits_signature.bind(self, *args, **kwargs).arguments
+        return bound["hidden_states"]
+
+    def decode_scope(self, *args, **kwargs):
+        decode_scope_signature.bind(self, *args, **kwargs)
+        return nullcontext()
+
+    owner.logits_processor.forward = logits_forward.__get__(owner.logits_processor)
+    monkeypatch.setattr(xing4_0, "mhc_pre", mhc_pre)
+    monkeypatch.setattr(xing4_0, "mhc_post", mhc_post)
+    monkeypatch.setattr(xing4_0, "attention_tensor_model_parallel_all_reduce", lambda x: x)
+    monkeypatch.setattr(mega_moe, "should_use_mega_moe", no_mega)
+    for layer in owner.model.layers:
+        attention = layer.self_attn
+        attention.layer_id = layer.layer_id
+        attention.forward = attention_cls.forward.__get__(attention)
+        attention.forward_prepare = forward_prepare.__get__(attention)
+        attention.forward_core = attention_cls.forward_core.__get__(attention)
+        attention.maybe_use_decode_attn_tp = decode_scope.__get__(attention)
+        mlp = layer.mlp
+        if layer.is_layer_sparse:
+            mlp.layer_id = layer.layer_id
+            mlp._enable_a2a_moe = False
+            mlp.alt_stream = None
+            mlp._can_dual_stream_graph = lambda _: False
+            mlp.forward = moe_cls.forward.__get__(mlp)
+            mlp.forward_normal = forward_normal.__get__(mlp)
+        else:
+            mlp.tp_size = 1
+            mlp.swiglu_limit = None
+            mlp.use_fused_clamp_act_mul = False
+            mlp.gate_up_proj = Projection()
+            mlp.down_proj = Projection()
+            mlp.act_fn = nn.Identity()
+            original_forward = dense_cls.forward
+
+            def dense_forward(self, *args, _layer_id=layer.layer_id, **kwargs):
+                calls["dense"].append(_layer_id)
+                return original_forward(self, *args, **kwargs)
+
+            mlp.forward = dense_forward.__get__(mlp)
+
+    forward_batch = SimpleNamespace(
+        can_run_tbo=False, residual_stream=None,
+        forward_mode=SimpleNamespace(is_idle=lambda: False),
+        moe_num_token_non_padded=lambda: None,
+    )
+    inputs = torch.ones(tokens, config.hidden_size, dtype=torch.bfloat16)
+    result = owner(
+        input_ids=None, positions=torch.arange(tokens),
+        forward_batch=forward_batch, input_embeds=inputs,
+    )
+    assert result.shape == inputs.shape and result.dtype == torch.bfloat16
+    assert torch.isfinite(result).all()
+    assert calls["attention"] == list(range(config.num_hidden_layers))
+    assert calls["dense"] == list(range(config.first_k_dense_replace))
+    assert calls["moe"] == list(range(config.first_k_dense_replace, config.num_hidden_layers))
+    assert len(calls["mhc_pre"]) == (2 * config.num_hidden_layers if tokens else 0)
+    assert len(calls["mhc_post"]) == (2 * config.num_hidden_layers if tokens else 0)
+    assert forward_batch.residual_stream is None
+    assert xing4_0.get_forward().attn_inputs is None

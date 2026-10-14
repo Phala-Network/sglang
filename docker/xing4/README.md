@@ -45,5 +45,9 @@ loopback/private addresses. Every public ingress path must authenticate.
 [verify_cpu.sh](verify_cpu.sh) runs source or actual installed-package checks
 on builder201. CPU driver stubs permit native imports only; CUDA/TileLang,
 mixed graph/kernel equivalence, real512K, quality and capacity remain GPU gates.
+Full official40-layer forward regressions execute the real Xing stack,
+MLA/MLP/MoE forward dispatch and terminal residual normalization with GPU compute
+mocked at production-signature boundaries. They preserve official dimensions
+and cover BF16/FP8 config, native/dynamic profiles and empty/nonempty rows.
 The unified [ordered patch stack](https://github.com/Phala-Network/sglang-serving-patches/tree/codex/xing4-v0521-20261014/versions/v0.5.21)
 preserves the published49-step prefix. No embedded Governor is selected.

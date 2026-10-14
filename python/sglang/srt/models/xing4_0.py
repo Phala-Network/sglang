@@ -534,7 +534,7 @@ class Xing4_0DecoderLayer(nn.Module):
                     forward_batch=forward_batch,
                     zero_allocator=zero_allocator,
                     llama_4_scaling=llama_4_scaling,
-                    input_on_attn_tp_slices=False,
+                    input_on_attention_tp_slices=False,
                     prev_topk_indices=prev_topk_indices,
                 )
             if isinstance(hidden_states, tuple):
@@ -604,7 +604,7 @@ class Xing4_0DecoderLayer(nn.Module):
         hidden_states = self.attn_boundary.prepare(
             hidden_states,
             forward_batch,
-            capture_gathered=captured_last_layer_outputs,
+            captured_last_layer_outputs=captured_last_layer_outputs,
         )
 
         with self.self_attn.maybe_use_decode_attn_tp(forward_batch):
@@ -613,7 +613,9 @@ class Xing4_0DecoderLayer(nn.Module):
                 "hidden_states": hidden_states,
                 "forward_batch": forward_batch,
                 "zero_allocator": zero_allocator,
-                "input_on_attn_tp_slices": self.attn_boundary.input_on_attn_tp_slices,
+                "input_on_attention_tp_slices": (
+                    self.attn_boundary.input_on_attention_tp_slices
+                ),
                 "prev_topk_indices": prev_topk_indices,
             }
             if not self.use_mha:
@@ -714,7 +716,7 @@ class Xing4_0DecoderLayer(nn.Module):
         )
 
     def op_comm_postprocess_layer(self, state):
-        hidden_states = self.ffn_boundary.finish_complete_output(
+        hidden_states = self.ffn_boundary.postprocess(
             state.pop("hidden_states_mlp_output"), state.forward_batch
         )
 
@@ -857,7 +859,7 @@ class Xing4_0Model(nn.Module):
             hidden_states = hidden_states.reshape(S, C)
 
         if not forward_batch.forward_mode.is_idle():
-            hidden_states = residual_batch.final_norm(
+            hidden_states = residual_batch.norm(
                 hidden_states, forward_batch, self.norm
             )
         return hidden_states

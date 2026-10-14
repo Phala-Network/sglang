@@ -101,7 +101,7 @@ from sglang.srt.entrypoints.openai.utils import (
     token_id_to_bytes,
 )
 from sglang.srt.entrypoints.request_headers import apply_header_overrides
-from sglang.srt.environ import envs
+from sglang.srt.environ import ToolStrictLevel, envs
 from sglang.srt.function_call.core_types import ToolCallItem
 from sglang.srt.function_call.function_call_parser import FunctionCallParser
 from sglang.srt.function_call.json_array_parser import JsonArrayParser
@@ -2427,6 +2427,10 @@ class OpenAIServingChat(OpenAIServingBase):
                         request.tool_choice == "required"
                         or isinstance(request.tool_choice, ToolChoice)
                         or any(tool.function.strict for tool in effective_tools)
+                        or (
+                            request.tool_choice == "auto"
+                            and parser.tool_strict_level >= ToolStrictLevel.FUNCTION
+                        )
                     )
                 ):
                     raise ValueError(

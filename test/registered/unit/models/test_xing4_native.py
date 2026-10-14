@@ -144,3 +144,105 @@ def test_reasoning_marker_survives_default_detokenization():
 def test_native_model_api_import():
     assert "config" in inspect.signature(Xing4_0ForCausalLM).parameters
     assert "Xing4_0ForCausalLM" in inspect.getsource(ModelConfig._derive_model_shapes)
+
+
+@pytest.mark.parametrize("kind", ["bf16", "fp8"])
+@pytest.mark.parametrize("dense_tp_size", [1, 2])
+def test_actual_full_constructor_uses_stable_layer_boundary_api(
+    kind, dense_tp_size, monkeypatch
+):
+    """Execute every official decoder constructor without GPU weight storage.
+
+    Module storage and distributed stage binding are stubbed with their real
+    signatures. The Xing constructors, local imports, reduction enums, FFN
+    declarations, mHC operands and attention-context initialization run for real.
+    """
+    from sglang.srt.layers import logits_processor
+    from sglang.srt.layers.layer_boundary import HandoffRows, ProducerReduction
+    from sglang.srt.layers.layer_boundary import layout
+    from sglang.srt.layers.layer_boundary.adapters import attention
+    from sglang.srt.models import deepseek_v2, xing4_0
+
+    source = json.loads((FIXTURES / f"{kind}.json").read_text())
+    config = Xing4_0Config(**source)
+    parallel = SimpleNamespace(
+        tp_size=1, moe_dense_tp_size=dense_tp_size,
+        enable_dp_lm_head=False, enable_attn_tp_input_scattered=False,
+    )
+    pp = SimpleNamespace(
+        is_first_rank=True, is_last_rank=True, rank_in_group=0, world_size=1
+    )
+    context = attention.AttnTpContext()
+    stage_calls = []
+
+    def storage_stub(original, *, attention_module=False, moe_module=False):
+        signature = inspect.signature(original.__init__)
+
+        class StorageStub(nn.Module):
+            def __init__(self, *args, **kwargs):
+                nn.Module.__init__(self)
+                signature.bind(self, *args, **kwargs)
+                self.constructor_kwargs = kwargs
+                if attention_module:
+                    self.prepare_qkv_latent = lambda *_: None
+                if moe_module:
+                    self.experts = SimpleNamespace(quant_method=object())
+                    self.num_fused_shared_experts = 0
+
+        return StorageStub
+
+    layers_signature = inspect.signature(xing4_0.make_layers)
+    stages_signature = inspect.signature(xing4_0.make_stages)
+
+    def make_layers(num_layers, layer_fn, **kwargs):
+        layers_signature.bind(num_layers, layer_fn, **kwargs)
+        return nn.ModuleList([
+            layer_fn(idx, f"{kwargs['prefix']}.{idx}") for idx in range(num_layers)
+        ]), 0, num_layers
+
+    def make_stages(*args, **kwargs):
+        stages_signature.bind(*args, **kwargs)
+        stage_calls.append((args, kwargs))
+        return object(), object()
+
+    monkeypatch.setattr(deepseek_v2, "DeepseekV2AttentionMLA", storage_stub(
+        deepseek_v2.DeepseekV2AttentionMLA, attention_module=True
+    ))
+    monkeypatch.setattr(deepseek_v2, "DeepseekV2MLP", storage_stub(deepseek_v2.DeepseekV2MLP))
+    monkeypatch.setattr(deepseek_v2, "DeepseekV2MoE", storage_stub(
+        deepseek_v2.DeepseekV2MoE, moe_module=True
+    ))
+    for name in ("VocabParallelEmbedding", "ParallelLMHead"):
+        monkeypatch.setattr(xing4_0, name, storage_stub(getattr(xing4_0, name)))
+    monkeypatch.setattr(logits_processor, "LogitsProcessor", storage_stub(
+        logits_processor.LogitsProcessor
+    ))
+    monkeypatch.setattr(xing4_0, "make_layers", make_layers)
+    monkeypatch.setattr(xing4_0, "make_stages", make_stages)
+    monkeypatch.setattr(xing4_0, "get_pp_group", lambda: pp)
+    for module in (xing4_0, layout, attention):
+        monkeypatch.setattr(module, "get_parallel", lambda: parallel)
+    monkeypatch.setattr(xing4_0, "get_attn_tp_context", lambda: context)
+    quant_config = SimpleNamespace(update_packed_modules_mapping=lambda _: None)
+    model = Xing4_0ForCausalLM(
+        config, quant_config=quant_config if kind == "fp8" else None
+    )
+
+    assert len(model.model.layers) == config.num_hidden_layers
+    assert len(stage_calls) == config.num_hidden_layers
+    for idx, layer in enumerate(model.model.layers):
+        sparse = idx >= config.first_k_dense_replace and idx % config.moe_layer_freq == 0
+        assert layer.is_layer_sparse is sparse
+        assert layer.enable_mhc
+        assert layer.attn_hc.hc_fn.shape[-1] == config.hidden_size * config.hc_mult
+        if not sparse:
+            expected = (0, 1) if dense_tp_size == 1 else (None, None)
+            assert (layer.mlp.constructor_kwargs["tp_rank"],
+                    layer.mlp.constructor_kwargs["tp_size"]) == expected
+        stages, kwargs = stage_calls[idx]
+        assert stages[1][0].sparse is sparse
+        assert stages[1][0].reduction is ProducerReduction.SCOPED
+        if idx == config.first_k_dense_replace - 1:
+            assert stages[1][0].handoff_rows is HandoffRows.TBO_SPLIT
+        assert kwargs["terminal"] is (idx == config.num_hidden_layers - 1)
+    assert context.allow_input_scattered is False

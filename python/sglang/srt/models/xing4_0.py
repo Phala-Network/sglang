@@ -48,6 +48,7 @@ from sglang.srt.layers.layer_boundary import (
     ProducerReduction,
     declare_attn,
     declare_ffn,
+    enable_moe_dense_fully_dp,
     get_attn_tp_context,
     make_stages,
 )
@@ -407,9 +408,7 @@ class Xing4_0DecoderLayer(nn.Module):
                 is_deepseek_v4=False,
             )
         else:
-            from sglang.srt.layers.layer_boundary import is_dense_ffn_fully_dp
-
-            if is_dense_ffn_fully_dp():
+            if enable_moe_dense_fully_dp():
                 mlp_tp_rank, mlp_tp_size = 0, 1
             else:
                 mlp_tp_rank, mlp_tp_size = None, None
@@ -448,16 +447,16 @@ class Xing4_0DecoderLayer(nn.Module):
         # KTEPWrapperMethod returns a TP-local partial: GPU expert partitions
         # are present on their respective ranks, while the complete CPU-expert
         # contribution exists only on TP rank 0.  Declare such an FFN output as
-        # TAIL_AFTER_SUM so the boundary never defers its post-experts
+        # LOCAL_TAIL so the boundary never defers its post-experts
         # all-reduce to a later layer; the CPU contribution is then counted
         # exactly once inside the MoE's own collective.
         self.is_kt_moe = isinstance(self.mlp, deepseek_v2.DeepseekV2MoE) and isinstance(
             self.mlp.experts.quant_method, KTEPWrapperMethod
         )
         ffn_reduction = (
-            ProducerReduction.TAIL_AFTER_SUM
+            ProducerReduction.LOCAL_TAIL
             if self.is_kt_moe
-            else ProducerReduction.EXIT_SCOPED
+            else ProducerReduction.SCOPED
         )
 
         self.attn_boundary, self.ffn_boundary = make_stages(
@@ -469,14 +468,14 @@ class Xing4_0DecoderLayer(nn.Module):
             (
                 declare_ffn(
                     sparse=self.is_layer_sparse,
-                    next_layer_sparse=self._stage_next_sparse,
+                    next_sparse=self._stage_next_sparse,
                     reduction=ffn_reduction,
                 ),
                 self.post_attention_layernorm,
             ),
             previous=declare_ffn(
                 sparse=self._stage_previous_sparse,
-                next_layer_sparse=self.is_layer_sparse,
+                next_sparse=self.is_layer_sparse,
             )
             if not self._stage_enters_stack
             else None,

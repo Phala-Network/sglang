@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -1024,6 +1025,30 @@ class ModelRunner:
         self.kv_index_translator.bind_and_verify_backends(
             [self.attn_backend, self.decode_attn_backend]
         )
+
+        if self.model_config.hf_config.architectures[0] == "Xing4_0ForCausalLM":
+            pool = self.token_to_kv_pool
+            buffers = getattr(pool, "kv_buffer", [])
+            first = buffers[0] if buffers else None
+            attention = next((getattr(layer, "self_attn", None)
+                              for layer in self.model.model.layers
+                              if getattr(layer, "self_attn", None) is not None), None)
+            logger.info("XING_RUNTIME_IDENTITY %s", json.dumps({
+                "pool_class": type(pool).__name__,
+                "logical_dtype": str(getattr(pool, "dtype", None)),
+                "storage_dtype": str(getattr(pool, "store_dtype", None)),
+                "tensor_dtype": str(first.dtype) if first is not None else None,
+                "tensor_shape": list(first.shape) if first is not None else None,
+                "kv_cache_dim": getattr(pool, "kv_cache_dim", None),
+                "runner_kv_cache_dtype": str(self.kv_cache_dtype),
+                "page_size": getattr(pool, "page_size", None),
+                "max_total_num_tokens": self.max_total_num_tokens,
+                "prefill_backend": self.prefill_attention_backend_str,
+                "decode_backend": self.decode_attention_backend_str,
+                "backend_class": type(self.attn_backend).__name__,
+                "decode_backend_class": type(self.decode_attn_backend).__name__,
+                "attention_scale": getattr(attention, "scaling", None),
+            }, sort_keys=True))
 
         if get_parallel().dcp_enabled and get_parallel().dcp_replicate_q_proj:
             self._prepare_replicated_q_proj()

@@ -3085,7 +3085,7 @@ class OpenAIServingChat(OpenAIServingBase):
         Some reasoning parsers rely on special-token delimiters that would be
         removed during detokenization when ``skip_special_tokens=True``.
         """
-        if self.reasoning_parser == "apertus2509":
+        if self.reasoning_parser in ("apertus2509", "xing4_0"):
             request.skip_special_tokens = False
         if self.reasoning_parser == "kimi_k3" or self.chat_encoding_spec == "kimi_k3":
             request.skip_special_tokens = False

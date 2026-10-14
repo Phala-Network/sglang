@@ -18,6 +18,7 @@ from sglang.srt.function_call.kimik3_detector import KimiK3Detector
 from sglang.srt.function_call.kimik3_format import (
     ARGUMENT_CLOSE,
     CALL_CLOSE,
+    MESSAGE_CLOSE,
     THINK_CLOSE,
     TOOLS_CLOSE,
     TOOLS_OPEN,
@@ -420,6 +421,282 @@ def test_strict_schema_supports_refs_and_mixed_unions():
                 _argument("value", "number", "1"),
             )
         ),
+    )
+
+
+@pytest.mark.parametrize("definitions_key", ["$defs", "definitions"])
+def test_strict_root_ref_uses_original_document_for_property_refs(definitions_key):
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "$ref": f"#/{definitions_key}/Root",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "Lookup",
+        "description": "A referenced parameter object",
+        "default": {"x": 1},
+        "examples": [{"x": 2}],
+        definitions_key: {
+            "Root": {"$ref": f"#/{definitions_key}/Parameters"},
+            "Parameters": {
+                "type": "object",
+                definitions_key: {"Value": {"type": "string"}},
+                "properties": {
+                    "x": {
+                        "$ref": f"#/{definitions_key}/Value",
+                        "description": "Keep the reference's original document",
+                    },
+                    "nested": {
+                        "type": "array",
+                        "items": {"$ref": f"#/{definitions_key}/Value"},
+                    },
+                },
+                "required": ["x"],
+                "additionalProperties": False,
+            },
+            "Value": {"type": "integer", "minimum": 1, "maximum": 3},
+        },
+    }
+    original = json.dumps(tool.function.parameters, sort_keys=True)
+    grammar = _grammar([tool], tool_choice="required")
+
+    assert _accepts(
+        grammar,
+        _tools_section(
+            _call(
+                "lookup",
+                1,
+                _argument("x", "number", "2"),
+                _argument("nested", "array", "[1,3]"),
+            )
+        ),
+    )
+    for arguments in (
+        (),
+        (_argument("x", "string", "2"),),
+        (_argument("x", "number", "4"),),
+        (_argument("x", "number", "2"), _argument("extra", "number", "1")),
+        (_argument("x", "number", "2"), _argument("nested", "array", '["1"]')),
+    ):
+        assert not _accepts(grammar, _tools_section(_call("lookup", 1, *arguments)))
+    assert json.dumps(tool.function.parameters, sort_keys=True) == original
+
+
+def test_strict_root_ref_decodes_json_pointer_escapes():
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "$ref": "#/$defs/Root~1name~0",
+        "$defs": {
+            "Root/name~": {
+                "type": "object",
+                "properties": {"x": {"type": "integer"}},
+                "required": ["x"],
+                "additionalProperties": False,
+            }
+        },
+    }
+    grammar = _grammar([tool], tool_choice="required")
+    assert _accepts(
+        grammar, _tools_section(_call("lookup", 1, _argument("x", "number", "1")))
+    )
+    assert not _accepts(grammar, _tools_section(_call("lookup", 1)))
+
+
+def test_strict_root_ref_additional_properties_use_original_definitions():
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "$ref": "#/$defs/Root",
+        "$defs": {
+            "Root": {
+                "type": "object",
+                "$defs": {"Extra": {"type": "string"}},
+                "properties": {"label": {"type": "string", "pattern": "[a-z]+"}},
+                "required": ["label"],
+                "additionalProperties": {"$ref": "#/$defs/Extra"},
+            },
+            "Extra": {"type": "integer", "minimum": 1, "maximum": 3},
+        },
+    }
+    grammar = _grammar([tool], tool_choice="required")
+    label = _argument("label", "string", "sample")
+    assert _accepts(
+        grammar,
+        _tools_section(_call("lookup", 1, label, _argument("extra", "number", "2"))),
+    )
+    for extra in (
+        _argument("extra", "string", "2"),
+        _argument("extra", "number", "4"),
+        _argument("label", "number", "2"),
+    ):
+        assert not _accepts(grammar, _tools_section(_call("lookup", 1, label, extra)))
+
+
+def test_strict_root_ref_target_still_rejects_unsupported_root_assertions():
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "$ref": "#/$defs/Root",
+        "$defs": {"Root": {"type": "object", "minProperties": 1}},
+    }
+    with pytest.raises(ValueError, match="unsupported.*root.*keyword"):
+        _grammar([tool], tool_choice="required")
+
+
+@pytest.mark.parametrize("definitions_key", ["$defs", "definitions"])
+def test_strict_argument_schema_rejects_conflicting_local_definitions(definitions_key):
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "$ref": f"#/{definitions_key}/Root",
+        definitions_key: {
+            "Root": {
+                "type": "object",
+                "properties": {
+                    "nested": {
+                        "type": "array",
+                        definitions_key: {"Value": {"type": "string"}},
+                        "items": {"$ref": f"#/{definitions_key}/Value"},
+                    }
+                },
+                "required": ["nested"],
+                "additionalProperties": False,
+            },
+            "Value": {"type": "integer"},
+        },
+    }
+    # Without $id, the nested pointer still targets the original document's
+    # integer schema. Hoisting preserves the array's own string definitions and
+    # changes that target, so refuse this scope instead of accepting strings.
+    with pytest.raises(ValueError, match="unsupported.*definition.*scope"):
+        _grammar([tool], tool_choice="required")
+
+
+@pytest.mark.parametrize(
+    "keyword, constraint",
+    [
+        ("oneOf", [{"properties": {"x": {"const": 1}}}]),
+        ("anyOf", [{"properties": {"x": {"const": 1}}}]),
+        ("allOf", [{"properties": {"x": {"const": 1}}}]),
+        ("not", {"required": ["x"]}),
+        ("if", {"required": ["x"]}),
+        ("then", {"required": ["y"]}),
+        ("else", {"required": ["y"]}),
+        ("minProperties", 2),
+        ("maxProperties", 0),
+        ("dependentRequired", {"x": ["y"]}),
+        ("dependentSchemas", {"x": {"required": ["y"]}}),
+        ("patternProperties", {"^x$": {"minimum": 2}}),
+        ("propertyNames", {"enum": ["y"]}),
+        ("unevaluatedProperties", False),
+        ("const", {"x": 1}),
+        ("enum", [{"x": 1}]),
+        ("x-unknown-constraint", True),
+    ],
+)
+def test_strict_root_schema_rejects_unsupported_keywords(keyword, constraint):
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "type": "object",
+        "properties": {"x": {"type": "integer"}},
+        "required": ["x"],
+        "additionalProperties": False,
+        keyword: constraint,
+    }
+    with pytest.raises(ValueError, match="unsupported.*root.*keyword"):
+        _grammar([tool], tool_choice="required")
+
+
+@pytest.mark.parametrize(
+    "keyword, constraint",
+    [
+        ("type", "object"),
+        ("properties", {"x": {"type": "integer"}}),
+        ("required", ["x"]),
+        ("additionalProperties", False),
+        ("oneOf", [{"required": ["x"]}]),
+    ],
+)
+def test_strict_root_ref_rejects_assertion_siblings(keyword, constraint):
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "$ref": "#/$defs/Root",
+        "$defs": {
+            "Root": {
+                "type": "object",
+                "properties": {"x": {"type": "integer"}},
+                "required": ["x"],
+                "additionalProperties": False,
+            }
+        },
+        keyword: constraint,
+    }
+    # additionalProperties=False beside this $ref makes the original schema
+    # unsatisfiable: outer properties is empty, so even {"x": 1} is invalid.
+    # Reject the unsupported conjunction instead of merging its dictionaries.
+    with pytest.raises(ValueError, match=r"unsupported.*\$ref.*sibling"):
+        _grammar([tool], tool_choice="required")
+
+
+@pytest.mark.parametrize(
+    "keyword, constraint",
+    [("minimum", 2), ("enum", [2]), ("type", "integer"), ("x-assertion", True)],
+)
+def test_strict_property_ref_rejects_assertion_siblings(keyword, constraint):
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "type": "object",
+        "$defs": {"Value": {"type": "integer", "minimum": 1, "maximum": 3}},
+        "properties": {"x": {"$ref": "#/$defs/Value", keyword: constraint}},
+        "required": ["x"],
+        "additionalProperties": False,
+    }
+    with pytest.raises(ValueError, match=r"unsupported.*\$ref.*sibling"):
+        _grammar([tool], tool_choice="required")
+
+
+@pytest.mark.parametrize("ref", ["#/$defs/Missing", "https://example.com/schema", 42])
+def test_strict_root_ref_rejects_unresolved_or_nonlocal_refs(ref):
+    tool = _tool(name="lookup")
+    tool.function.parameters = {"$ref": ref}
+    with pytest.raises(ValueError, match=r"\$ref"):
+        _grammar([tool], tool_choice="required")
+
+
+def test_strict_root_ref_rejects_reference_cycle():
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "$ref": "#/$defs/Root",
+        "$defs": {
+            "Root": {"$ref": "#/$defs/Alias"},
+            "Alias": {"$ref": "#/$defs/Root"},
+        },
+    }
+    with pytest.raises(ValueError, match=r"cyclic.*\$ref"):
+        _grammar([tool], tool_choice="required")
+
+
+@pytest.mark.parametrize("target", [True, False])
+def test_strict_root_ref_boolean_schema(target):
+    tool = _tool(name="lookup")
+    tool.function.parameters = {"$ref": "#/$defs/Root", "$defs": {"Root": target}}
+    if not target:
+        with pytest.raises(ValueError, match="object schema"):
+            _grammar([tool], tool_choice="required")
+        return
+    grammar = _grammar([tool], tool_choice="required")
+    assert _accepts(grammar, _tools_section(_call("lookup", 1)))
+    assert _accepts(
+        grammar, _tools_section(_call("lookup", 1, _argument("x", "number", "1")))
+    )
+
+
+def test_loose_required_tool_keeps_unsupported_root_schema_unconstrained():
+    tool = _tool(name="lookup", strict=False)
+    tool.function.parameters = {
+        "$ref": "#/$defs/Missing",
+        "minProperties": 2,
+        "dependentRequired": {"x": ["y"]},
+    }
+    grammar = _grammar([tool], tool_choice="required")
+    assert _accepts(
+        grammar,
+        _tools_section(_call("lookup", 1, _argument("custom", "string", "value"))),
     )
 
 
@@ -1018,6 +1295,23 @@ def test_reasoning_prefix_is_owned_by_exactly_one_layer():
     assert _accepts(wrapped_by_xgrammar, output)
     assert not _accepts(post_reasoning_only, output)
     assert _accepts(post_reasoning_only, _tools_section(_valid_weather_call()))
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("marker", [TOOLS_CLOSE, MESSAGE_CLOSE])
+@pytest.mark.parametrize("named", [False, True])
+def test_required_prefix_cannot_emit_external_stop_before_call(strict, marker, named):
+    tool = _tool(strict=strict)
+    choice = (
+        ToolChoice(function=ToolChoiceFuncName(name="weather"))
+        if named
+        else "required"
+    )
+    tag = get_kimik3_structural_tag([tool], tool_choice=choice)
+    good = _tools_section(_valid_weather_call())
+    prefix = "<|open|>response<|sep|>Checking.<|close|>response<|sep|>"
+    assert _token_accepts(tag, prefix + good)
+    assert not _token_accepts(tag, prefix + marker + good)
 
 
 if __name__ == "__main__":

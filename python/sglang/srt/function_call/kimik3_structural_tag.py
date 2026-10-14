@@ -24,6 +24,7 @@ from sglang.srt.function_call.kimik3_format import (
     ARGUMENT_CLOSE,
     CALL_CLOSE,
     CALL_OPEN,
+    MESSAGE_CLOSE,
     THINK_CLOSE,
     THINK_OPEN,
     TOOLS_CLOSE,
@@ -79,6 +80,25 @@ _OBJECT_KEYWORDS = {
     "propertyNames",
     "required",
 }
+_SCHEMA_METADATA_KEYWORDS = {
+    "$comment",
+    "$defs",
+    "$schema",
+    "default",
+    "definitions",
+    "deprecated",
+    "description",
+    "examples",
+    "readOnly",
+    "title",
+    "writeOnly",
+}
+_ROOT_SCHEMA_KEYWORDS = _SCHEMA_METADATA_KEYWORDS | {
+    "additionalProperties",
+    "properties",
+    "required",
+    "type",
+}
 
 
 def _escape_attr(value: str) -> str:
@@ -122,6 +142,31 @@ def _resolve_local_ref(
     if isinstance(value, (bool, dict)):
         return value
     return None
+
+
+def _dereference_schema(
+    schema: Union[bool, Dict[str, Any]], root_schema: Dict[str, Any]
+) -> Union[bool, Dict[str, Any]]:
+    """Resolve pure local refs without dropping or merging assertion siblings."""
+    seen_refs: Set[str] = set()
+    while isinstance(schema, dict) and "$ref" in schema:
+        unsupported = set(schema).difference(_SCHEMA_METADATA_KEYWORDS, {"$ref"})
+        if unsupported:
+            raise ValueError(
+                "Kimi K3 schema has unsupported $ref siblings: "
+                f"{sorted(unsupported)!r}"
+            )
+        ref = schema["$ref"]
+        if not isinstance(ref, str):
+            raise ValueError("Kimi K3 schema $ref must be a local JSON pointer")
+        if ref in seen_refs:
+            raise ValueError(f"Kimi K3 schema has a cyclic $ref: {ref!r}")
+        target = _resolve_local_ref(ref, root_schema)
+        if target is None:
+            raise ValueError(f"Kimi K3 schema $ref is unresolved or nonlocal: {ref!r}")
+        seen_refs.add(ref)
+        schema = target
+    return schema
 
 
 def _schema_types(
@@ -204,6 +249,12 @@ def _with_root_definitions(
         return schema
     result = dict(schema)
     for key in ("$defs", "definitions"):
+        if key in result and result[key] != root_schema.get(key, {}):
+            # Each XTML value becomes a separate JSON-schema document. Its own
+            # definitions could retarget pointers from the original parameters.
+            raise ValueError(
+                "Kimi K3 argument schema has unsupported definition scope"
+            )
         if key in root_schema and key not in result:
             result[key] = root_schema[key]
     return result
@@ -214,16 +265,9 @@ def _restrict_schema_type(
     json_type: str,
     root_schema: Dict[str, Any],
 ) -> Union[bool, Dict[str, Any]]:
+    schema = _dereference_schema(schema, root_schema)
     if not isinstance(schema, dict):
         return {"type": json_type} if schema else False
-
-    ref = schema.get("$ref")
-    if isinstance(ref, str):
-        target = _resolve_local_ref(ref, root_schema)
-        if target is not None:
-            return _with_root_definitions(
-                _restrict_schema_type(target, json_type, root_schema), root_schema
-            )
 
     result = dict(schema)
     schema_type = result.get("type")
@@ -332,6 +376,7 @@ def _argument_value_variants(
     root_schema: Dict[str, Any],
     loose_strings: bool = False,
 ) -> List[Tuple[str, Format]]:
+    schema = _dereference_schema(schema, root_schema)
     return [
         (
             json_type,
@@ -455,7 +500,9 @@ def _dynamic_argument_format(
     )
 
 
-def _strict_arguments_format(parameters: Dict[str, Any]) -> Format:
+def _strict_arguments_format(
+    parameters: Dict[str, Any], root_schema: Dict[str, Any]
+) -> Format:
     properties = parameters.get("properties", {})
     if not isinstance(properties, dict):
         raise ValueError("Kimi K3 tool parameters 'properties' must be an object")
@@ -476,7 +523,7 @@ def _strict_arguments_format(parameters: Dict[str, Any]) -> Format:
     for key, schema in properties.items():
         if not isinstance(key, str) or not isinstance(schema, (bool, dict)):
             raise ValueError("Kimi K3 tool property schemas must be JSON schemas")
-        argument = _known_argument_format(key, schema, parameters)
+        argument = _known_argument_format(key, schema, root_schema)
         if argument is None:
             if key in required_set:
                 raise ValueError(
@@ -493,7 +540,7 @@ def _strict_arguments_format(parameters: Dict[str, Any]) -> Format:
         elements.append(
             StarFormat(
                 content=_dynamic_argument_format(
-                    True, parameters, excluded_keys=declared
+                    True, root_schema, excluded_keys=declared
                 )
             )
         )
@@ -501,7 +548,7 @@ def _strict_arguments_format(parameters: Dict[str, Any]) -> Format:
         elements.append(
             StarFormat(
                 content=_dynamic_argument_format(
-                    additional, parameters, excluded_keys=declared
+                    additional, root_schema, excluded_keys=declared
                 )
             )
         )
@@ -529,12 +576,25 @@ def _tool_arguments_format(tool: Tool) -> Format:
         raise ValueError(
             f"Kimi K3 strict tool {tool.function.name!r} must define parameters"
         )
-    schema_types = _schema_types(parameters, parameters)
+    root_schema = parameters
+    parameters = _dereference_schema(parameters, root_schema)
+    if parameters is True:
+        parameters = {}
+    if isinstance(parameters, dict):
+        unsupported = set(parameters).difference(_ROOT_SCHEMA_KEYWORDS)
+        if unsupported:
+            # The XTML converter enforces only the object fields below. Passing
+            # any other root keyword through would silently lose its assertion.
+            raise ValueError(
+                "Kimi K3 tool parameters have unsupported root schema keywords: "
+                f"{sorted(unsupported)!r}"
+            )
+    schema_types = _schema_types(parameters, root_schema)
     if "object" not in schema_types:
         raise ValueError(
             f"Kimi K3 tool {tool.function.name!r} parameters must be an object schema"
         )
-    return _strict_arguments_format(parameters)
+    return _strict_arguments_format(parameters, root_schema)
 
 
 def _tool_call_tag(tool: Tool, arguments_format: Optional[Format] = None) -> TagFormat:
@@ -703,7 +763,14 @@ def get_kimik3_structural_tag(
         suffix: Format = SequenceFormat(
             elements=[
                 AnyTextFormat(
-                    excludes=[TOOLS_OPEN, THINK_OPEN, THINK_CLOSE, CALL_OPEN]
+                    excludes=[
+                        TOOLS_OPEN,
+                        TOOLS_CLOSE,
+                        MESSAGE_CLOSE,
+                        THINK_OPEN,
+                        THINK_CLOSE,
+                        CALL_OPEN,
+                    ]
                 ),
                 tools_tag,
             ]

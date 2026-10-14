@@ -378,12 +378,13 @@ from sglang.srt.utils.hf_transformers_utils import (
 )
 from sglang.srt.utils.msgspec_utils import msgspec_to_builtins
 from sglang.srt.utils.numa_utils import get_numa_node_if_available, numa_bind_to_node
+from sglang.srt.utils.startup_diagnostics import scheduler_exception_diagnostic
 from sglang.srt.utils.torch_memory_saver_adapter import TorchMemorySaverAdapter
 from sglang.srt.utils.weight_versions import (
     compute_weight_version_spans,
     record_weight_version_events,
 )
-from sglang.utils import TypeBasedDispatcher, get_exception_traceback
+from sglang.utils import TypeBasedDispatcher
 
 if is_mps():
     CudaStreamContext = nullcontext
@@ -6214,9 +6215,14 @@ def run_scheduler_process(
         # Run the event loop (blocks until a ShutdownReq sets gracefully_exit)
         scheduler.run_event_loop()
 
-    except Exception:
-        traceback = get_exception_traceback()
-        logger.error('Scheduler hit an exception: <redacted>')
+    except Exception as error:
+        logger.error(
+            "SCHEDULER_FAILURE %s",
+            scheduler_exception_diagnostic(
+                error, startup=scheduler is None,
+                credentials=(server_args.api_key, server_args.admin_api_key),
+            ),
+        )
         parent_process.send_signal(signal.SIGQUIT)
         # Opt-in: SIGKILL the pgroup so sibling ranks don't spew thousands
         # of NCCL/TCPStore tracebacks before they finally die.

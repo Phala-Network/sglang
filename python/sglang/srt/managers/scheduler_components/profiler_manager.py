@@ -171,7 +171,9 @@ class SchedulerProfilerManager:
             return self._profile_manager.manual_start()
 
         stage_str = f" for {stage.name}" if stage else ""
-        logger.info('Profiling starts<redacted>. Traces will be saved to: <redacted> (with profile id: <redacted>)')
+        logger.info(
+            "Profiling starts<redacted>. Traces will be saved to: <redacted> (with profile id: <redacted>)"
+        )
 
         activities = self.profiler_activities
         with_stack = self.torch_profiler_with_stack
@@ -304,7 +306,7 @@ class SchedulerProfilerManager:
 
             logger.info(f"Profile merge completed: {merged_path}")
         except Exception as e:
-            logger.error('Failed to merge profiles: <redacted>', exc_info=False)
+            logger.error("Failed to merge profiles: <redacted>", exc_info=False)
             return f" Merge failed: {e!s}"
         else:
             return merge_message
@@ -322,8 +324,6 @@ class SchedulerProfilerManager:
                 message="Profiling is not in progress. Call /start_profile first.",
             )
 
-        self.torch_profiler_output_dir.mkdir(parents=True, exist_ok=True)
-
         if self.profile_prefix:
             stage_prefix = self.profile_prefix + "-"
         else:
@@ -331,73 +331,127 @@ class SchedulerProfilerManager:
 
         stage_suffix = f"-{stage.name}" if stage else ""
         logger.info("Stop profiling" + stage_suffix + "...")
-        if self.torch_profiler is not None:
-            self.torch_profiler.stop()
-            if not _is_npu:
+        failure: Optional[OSError] = None
+        operation = "stop"
+        activities = self.profiler_activities or []
+        torch_profiler = self.torch_profiler
+        rpd_profiler = self.rpd_profiler
+        rpd_profile_path = getattr(self, "rpd_profile_path", None)
+        try:
+            # Stop before touching the output mount. A revoked mount must not
+            # leave Kineto running; do not retry stop() after it was attempted.
+            if torch_profiler is not None:
+                torch_profiler.stop()
+            if rpd_profiler is not None:
+                rpd_profiler.rangePop()
+                rpd_profiler.stop()
+                rpd_profiler.flush()
+
+            operation = "output mkdir"
+            if (
+                torch_profiler is not None
+                or rpd_profiler is not None
+                or "MEM" in activities
+            ):
+                self.torch_profiler_output_dir.mkdir(parents=True, exist_ok=True)
+
+            if torch_profiler is not None and not _is_npu:
                 # Build filename with only non-zero ranks to maintain backward compatibility
                 filename_parts = [self.profile_id, f"TP-{get_parallel().tp_rank}"]
-
-                # Only add other ranks if parallelism is enabled (size > 1)
                 if get_parallel().dp_size > 1:
                     filename_parts.append(f"DP-{get_parallel().dp_rank}")
                 if get_parallel().pp_size > 1:
                     filename_parts.append(f"PP-{get_parallel().pp_rank}")
                 if get_parallel().moe_ep_size > 1:
                     filename_parts.append(f"EP-{get_parallel().moe_ep_rank}")
-
                 filename = (
                     stage_prefix
                     + "-".join(filename_parts)
                     + stage_suffix
                     + ".trace.json.gz"
                 )
-
-                self.torch_profiler.export_chrome_trace(
+                operation = "trace export"
+                torch_profiler.export_chrome_trace(
                     os.path.join(self.torch_profiler_output_dir, filename)
                 )
-            torch.distributed.barrier(self.dp_tp_cpu_group)
 
-        if self.rpd_profiler is not None:
-            self.rpd_profiler.rangePop()
-            self.rpd_profiler.stop()
-            self.rpd_profiler.flush()
-
-            torch.distributed.barrier(self.dp_tp_cpu_group)
-            if get_parallel().tp_rank == 0:
-                from sglang.srt.utils.rpd_utils import rpd_to_chrome_trace
-
-                rpd_to_chrome_trace("trace.rpd", self.rpd_profile_path)
+            if "MEM" in activities:
+                operation = "memory snapshot export"
+                memory_profile_path = os.path.join(
+                    self.torch_profiler_output_dir,
+                    stage_prefix
+                    + str(time.time())
+                    + f"-TP-{get_parallel().tp_rank}-memory"
+                    + stage_suffix
+                    + ".pickle",
+                )
+                torch.cuda.memory._dump_snapshot(memory_profile_path)
+        except OSError as error:
+            # Only diagnostic I/O failures are recoverable here. CUDA/runtime
+            # errors and distributed failures must still reach the scheduler.
+            failure = error
+            logger.error(
+                "Profile %s failed (%s, errno=%s); serving continues",
+                operation,
+                type(error).__name__,
+                error.errno,
+            )
+        finally:
+            self.torch_profiler = None
             self.rpd_profiler = None
             self.rpd_profile_path = None
+            self.profile_in_progress = False
+            self.profiler_start_forward_ct = None
+            self._apply_detailed_annotations(False)
+            if "MEM" in activities:
+                torch.cuda.memory._record_memory_history(enabled=None)
+            if "CUDA_PROFILER" in activities:
+                if get_device().gpu_id == get_device().base_gpu_id:
+                    torch.cuda.cudart().cudaProfilerStop()
+            if torch_profiler is not None:
+                gc.collect()
 
-        if self.profiler_activities is not None and "MEM" in self.profiler_activities:
-            memory_profile_path = os.path.join(
-                self.torch_profiler_output_dir,
-                stage_prefix
-                + str(time.time())
-                + f"-TP-{get_parallel().tp_rank}-memory"
-                + stage_suffix
-                + ".pickle",
+        # Every rank participates even after a local write failure. This also
+        # synchronizes RPD flushes before rank zero converts the shared trace.
+        # A broken collective is fatal, not an optional profiling I/O error.
+        export_failed = torch.tensor(
+            [failure is not None], dtype=torch.int32, device="cpu"
+        )
+        torch.distributed.all_reduce(
+            export_failed,
+            op=torch.distributed.ReduceOp.MAX,
+            group=self.dp_tp_cpu_group,
+        )
+        if rpd_profiler is not None:
+            if not export_failed.item() and get_parallel().tp_rank == 0:
+                try:
+                    from sglang.srt.utils.rpd_utils import rpd_to_chrome_trace
+
+                    rpd_to_chrome_trace("trace.rpd", rpd_profile_path)
+                except OSError as error:
+                    failure = error
+                    export_failed.fill_(1)
+                    logger.error(
+                        "RPD trace export failed (%s, errno=%s); serving continues",
+                        type(error).__name__,
+                        error.errno,
+                    )
+            # Conversion is rank-zero-only, so share its outcome as well.
+            torch.distributed.all_reduce(
+                export_failed,
+                op=torch.distributed.ReduceOp.MAX,
+                group=self.dp_tp_cpu_group,
             )
-            torch.cuda.memory._dump_snapshot(memory_profile_path)
-            torch.cuda.memory._record_memory_history(enabled=None)
 
-        if "CUDA_PROFILER" in self.profiler_activities:
-            if get_device().gpu_id == get_device().base_gpu_id:
-                torch.cuda.cudart().cudaProfilerStop()
+        if export_failed.item():
+            detail = type(failure).__name__ if failure else "failure on another rank"
+            return ProfileReqOutput(
+                success=False,
+                message=f"Profile stop/export failed ({detail})",
+            )
 
         merge_message = self._merge_profile_traces()
-
-        logger.info('Profiling done. Traces are saved to: <redacted><redacted>')
-
-        if self.torch_profiler is not None:
-            self.torch_profiler = None
-            gc.collect()
-
-        self.profile_in_progress = False
-        self.profiler_start_forward_ct = None
-
-        self._apply_detailed_annotations(False)
+        logger.info("Profiling done. Traces are saved to: <redacted><redacted>")
         return ProfileReqOutput(success=True, message=f"Succeeded.{merge_message}")
 
     def _profile_batch_predicate(self, batch: ScheduleBatch):
@@ -464,7 +518,7 @@ class SchedulerProfilerManager:
                     recv_req.profile_stages,
                 )
             else:
-                self._init_profile(
+                result = self._init_profile(
                     recv_req.output_dir,
                     recv_req.start_step,
                     recv_req.num_steps,
@@ -477,6 +531,8 @@ class SchedulerProfilerManager:
                     recv_req.profile_prefix,
                     recv_req.detailed_annotations,
                 )
+                if not result.success:
+                    return result
                 return self._start_profile()
         else:
             return self._stop_profile()

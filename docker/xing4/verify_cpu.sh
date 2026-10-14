@@ -50,4 +50,5 @@ python -m pytest -q --junitxml="${JUNIT_XML:-/tmp/xing4-cpu.xml}" \
   test/registered/unit/models/test_xing4_native.py \
   test/registered/unit/models/test_xing4_tokenizer.py \
   test/registered/unit/models/test_xing4_runtime_auth.py \
-  test/registered/unit/utils/test_startup_failure_diagnostics.py
+  test/registered/unit/utils/test_startup_failure_diagnostics.py \
+  test/registered/unit/test_profiler_export_failure.py

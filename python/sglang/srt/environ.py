@@ -559,9 +559,9 @@ class Envs:
     SGLANG_DSPARK_OPT_MARKOV_W2_TP_SHARD = EnvBool(True)
     # With the TP-sharded markov_w2, run the draft's vocab all-gathers (each
     # step's per-shard token candidates, and the step logits sampling keeps) over
-    # the NVLink push collective (CustomAllReduceV2's multicast plane) instead of
-    # the NCCL ring. Only taken when the group's communicator has a multicast
-    # plane; off, or no such plane, keeps the NCCL all-gather.
+    # CustomAllReduceV2's NVLink push collective instead of the NCCL ring (slices
+    # past the push slot use the multicast pull path when there is one). Off, or
+    # no push plane, keeps the NCCL all-gather.
     SGLANG_DSPARK_NVLINK_VOCAB_GATHER = EnvBool(True)
     SGLANG_DSPARK_ENABLE_MULTI_STREAM = EnvBool(True)
     SGLANG_DSPARK_CONFIDENCE_RELAY_LAG_STEPS = EnvInt(2)

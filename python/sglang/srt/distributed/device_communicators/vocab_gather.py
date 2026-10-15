@@ -73,7 +73,7 @@ def _alloc_symm(
 
 
 class NVLinkVocabGather(VocabGather):
-    """The NVLink collectives on CustomAllReduceV2's multicast plane.
+    """The NVLink collectives on CustomAllReduceV2's push and multicast planes.
 
     A slice that fits one slot of the push plane takes the push kernel into a
     fresh tensor; a larger one that fits ``pull_out`` takes the pull kernel into
@@ -100,7 +100,7 @@ class NVLinkVocabGather(VocabGather):
         self.fallback = fallback
         self.pull_out: Optional[torch.Tensor] = None
         self.pull_mc_ptr = 0
-        if symm_rows > 0 and self.comm.pull is not None:
+        if symm_rows > 0 and self.comm.pull is not None and ca_comm.has_multicast:
             out, mc_ptr = _alloc_symm(
                 group, (self.world_size * symm_rows, local_width), dtype
             )
@@ -172,7 +172,7 @@ def _nvlink_ca_comm(group, *, local_width: int, dtype: torch.dtype):
     if ca_comm is None or getattr(ca_comm, "disabled", True):
         return None
     comm = getattr(ca_comm, "obj", None)
-    if comm is None or not getattr(ca_comm, "has_multicast", False):
+    if comm is None:
         return None
     if comm.push is None or comm.world_size != group.world_size:
         return None
@@ -204,10 +204,10 @@ def make_vocab_gather(
     symm_rows: Optional[int] = None,
 ) -> VocabGather:
     """The gather for ``group``: local for a group of one, NVLink when the
-    group's custom all-reduce has a multicast plane (and ``prefer_nvlink``),
-    the NCCL ring otherwise. ``symm_rows`` is the row capacity of the NVLink
-    gather's symmetric-memory output for slices past the push slot; None sizes
-    it for the server's largest batch, 0 leaves those slices to NCCL."""
+    group's custom all-reduce has a push plane (and ``prefer_nvlink``), the NCCL
+    ring otherwise. ``symm_rows`` is the row capacity of the NVLink gather's
+    symmetric-memory output for slices past the push slot (needs multicast);
+    None sizes it for the server's largest batch, 0 leaves those slices to NCCL."""
     if group is None or group.world_size == 1:
         return LocalVocabGather()
     nccl = NcclVocabGather(group)

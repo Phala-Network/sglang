@@ -674,6 +674,17 @@ class BaseRunner(ABC):
             encoder_lens=encoder_lens,
             return_logprob=False,
             positions=positions,
+            # Dummy batches have no admitted requests: use the short profile's
+            # zero table offset for startup warmup, preserving physical KV.
+            rope_positions=(
+                positions
+                if getattr(
+                    getattr(mr.model_config, "request_static_yarn_config", None),
+                    "position_kind",
+                    None,
+                ) == "mla"
+                else None
+            ),
             extend_num_tokens=extend_num_tokens,
             extend_seq_lens=extend_seq_lens,
             extend_prefix_lens=extend_prefix_lens,

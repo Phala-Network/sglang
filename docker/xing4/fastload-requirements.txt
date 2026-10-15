@@ -1,0 +1,1 @@
+fastsafetensors==0.4.0 --hash=sha256:d1ecbb199d98d222c827ae1cc9c7b09dd9ef2d34aa0eb01baa8f81f70345dc0a

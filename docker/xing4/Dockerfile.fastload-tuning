@@ -1,0 +1,18 @@
+# Tuning only; production uses unmodified RC5.2 with its default loader.
+ARG BASE_IMAGE=ghcr.io/phala-network/sglang:phala-v0.5.21-xing4-yarn-rc5.2@sha256:69ee0bee39fae2711212d4f765c735c10738142da91e0f9bf4655bfd30a22c35
+FROM ${BASE_IMAGE}
+ARG ENGINE_COMMIT
+ARG PATCHES_COMMIT
+ARG RELEASE_VERSION
+LABEL org.opencontainers.image.source="https://github.com/Phala-Network/sglang" \
+      org.opencontainers.image.revision="${ENGINE_COMMIT}" \
+      org.opencontainers.image.version="${RELEASE_VERSION}" \
+      org.phala.serving-patches.revision="${PATCHES_COMMIT}" \
+      org.phala.tuning.only="true" \
+      org.phala.tuning.base-engine.revision="5b32c5227da46c3db3f2569aab1d83f81f9d9080" \
+      org.phala.tuning.fastsafetensors.version="0.4.0"
+COPY fastsafetensors-0.4.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl /tmp/fastload-wheel/
+COPY fastload-requirements.txt /tmp/fastload-wheel/
+RUN python -m pip install --disable-pip-version-check --no-deps --no-index --require-hashes --find-links=/tmp/fastload-wheel -r /tmp/fastload-wheel/fastload-requirements.txt \
+    && python -c 'import json,os;from pathlib import Path;p=Path("/opt/phala-xing4/installed-source.json");a=json.loads(p.read_text());assert a["engine_commit"]=="5b32c5227da46c3db3f2569aab1d83f81f9d9080";a["engine_commit"]=os.environ["ENGINE_COMMIT"];a["tuning_base_engine_commit"]="5b32c5227da46c3db3f2569aab1d83f81f9d9080";a["tuning_dependency"]={"name":"fastsafetensors","version":"0.4.0","wheel_sha256":"d1ecbb199d98d222c827ae1cc9c7b09dd9ef2d34aa0eb01baa8f81f70345dc0a"};p.write_text(json.dumps(a,indent=2)+"\n")' \
+    && rm -rf /tmp/fastload-wheel

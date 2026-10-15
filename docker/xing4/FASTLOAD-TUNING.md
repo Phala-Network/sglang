@@ -1,0 +1,9 @@
+# Tuning-only fastsafetensors layer
+
+This optional image starts from the immutable RC5.2 runtime and installs only the official fastsafetensors 0.4.0 cp312 x86_64 wheel (2,096,153 bytes) offline, without dependency upgrades. Its SHA256 is pinned in `fastload-requirements.txt`; existing typer 0.27.2 satisfies typer>=0.9.0. The base SGLang runtime files, kernels, model data and native extensions remain unchanged.
+
+Build `Dockerfile.fastload-tuning` from a context containing the committed Dockerfile/requirements and the hash-verified official wheel. Supply the complete engine and serving-patches commits. Use `--load-format fastsafetensors` only during authorized tuning; the existing load format also applies to the native BF16 NextN checkpoint. No model copy or production startup pip install is required.
+
+Official 0.4.0 `fastsafetensors/copier/gds.py` checks `/dev/nvidia-fs0` on Linux before GDS initialization. A missing node skips `init_gds()` and selects the nogds copier; missing libcufile or capability=0 also selects nogds. File-handle setup RuntimeError falls back to nogds, while already submitted I/O failures, capability<0 and init_gds failure remain fatal. SGLang additionally supports `--model-loader-extra-config '{"enable_gds":false}'` to force nogds, but automatic fallback needs no extra flag. This source review is not a GPU storage acceptance result.
+
+The original RC5.2 image with its default auto loader remains the production candidate. Before production acceptance remove the tuning image/loader and verify an actual startup from the original image. CPU import and loader-boundary checks do not prove GPU file loading speed or GDS support. At the next necessary GPU tuning restart, record the actual copier/fallback behavior, weights-loading seconds and total ready seconds separately; do not repeat the quality/performance scoring matrix solely for this loader.

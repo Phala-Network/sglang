@@ -15,7 +15,7 @@ from sglang.srt.layers.logits_processor import (
     LogitsProcessorOutput,
     SamplingMaskOutput,
 )
-from sglang.srt.managers import io_struct
+from sglang.srt.managers import cc_d2h_helper, io_struct
 from sglang.srt.managers.schedule_batch import Req
 from sglang.srt.model_executor.forward_batch_info import PPProxyTensors
 from sglang.srt.runtime_context import get_spec, max_speculative_num_draft_tokens
@@ -170,47 +170,59 @@ class GenerationBatchResult:
         Only the tensors which are needed for processing results are copied,
         e.g., next_token_ids, logits outputs
         """
+        if cc_d2h_helper.enabled() and self.copy_done is not None:
+            cc_d2h_helper.copy_result_to_cpu(
+                self,
+                self._copy_to_cpu,
+                _async_d2h,
+                return_logprob,
+                return_hidden_states,
+            )
+            return
+        self._copy_to_cpu(_async_d2h, return_logprob, return_hidden_states)
+
+    def _copy_to_cpu(
+        self, d2h, return_logprob: bool, return_hidden_states: bool
+    ) -> None:
         if return_logprob:
             if self.logits_output.next_token_logprobs is not None:
-                self.logits_output.next_token_logprobs = _async_d2h(
+                self.logits_output.next_token_logprobs = d2h(
                     self.logits_output.next_token_logprobs
                 )
             if self.logits_output.input_token_logprobs is not None:
-                self.logits_output.input_token_logprobs = _async_d2h(
+                self.logits_output.input_token_logprobs = d2h(
                     self.logits_output.input_token_logprobs
                 )
             if self.logits_output.next_token_top_logprobs_val is not None:
                 self.logits_output.next_token_top_logprobs_val = [
-                    _async_d2h(v) if torch.is_tensor(v) else v
+                    d2h(v) if torch.is_tensor(v) else v
                     for v in self.logits_output.next_token_top_logprobs_val
                 ]
             if self.logits_output.next_token_top_logprobs_idx is not None:
                 self.logits_output.next_token_top_logprobs_idx = [
-                    _async_d2h(x) if torch.is_tensor(x) else x
+                    d2h(x) if torch.is_tensor(x) else x
                     for x in self.logits_output.next_token_top_logprobs_idx
                 ]
             if self.logits_output.next_token_token_ids_logprobs_val is not None:
                 self.logits_output.next_token_token_ids_logprobs_val = [
-                    _async_d2h(v) if torch.is_tensor(v) else v
+                    d2h(v) if torch.is_tensor(v) else v
                     for v in self.logits_output.next_token_token_ids_logprobs_val
                 ]
         if return_hidden_states and self.logits_output.hidden_states is not None:
-            self.logits_output.hidden_states = _async_d2h(
-                self.logits_output.hidden_states
-            )
-        self.next_token_ids = _async_d2h(self.next_token_ids)
+            self.logits_output.hidden_states = d2h(self.logits_output.hidden_states)
+        self.next_token_ids = d2h(self.next_token_ids)
 
         if self.accept_lens is not None:
-            self.accept_lens = _async_d2h(self.accept_lens)
+            self.accept_lens = d2h(self.accept_lens)
 
         if self.block_accept_lens is not None:
-            self.block_accept_lens = _async_d2h(self.block_accept_lens)
+            self.block_accept_lens = d2h(self.block_accept_lens)
 
         if self.cap_lens is not None:
-            self.cap_lens = _async_d2h(self.cap_lens)
+            self.cap_lens = d2h(self.cap_lens)
 
         # Sub-objects only declare their device fields; the single copy+safety
-        # primitive (_async_d2h: pinned D2H + record_stream) is injected here so
+        # primitive (d2h, _async_d2h by default: pinned D2H + record_stream) is injected here so
         # all device->host copying and lifetime safety lives in one place.
         sampling_mask_output = (
             self.logits_output.sampling_mask_output
@@ -224,18 +236,18 @@ class GenerationBatchResult:
             self.expert_distribution_metrics,
         ):
             if holder is not None:
-                holder.map_device_tensors(_async_d2h)
+                holder.map_device_tensors(d2h)
 
-        self.copy_auxiliary_output_to_cpu()
+        self.copy_auxiliary_output_to_cpu(d2h)
 
         self.copy_done.record()
 
-    def copy_auxiliary_output_to_cpu(self) -> None:
+    def copy_auxiliary_output_to_cpu(self, d2h=_async_d2h) -> None:
         if self.logits_output is None or self.auxiliary_host_output is not None:
             return
         device_output = self.logits_output.auxiliary_device_output
         if device_output is not None:
-            self.auxiliary_host_output = device_output.copy_to_host(_async_d2h)
+            self.auxiliary_host_output = device_output.copy_to_host(d2h)
             self.logits_output.auxiliary_device_output = None
 
     @classmethod

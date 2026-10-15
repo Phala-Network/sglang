@@ -824,6 +824,11 @@ class Envs:
     SGLANG_MLA_DEDUP_CHUNK_TOKENS = EnvInt(2048)
     SGLANG_HICACHE_HF3FS_CONFIG_PATH = EnvStr(None)
     SGLANG_HICACHE_DECODE_OFFLOAD_STRIDE = EnvInt(None)
+    # NVIDIA CC: copy overlap results to the host from a helper process, so the scheduler
+    # does not block on the forward (managers/cc_d2h_helper.py).
+    SGLANG_CC_D2H_HELPER = EnvBool(False)
+    SGLANG_CC_D2H_HELPER_SLOTS = EnvInt(32)
+    SGLANG_CC_D2H_HELPER_SLOT_KB = EnvInt(1024)
     SGLANG_HICACHE_SKIP_HOST_DUPLICATE_RECLAIM = EnvBool(False)
     SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR = EnvStr(None)
     # File-backend LRU eviction (opt-in; sizes accept SI/IEC suffixes, "0" disables).

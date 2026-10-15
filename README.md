@@ -29,6 +29,15 @@ Final-image and GPU/service gates remain separate. The
 [existing compatibility exception](https://github.com/Phala-Network/sglang-serving-patches/blob/d0d730ee269fb67c06d5823499aa02f53ba5838e/versions/v0.5.21/XING4-DYNAMIC-YARN.md)
 continues without changing shared Governor identity or previously published tags.
 
+The independent [Xing request-static EAGLE source candidate](https://github.com/Phala-Network/sglang/releases/tag/phala-v0.5.21-xing4-yarn-rc5.4)
+binds source `2b9940cb7764c26c40cc8a48538374e7b200dc53` and the
+[61-step ordered patch record](https://github.com/Phala-Network/sglang-serving-patches/blob/5006f054a1055d5269d906affc79864e118788ed/versions/v0.5.21/DYNAMIC-EAGLE.md).
+It carries immutable per-request factor64/128 YaRN through fixed BF16/E4M3 TP1
+EAGLE target/draft graphs. Seventeen dedicated and184 affected CPU cases pass,
+with10 explicit CUDA skips; canonical replay verifies every intermediate tree.
+Dynamic image, GPU graph,512K quality/cache and recovery gates remain separate.
+This uses the same officialv0.5.21 maintenance exception above.
+
 The PyPI package `sglang` is the upstream distribution; installing it does not
 install this fork's changes. For development, follow the
 [installation guide](https://docs.sglang.io/get_started/install.html) using this

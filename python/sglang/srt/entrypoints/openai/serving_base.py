@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 import uuid
 from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
@@ -31,6 +32,47 @@ if TYPE_CHECKING:
     from sglang.srt.managers.tokenizer_manager import TokenizerManager
 
 logger = logging.getLogger(__name__)
+
+_REJECTION_STAGES = frozenset(("validation", "conversion", "json_constraint", "stream", "nonstream", "response"))
+_REJECTION_SOURCES = {
+    "entrypoints/openai/serving_base.py": "serving_base",
+    "entrypoints/openai/serving_chat.py": "serving_chat",
+    "entrypoints/openai/serving_completions.py": "serving_completions",
+    "entrypoints/openai/serving_responses.py": "serving_responses",
+    "entrypoints/openai/protocol.py": "protocol",
+    "constrained/json_schema_validation.py": "schema_validation",
+    "function_call/kimik3_structural_tag.py": "k3_tool_constraint",
+    "managers/tokenizer_manager.py": "tokenizer_manager",
+    "sampling/sampling_params.py": "sampling_params",
+}
+_SRT_SOURCE_ROOT = __file__.replace("\\", "/").rsplit("/entrypoints/openai/", 1)[0] + "/"
+
+
+def _log_safe_request_rejection(stage, status_code, exc=None):
+    """Log fixed categories/code locations only, never request or exception text."""
+    stage = stage if stage in _REJECTION_STAGES else "unknown"
+    status = int(status_code) if isinstance(status_code, int) and not isinstance(status_code, bool) and 400 <= status_code <= 599 else 0
+    source, line = "unknown", 0
+    caller = sys._getframe(2)
+    filename = caller.f_code.co_filename.replace("\\", "/")
+    if filename.startswith(_SRT_SOURCE_ROOT):
+        label = _REJECTION_SOURCES.get(filename[len(_SRT_SOURCE_ROOT):])
+        if label is not None:
+            source, line = label, caller.f_lineno
+    del caller
+    tb = exc.__traceback__ if exc is not None else None
+    # Bounded walk; retain no frames, exception or request after this call.
+    for _ in range(32):
+        if tb is None:
+            break
+        filename = tb.tb_frame.f_code.co_filename.replace("\\", "/")
+        if filename.startswith(_SRT_SOURCE_ROOT):
+            label = _REJECTION_SOURCES.get(filename[len(_SRT_SOURCE_ROOT):])
+            if label is not None:
+                source, line = label, tb.tb_lineno
+        tb = tb.tb_next
+    logger.info("Request rejected: stage=%s status=%d source=%s line=%d", stage, status, source, line)
+
 
 
 class GenerationStreamingResponse(StreamingResponse):
@@ -289,6 +331,7 @@ class OpenAIServingBase(ABC):
         param: Optional[str] = None,
     ) -> ORJSONResponse:
         """Create an error response"""
+        _log_safe_request_rejection("response", status_code, sys.exc_info()[1])
         # TODO: remove fastapi dependency in openai and move response handling to the entrypoint
         error = ErrorResponse(
             object="error",

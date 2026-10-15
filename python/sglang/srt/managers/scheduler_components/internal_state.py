@@ -49,6 +49,7 @@ class SchedulerInternalStateController:
         for contribute in (
             self._add_topology,
             self._add_memory_usage,
+            self._add_grammar_budget,
             self._add_disaggregation,
             self._add_elastic_ep,
             self._add_speculative,
@@ -90,6 +91,15 @@ class SchedulerInternalStateController:
                 None if draft_worker is None else draft_worker.graph_memory_usage
             ),
         )
+
+    def _add_grammar_budget(self, state: Dict[str, Any]) -> None:
+        grammar_backend = self.scheduler.grammar_manager.grammar_backend
+        state["grammar_budget"] = (
+            {"available": False, "reason": "backend_disabled"}
+            if grammar_backend is None
+            else grammar_backend.budget_snapshot()
+        )
+        state["grammar_budget"]["tp_rank"] = get_parallel().tp_rank
 
     def _add_disaggregation(self, state: Dict[str, Any]) -> None:
         # PD role switch: report this instance's role and the decode CUDA graph

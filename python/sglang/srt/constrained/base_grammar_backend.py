@@ -249,6 +249,15 @@ class BaseGrammarBackend:
         self._pending = {}
         self._inflight = {}
         self._pending_bytes = 0
+        self._budget_observations = {
+            "cache_lookup_hits": 0,
+            "cache_lookup_misses": 0,
+            "capacity_rejections": 0,
+            "compiles_started": 0,
+            "compiles_finished": 0,
+            "compile_queue_seconds": 0.0,
+            "compile_wall_seconds": 0.0,
+        }
         self.cache_max_bytes = envs.SGLANG_GRAMMAR_CACHE_MAX_BYTES.get()
         self.cache_max_entries = envs.SGLANG_GRAMMAR_CACHE_MAX_ENTRIES.get()
         self.invalid_cache_max_bytes = envs.SGLANG_GRAMMAR_INVALID_CACHE_MAX_BYTES.get()
@@ -287,6 +296,32 @@ class BaseGrammarBackend:
         # The preserved PP cache has no byte accounting.
         return self._cache_bytes if self.use_cache_budget else None
 
+    def budget_snapshot(self) -> dict:
+        """Fixed-size, nonblocking diagnostics; never traverse keys or ctxs.
+
+        Cache bytes are the existing approximate admission charge, not RSS.
+        Pending bytes cover input keys, not compiled results or live matchers.
+        Counters last for the backend lifetime, including cache resets.
+        """
+        if not self.use_cache_budget:
+            return {"available": False, "reason": "budget_disabled"}
+        if not self._cache_lock.acquire(blocking=False):
+            return {"available": False, "reason": "busy"}
+        try:
+            return {
+                "available": True,
+                "cache_generation": self._cache_generation,
+                "cache_entries": len(self.cache),
+                "approx_cache_bytes": self._cache_bytes,
+                "cache_limit_bytes": self.cache_max_bytes,
+                "pending_requests": len(self._pending),
+                "pending_input_bytes": self._pending_bytes,
+                "inflight_compiles": len(self._inflight),
+                **self._budget_observations,
+            }
+        finally:
+            self._cache_lock.release()
+
     def _remove_cache_entry(self, key):
         value = self.cache.pop(key, None)
         weight = self._cache_weights.pop(key, 0)
@@ -312,13 +347,24 @@ class BaseGrammarBackend:
 
     def _run_compile(self, flight_key, key, require_reasoning):
         with self._cache_lock:
-            _, waiters = self._inflight[flight_key]
+            source, waiters = self._inflight[flight_key]
             if all(
                 waiter.cancelled() or self._pending.get(waiter, (0, True))[1]
                 for waiter in waiters
             ):
                 return None
-        return self._init_value_dispatch(key, require_reasoning)
+            self._budget_observations["compiles_started"] += 1
+            started = time.perf_counter()
+            self._budget_observations["compile_queue_seconds"] += (
+                started - source._grammar_submitted_at
+            )
+        try:
+            return self._init_value_dispatch(key, require_reasoning)
+        finally:
+            elapsed = time.perf_counter() - started
+            with self._cache_lock:
+                self._budget_observations["compiles_finished"] += 1
+                self._budget_observations["compile_wall_seconds"] += elapsed
 
     def _complete_compile(self, flight_key, source):
         with self._cache_lock:
@@ -467,16 +513,19 @@ class BaseGrammarBackend:
                 value = None
             if value is not None:
                 self.cache.move_to_end(cache_key)
+                self._budget_observations["cache_lookup_hits"] += 1
         if value is not None:
             copied_value = value.copy()
             copied_value.maybe_init_reasoning(require_reasoning)
             return copied_value, True
         with self._cache_lock:
+            self._budget_observations["cache_lookup_misses"] += 1
             weight = self._key_size_bytes(cache_key)
             if (
                 len(self._pending) >= self.max_pending_compiles
                 or self._pending_bytes + weight > self.max_pending_bytes
             ):
+                self._budget_observations["capacity_rejections"] += 1
                 future = Future()
                 future.set_result(
                     InvalidGrammarObject(
@@ -491,9 +540,11 @@ class BaseGrammarBackend:
                 flight = self._inflight.get(flight_key)
                 is_new = flight is None
                 if is_new:
+                    submitted_at = time.perf_counter()
                     source = self.executor.submit(
                         self._run_compile, flight_key, key[:2], require_reasoning
                     )
+                    source._grammar_submitted_at = submitted_at
                     flight = self._inflight[flight_key] = (source, [])
                 source, waiters = flight
                 waiters.append(future)

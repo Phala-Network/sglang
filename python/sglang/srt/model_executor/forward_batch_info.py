@@ -1374,11 +1374,9 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
         else:
             num_tokens = 0
         if enable_num_token_non_padded():
-            self.global_num_token_non_padded = torch.tensor(
-                num_tokens,
-                dtype=torch.int32,
-                pin_memory=is_pin_memory_available(device),
-            ).to(device, non_blocking=True)
+            self.global_num_token_non_padded = torch.full(
+                (), num_tokens, dtype=torch.int32, device=device
+            )
         self.global_num_token_non_padded_cpu = num_tokens
 
     def set_local_num_token_non_padded(self, *, sharded: bool) -> None:

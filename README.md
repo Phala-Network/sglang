@@ -38,6 +38,16 @@ with10 explicit CUDA skips; canonical replay verifies every intermediate tree.
 Dynamic image, GPU graph,512K quality/cache and recovery gates remain separate.
 This uses the same officialv0.5.21 maintenance exception above.
 
+The [Xing startup dummy repair](https://github.com/Phala-Network/sglang/releases/tag/phala-v0.5.21-xing4-yarn-rc5.5)
+binds source `119e05e0ebb55c0fb324c493ea052f56b0e28350` and the
+[62-step ordered patch record](https://github.com/Phala-Network/sglang-serving-patches/blob/aeff9066fd91770e3c4776aa307c26679f894344/versions/v0.5.21/DYNAMIC-EAGLE-STARTUP.md).
+It repairs the RC5.4 dynamic target autotune dummy's missing model positions;
+the real startup CPU regression reproduces the original failure and passes both
+dynamic and default-None controls after repair. Only the dummy constructor changes.
+Independent source review and canonical62-step replay pass; installed image and
+real dynamic GPU startup,512K,cache,quality and recovery remain separate gates.
+This continues the same officialv0.5.21 compatibility maintenance exception.
+
 The PyPI package `sglang` is the upstream distribution; installing it does not
 install this fork's changes. For development, follow the
 [installation guide](https://docs.sglang.io/get_started/install.html) using this

@@ -18,6 +18,17 @@ weights, deployment configuration and rollout acceptance remain separate.
 from its release receipt. A source tag or upstream feature list alone does not
 establish hardware/model qualification.
 
+The officialv0.5.21 compatibility maintenance line uses separately pinned native
+interfaces; it does not replace this sharedv0.5.20 tree. Its
+[Xing native EAGLE budget release](https://github.com/Phala-Network/sglang/releases/tag/phala-v0.5.21-xing4-yarn-rc5.3)
+binds complete source48e9fc7d56930660999dc108cb5ecddee5245715 and the
+[60-step ordered patch record](https://github.com/Phala-Network/sglang-serving-patches/blob/3f1ed96fa5d8f51b18fdce73d4b824c675f0af25/versions/v0.5.21/NATIVE-EAGLE-PUBLIC-BUDGET.md).
+It repairs public262144 admission for the scoped BF16/E4M3 TP1 EAGLE recipe;
+16 dedicated and166 affected CPU cases pass, with10 explicit CUDA skips.
+Final-image and GPU/service gates remain separate. The
+[existing compatibility exception](https://github.com/Phala-Network/sglang-serving-patches/blob/d0d730ee269fb67c06d5823499aa02f53ba5838e/versions/v0.5.21/XING4-DYNAMIC-YARN.md)
+continues without changing shared Governor identity or previously published tags.
+
 The PyPI package `sglang` is the upstream distribution; installing it does not
 install this fork's changes. For development, follow the
 [installation guide](https://docs.sglang.io/get_started/install.html) using this

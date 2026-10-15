@@ -13,6 +13,7 @@
 # ==============================================================================
 """The baseclass of a backend for reasoner grammar-guided constrained decoding."""
 
+import json
 import logging
 from collections import OrderedDict
 from concurrent.futures import Future
@@ -93,8 +94,26 @@ class ReasonerGrammarObject(BaseGrammarObject):
         self._kimik3_boundary_next_tokens = ()
         self._kimik3_boundary_matches = (0, 0)
         self._kimik3_thinking_history = []
+        self._kimik3_json_grammars = None
+        self._kimik3_json_tokenizer = None
+        self._kimik3_json_stop_ids = None
 
     def maybe_init_reasoning(self, reasoning: bool):
+        if self._kimik3_json_grammars is not None:
+            # Cache entries are shared across requests with thinking on/off.
+            # Keep both immutable compiled templates, but never share matchers.
+            template = self._kimik3_json_grammars[bool(reasoning)]
+            if (
+                self.grammar.ctx is not template.ctx
+                or self.current_token is not None
+                or self.grammar.accepted_tokens
+                or self.grammar.finished
+            ):
+                self.grammar = template.copy()
+            self.current_token = None
+            # copy() already carries immutable boundary metadata and the
+            # templates' stop overrides. Re-tokenizing every marker suffix or
+            # rebuilding another matcher here made cache hits millisecond-scale.
         self._matched_think_end_tokens = 0
         self._thinking_match_history.clear()
         self._kimik3_boundary_matches = (0,) * len(self._kimik3_boundary_matchers)
@@ -108,6 +127,20 @@ class ReasonerGrammarObject(BaseGrammarObject):
 
     def enable_kimik3_required_native_boundary(self, tokenizer, stop_token_ids):
         """Keep generated required/strict-auto K3 constraints active while thinking."""
+        if self.current_token is not None or self._thinking_match_history:
+            raise ValueError("K3 native boundary must be configured before decoding")
+        from .xgrammar_backend import XGrammarGrammar
+
+        token_bytes = getattr(
+            getattr(tokenizer, "model", None), "decode_single_token_bytes", None
+        )
+        if not isinstance(self.grammar, XGrammarGrammar) or not callable(token_bytes):
+            raise ValueError("K3 native boundary requires XGrammar and K3 token bytes")
+        self.grammar.set_stop_token_ids_before_decoding(stop_token_ids)
+        self._install_kimik3_boundary_metadata(tokenizer)
+
+    def _install_kimik3_boundary_metadata(self, tokenizer):
+        """Install tokenizer-local immutable metadata, never matcher progress."""
         from sglang.srt.function_call.kimik3_format import (
             RESPONSE_OPEN,
             THINK_CLOSE,
@@ -116,18 +149,20 @@ class ReasonerGrammarObject(BaseGrammarObject):
 
         from .xgrammar_backend import XGrammarGrammar
 
-        if self.current_token is not None or self._thinking_match_history:
-            raise ValueError("K3 native boundary must be configured before decoding")
         token_bytes = getattr(
             getattr(tokenizer, "model", None), "decode_single_token_bytes", None
         )
         if not isinstance(self.grammar, XGrammarGrammar) or not callable(token_bytes):
             raise ValueError("K3 native boundary requires XGrammar and K3 token bytes")
-        self.grammar.set_stop_token_ids_before_decoding(stop_token_ids)
         self._kimik3_token_bytes = token_bytes
+        markers = (
+            (THINK_CLOSE, RESPONSE_OPEN)
+            if self._kimik3_json_grammars is not None
+            else (THINK_CLOSE, TOOLS_OPEN, RESPONSE_OPEN)
+        )
         self._kimik3_boundary_matchers = tuple(
             TokenSequenceMatcher(marker.encode())
-            for marker in (THINK_CLOSE, TOOLS_OPEN, RESPONSE_OPEN)
+            for marker in markers
         )
         self._kimik3_boundary_matches = (0,) * len(self._kimik3_boundary_matchers)
         # Only encode the short ASCII markers' suffixes, never the vocabulary.
@@ -138,7 +173,7 @@ class ReasonerGrammarObject(BaseGrammarObject):
                 tokenizer.encode(marker[offset:], add_special_tokens=False)[0]
                 for offset in range(len(marker))
             )
-            for marker in (THINK_CLOSE, TOOLS_OPEN, RESPONSE_OPEN)
+            for marker in markers
         )
 
     def set_request_think_end_ids(self, think_end_ids: Sequence[int]) -> None:
@@ -497,6 +532,9 @@ class ReasonerGrammarObject(BaseGrammarObject):
         new_obj._opening = list(self._opening)
         new_obj._opening_text = self._opening_text
         new_obj._generated = self._generated
+        new_obj._kimik3_json_grammars = self._kimik3_json_grammars
+        new_obj._kimik3_json_tokenizer = self._kimik3_json_tokenizer
+        new_obj._kimik3_json_stop_ids = self._kimik3_json_stop_ids
         if self._kimik3_token_bytes is not None:
             new_obj._kimik3_token_bytes = self._kimik3_token_bytes
             new_obj._kimik3_boundary_matchers = self._kimik3_boundary_matchers
@@ -561,6 +599,12 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
         super().__init__()
         self.grammar_backend = grammar_backend
         self._budget_variant_keys: OrderedDict[Tuple[str, str], None] = OrderedDict()
+        from sglang.srt.parser.reasoning_parser import KimiK3Detector
+
+        self._kimik3_json_tokenizer = (
+            tokenizer if isinstance(reasoning_parser.detector, KimiK3Detector) else None
+        )
+        self._kimik3_json_boundary_metadata = None
         think_end_ids = reasoning_parser.detector.get_think_end_token_ids(tokenizer)
         if not think_end_ids:
             raise ValueError(
@@ -701,6 +745,8 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
     ) -> Optional[BaseGrammarObject]:
         key_type, _, variant = key[0].partition(":")
         key = (key_type, key[1])
+        if key[0] == "json" and self._kimik3_json_tokenizer is not None:
+            return self._init_kimik3_json(key, reasoning)
         ret = self.grammar_backend._init_value_dispatch(key, reasoning)
         if ret is None or isinstance(ret, InvalidGrammarObject):
             return ret
@@ -739,3 +785,75 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
                 max_think_tokens=max_think_tokens,
             ),
         )
+
+    def _init_kimik3_json(self, key, reasoning):
+        from .json_schema_validation import (
+            UnsupportedJSONSchemaFeature,
+            validate_xgrammar_json_schema,
+        )
+        from .kimik3_json_schema import json_response_format
+        from .xgrammar_backend import XGrammarGrammarBackend
+
+        backend = self.grammar_backend
+        if not isinstance(backend, XGrammarGrammarBackend):
+            return InvalidGrammarObject("Kimi K3 native JSON constraints require XGrammar")
+        if not backend.any_whitespace:
+            return InvalidGrammarObject(
+                "Kimi K3 native JSON requires any_whitespace=True; "
+                "fixed whitespace formatting is unsupported"
+            )
+        try:
+            schema = {} if key[1] == "$$ANY$$" else json.loads(key[1])
+            validate_xgrammar_json_schema(schema)
+            templates = []
+            for thinking in (False, True):
+                native_key = (
+                    "structural_tag",
+                    json.dumps(json_response_format(
+                        schema, thinking, backend.max_whitespace_cnt
+                    )),
+                )
+                grammar = backend._init_value_dispatch(native_key, False)
+                if grammar is None or isinstance(grammar, InvalidGrammarObject):
+                    return grammar or InvalidGrammarObject("Kimi K3 JSON compilation failed")
+                templates.append(grammar)
+        except (ValueError, RuntimeError, UnsupportedJSONSchemaFeature) as exc:
+            # Do not put schema values or generated content into an error message.
+            return InvalidGrammarObject(
+                f"Unable to compile Kimi K3 native JSON constraint ({type(exc).__name__})"
+            )
+
+        tokenizer = self._kimik3_json_tokenizer
+        stops = set(templates[0].ctx.tokenizer_info.stop_token_ids)
+        if tokenizer.eos_token_id is not None:
+            stops.add(tokenizer.eos_token_id)
+        stops.update(getattr(tokenizer, "additional_stop_token_ids", None) or [])
+        try:
+            for template in templates:
+                template.set_stop_token_ids_before_decoding(sorted(stops))
+            obj = self._make_grammar_object(templates[bool(reasoning)].copy(), reasoning)
+            obj._kimik3_json_grammars = tuple(templates)
+            obj._kimik3_json_tokenizer = tokenizer
+            obj._kimik3_json_stop_ids = sorted(stops)
+            metadata = self._kimik3_json_boundary_metadata
+            if metadata is None:
+                obj._install_kimik3_boundary_metadata(tokenizer)
+                # All schemas on this backend use the same tokenizer and JSON
+                # channel boundaries. Share only immutable helpers, not states.
+                self._kimik3_json_boundary_metadata = (
+                    obj._kimik3_token_bytes,
+                    obj._kimik3_boundary_matchers,
+                    obj._kimik3_boundary_next_tokens,
+                )
+            else:
+                (
+                    obj._kimik3_token_bytes,
+                    obj._kimik3_boundary_matchers,
+                    obj._kimik3_boundary_next_tokens,
+                ) = metadata
+            obj.maybe_init_reasoning(reasoning)
+        except (ValueError, RuntimeError) as exc:
+            return InvalidGrammarObject(
+                f"Unable to initialize Kimi K3 native JSON constraint ({type(exc).__name__})"
+            )
+        return obj

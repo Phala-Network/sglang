@@ -3070,6 +3070,9 @@ class OpenAIServingChat(OpenAIServingBase):
 
         stream_started = False
         error_aborted = False
+        stream_error = None
+        generation_closed = False
+        propagating_exception = False
         generator = self.tokenizer_manager.generate_request(
             adapted_request, raw_request
         )
@@ -3239,6 +3242,16 @@ class OpenAIServingChat(OpenAIServingBase):
                     has_tool_calls.get(index, False),
                 )
 
+            # Close before declaring success: cleanup itself can fail. Mark the
+            # attempt first so a failing close is not retried in the finally block.
+            generation_closed = True
+            try:
+                await generator.aclose()
+            except Exception:
+                raise RuntimeError("Chat stream cleanup failed.") from None
+            if not error_aborted and set(finish_reasons) != set(range(request.n)):
+                raise RuntimeError("Chat stream ended without all finish reasons.")
+
             # Send finish_reason chunks for each index that completed
             for idx, finish_reason_data in finish_reasons.items():
                 finish_reason_type = finish_reason_data["type"]
@@ -3398,25 +3411,56 @@ class OpenAIServingChat(OpenAIServingBase):
                 yield f"data: {usage_chunk.model_dump_json()}\n\n"
 
         except _AllowedToolsOutputError as e:
-            error = self.create_streaming_error_response(
+            stream_error = self.create_streaming_error_response(
                 str(e), err_type="InternalServerError", status_code=500
             )
-            yield f"data: {error}\n\n"
         except _KimiK3ToolCallValidationError as e:
             if not stream_started:
+                propagating_exception = True
                 raise
-            error = self.create_streaming_error_response(
+            stream_error = self.create_streaming_error_response(
                 str(e), err_type="InternalServerError", status_code=500
             )
-            yield f"data: {error}\n\n"
         except ValueError as e:
             if not stream_started:
+                propagating_exception = True
                 raise
-            error = self.create_streaming_error_response(str(e))
-            yield f"data: {error}\n\n"
+            stream_error = self.create_streaming_error_response(str(e))
+        except Exception:
+            # Exception messages can contain generated text or request data.
+            # A failed stream must be explicit, never a synthesized successful stop.
+            if not error_aborted:
+                stream_error = self.create_streaming_error_response(
+                    "Chat stream generation failed.",
+                    err_type="InternalServerError",
+                    status_code=500,
+                )
+        except BaseException:
+            # Preserve cancellation and GeneratorExit; neither permits more yields.
+            propagating_exception = True
+            raise
         finally:
-            await generator.aclose()
+            if not generation_closed:
+                try:
+                    await generator.aclose()
+                except Exception:
+                    # Cleanup must not replace an active error or cancellation.
+                    if (
+                        not propagating_exception
+                        and stream_error is None
+                        and not error_aborted
+                    ):
+                        stream_error = self.create_streaming_error_response(
+                            "Chat stream cleanup failed.",
+                            err_type="InternalServerError",
+                            status_code=500,
+                        )
+                except BaseException:
+                    if not propagating_exception:
+                        raise
 
+        if stream_error is not None:
+            yield f"data: {stream_error}\n\n"
         yield "data: [DONE]\n\n"
 
     async def _handle_non_streaming_request(
@@ -3542,6 +3586,8 @@ class OpenAIServingChat(OpenAIServingBase):
                 )
             elif self.reasoning_parser and request.separate_reasoning:
                 force_reasoning = self._should_force_reasoning(request)
+                if self._kimi_k3_structured_json(request):
+                    force_reasoning = self._get_reasoning_from_request(request)
                 try:
                     parser = ReasoningParser(
                         model_type=self.reasoning_parser,
@@ -3550,6 +3596,7 @@ class OpenAIServingChat(OpenAIServingBase):
                         request=request,
                         tokenizer=self.tokenizer_manager.tokenizer,
                         tool_call_parser_active=self._tool_call_parsing_active(request),
+                        structured_json=self._kimi_k3_structured_json(request),
                     )
                     reasoning_text, text = parser.parse_non_stream(
                         text,
@@ -4009,6 +4056,8 @@ class OpenAIServingChat(OpenAIServingBase):
         """Process reasoning content in streaming response"""
         if index not in reasoning_parser_dict:
             is_force_reasoning = self._should_force_reasoning(request)
+            if self._kimi_k3_structured_json(request):
+                is_force_reasoning = self._get_reasoning_from_request(request)
             reasoning_parser_dict[index] = ReasoningParser(
                 self.reasoning_parser,
                 request.stream_reasoning,
@@ -4016,6 +4065,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 request,
                 tokenizer=self.tokenizer_manager.tokenizer,
                 tool_call_parser_active=self._tool_call_parsing_active(request),
+                structured_json=self._kimi_k3_structured_json(request),
             )
         reasoning_parser = reasoning_parser_dict[index]
         token_context = {}
@@ -4037,6 +4087,17 @@ class OpenAIServingChat(OpenAIServingBase):
             if end_normal_text:
                 normal_text = (normal_text or "") + end_normal_text
         return reasoning_text, normal_text
+
+    def _kimi_k3_structured_json(self, request: ChatCompletionRequest) -> bool:
+        """Match the constrained JSON branch selected by the K3 renderer."""
+        response_format = request.response_format
+        return self.reasoning_parser == "kimi_k3" and response_format is not None and (
+            response_format.type == "json_object"
+            or (
+                response_format.type == "json_schema"
+                and response_format.json_schema.strict is not False
+            )
+        )
 
     def _get_history_tool_calls_cnt(self, request: ChatCompletionRequest) -> int:
         """Counts the number of tool calls in the request's message history.

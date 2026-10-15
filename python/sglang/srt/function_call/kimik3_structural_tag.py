@@ -1,4 +1,7 @@
+import copy
+import re
 from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Tuple, Union
+from urllib.parse import unquote
 
 from xgrammar import StructuralTag
 from xgrammar.structural_tag import (
@@ -20,6 +23,10 @@ from xgrammar.structural_tag import (
 )
 
 from sglang.srt.entrypoints.openai.protocol import Tool, ToolChoice
+from sglang.srt.constrained.json_schema_validation import (
+    _iter_subschemas,
+    validate_local_json_reference_scope,
+)
 from sglang.srt.function_call.kimik3_format import (
     ARGUMENT_CLOSE,
     CALL_CLOSE,
@@ -131,14 +138,32 @@ def _matches_json_type(value: Any, json_type: str) -> bool:
 def _resolve_local_ref(
     ref: str, root_schema: Dict[str, Any]
 ) -> Optional[Union[bool, Dict[str, Any]]]:
-    if not ref.startswith("#/"):
+    if ref == "":
+        ref = "#"
+    if not ref.startswith("#") or re.search(r"%(?![0-9A-Fa-f]{2})", ref):
+        return None
+    try:
+        pointer = unquote(ref[1:], encoding="utf-8", errors="strict")
+    except UnicodeError:
+        return None
+    if not pointer:
+        return root_schema
+    if not pointer.startswith("/"):
         return None
     value: Any = root_schema
-    for part in ref[2:].split("/"):
-        key = part.replace("~1", "/").replace("~0", "~")
-        if not isinstance(value, dict) or key not in value:
+    for part in pointer[1:].split("/"):
+        if re.search(r"~(?![01])", part):
             return None
-        value = value[key]
+        key = part.replace("~1", "/").replace("~0", "~")
+        if isinstance(value, dict) and key in value:
+            value = value[key]
+        elif isinstance(value, list) and re.fullmatch(r"0|[1-9][0-9]*", key):
+            # Compare length before int() to keep adversarial indices bounded.
+            if len(key) > len(str(len(value))) or int(key) >= len(value):
+                return None
+            value = value[int(key)]
+        else:
+            return None
     if isinstance(value, (bool, dict)):
         return value
     return None
@@ -246,14 +271,39 @@ def _with_root_definitions(
 ) -> Union[bool, Dict[str, Any]]:
     if not isinstance(schema, dict):
         return schema
-    result = dict(schema)
-    for key in ("$defs", "definitions"):
-        if key in result and result[key] != root_schema.get(key, {}):
-            # Each XTML value becomes a separate JSON-schema document. Its own
-            # definitions could retarget pointers from the original parameters.
-            raise ValueError("Kimi K3 argument schema has unsupported definition scope")
-        if key in root_schema and key not in result:
-            result[key] = root_schema[key]
+    # XTML extracts an argument into a new schema document. Preserve the
+    # original pointer scope by copying only targets reachable from this value.
+    # Instance-valued const/enum/default data must never be rewritten.
+    if not any("$ref" in node for node, _ in _iter_subschemas(schema, include_definitions=False)):
+        return schema
+    result = copy.deepcopy(schema)
+    definitions = result.setdefault("$defs", {})
+    targets: Dict[int, str] = {}
+    pending = [result]
+    next_id = 0
+    while pending:
+        current = pending.pop()
+        # Snapshot: adding target definitions while visiting must not mutate
+        # the schema-map iterator, or revisit newly rewritten pointers.
+        nodes = list(_iter_subschemas(current, include_definitions=False))
+        for node, _ in nodes:
+            if "$ref" not in node:
+                continue
+            ref = node["$ref"]
+            target = _resolve_local_ref(ref, root_schema) if isinstance(ref, str) else None
+            if target is None:
+                raise ValueError("Kimi K3 schema $ref is unresolved or nonlocal")
+            identity = id(target)
+            if identity not in targets:
+                while f"__k3_ref_{next_id}" in definitions:
+                    next_id += 1
+                name = f"__k3_ref_{next_id}"
+                next_id += 1
+                targets[identity] = name
+                cloned = copy.deepcopy(target)
+                definitions[name] = cloned
+                pending.append(cloned)
+            node["$ref"] = "#/$defs/" + targets[identity]
     return result
 
 
@@ -305,7 +355,7 @@ def _restrict_schema_type(
             return False
     if "const" in result and not _matches_json_type(result["const"], json_type):
         return False
-    return _with_root_definitions(result, root_schema)
+    return result
 
 
 _STRING_SHAPE_KEYWORDS = _STRING_KEYWORDS | {
@@ -354,8 +404,11 @@ def _value_format(
             nonnegative = dict(schema)
             nonnegative.pop("exclusiveMinimum", None)
             nonnegative["minimum"] = 0
+            definitions = schema.get("$defs")
             schema = {"anyOf": [negative, nonnegative]}
-    return JSONSchemaFormat(json_schema=schema, style="json")
+            if definitions is not None:
+                schema["$defs"] = definitions
+    return JSONSchemaFormat(json_schema=schema, style="json", property_order="unordered")
 
 
 def _argument_value_variants(
@@ -369,6 +422,7 @@ def _argument_value_variants(
         restricted = _restrict_schema_type(schema, json_type, root_schema)
         if restricted is False:
             continue
+        restricted = _with_root_definitions(restricted, root_schema)
         if json_type == "string":
             if loose_strings or _is_free_text(restricted):
                 # Raw strings remain delimiter-framed. JSON strings provide an
@@ -517,6 +571,8 @@ def _strict_arguments_format(
         )
 
     elements: List[Format] = []
+    unordered = parameters.get("additionalProperties", True) is False
+    required_flags: List[bool] = []
     for key, schema in properties.items():
         if not isinstance(key, str) or not isinstance(schema, (bool, dict)):
             raise ValueError("Kimi K3 tool property schemas must be JSON schemas")
@@ -528,8 +584,9 @@ def _strict_arguments_format(
                 )
             continue
         elements.append(
-            argument if key in required_set else OptionalFormat(content=argument)
+            argument if unordered or key in required_set else OptionalFormat(content=argument)
         )
+        required_flags.append(key in required_set)
 
     additional = parameters.get("additionalProperties", True)
     declared = set(properties)
@@ -555,7 +612,7 @@ def _strict_arguments_format(
         )
     if not elements:
         return ConstStringFormat(value="")
-    return SequenceFormat(elements=elements)
+    return SequenceFormat(elements=elements, unordered=unordered, required=required_flags if unordered else [])
 
 
 def _tool_arguments_format(tool: Tool) -> Format:
@@ -574,6 +631,7 @@ def _tool_arguments_format(tool: Tool) -> Format:
             f"Kimi K3 strict tool {tool.function.name!r} must define parameters"
         )
     root_schema = parameters
+    validate_local_json_reference_scope(root_schema)
     parameters = _dereference_schema(parameters, root_schema)
     if parameters is True:
         parameters = {}

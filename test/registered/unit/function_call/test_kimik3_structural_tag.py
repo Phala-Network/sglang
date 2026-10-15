@@ -544,7 +544,7 @@ def test_strict_root_ref_target_still_rejects_unsupported_root_assertions():
 
 
 @pytest.mark.parametrize("definitions_key", ["$defs", "definitions"])
-def test_strict_argument_schema_rejects_conflicting_local_definitions(definitions_key):
+def test_strict_argument_schema_preserves_root_over_local_definitions(definitions_key):
     tool = _tool(name="lookup")
     tool.function.parameters = {
         "$ref": f"#/{definitions_key}/Root",
@@ -564,11 +564,11 @@ def test_strict_argument_schema_rejects_conflicting_local_definitions(definition
             "Value": {"type": "integer"},
         },
     }
-    # Without $id, the nested pointer still targets the original document's
-    # integer schema. Hoisting preserves the array's own string definitions and
-    # changes that target, so refuse this scope instead of accepting strings.
-    with pytest.raises(ValueError, match="unsupported.*definition.*scope"):
-        _grammar([tool], tool_choice="required")
+    # The extracted argument must still target the original root's integer,
+    # never its own local string definition with the same name.
+    grammar = _grammar([tool], tool_choice="required")
+    assert _accepts(grammar, _tools_section(_call("lookup", 1, _argument("nested", "array", "[1]"))))
+    assert not _accepts(grammar, _tools_section(_call("lookup", 1, _argument("nested", "array", '["bad"]'))))
 
 
 @pytest.mark.parametrize(

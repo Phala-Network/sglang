@@ -76,7 +76,6 @@ class TestXGrammarJSONSchemaValidation(unittest.TestCase):
 
     def test_rejects_lossy_string_constraint_combinations(self):
         cases = (
-            {"type": "string", "pattern": "^[a-z]+$", "minLength": 2},
             {"type": "string", "format": "uuid", "maxLength": 36},
             {"type": "string", "format": "uuid", "pattern": "^a"},
         )
@@ -86,6 +85,10 @@ class TestXGrammarJSONSchemaValidation(unittest.TestCase):
                     UnsupportedJSONSchemaFeature, "cannot be enforced together"
                 ):
                     validate_xgrammar_json_schema(schema)
+
+    def test_accepts_pattern_length_and_nonunique_arrays(self):
+        validate_xgrammar_json_schema({"type": "string", "pattern": "^[a-z]+$", "minLength": 2})
+        validate_xgrammar_json_schema({"type": "array", "uniqueItems": False})
 
     def test_checks_nested_schema_without_walking_instance_data(self):
         schema = {
@@ -195,7 +198,7 @@ class TestBackendJSONSchemaPrevalidation(unittest.TestCase):
         backend.grammar_compiler = MagicMock()
 
         result = backend.dispatch_json(
-            '{"type":"string","pattern":"^[a-z]+$","minLength":2}'
+            '{"type":"string","format":"uuid","pattern":"^a"}'
         )
 
         self.assertIsInstance(result, InvalidGrammarObject)

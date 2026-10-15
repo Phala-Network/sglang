@@ -97,7 +97,7 @@ def _escape_json_pointer(value: str) -> str:
 
 
 def _iter_subschemas(
-    schema: Any, pointer: str = "#"
+    schema: Any, pointer: str = "#", *, include_definitions: bool = True
 ) -> Iterator[tuple[dict[str, Any], str]]:
     """Walk schema-bearing keywords without inspecting instance-valued data."""
     if not isinstance(schema, dict):
@@ -108,24 +108,26 @@ def _iter_subschemas(
     for keyword in _SINGLE_SUBSCHEMA_KEYWORDS:
         child = schema.get(keyword)
         if isinstance(child, (bool, dict)):
-            yield from _iter_subschemas(child, f"{pointer}/{keyword}")
+            yield from _iter_subschemas(child, f"{pointer}/{keyword}", include_definitions=include_definitions)
         elif keyword == "items" and isinstance(child, list):
             for index, item in enumerate(child):
-                yield from _iter_subschemas(item, f"{pointer}/{keyword}/{index}")
+                yield from _iter_subschemas(item, f"{pointer}/{keyword}/{index}", include_definitions=include_definitions)
 
     for keyword in _SUBSCHEMA_ARRAY_KEYWORDS:
         children = schema.get(keyword)
         if isinstance(children, list):
             for index, child in enumerate(children):
-                yield from _iter_subschemas(child, f"{pointer}/{keyword}/{index}")
+                yield from _iter_subschemas(child, f"{pointer}/{keyword}/{index}", include_definitions=include_definitions)
 
     for keyword in _SUBSCHEMA_MAP_KEYWORDS:
+        if not include_definitions and keyword in ("$defs", "definitions"):
+            continue
         children = schema.get(keyword)
         if isinstance(children, dict):
             for name, child in children.items():
                 escaped_name = _escape_json_pointer(name)
                 yield from _iter_subschemas(
-                    child, f"{pointer}/{keyword}/{escaped_name}"
+                    child, f"{pointer}/{keyword}/{escaped_name}", include_definitions=include_definitions
                 )
 
     dependencies = schema.get("dependencies")
@@ -134,7 +136,7 @@ def _iter_subschemas(
             if isinstance(child, (bool, dict)):
                 escaped_name = _escape_json_pointer(name)
                 yield from _iter_subschemas(
-                    child, f"{pointer}/dependencies/{escaped_name}"
+                    child, f"{pointer}/dependencies/{escaped_name}", include_definitions=include_definitions
                 )
 
 
@@ -164,10 +166,20 @@ def _can_describe_string(schema: dict[str, Any]) -> bool:
     )
 
 
+def validate_local_json_reference_scope(schema: Any) -> None:
+    """The pinned converter supports one schema resource, not nested $id bases."""
+    for subschema, pointer in _iter_subschemas(schema):
+        if pointer != "#" and "$id" in subschema:
+            _raise_unsupported("xgrammar", pointer, "nested $id resource scope is unsupported")
+
+
 def validate_xgrammar_json_schema(schema: Any) -> None:
     """Reject constraints XGrammar 0.2.x accepts without fully enforcing."""
+    validate_local_json_reference_scope(schema)
     for subschema, pointer in _iter_subschemas(schema):
         unsupported = sorted(_XGRAMMAR_UNSUPPORTED_KEYWORDS.intersection(subschema))
+        if subschema.get("uniqueItems") is False:
+            unsupported.remove("uniqueItems")
         if unsupported:
             _raise_unsupported(
                 "xgrammar",
@@ -192,7 +204,9 @@ def validate_xgrammar_json_schema(schema: Any) -> None:
             if _can_describe_string(subschema)
             else []
         )
-        if len(groups) > 1:
+        # The pinned converter composes pattern with string-length metadata.
+        # format+pattern still selects one branch and would drop an assertion.
+        if len(groups) > 1 and set(groups) != {"pattern", "minLength/maxLength"}:
             _raise_unsupported(
                 "xgrammar",
                 pointer,

@@ -233,6 +233,9 @@ class FlashInferMLAAttnBackend(AttentionBackend):
         # The public request context remains model_config.context_len.
         self.max_context_len = model_runner.model_config.context_len + getattr(
             model_runner.model_config, "xing_eagle_context_headroom", 0
+        ) + getattr(
+            getattr(model_runner.model_config, "request_static_yarn_config", None),
+            "lookahead", 0,
         )
         self.device = model_runner.device
         self.skip_prefill = skip_prefill

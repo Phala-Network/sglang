@@ -166,17 +166,19 @@ def test_actual_allocator_rounding_and_final_accepted_run_fit_reserved_row_and_e
     assert len(actual_req.output_ids) == 259  # owned scratch is retained for normal release
 
 
-@pytest.mark.parametrize("headroom", [0, 8])
-def test_real_backend_construction_and_graph_metadata_cover_native_tail(headroom):
+@pytest.mark.parametrize("headroom,dynamic", [(0, False), (8, False), (8, True)])
+def test_real_backend_construction_and_graph_metadata_cover_native_tail(headroom, dynamic):
     from sglang.srt.layers.attention import flashinfer_mla_backend as fi
     from sglang.srt.layers.attention import trtllm_mla_backend as trt
     from sglang.srt.model_executor.forward_batch_info import ForwardMode
 
-    config = NS(context_len=262144, xing_eagle_context_headroom=headroom,
+    context = 524288 if dynamic else 262144
+    config = NS(context_len=context, xing_eagle_context_headroom=0 if dynamic else headroom,
+        request_static_yarn_config=NS(lookahead=headroom) if dynamic else None,
         num_attention_heads=64, get_num_kv_heads=lambda size: 1, kv_lora_rank=512,
         qk_nope_head_dim=128, qk_rope_head_dim=64, v_head_dim=128, scaling=1.0)
     runner = NS(model_config=config, device="cpu", page_size=64,
-        req_to_token_pool=NS(size=2, req_to_token=torch.zeros((2, 262215), dtype=torch.int32)),
+        req_to_token_pool=NS(size=2, req_to_token=torch.zeros((2, context + 71), dtype=torch.int32)),
         token_to_kv_pool=object(), kv_index_translator=NS(is_translating=False),
         dtype=torch.bfloat16, kv_cache_dtype=torch.float8_e4m3fn,
         max_running_requests=2, is_draft_worker=False)
@@ -211,20 +213,20 @@ def test_real_backend_construction_and_graph_metadata_cover_native_tail(headroom
         backend = trt.TRTLLMMLABackend(runner)
         backend.init_cuda_graph_state(max_bs=2, max_num_tokens=8)
         for mode in (ForwardMode.TARGET_VERIFY, ForwardMode.DRAFT_EXTEND_V2):
-            backend._init_cuda_graph_metadata(2, 8, mode, torch.tensor([262143, 16]), "cpu")
+            backend._init_cuda_graph_metadata(2, 8, mode, torch.tensor([context - 1, 16]), "cpu")
             metadata = backend.forward_decode_metadata
-            assert metadata.max_seq_len_k == 262144 + headroom
-            assert metadata.block_kv_indices.shape[1] * 64 >= 262144 + headroom
+            assert metadata.max_seq_len_k == context + headroom
+            assert metadata.block_kv_indices.shape[1] * 64 >= context + headroom
         draft = fi.FlashInferMLAMultiStepDraftBackend(runner, topk=1, speculative_num_steps=3)
         draft.init_cuda_graph_state(max_bs=2, max_num_tokens=8)
-    assert config.context_len == 262144
-    assert backend.max_context_len == draft.max_context_len == 262144 + headroom
-    assert draft.cuda_graph_kv_indices.shape == (3, 2 * (262144 + headroom))
+    assert config.context_len == context
+    assert backend.max_context_len == draft.max_context_len == context + headroom
+    assert draft.cuda_graph_kv_indices.shape == (3, 2 * (context + headroom))
     if headroom:
         # Two last-step requests can still execute the entire draft/verify run.
-        required = draft_kv_indices_used_len(2 * 262143, topk=1, bs=2, num_steps=3)
+        required = draft_kv_indices_used_len(2 * (context - 1), topk=1, bs=2, num_steps=3)
         assert required <= draft.cuda_graph_kv_indices.shape[1]
-        assert backend.forward_decode_metadata.block_kv_indices.shape[1] >= 4097
+        assert backend.forward_decode_metadata.block_kv_indices.shape[1] >= context // 64 + 1
 
 
 def test_auto_truncate_cannot_shrink_native_public_input_or_output():

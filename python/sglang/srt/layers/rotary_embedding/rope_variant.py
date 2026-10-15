@@ -365,14 +365,18 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbedding):
         self.scaling_factor = self.scaling_factors[-1]
         if type(speculative_headroom) is not int or speculative_headroom not in (0, 8):
             raise ValueError("Xing EAGLE RoPE headroom must be zero or eight")
-        if speculative_headroom and len(self.scaling_factors) != 1:
-            raise ValueError("Xing EAGLE RoPE headroom currently requires a static profile")
+        if (
+            speculative_headroom
+            and len(self.scaling_factors) != 1
+            and self.scaling_factors != (64, 128)
+        ):
+            raise ValueError("Xing EAGLE RoPE headroom requires static or64/128 profiles")
         self.speculative_headroom = speculative_headroom
         self.scaling_factor_to_offset = {}
         offset = 0
         for factor in self.scaling_factors:
             self.scaling_factor_to_offset[factor] = offset
-            offset += int(max_position_embeddings * factor)
+            offset += int(max_position_embeddings * factor) + speculative_headroom
         self.extrapolation_factor = extrapolation_factor
         self.attn_factor = attn_factor
         self.beta_fast = beta_fast
@@ -436,7 +440,7 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbedding):
             for factor in self.scaling_factors:
                 inv_freq = self._compute_inv_freq(factor)
                 t = torch.arange(
-                    int(self.max_position_embeddings * factor),
+                    int(self.max_position_embeddings * factor) + self.speculative_headroom,
                     device=self.device,
                     dtype=torch.float32,
                 )

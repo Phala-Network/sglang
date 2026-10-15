@@ -510,6 +510,14 @@ class ModelConfig:
         rope_scaling = getattr(self.hf_text_config, "rope_parameters", None) or getattr(
             self.hf_text_config, "rope_scaling", {}
         )
+        if (
+            getattr(self.hf_text_config, "model_type", None) == "xing4_0"
+            and isinstance(rope_scaling, dict)
+            and rope_scaling.get("request_static_factors") is not None
+            and speculative_algorithm == "EAGLE"
+        ):
+            # Both target and embedded MTP own the same per-profile scratch layout.
+            rope_scaling["_request_static_yarn_lookahead"] = 8
         from sglang.srt.configs.request_static_yarn import RequestStaticYarnConfig
 
         self.request_static_yarn_config = RequestStaticYarnConfig.from_hf_config(
@@ -734,6 +742,12 @@ class ModelConfig:
         self.use_engram = bool(getattr(self.hf_config, "engram_layer_ids", ()))
         self._derive_multimodal_cuda_graph_support(enable_multimodal)
         self.dtype = _get_and_verify_dtype(self.hf_text_config, dtype)
+        if (
+            self.request_static_yarn_config is not None
+            and self.request_static_yarn_config.lookahead
+            and (self.dtype != torch.bfloat16 or self.quantization is not None)
+        ):
+            raise ValueError("Xing request-static EAGLE requires unquantized BF16 weights")
 
         # Derive context length and model shapes
         self._derive_context_length(context_length)

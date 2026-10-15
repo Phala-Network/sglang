@@ -109,6 +109,7 @@ from sglang.srt.speculative.spec_utils import (
     fast_sample,
     get_plan_stream,
     load_token_map,
+    record_stream_each,
     renorm_draft_probs,
     sample_draft_proposal,
     select_top_k_tokens,
@@ -823,6 +824,8 @@ class EagleDraftWorker(EagleDraftWorkerBase):
                     )
                     topk_p, topk_index = fast_topk(probs, self.topk, dim=-1)
                     forward_batch.positions.add_(1)
+                if forward_batch.rope_positions is not None:
+                    forward_batch.rope_positions.add_(1)
                 if self.draft_runner.model_config.model_is_mrope:
                     forward_batch.mrope_positions.add_(1)
                 maybe_detect_oob(
@@ -1078,9 +1081,11 @@ class EagleDraftWorker(EagleDraftWorkerBase):
             )
 
         if self.plan_stream:
-            torch.get_device_module(self.device).current_stream().wait_stream(
-                self.plan_stream
-            )
+            forward_stream = torch.get_device_module(self.device).current_stream()
+            forward_stream.wait_stream(self.plan_stream)
+            # This model input was allocated on the plan stream. The join orders
+            # its writes; record the main-stream read to protect allocator reuse.
+            record_stream_each((forward_batch.rope_positions,), forward_stream)
 
         # Run draft extend batch in the main compute stream
         can_run_decode_cuda_graph = (

@@ -38,6 +38,7 @@ class RequestStaticYarnConfig:
     original_max_position: int
     profiles: tuple[tuple[float, int, str], ...]
     position_kind: str = "mrope"
+    lookahead: int = 0
 
     @classmethod
     def from_hf_config(cls, hf_text_config: Any):
@@ -58,6 +59,9 @@ class RequestStaticYarnConfig:
             )
         is_xing = getattr(hf_text_config, "model_type", None) == "xing4_0"
         position_kind = "mla" if is_xing else "mrope"
+        lookahead = rope.get("_request_static_yarn_lookahead", 0) if is_xing else 0
+        if type(lookahead) is not int or lookahead not in (0, 8):
+            raise ValueError("Xing request-static YaRN lookahead must be zero or eight")
         rope_type = rope.get("rope_type", rope.get("type"))
         if is_xing:
             if (
@@ -135,8 +139,8 @@ class RequestStaticYarnConfig:
                 json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
             profiles.append((factor, offset, "yarn:" + digest))
-            offset += int(rows)
-        return cls(normalized, original, tuple(profiles), position_kind)
+            offset += int(rows) + lookahead
+        return cls(normalized, original, tuple(profiles), position_kind, lookahead)
 
     def validate_model_support(self, architectures, is_multimodal: bool):
         if self.position_kind == "mla":
@@ -191,7 +195,6 @@ class RequestStaticYarnConfig:
             or getattr(args, "enable_dsa_prefill_cp", False)
             or getattr(args, "enable_mla_prefill_cp", False)
             or getattr(args, "enable_lora", False)
-            or getattr(args, "speculative_algorithm", None) not in (None, "NONE")
             or getattr(args, "disaggregation_mode", "null") != "null"
             or getattr(args, "enable_lmcache", False)
             or getattr(args, "enable_hierarchical_cache", False)
@@ -200,8 +203,36 @@ class RequestStaticYarnConfig:
         ):
             raise ValueError(
                 "Xing request-static YaRN requires TP1/TP2, PP1, no CP/DP, "
-                "speculation, LoRA, disaggregation or offload"
+                "LoRA, disaggregation or offload"
             )
+
+        algorithm = getattr(args, "speculative_algorithm", None)
+        if algorithm not in (None, "NONE"):
+            if self.lookahead != 8:
+                raise ValueError("Xing EAGLE request-static YaRN requires eight lookahead rows")
+            if (
+                algorithm != "EAGLE"
+                or getattr(args, "tp_size", 1) != 1
+                or getattr(args, "page_size", 64) != 64
+                or getattr(args, "kv_cache_dtype", "auto") != "fp8_e4m3"
+                or getattr(args, "quantization", None) is not None
+                or getattr(args, "speculative_draft_attention_backend", None)
+                not in (None, "trtllm_mla")
+                or (
+                    getattr(args, "speculative_num_steps", None),
+                    getattr(args, "speculative_eagle_topk", None),
+                    getattr(args, "speculative_num_draft_tokens", None),
+                ) != (3, 1, 4)
+                or getattr(args, "speculative_attention_mode", "prefill") != "prefill"
+                or getattr(args, "speculative_adaptive", False)
+                or getattr(args, "enable_multi_layer_eagle", False)
+                or getattr(args, "speculative_use_rejection_sampling", False)
+                or getattr(args, "speculative_draft_window_size", None) not in (None, 0)
+            ):
+                raise ValueError(
+                    "Xing request-static EAGLE requires TP1, BF16 weights, FP8 E4M3 KV, "
+                    "page64, TRTMLA and fixed single-layer EAGLE3/topk1/draft4 prefill"
+                )
 
     def select(self, budget: int, explicit_factor=None, reserved_tokens=0) -> YarnProfile:
         if isinstance(budget, bool) or not isinstance(budget, int) or budget < 0:

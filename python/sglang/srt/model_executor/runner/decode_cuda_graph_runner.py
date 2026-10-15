@@ -1312,6 +1312,11 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
                 self._stage_ragged_verify_layout(ragged_layout, graph_size_key)
             self.buffers.input_ids[: self.raw_num_token].copy_(forward_batch.input_ids)
             self.buffers.positions[: self.raw_num_token].copy_(forward_batch.positions)
+            if self.buffers.rope_positions is not None:
+                self.buffers.rope_positions.zero_()
+                self.buffers.rope_positions[: self.raw_num_token].copy_(
+                    forward_batch.rope_positions
+                )
             if (
                 pp_proxy_tensors is not None
                 and self.buffers.pp_proxy_tensors is not None

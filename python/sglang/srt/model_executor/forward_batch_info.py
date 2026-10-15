@@ -721,6 +721,7 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
     mrope_positions: torch.Tensor = None
     # Xing YaRN table addresses only; positions / KV indices stay physical.
     rope_positions: Optional[torch.Tensor] = None
+    rope_position_offsets: Optional[torch.Tensor] = None
 
     # For two-batch overlap
     tbo_parent_token_range: Optional[Tuple[int, int]] = None
@@ -1433,30 +1434,42 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
         if self.forward_mode.is_idle():
             self.rope_positions = self.positions
             return
-        if not (self.forward_mode.is_decode() or self.forward_mode.is_extend()):
-            raise RuntimeError("Xing request-static YaRN forward mode is unsupported")
         profiles = [req.rope_profile for req in batch.reqs]
         if any(profile is None for profile in profiles):
             raise RuntimeError("Xing request-static YaRN profile missing at model forward")
-        repeats = (
-            [1] * len(profiles)
-            if self.forward_mode.is_decode()
-            else batch.extend_lens
-        )
+        if self.forward_mode.is_target_verify() or self.forward_mode.is_draft_extend_v2():
+            # EAGLE carries fixed-width request blocks, not stale prefill lengths.
+            repeats = [self.spec_info.num_tokens_per_req] * len(profiles)
+        elif self.forward_mode.is_decode():
+            repeats = [1] * len(profiles)
+        elif self.forward_mode.is_extend():
+            repeats = batch.extend_lens
+        else:
+            raise RuntimeError("Xing request-static YaRN forward mode is unsupported")
         num_tokens = self.positions.numel()
-        if len(repeats) != len(profiles) or sum(repeats) != num_tokens:
-            raise RuntimeError("Xing request-static YaRN token layout mismatch")
+        if isinstance(repeats, torch.Tensor):
+            if repeats.ndim != 1 or repeats.numel() != len(profiles):
+                raise RuntimeError("Xing request-static YaRN token layout mismatch")
+            repeats = repeats.to(device=self.positions.device, dtype=torch.int64)
+        else:
+            if len(repeats) != len(profiles) or sum(repeats) != num_tokens:
+                raise RuntimeError("Xing request-static YaRN token layout mismatch")
+            repeats = torch.tensor(
+                repeats, dtype=torch.int64, device=self.positions.device
+            )
         offsets = torch.tensor(
             [profile.offset for profile in profiles],
             dtype=torch.int64,
-            device=model_runner.device,
+            device=self.positions.device,
         )
-        token_offsets = torch.repeat_interleave(
-            offsets,
-            torch.tensor(repeats, dtype=torch.int64, device=model_runner.device),
-            output_size=num_tokens,
+        self.rope_position_offsets = torch.repeat_interleave(
+            offsets, repeats, output_size=num_tokens
         )
-        self.rope_positions = self.positions + token_offsets
+        self.refresh_request_static_yarn_positions()
+
+    def refresh_request_static_yarn_positions(self):
+        if self.rope_position_offsets is not None:
+            self.rope_positions = self.positions + self.rope_position_offsets
 
     def _expand_mrope_from_input(
         self,

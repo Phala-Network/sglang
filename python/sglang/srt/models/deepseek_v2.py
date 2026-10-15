@@ -2142,10 +2142,9 @@ class DeepseekV2AttentionMLA(
                 compute_mla_mscale_scaling(static_long_rope, self.qk_head_dim**-0.5)
                 / self.scaling
             )
-            self.request_static_yarn_long_offset = int(
-                rope_scaling["original_max_position_embeddings"]
-                * rope_scaling["request_static_factors"][0]
-            )
+            self.request_static_yarn_long_offset = self.rotary_emb.scaling_factor_to_offset[
+                rope_scaling["request_static_factors"][-1]
+            ]
 
         self.attn_mqa = RadixAttention(
             self.num_local_heads,

@@ -75,6 +75,7 @@ class EagleDraftExtendInputBuffers(ForwardInputBuffers):
     req_pool_indices: torch.Tensor
     out_cache_loc: torch.Tensor
     positions: torch.Tensor
+    rope_positions: Optional[torch.Tensor]
     mrope_positions: torch.Tensor
     hidden_states: Optional[torch.Tensor]
     seq_lens: torch.Tensor
@@ -170,6 +171,14 @@ class EAGLEDraftExtendCudaGraphRunner(DecodeCudaGraphRunner):
                 (self.max_num_token,), dtype=self._cache_loc_dtype()
             )
             positions = torch.zeros((self.max_num_token,), dtype=torch.int64)
+            rope_positions = (
+                torch.zeros_like(positions)
+                if getattr(
+                    getattr(model_runner.model_config, "request_static_yarn_config", None),
+                    "position_kind", None,
+                ) == "mla"
+                else None
+            )
             mrope_positions = torch.zeros((3, self.max_num_token), dtype=torch.int64)
 
             # Width and dtype both come from the draft `model_runner` so the
@@ -270,6 +279,7 @@ class EAGLEDraftExtendCudaGraphRunner(DecodeCudaGraphRunner):
             req_pool_indices=req_pool_indices,
             out_cache_loc=out_cache_loc,
             positions=positions,
+            rope_positions=rope_positions,
             mrope_positions=mrope_positions,
             hidden_states=hidden_states,
             seq_lens=seq_lens,
@@ -360,6 +370,11 @@ class EAGLEDraftExtendCudaGraphRunner(DecodeCudaGraphRunner):
         extend_seq_lens_cpu = self.extend_seq_lens_cpu[:bs]
         out_cache_loc = buffers.out_cache_loc[:num_tokens]
         positions = buffers.positions[:num_tokens]
+        rope_positions = (
+            buffers.rope_positions[:num_tokens]
+            if buffers.rope_positions is not None
+            else None
+        )
         mrope_positions = buffers.mrope_positions[:, :num_tokens]
         hidden_states = (
             buffers.hidden_states[:num_tokens]
@@ -429,6 +444,7 @@ class EAGLEDraftExtendCudaGraphRunner(DecodeCudaGraphRunner):
             seq_lens_sum=seq_lens.sum().item(),
             return_logprob=False,
             positions=positions,
+            rope_positions=rope_positions,
             mrope_positions=mrope_positions,
             global_num_tokens_gpu=buffers.global_num_tokens_gpu,
             global_num_tokens_for_logprob_cpu=global_num_tokens_for_logprob_cpu,
@@ -550,6 +566,12 @@ class EAGLEDraftExtendCudaGraphRunner(DecodeCudaGraphRunner):
             forward_batch.positions,
             forward_batch.req_pool_indices,
         ]
+        if buffers.rope_positions is not None:
+            if forward_batch.rope_positions is None:
+                raise RuntimeError("Xing EAGLE graph model positions are missing")
+            buffers.rope_positions.zero_()
+            copy_dsts.append(buffers.rope_positions[:num_tokens])
+            copy_srcs.append(forward_batch.rope_positions)
         if self.model_runner.model_config.model_is_mrope:
             buffers.mrope_positions.zero_()
             if forward_batch.mrope_positions is not None:

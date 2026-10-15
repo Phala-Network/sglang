@@ -1306,6 +1306,10 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         _max_req_len = self.context_len
         xing_eagle_public_budget = bool(
             getattr(self.model_config, "xing_eagle_context_headroom", 0)
+            or getattr(
+                getattr(self.model_config, "request_static_yarn_config", None),
+                "lookahead", 0,
+            )
         )
         allow_auto_truncate = (
             self.allow_auto_truncate
@@ -1316,7 +1320,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         if not xing_eagle_public_budget:
             input_token_num += self.num_reserved_tokens
 
-        # Validate input length independently of native Xing EAGLE scratch.
+        # Validate input length independently of Xing EAGLE scratch.
         if input_token_num >= self.context_len:
             if allow_auto_truncate:
                 logger.warning(

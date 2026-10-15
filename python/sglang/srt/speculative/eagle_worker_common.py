@@ -539,6 +539,11 @@ def run_eagle_verify(
             ),
         )
 
+    # Physical positions may be refreshed after the plan-stream dependency.
+    # Rebuild only model addresses; KV positions/locations remain untouched.
+    record_stream_each((verify_forward_batch.rope_position_offsets,), fwd_stream)
+    verify_forward_batch.refresh_request_static_yarn_positions()
+
     # Must stay ahead of the target verify launch below.
     grammar_tree = (
         GrammarTree.from_device(

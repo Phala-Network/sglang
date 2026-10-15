@@ -17,7 +17,7 @@ page64, and `--context-length 524288 --json-model-override-args` with one JSON
 argument:
 
 ```json
-{"max_position_embeddings":524288,"rope_scaling":{"rope_type":"yarn","factor":128,"request_static_factors":[64,128],"original_max_position_embeddings":4096,"beta_fast":32,"beta_slow":1,"mscale":1,"mscale_all_dim":1}}
+{"max_position_embeddings":524288,"rope_scaling":{"rope_type":"yarn","rope_theta":10000,"factor":128,"request_static_factors":[64,128],"original_max_position_embeddings":4096,"beta_fast":32,"beta_slow":1,"mscale":1,"mscale_all_dim":1}}
 ```
 
 The original input plus output budget selects factor64 through262144 and
@@ -37,15 +37,23 @@ The fixed BF16-weight/E4M3-KV, TP1, page64, TRTLLM-MLA prefill/decode/draft,
 EAGLE3/topk1/draft4 recipe keeps eight internal lookahead slots for RoPE and
 attention index tables. Existing KV spare-page and request-row capacity cover
 this scratch. Intake rejects public overflow or insufficient empty-pool capacity
-without shrinking either input or requested output. This does not enable EAGLE
-for request-static dynamic YaRN. Prefill graph remains enabled by default.
+without shrinking either input or requested output. Prefill graph remains
+enabled by default.
 The real-path CPU regression is
 `test/registered/unit/managers/test_xing_native_eagle_public_budget.py`.
 
 Static64 uses official unmodified model config and context262144. Static128
 uses the JSON above without `request_static_factors`; it is a control, not a
-request-static endpoint. Speculation, CP/DP/PP, LoRA, PD and offload are not
-qualified for this dynamic path and are rejected before weight allocation.
+request-static endpoint.
+
+Request-static EAGLE uses the same fixed BF16-weight/E4M3-KV, TP1, page64,
+TRTMLA, single-layer3/topk1/draft4 prefill recipe. Each64/128 table has eight
+independent scratch rows; long-table model addresses start at262152. Physical KV
+positions remain unchanged. Verify, draft, draft-extend and their graph buffers
+carry the immutable profile; graph warmups restore both position inputs. CPU
+coverage includes the real constructors, intake, replay and mixed-profile paths.
+Real512K, CUDA graph/kernel equivalence, quality and capacity remain GPU gates.
+Other speculative layouts, CP/DP/PP, LoRA, PD and offload fail before allocation.
 
 Protected `TOKEN` environment authentication requires `PIG_AUTH_FROM_TOKEN=1`.
 Model mounts contain only weights/JSON/SentencePiece/Jinja data and use

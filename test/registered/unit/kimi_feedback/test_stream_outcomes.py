@@ -1,6 +1,7 @@
 """CPU-only synthetic generation: real chat stream outcome/cleanup path."""
 import asyncio
 import json
+from http import HTTPStatus
 from types import SimpleNamespace
 from unittest.mock import patch
 import pytest
@@ -21,7 +22,8 @@ class Generation:
                 yield {"text": "synthetic", "index": index, "meta_info": {
                     "id": "synthetic", "prompt_tokens": 1, "completion_tokens": 1,
                     "cached_tokens": 0,
-                    "finish_reason": {"type": self.finish} if self.finish else None}}
+                    "finish_reason": (self.finish.get(index) if isinstance(self.finish, dict)
+                        else {"type": self.finish} if self.finish else None)}}
         if self.fault:
             raise self.fault(SECRET)
     async def aclose(self):
@@ -121,4 +123,34 @@ def test_close_error_is_sanitized_before_success(close_fault):
     assert wire.count("data: [DONE]") == 1
     assert sum("error" in e for e in events(wire)) == 1
     assert not [c for e in events(wire) for c in e.get("choices", []) if c.get("finish_reason")]
+    assert generation.closed == 1
+
+
+@pytest.mark.parametrize("close_fault", [None, RuntimeError])
+@pytest.mark.parametrize("indices", [(0, 1), (1, 0)])
+def test_error_abort_ends_stream_without_late_success(indices, close_fault):
+    generation = Generation(
+        finish={indices[0]: {"type": "stop"}, indices[1]: {
+            "type": "abort", "status_code": HTTPStatus.INTERNAL_SERVER_ERROR,
+            "message": "Synthetic abort."}},
+        indices=indices, close_fault=close_fault,
+    )
+    wire, failure = run_case(generation, n=2)
+    assert failure is None
+    parsed = events(wire)
+    assert sum("error" in event for event in parsed) == 1
+    assert "error" in parsed[-1], "successful metadata escaped after an error abort"
+    assert not [c for e in parsed for c in e.get("choices", []) if c.get("finish_reason")]
+    assert wire.count("data: [DONE]") == 1
+    assert generation.closed == 1
+
+
+def test_graceful_abort_keeps_existing_finish_contract():
+    generation = Generation(finish="abort")
+    wire, failure = run_case(generation)
+    assert failure is None
+    assert not any("error" in event for event in events(wire))
+    assert [c["finish_reason"] for e in events(wire) for c in e.get("choices", [])
+            if c.get("finish_reason")] == ["abort"]
+    assert wire.count("data: [DONE]") == 1
     assert generation.closed == 1

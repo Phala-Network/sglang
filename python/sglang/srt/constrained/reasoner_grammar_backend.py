@@ -95,8 +95,6 @@ class ReasonerGrammarObject(BaseGrammarObject):
         self._kimik3_boundary_matches = (0, 0)
         self._kimik3_thinking_history = []
         self._kimik3_json_grammars = None
-        self._kimik3_json_tokenizer = None
-        self._kimik3_json_stop_ids = None
 
     def maybe_init_reasoning(self, reasoning: bool):
         if self._kimik3_json_grammars is not None:
@@ -533,8 +531,6 @@ class ReasonerGrammarObject(BaseGrammarObject):
         new_obj._opening_text = self._opening_text
         new_obj._generated = self._generated
         new_obj._kimik3_json_grammars = self._kimik3_json_grammars
-        new_obj._kimik3_json_tokenizer = self._kimik3_json_tokenizer
-        new_obj._kimik3_json_stop_ids = self._kimik3_json_stop_ids
         if self._kimik3_token_bytes is not None:
             new_obj._kimik3_token_bytes = self._kimik3_token_bytes
             new_obj._kimik3_boundary_matchers = self._kimik3_boundary_matchers
@@ -833,8 +829,6 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
                 template.set_stop_token_ids_before_decoding(sorted(stops))
             obj = self._make_grammar_object(templates[bool(reasoning)].copy(), reasoning)
             obj._kimik3_json_grammars = tuple(templates)
-            obj._kimik3_json_tokenizer = tokenizer
-            obj._kimik3_json_stop_ids = sorted(stops)
             metadata = self._kimik3_json_boundary_metadata
             if metadata is None:
                 obj._install_kimik3_boundary_metadata(tokenizer)

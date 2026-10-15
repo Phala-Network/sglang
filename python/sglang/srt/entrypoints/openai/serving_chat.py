@@ -3249,7 +3249,12 @@ class OpenAIServingChat(OpenAIServingBase):
                 await generator.aclose()
             except Exception:
                 raise RuntimeError("Chat stream cleanup failed.") from None
-            if not error_aborted and set(finish_reasons) != set(range(request.n)):
+            if error_aborted:
+                # An explicit error abort ends the response. Do not follow it
+                # with buffered success finishes or metadata from other choices.
+                yield "data: [DONE]\n\n"
+                return
+            if set(finish_reasons) != set(range(request.n)):
                 raise RuntimeError("Chat stream ended without all finish reasons.")
 
             # Send finish_reason chunks for each index that completed

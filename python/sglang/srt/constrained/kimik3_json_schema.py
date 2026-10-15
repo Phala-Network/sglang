@@ -33,9 +33,9 @@ def json_response_format(schema, thinking, max_whitespace_cnt=None):
         const(""), const(RESPONSE_CLOSE), const(RESPONSE_CLOSE + MESSAGE_CLOSE)
     )
     final = sequence(value, closing)
-    response = either(final, sequence(const(RESPONSE_OPEN), final))
+    response_open = either(const(""), const(RESPONSE_OPEN))
     if not thinking:
-        return {"type": "structural_tag", "format": response}
+        return {"type": "structural_tag", "format": sequence(response_open, final)}
 
     # A closing response marker cannot retroactively turn arbitrary reasoning
     # into unconstrained final text. It is allowed only after the JSON branch.
@@ -51,7 +51,11 @@ def json_response_format(schema, thinking, max_whitespace_cnt=None):
             "end": marker,
         }
 
-    return {"type": "structural_tag", "format": either(
-        sequence(reasoning_until(THINK_CLOSE), response),
-        sequence(reasoning_until(RESPONSE_OPEN), final),
-    )}
+    # Keep one schema-bearing suffix instead of serializing it in every branch.
+    # XGrammar deduplicates equal formats internally; this also avoids repeated
+    # Python serialization and format parsing for large request schemas.
+    boundary = either(
+        sequence(reasoning_until(THINK_CLOSE), response_open),
+        reasoning_until(RESPONSE_OPEN),
+    )
+    return {"type": "structural_tag", "format": sequence(boundary, final)}

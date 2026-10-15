@@ -708,6 +708,8 @@ class _KimiK3JSONContentParser:
     This lexer locates the root boundary; it is not a JSON/schema validator.
     """
 
+    _STRING_EVENT = re.compile(r'["\\]')
+
     def __init__(self, thinking, stream_reasoning=True):
         self.phase = "thinking" if thinking else "start"
         self.buffer = ""
@@ -781,6 +783,13 @@ class _KimiK3JSONContentParser:
                     self.in_string = False
                     if self.root == "string":
                         self.phase = "tail"
+                elif self.root != "primitive":
+                    # Skip ordinary string spans; quotes and escapes still use
+                    # the state machine, including across chunk boundaries.
+                    event = self._STRING_EVENT.search(data, position)
+                    end = event.start() if event is not None else len(data)
+                    content.append(data[position:end])
+                    position = end
             elif char == '"':
                 self.in_string = True
             elif char in "{[":

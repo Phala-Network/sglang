@@ -229,7 +229,11 @@ class FlashInferMLAAttnBackend(AttentionBackend):
         super().__init__()
 
         # Parse constants
-        self.max_context_len = model_runner.model_config.context_len
+        # Speculative lookahead extends internal index/block tables only.
+        # The public request context remains model_config.context_len.
+        self.max_context_len = model_runner.model_config.context_len + getattr(
+            model_runner.model_config, "xing_eagle_context_headroom", 0
+        )
         self.device = model_runner.device
         self.skip_prefill = skip_prefill
         # Pool refs — captured at construction so they survive deletion of the

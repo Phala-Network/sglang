@@ -44,6 +44,7 @@ python -m pytest -q --junitxml="${JUNIT_XML:-/tmp/xing4-cpu.xml}" \
   test/registered/unit/configs/test_xing_request_static_yarn_policy.py \
   test/registered/unit/model_executor/test_xing_request_static_yarn_torch.py \
   test/registered/unit/managers/test_xing_request_static_yarn_lifecycle.py \
+  test/registered/unit/managers/test_xing_native_eagle_public_budget.py \
   test/registered/unit/configs/test_request_static_yarn_policy.py \
   test/registered/unit/model_executor/test_request_static_yarn_torch.py \
   test/registered/unit/managers/test_request_static_yarn_admission_reject.py \

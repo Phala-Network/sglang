@@ -465,6 +465,7 @@ class ModelConfig:
         self.is_draft_model = is_draft_model
         self.is_draft_quantization_explicit = is_draft_quantization_explicit
         self.speculative_algorithm = speculative_algorithm
+        self.xing_eagle_context_headroom = 0
         self.model_impl = model_impl
         self.sampling_defaults = sampling_defaults
         self.quantize_and_serve = quantize_and_serve
@@ -805,7 +806,7 @@ class ModelConfig:
             if is_draft_model
             else cfg.decrypted_config_file
         )
-        return ModelConfig(
+        model_config = ModelConfig(
             model_path=model_path or cfg.model_path,
             trust_remote_code=cfg.trust_remote_code,
             revision=model_revision or cfg.revision,
@@ -834,6 +835,46 @@ class ModelConfig:
             speculative_algorithm=cfg.speculative_algorithm,
             **kwargs,
         )
+        rope = getattr(model_config.hf_text_config, "rope_scaling", None)
+        if (
+            getattr(model_config.hf_text_config, "model_type", None) == "xing4_0"
+            and model_config.request_static_yarn_config is None
+            and model_config.context_len == 262144
+            and model_config.dtype == torch.bfloat16
+            and model_config.quantization is None
+            and isinstance(rope, dict)
+            and rope.get("factor") == 64
+            and rope.get("original_max_position_embeddings") == 4096
+            and cfg.device == "cuda"
+            and cfg.kv_cache_dtype == "fp8_e4m3"
+            and cfg.page_size == 64
+            and cfg.attention_backend == "trtllm_mla"
+            and all(
+                backend in (None, "trtllm_mla")
+                for backend in (
+                    cfg.prefill_attention_backend,
+                    cfg.decode_attention_backend,
+                    cfg.speculative_draft_attention_backend,
+                )
+            )
+            and cfg.speculative_attention_mode == "prefill"
+            and (
+                cfg.tp_size, cfg.pp_size, cfg.dp_size, cfg.attn_cp_size, cfg.dcp_size
+            ) == (1, 1, 1, 1, 1)
+            and cfg.speculative_algorithm == "EAGLE"
+            and (
+                cfg.speculative_num_steps,
+                cfg.speculative_eagle_topk,
+                cfg.speculative_num_draft_tokens,
+            ) == (3, 1, 4)
+            and not cfg.speculative_adaptive
+            and not cfg.enable_multi_layer_eagle
+        ):
+            # Public context counts accepted input/output. Fixed EAGLE lookahead
+            # uses independent KV/req-row and RoPE-table storage; it is not input.
+            model_config.xing_eagle_context_headroom = 8
+            rope["_xing_eagle_rope_headroom"] = 8
+        return model_config
 
     def _derive_multimodal_cuda_graph_support(self, enable_multimodal: bool) -> None:
         """Declare graph capabilities before deriving shapes and validating config.

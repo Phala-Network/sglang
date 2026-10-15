@@ -549,7 +549,7 @@ class TpModelWorker(BaseTpWorker):
         if getattr(
             getattr(self.model_config, "request_static_yarn_config", None),
             "position_kind", None,
-        ) == "mla":
+        ) == "mla" or getattr(self.model_config, "xing_eagle_context_headroom", 0):
             # Public RoPE capacity is independent of paged-KV headroom. Intake
             # checks the raw budget and the allocator checks its own padding.
             max_req_len = self.model_config.context_len

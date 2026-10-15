@@ -2547,13 +2547,28 @@ class Scheduler(
                 "position_kind", None,
             ) == "mla"
         )
+        native_eagle_headroom = getattr(
+            self.model_config, "xing_eagle_context_headroom", 0
+        )
+        preserve_public_budget = xing_yarn or bool(native_eagle_headroom)
         max_new_tokens = (
             req.sampling_params.max_new_tokens
             if req.sampling_params.max_new_tokens is not None
             else 1 << 30
         )
-        if xing_yarn:
-            max_new_tokens = yarn_profile.budget - input_len
+        if native_eagle_headroom:
+            if req.sampling_params.max_new_tokens is None:
+                max_new_tokens = max(0, self.model_config.context_len - input_len)
+            if input_len + max_new_tokens > self.model_config.context_len:
+                req.set_finish_with_abort(
+                    "Requested input plus output budget exceeds public Xing context; "
+                    "the admitted budget is not clipped",
+                    status_code=HTTPStatus.BAD_REQUEST,
+                )
+                return
+        if preserve_public_budget:
+            if xing_yarn:
+                max_new_tokens = yarn_profile.budget - input_len
             if (
                 self.max_new_tokens_limit is not None
                 and self.max_new_tokens_limit > 0
@@ -2561,7 +2576,7 @@ class Scheduler(
             ):
                 req.set_finish_with_abort(
                     "Requested output budget exceeds SGLANG_MAX_NEW_TOKENS_LIMIT; "
-                    "request-static YaRN does not clip the admitted budget",
+                    "the runtime does not clip the admitted budget",
                     status_code=HTTPStatus.BAD_REQUEST,
                 )
                 return
@@ -2571,7 +2586,7 @@ class Scheduler(
             max_new_tokens = min(max_new_tokens, self.max_new_tokens_limit)
 
         # Keep this bound consistent with PrefillAdder's admission budget.
-        if not xing_yarn:
+        if not preserve_public_budget:
             max_new_tokens = max(
                 0,
                 min(max_new_tokens, self.max_req_len - input_len - 1),
@@ -2590,15 +2605,20 @@ class Scheduler(
             sliding_window_size=self.sliding_window_size,
             chunk_size=self.chunked_prefill_size,
         )
-        if xing_yarn and (
-            yarn_profile.budget + yarn_profile.reserved_tokens > token_capacity
+        public_budget = input_len + requested_new_tokens
+        reserved_tokens = yarn_profile.reserved_tokens if xing_yarn else 0
+        # Native page64 EAGLE needs eight speculative slots. The allocator's
+        # existing spare page/sentinel already covers the rounded decode tail;
+        # retain its result as an admission check instead of clipping output.
+        if preserve_public_budget and (
+            public_budget + reserved_tokens > token_capacity
             or max_new_tokens is None
             or max_new_tokens < requested_new_tokens
         ):
             req.set_finish_with_abort(
                 "Requested input plus output budget does not fit the KV pool "
-                "including independent page padding/headroom; request-static "
-                "YaRN does not clip the admitted budget",
+                "including independent page padding/headroom; the runtime "
+                "does not clip the admitted budget",
                 status_code=HTTPStatus.BAD_REQUEST,
             )
             return
@@ -3108,8 +3128,8 @@ class Scheduler(
         if (
             getattr(getattr(self.model_config, "request_static_yarn_config", None),
                     "position_kind", None) == "mla"
-            and req.to_finish is not None
-        ):
+            or getattr(self.model_config, "xing_eagle_context_headroom", 0)
+        ) and req.to_finish is not None:
             self.retire_unadmitted_request(req)
             return
 

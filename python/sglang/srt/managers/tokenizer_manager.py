@@ -1304,14 +1304,19 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     "encoder SWA replay cannot return cached prompt logprobs"
                 )
         _max_req_len = self.context_len
+        xing_eagle_public_budget = bool(
+            getattr(self.model_config, "xing_eagle_context_headroom", 0)
+        )
         allow_auto_truncate = (
             self.allow_auto_truncate
             and getattr(self.model_config, "request_static_yarn_config", None) is None
+            and not xing_eagle_public_budget
         )
         input_token_num = len(input_ids) if input_ids is not None else 0
-        input_token_num += self.num_reserved_tokens
+        if not xing_eagle_public_budget:
+            input_token_num += self.num_reserved_tokens
 
-        # Validate input length
+        # Validate input length independently of native Xing EAGLE scratch.
         if input_token_num >= self.context_len:
             if allow_auto_truncate:
                 logger.warning(

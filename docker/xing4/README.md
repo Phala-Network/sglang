@@ -32,6 +32,16 @@ budget, capacity and `reserved_tokens`. Explicit selection uses
 `custom_params.yarn_factor` for Chat. Use
 `chat_template_kwargs.spaces_between_special_tokens=false` for Chat decoding.
 
+Native Static64 EAGLE counts only input plus requested output toward262144.
+The fixed BF16-weight/E4M3-KV, TP1, page64, TRTLLM-MLA prefill/decode/draft,
+EAGLE3/topk1/draft4 recipe keeps eight internal lookahead slots for RoPE and
+attention index tables. Existing KV spare-page and request-row capacity cover
+this scratch. Intake rejects public overflow or insufficient empty-pool capacity
+without shrinking either input or requested output. This does not enable EAGLE
+for request-static dynamic YaRN. Prefill graph remains enabled by default.
+The real-path CPU regression is
+`test/registered/unit/managers/test_xing_native_eagle_public_budget.py`.
+
 Static64 uses official unmodified model config and context262144. Static128
 uses the JSON above without `request_static_factors`; it is a control, not a
 request-static endpoint. Speculation, CP/DP/PP, LoRA, PD and offload are not

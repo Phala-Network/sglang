@@ -1159,6 +1159,12 @@ class Scheduler(
         if get_model().is_startup_weight_load_overlap:
             self.tp_worker.finalize_startup_weight_load()
 
+        from sglang.srt.managers.scheduler_components.startup_spec_identity import (
+            emit_xing_spec_startup_identity,
+        )
+
+        emit_xing_spec_startup_identity(self)
+
         # Adaptive/speculative graphs and post-capture KV sizing can consume
         # the headroom seen by the initial DeepGEMM layout budget. Refresh it
         # after these allocations, before elastic EP rejoins healthy ranks

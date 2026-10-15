@@ -1,7 +1,9 @@
 """Detect JSON Schema constraints that grammar backends silently ignore."""
 
+import re
 from collections.abc import Iterator
 from typing import Any
+from urllib.parse import unquote
 
 
 class UnsupportedJSONSchemaFeature(ValueError):
@@ -96,6 +98,65 @@ def _escape_json_pointer(value: str) -> str:
     return value.replace("~", "~0").replace("/", "~1")
 
 
+def resolve_local_json_pointer(ref: str, root_schema: Any) -> Any:
+    """Resolve one-resource pointers shared by preflight and K3 extraction."""
+    if ref == "":
+        ref = "#"
+    if (
+        not isinstance(ref, str)
+        or not ref.startswith("#")
+        or re.search(r"%(?![0-9A-Fa-f]{2})", ref)
+    ):
+        return None
+    try:
+        pointer = unquote(ref[1:], encoding="utf-8", errors="strict")
+    except UnicodeError:
+        return None
+    if not pointer:
+        return root_schema
+    if not pointer.startswith("/"):
+        return None
+    value = root_schema
+    location = "schema"
+    for part in pointer[1:].split("/"):
+        if (
+            location == "schema"
+            and isinstance(value, dict)
+            and value is not root_schema
+            and "$id" in value
+        ):
+            _raise_unsupported("xgrammar", ref, "nested $id resource scope is unsupported")
+        if re.search(r"~(?![01])", part):
+            return None
+        key = part.replace("~1", "/").replace("~0", "~")
+        if isinstance(value, dict) and key in value:
+            child = value[key]
+            if location == "schema_map":
+                location = "schema"
+            elif location == "schema":
+                if key in _SUBSCHEMA_MAP_KEYWORDS or key == "dependencies":
+                    location = "schema_map"
+                elif key in _SUBSCHEMA_ARRAY_KEYWORDS or (
+                    key == "items" and isinstance(child, list)
+                ):
+                    location = "schema_array"
+                elif key not in _SINGLE_SUBSCHEMA_KEYWORDS:
+                    location = "data"
+            else:
+                location = "data"
+            value = child
+        elif isinstance(value, list) and re.fullmatch(r"0|[1-9][0-9]*", key):
+            if len(key) > len(str(len(value))) or int(key) >= len(value):
+                return None
+            value = value[int(key)]
+            location = "schema" if location == "schema_array" else "data"
+        else:
+            return None
+    if isinstance(value, dict) and value is not root_schema and "$id" in value:
+        _raise_unsupported("xgrammar", ref, "nested $id resource scope is unsupported")
+    return value if isinstance(value, (bool, dict)) else None
+
+
 def _iter_subschemas(
     schema: Any, pointer: str = "#", *, include_definitions: bool = True
 ) -> Iterator[tuple[dict[str, Any], str]]:
@@ -146,6 +207,26 @@ def _raise_unsupported(backend: str, pointer: str, reason: str) -> None:
     )
 
 
+def _iter_referenced_subschemas(schema: Any) -> Iterator[tuple[dict[str, Any], str]]:
+    """Visit annotations only when a schema reference makes them active."""
+    pending = [(schema, "#")]
+    seen = set()
+    while pending:
+        root, pointer = pending.pop()
+        if id(root) in seen:
+            continue
+        for node, location in _iter_subschemas(root, pointer):
+            if id(node) in seen:
+                continue
+            seen.add(id(node))
+            yield node, location
+            ref = node.get("$ref")
+            if isinstance(ref, str):
+                target = resolve_local_json_pointer(ref, schema)
+                if isinstance(target, dict) and id(target) not in seen:
+                    pending.append((target, ref))
+
+
 def _string_constraint_groups(schema: dict[str, Any]) -> list[str]:
     groups = []
     if "format" in schema:
@@ -168,15 +249,16 @@ def _can_describe_string(schema: dict[str, Any]) -> bool:
 
 def validate_local_json_reference_scope(schema: Any) -> None:
     """The pinned converter supports one schema resource, not nested $id bases."""
-    for subschema, pointer in _iter_subschemas(schema):
-        if pointer != "#" and "$id" in subschema:
+    for subschema, pointer in _iter_referenced_subschemas(schema):
+        if subschema is not schema and "$id" in subschema:
             _raise_unsupported("xgrammar", pointer, "nested $id resource scope is unsupported")
 
 
 def validate_xgrammar_json_schema(schema: Any) -> None:
     """Reject constraints XGrammar 0.2.x accepts without fully enforcing."""
-    validate_local_json_reference_scope(schema)
-    for subschema, pointer in _iter_subschemas(schema):
+    for subschema, pointer in _iter_referenced_subschemas(schema):
+        if subschema is not schema and "$id" in subschema:
+            _raise_unsupported("xgrammar", pointer, "nested $id resource scope is unsupported")
         unsupported = sorted(_XGRAMMAR_UNSUPPORTED_KEYWORDS.intersection(subschema))
         if subschema.get("uniqueItems") is False:
             unsupported.remove("uniqueItems")

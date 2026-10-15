@@ -1546,6 +1546,27 @@ class OpenAIServingChat(OpenAIServingBase):
         """
         if not self.tool_call_parser or request._response_parser_json_response_format:
             return False
+        response_format = request.response_format
+        # Match to_sampling_params: an explicit JSON constraint takes precedence
+        # over auto tool grammar. Its string data must not be parsed as tools.
+        # A non-strict json_schema stays unconstrained under the K3 renderer.
+        # Main's template JSON-answer grammar (GRAMMAR_AT_ANSWER) admits native
+        # calls instead of the answer, so tool extraction still reads it.
+        constrained_json = response_format is not None and (
+            response_format.type == "json_object"
+            or (
+                response_format.type == "json_schema"
+                and (
+                    response_format.json_schema.strict is not False
+                    or self.chat_encoding_spec != "kimi_k3"
+                )
+            )
+        )
+        if (
+            constrained_json
+            and request._response_parser_grammar_start != GRAMMAR_AT_ANSWER
+        ):
+            return False
         if not self._effective_tools(request):
             # With no tools declared, tool_choice only holds its default and limits nothing.
             detector = FunctionCallParser.ToolCallParserEnum[self.tool_call_parser]
@@ -3249,12 +3270,14 @@ class OpenAIServingChat(OpenAIServingBase):
                 await generator.aclose()
             except Exception:
                 raise RuntimeError("Chat stream cleanup failed.") from None
-            if error_aborted:
-                # An explicit error abort ends the response. Do not follow it
-                # with buffered success finishes or metadata from other choices.
+            if error_aborted and self.chat_encoding_spec == "kimi_k3":
+                # K3 production contract: an explicit error abort ends the
+                # response, without buffered success finishes or metadata from
+                # other choices. Other encodings keep main's behavior, where
+                # sibling finishes and usage still follow the error.
                 yield "data: [DONE]\n\n"
                 return
-            if set(finish_reasons) != set(range(request.n)):
+            if not error_aborted and set(finish_reasons) != set(range(request.n)):
                 raise RuntimeError("Chat stream ended without all finish reasons.")
 
             # Send finish_reason chunks for each index that completed

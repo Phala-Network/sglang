@@ -1,14 +1,20 @@
 """Synthetic root-scope and preflight checks; no request captures."""
 import copy
 import json
+
 import pytest
 import xgrammar as xgr
 from xgrammar.testing import _is_grammar_accept_string
-from sglang.srt.function_call.kimik3_structural_tag import (
-    _argument_value_variants, _resolve_local_ref, _with_root_definitions,
-)
+
 from sglang.srt.constrained.json_schema_validation import (
-    validate_xgrammar_json_schema, UnsupportedJSONSchemaFeature,
+    UnsupportedJSONSchemaFeature,
+    validate_local_json_reference_scope,
+    validate_xgrammar_json_schema,
+)
+from sglang.srt.function_call.kimik3_structural_tag import (
+    _argument_value_variants,
+    _resolve_local_ref,
+    _with_root_definitions,
 )
 
 def accepts(schema, value):
@@ -133,3 +139,92 @@ def test_reference_scope_guard_ignores_instance_data():
         schema={key:[value] if key in ('enum','examples') else value}
         validate_local_json_reference_scope(schema)
         validate_xgrammar_json_schema(schema)
+
+
+@pytest.mark.parametrize('location,ref', [
+    ('default', '#/default/target'), ('x-extra', '#/x-extra/target'),
+    ('examples', '#/examples/0'), ('default', '#%2Fdefault%2Ftarget'),
+])
+@pytest.mark.parametrize('target', [
+    {'type':'array','items':{'type':'integer'},'uniqueItems':True},
+    {'type':'integer','multipleOf':2},
+    {'type':'string','format':'email','pattern':'^x$'},
+])
+def test_referenced_annotation_constraints_are_preflighted(location,ref,target):
+    root={'$ref':ref,location:[target] if location=='examples' else {'target':target}}
+    with pytest.raises(UnsupportedJSONSchemaFeature):
+        validate_xgrammar_json_schema(root)
+
+
+def test_unreferenced_annotations_remain_instance_data():
+    target={'uniqueItems':True,'multipleOf':2,'$id':'data','$ref':'data'}
+    for location in ('default','examples','enum','const','x-extra'):
+        schema={location:[target] if location in ('examples','enum') else target}
+        validate_xgrammar_json_schema(schema)
+
+
+def test_valid_annotation_reference_keeps_native_constraints():
+    root={'$ref':'#/default/target','default':{'target':{'type':'integer'}}}
+    validate_xgrammar_json_schema(root)
+    assert accepts(root,3) and not accepts(root,'3')
+
+
+def test_consuming_annotation_reference_cycle_is_bounded():
+    root={'$ref':'#/default/node','default':{'node':{'anyOf':[
+        {'type':'null'}, {'type':'array','items':{'$ref':'#/default/node'}}]}}}
+    validate_xgrammar_json_schema(root)
+    assert accepts(root,[[None]]) and not accepts(root,[3])
+
+
+def test_annotation_reference_intermediate_id_remains_literal_data():
+    target = {"type": "integer", "minimum": 2}
+    root = {
+        "$ref": "#/default/inner/properties/value",
+        "default": {
+            "inner": {
+                "$id": "https://example.invalid/nested",
+                "properties": {"value": target},
+            }
+        },
+    }
+    assert _resolve_local_ref(root["$ref"], root) is target
+    validate_local_json_reference_scope(root)
+    validate_xgrammar_json_schema(root)
+    assert accepts(root, 2)
+    assert not accepts(root, 1)
+    assert not accepts(root, "2")
+
+
+@pytest.mark.parametrize("container", ["$defs", "properties"])
+def test_schema_map_member_named_id_keeps_native_constraints(container):
+    target = {"type": "integer", "minimum": 2}
+    root = {
+        "$ref": f"#/{container}/target",
+        container: {"$id": {"type": "string"}, "target": target},
+    }
+    assert _resolve_local_ref(root["$ref"], root) is target
+    validate_local_json_reference_scope(root)
+    validate_xgrammar_json_schema(root)
+    assert accepts(root, 2)
+    assert not accepts(root, 1)
+    assert not accepts(root, "2")
+
+
+def test_annotation_reference_target_own_id_is_refused():
+    root = {
+        "$ref": "#/default/target",
+        "default": {
+            "target": {
+                "$id": "https://example.invalid/target",
+                "type": "integer",
+            }
+        },
+    }
+    with pytest.raises(UnsupportedJSONSchemaFeature, match=r"nested \$id"):
+        _resolve_local_ref(root["$ref"], root)
+    with pytest.raises(UnsupportedJSONSchemaFeature, match=r"nested \$id"):
+        validate_local_json_reference_scope(root)
+    with pytest.raises(UnsupportedJSONSchemaFeature, match=r"nested \$id"):
+        validate_xgrammar_json_schema(root)
+    with pytest.raises(RuntimeError, match=r"Nested \$id schema resources"):
+        accepts(root, 2)

@@ -32,9 +32,9 @@ class Generation:
             raise self.close_fault(SECRET)
 
 
-def run_case(generation, *, n=1, tool=False, close_early=False):
+def run_case(generation, *, n=1, tool=False, close_early=False, encoding_spec=None):
     serving = object.__new__(module.OpenAIServingChat)
-    serving.chat_encoding_spec = None
+    serving.chat_encoding_spec = encoding_spec
     # Attributes __init__ sets on the fork's main line.
     serving.reasoning_parser = serving.tool_call_parser = None
     serving._encoding_adapter = None
@@ -135,7 +135,8 @@ def test_error_abort_ends_stream_without_late_success(indices, close_fault):
             "message": "Synthetic abort."}},
         indices=indices, close_fault=close_fault,
     )
-    wire, failure = run_case(generation, n=2)
+    # The fork's main line scopes this contract to the K3 encoding.
+    wire, failure = run_case(generation, n=2, encoding_spec="kimi_k3")
     assert failure is None
     parsed = events(wire)
     assert sum("error" in event for event in parsed) == 1

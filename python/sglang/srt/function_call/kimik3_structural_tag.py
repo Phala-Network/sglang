@@ -1,7 +1,6 @@
 import copy
 import re
 from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Tuple, Union
-from urllib.parse import unquote
 
 from xgrammar import StructuralTag
 from xgrammar.structural_tag import (
@@ -25,6 +24,7 @@ from xgrammar.structural_tag import (
 from sglang.srt.entrypoints.openai.protocol import Tool, ToolChoice
 from sglang.srt.constrained.json_schema_validation import (
     _iter_subschemas,
+    resolve_local_json_pointer as _resolve_local_ref,
     validate_local_json_reference_scope,
 )
 from sglang.srt.function_call.kimik3_format import (
@@ -133,40 +133,6 @@ def _matches_json_type(value: Any, json_type: str) -> bool:
     return value_type == json_type or (
         json_type == "number" and value_type == "integer"
     )
-
-
-def _resolve_local_ref(
-    ref: str, root_schema: Dict[str, Any]
-) -> Optional[Union[bool, Dict[str, Any]]]:
-    if ref == "":
-        ref = "#"
-    if not ref.startswith("#") or re.search(r"%(?![0-9A-Fa-f]{2})", ref):
-        return None
-    try:
-        pointer = unquote(ref[1:], encoding="utf-8", errors="strict")
-    except UnicodeError:
-        return None
-    if not pointer:
-        return root_schema
-    if not pointer.startswith("/"):
-        return None
-    value: Any = root_schema
-    for part in pointer[1:].split("/"):
-        if re.search(r"~(?![01])", part):
-            return None
-        key = part.replace("~1", "/").replace("~0", "~")
-        if isinstance(value, dict) and key in value:
-            value = value[key]
-        elif isinstance(value, list) and re.fullmatch(r"0|[1-9][0-9]*", key):
-            # Compare length before int() to keep adversarial indices bounded.
-            if len(key) > len(str(len(value))) or int(key) >= len(value):
-                return None
-            value = value[int(key)]
-        else:
-            return None
-    if isinstance(value, (bool, dict)):
-        return value
-    return None
 
 
 def _dereference_schema(

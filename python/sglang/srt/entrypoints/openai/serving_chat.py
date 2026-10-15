@@ -123,6 +123,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_GLM53_DEFAULT_REASONING_BUDGET = 1024
+
 _QWEN35_REASONING_EFFORT_GUIDANCE = {
     "low": (
         "For this low-effort request, reason briefly in one compact internal "
@@ -487,6 +489,17 @@ class OpenAIServingChat(OpenAIServingBase):
             # Only process string content, ignore multimodal content (lists)
             if isinstance(last_content, str):
                 if request.continue_final_message:
+                    if (
+                        self._uses_glm53_chat_template()
+                        and not self._get_reasoning_from_request(request)
+                        and last_content.rfind("<think>")
+                        > last_content.rfind("</think>")
+                    ):
+                        raise ValueError(
+                            "GLM-5.3 reasoning-off cannot continue an unclosed "
+                            "<think> assistant message. Close the reasoning "
+                            "block or provide a final-answer prefix."
+                        )
                     # Extract content and remove the assistant message
                     assistant_prefix = last_content
                     messages = messages[:-1]
@@ -602,6 +615,108 @@ class OpenAIServingChat(OpenAIServingBase):
                 and isinstance(tool.get("function"), dict)
                 and tool["function"].get("name") in allowed_names
             ]
+
+    def _uses_glm53_chat_template(self) -> bool:
+        config = self.template_manager.reasoning_config
+        return (
+            self.reasoning_parser == "glm45"
+            and getattr(
+                self.tokenizer_manager.model_config.hf_config, "model_type", None
+            )
+            == "glm_moe_dsa"
+            and config is not None
+            and config.special_case == "always"
+        )
+
+    def _glm53_reasoning_effort_token_range(
+        self,
+        reasoning_effort: Optional[str],
+        max_new_tokens: Optional[int],
+        reasoning_max_tokens: Optional[int] = None,
+    ) -> Optional[tuple[int, int]]:
+        """Bound GLM-5.3 reasoning without imposing a minimum thinking length."""
+        if (
+            not self._uses_glm53_chat_template()
+            or get_serving().enable_strict_thinking is not True
+            or reasoning_effort == "none"
+        ):
+            return None
+
+        budget = reasoning_max_tokens
+        if budget is None:
+            if reasoning_effort is not None:
+                # Explicit effort retains the official template's low/high/max
+                # semantics. Only an omitted effort receives our default cap.
+                return None
+            budget = _GLM53_DEFAULT_REASONING_BUDGET
+        if max_new_tokens is not None:
+            if type(max_new_tokens) is not int or max_new_tokens < 1:
+                return None
+            answer_reserve = min(1024, max(1, max_new_tokens // 4))
+            closing_tokens = len(
+                self.tokenizer_manager.tokenizer.encode(
+                    "</think>", add_special_tokens=False
+                )
+            )
+            budget = min(
+                budget, max(0, max_new_tokens - answer_reserve - closing_tokens)
+            )
+        return (0, budget)
+
+    def _close_glm53_reasoning_prefill(
+        self, request: ChatCompletionRequest, prompt_ids: list[int]
+    ) -> list[int]:
+        if not self._uses_glm53_chat_template() or self._get_reasoning_from_request(
+            request
+        ):
+            return prompt_ids
+        # The pinned template has no thinking toggle. Change only the final
+        # generation prefill and leave caller-owned IDs and history untouched.
+        tokenizer = self.tokenizer_manager.tokenizer
+        generation_prefix_ids = tokenizer.encode(
+            "<|assistant|><think>", add_special_tokens=False
+        )
+        closing_ids = tokenizer.encode("</think>", add_special_tokens=False)
+        if generation_prefix_ids and (
+            prompt_ids[-len(generation_prefix_ids) :] == generation_prefix_ids
+        ):
+            return prompt_ids + closing_ids
+        if request.input_ids is not None:
+            # Raw IDs may contain an assistant continuation rather than the
+            # template's empty generation prefix. Inspect only its final turn;
+            # do not reinterpret or rewrite completed history or user/tool data.
+            role_sequences = [
+                (role, tokenizer.encode(f"<|{role}|>", add_special_tokens=False))
+                for role in ("system", "user", "assistant", "observation")
+            ]
+            start_ids = tokenizer.encode("<think>", add_special_tokens=False)
+            last_thinking_marker = None
+            for index in range(len(prompt_ids) - 1, -1, -1):
+                for role, sequence in role_sequences:
+                    if (
+                        sequence
+                        and prompt_ids[index] == sequence[0]
+                        and prompt_ids[index : index + len(sequence)] == sequence
+                    ):
+                        if role == "assistant" and last_thinking_marker == "open":
+                            raise ValueError(
+                                "GLM-5.3 reasoning-off cannot continue an unclosed "
+                                "<think> assistant input_ids prefix."
+                            )
+                        return prompt_ids
+                if last_thinking_marker is None:
+                    for marker, sequence in (
+                        ("open", start_ids),
+                        ("closed", closing_ids),
+                    ):
+                        if (
+                            sequence
+                            and prompt_ids[index] == sequence[0]
+                            and prompt_ids[index : index + len(sequence)] == sequence
+                        ):
+                            last_thinking_marker = marker
+                            break
+        return prompt_ids
 
     def _uses_qwen35_chat_template(self) -> bool:
         hf_config = self.tokenizer_manager.model_config.hf_config
@@ -1497,7 +1612,9 @@ class OpenAIServingChat(OpenAIServingBase):
                 f"Harmony does not support reasoning effort {reasoning_effort}"
             )
 
-        if reasoning_effort is not None:
+        if reasoning_effort is not None and not (
+            self._uses_glm53_chat_template() and request.reasoning_effort == "none"
+        ):
             request.reasoning_effort = reasoning_effort
 
         if request.stream:
@@ -1541,6 +1658,18 @@ class OpenAIServingChat(OpenAIServingBase):
             if processed_messages.require_reasoning
             else None
         )
+        if processed_messages.require_reasoning and self._uses_glm53_chat_template():
+            reasoning_token_range = self._glm53_reasoning_effort_token_range(
+                request.reasoning_effort,
+                sampling_params.get("max_new_tokens"),
+                request.reasoning_max_tokens,
+            )
+            if reasoning_token_range is not None:
+                # The GLM47 constraint describes only the answer/tool suffix
+                # when the reasoner backend owns a per-request thinking budget.
+                # Keep its native constraint type through to_sampling_params so
+                # response_format/tool-choice precedence stays unchanged.
+                sampling_params.pop("ebnf_full_assistant", None)
 
         # Handle single vs multiple requests
         if request.input_ids is not None:
@@ -1661,13 +1790,22 @@ class OpenAIServingChat(OpenAIServingBase):
             enable_thinking = (request.chat_template_kwargs or {}).get(
                 "enable_thinking"
             )
+            if self._uses_glm53_chat_template():
+                enable_thinking = thinking_mode
+                if (
+                    self._glm53_reasoning_effort_token_range(
+                        request.reasoning_effort, None, request.reasoning_max_tokens
+                    )
+                    is not None
+                ):
+                    enable_thinking = False
             parser = FunctionCallParser(effective_tools, self.tool_call_parser)
             tool_call_constraint = parser.get_structure_constraint(
                 effective_tool_choice,
                 parallel_tool_calls=request.parallel_tool_calls,
-                thinking_mode=True
-                if enable_thinking is None
-                else bool(enable_thinking),
+                thinking_mode=(
+                    True if enable_thinking is None else bool(enable_thinking)
+                ),
             )
 
         # Apply chat template and its stop strings
@@ -1729,7 +1867,9 @@ class OpenAIServingChat(OpenAIServingBase):
         if request.input_ids is not None:
             result = MessageProcessingResult(
                 prompt="",
-                prompt_ids=request.input_ids,
+                prompt_ids=self._close_glm53_reasoning_prefill(
+                    request, request.input_ids
+                ),
                 image_data=None,
                 audio_data=None,
                 video_data=None,
@@ -2039,6 +2179,11 @@ class OpenAIServingChat(OpenAIServingBase):
                     # and TypeError (e.g., tojson filter on Jinja2 Undefined variables)
                     # should be treated as client errors (400 BadRequest)
                     raise ValueError(str(template_error)) from template_error
+
+            closed_prompt_ids = self._close_glm53_reasoning_prefill(request, prompt_ids)
+            if closed_prompt_ids is not prompt_ids:
+                prompt_ids = closed_prompt_ids
+                decoded_prompt = None
 
             # Append assistant prefix if continue_final_message is enabled
             if assistant_prefix:
@@ -2667,10 +2812,7 @@ class OpenAIServingChat(OpenAIServingBase):
             # Handle reasoning content
             reasoning_text = None
             if self.reasoning_parser and request.separate_reasoning:
-                force_reasoning = (
-                    self.template_manager.force_reasoning
-                    or self._get_reasoning_from_request(request)
-                )
+                force_reasoning = self._should_force_reasoning(request)
                 try:
                     parser = ReasoningParser(
                         model_type=self.reasoning_parser,
@@ -3035,10 +3177,7 @@ class OpenAIServingChat(OpenAIServingBase):
     ) -> tuple[str | None, str]:
         """Process reasoning content in streaming response"""
         if index not in reasoning_parser_dict:
-            is_force_reasoning = (
-                self.template_manager.force_reasoning
-                or self._get_reasoning_from_request(request)
-            )
+            is_force_reasoning = self._should_force_reasoning(request)
             reasoning_parser_dict[index] = ReasoningParser(
                 self.reasoning_parser,
                 request.stream_reasoning,
@@ -3239,6 +3378,14 @@ class OpenAIServingChat(OpenAIServingBase):
         if not self.reasoning_parser:
             return False
 
+        if self._uses_glm53_chat_template():
+            kwargs = request.chat_template_kwargs or {}
+            return (
+                request.reasoning_effort != "none"
+                and kwargs.get("enable_thinking") is not False
+                and kwargs.get("thinking") is not False
+            )
+
         if self.reasoning_parser == "iquest_q1":
             return IQuestQ1ReasoningDetector.thinking_enabled(
                 request.chat_template_kwargs or {}
@@ -3312,6 +3459,14 @@ class OpenAIServingChat(OpenAIServingBase):
         return (
             request.chat_template_kwargs is not None
             and request.chat_template_kwargs.get(config.toggle_param) is True
+        )
+
+    def _should_force_reasoning(self, request: ChatCompletionRequest) -> bool:
+        if self._uses_glm53_chat_template():
+            return self._get_reasoning_from_request(request)
+        return (
+            self.template_manager.force_reasoning
+            or self._get_reasoning_from_request(request)
         )
 
     async def _process_tool_call_stream(

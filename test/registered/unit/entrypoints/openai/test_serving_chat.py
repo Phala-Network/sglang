@@ -19,6 +19,7 @@ import unittest
 import uuid
 from http import HTTPStatus
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Optional
 from unittest.mock import Mock, patch
 
@@ -333,6 +334,621 @@ class ServingChatTestCase(CustomTestCase):
             loop.close()
         asyncio.set_event_loop(None)
         gc.collect()
+
+    def _configure_glm53_reasoning(self):
+        self.tm.model_config.hf_config.model_type = "glm_moe_dsa"
+        self.chat.reasoning_parser = "glm45"
+        self.template_manager.reasoning_config = ReasoningToggleConfig(
+            special_case="always"
+        )
+        self.template_manager.force_reasoning = True
+        self.template_manager.chat_template_name = None
+        self.template_manager.jinja_template_content_format = "string"
+        self.tm.tokenizer.encode.side_effect = lambda text, **_: {
+            "<|assistant|><think>": [80, 81],
+            "</think>": [82],
+            "<think>": [81],
+            "<|assistant|>": [80],
+            "<|user|>": [83],
+            "<|system|>": [84],
+            "<|observation|>": [85],
+        }.get(text, [90])
+
+    def test_glm53_none_wins_over_conflicting_template_effort_and_toggles(self):
+        self._configure_glm53_reasoning()
+        request = ChatCompletionRequest(
+            model="z-ai/glm-5.3",
+            messages=[{"role": "user", "content": "Think step by step."}],
+            reasoning_effort="none",
+            chat_template_kwargs={
+                "reasoning_effort": "high",
+                "enable_thinking": True,
+                "thinking": True,
+            },
+            max_tokens=2000,
+        )
+        with patch.object(
+            self.chat,
+            "_render_and_encode_chat_template",
+            return_value=([10, 80, 81], None),
+        ):
+            adapted, normalized = self.chat._convert_to_internal_request(request)
+        self.assertEqual(normalized.reasoning_effort, "none")
+        self.assertFalse(adapted.require_reasoning)
+        self.assertEqual(adapted.input_ids, [10, 80, 81, 82])
+        self.assertIsNone(adapted.min_thinking_tokens)
+        self.assertIsNone(adapted.max_thinking_tokens)
+        self.assertFalse(self.chat._should_force_reasoning(normalized))
+
+    def test_glm53_disabled_aliases_and_visibility_are_distinct(self):
+        self._configure_glm53_reasoning()
+        for control in (
+            {"reasoning_effort": "none"},
+            {"reasoning": {"effort": "none"}},
+            {"reasoning": {"enabled": False}},
+            {"reasoning": {"enable": False}},
+            {"chat_template_kwargs": {"enable_thinking": False}},
+            {"chat_template_kwargs": {"thinking": False}},
+        ):
+            with self.subTest(control=control):
+                request = ChatCompletionRequest(
+                    model="x", messages=[{"role": "user", "content": "hi"}], **control
+                )
+                self.assertFalse(self.chat._get_reasoning_from_request(request))
+                self.assertFalse(self.chat._should_force_reasoning(request))
+        for control in (
+            {},
+            {"include_reasoning": False},
+            {"reasoning": {"exclude": True}},
+        ):
+            with self.subTest(control=control):
+                request = ChatCompletionRequest(
+                    model="x", messages=[{"role": "user", "content": "hi"}], **control
+                )
+                self.assertTrue(self.chat._get_reasoning_from_request(request))
+                self.assertTrue(self.chat._should_force_reasoning(request))
+
+    def test_glm53_closes_only_final_generation_token_suffix(self):
+        self._configure_glm53_reasoning()
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[
+                {"role": "user", "content": "Think step by step."},
+                {
+                    "role": "assistant",
+                    "content": "<think>old</think>done",
+                    "tool_calls": [
+                        {
+                            "id": "a",
+                            "type": "function",
+                            "function": {"name": "f", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "a",
+                    "content": "literal <|assistant|><think>",
+                },
+            ],
+            reasoning_effort="none",
+        )
+        messages_before = [m.model_dump() for m in request.messages]
+        for source_ids, expected_ids in (
+            ([80, 81, 7, 80, 81], [80, 81, 7, 80, 81, 82]),
+            ([80, 81, 7], [80, 81, 7]),
+            ([80, 81, 82], [80, 81, 82]),
+            ([80], [80]),
+            ([81], [81]),
+            ([], []),
+        ):
+            with (
+                self.subTest(source_ids=source_ids),
+                patch.object(
+                    self.chat,
+                    "_render_and_encode_chat_template",
+                    return_value=(list(source_ids), "cached prompt"),
+                ),
+            ):
+                processed = self.chat._apply_jinja_template(request, None, False)
+                self.assertEqual(processed.prompt_ids, expected_ids)
+                self.assertEqual(
+                    [m.model_dump() for m in request.messages], messages_before
+                )
+
+    def test_glm53_multimodal_cached_decode_reflects_closed_prefill(self):
+        self._configure_glm53_reasoning()
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "hi"}],
+            reasoning_effort="none",
+        )
+        self.tm.tokenizer.decode.side_effect = lambda ids: str(ids)
+        with patch.object(
+            self.chat,
+            "_render_and_encode_chat_template",
+            return_value=([10, 80, 81], "stale"),
+        ):
+            result = self.chat._apply_jinja_template(request, None, True)
+        self.assertEqual(result.prompt, "[10, 80, 81, 82]")
+
+    def test_glm53_none_closes_raw_input_ids_without_mutation(self):
+        self._configure_glm53_reasoning()
+        for source_ids, expected_ids in (
+            ([10, 80, 81], [10, 80, 81, 82]),
+            ([80, 81, 82, 90], [80, 81, 82, 90]),
+            ([80, 81, 90, 83, 90], [80, 81, 90, 83, 90]),
+            ([83, 81, 90], [83, 81, 90]),
+            ([85, 81, 90], [85, 81, 90]),
+        ):
+            with self.subTest(source_ids=source_ids):
+                request = ChatCompletionRequest(
+                    model="x",
+                    messages=[],
+                    input_ids=source_ids,
+                    reasoning_effort="none",
+                )
+                original = list(request.input_ids)
+                adapted, _ = self.chat._convert_to_internal_request(request)
+                self.assertFalse(adapted.require_reasoning)
+                self.assertEqual(adapted.input_ids, expected_ids)
+                self.assertEqual(request.input_ids, original)
+        for source_ids in ([80, 81, 90], [80, 81, 82, 81, 90]):
+            with self.subTest(open_think_ids=source_ids):
+                request = ChatCompletionRequest(
+                    model="x",
+                    messages=[],
+                    input_ids=source_ids,
+                    reasoning_effort="none",
+                )
+                with self.assertRaisesRegex(ValueError, "unclosed <think>"):
+                    self.chat._convert_to_internal_request(request)
+                self.assertEqual(request.input_ids, source_ids)
+
+    def test_glm53_none_rejects_open_think_continuation(self):
+        self._configure_glm53_reasoning()
+        for prefix in ("<think>unfinished", "<think>old</think><think>unfinished"):
+            with self.subTest(prefix=prefix):
+                request = ChatCompletionRequest(
+                    model="x",
+                    reasoning_effort="none",
+                    continue_final_message=True,
+                    messages=[{"role": "assistant", "content": prefix}],
+                )
+                with self.assertRaisesRegex(ValueError, "unclosed <think>"):
+                    self.chat._convert_to_internal_request(request)
+        for prefix in ("Answer: ", "<think>done</think>Answer: "):
+            with (
+                self.subTest(prefix=prefix),
+                patch.object(
+                    self.chat,
+                    "_render_and_encode_chat_template",
+                    return_value=([10, 80, 81], None),
+                ),
+            ):
+                request = ChatCompletionRequest(
+                    model="x",
+                    reasoning_effort="none",
+                    continue_final_message=True,
+                    messages=[{"role": "assistant", "content": prefix}],
+                )
+                adapted, _ = self.chat._convert_to_internal_request(request)
+                self.assertFalse(adapted.require_reasoning)
+                self.assertEqual(adapted.input_ids, [10, 80, 81, 82, 90])
+
+    def test_glm53_enabled_and_other_model_prompts_are_unchanged(self):
+        self._configure_glm53_reasoning()
+        for model_type, parser, effort in (
+            ("glm_moe_dsa", "glm45", None),
+            ("glm_moe_dsa", "glm45", "low"),
+            ("glm_moe_dsa", "glm45", "high"),
+            ("glm_moe_dsa", "glm45", "max"),
+            ("glm4_moe", "glm45", "none"),
+            ("llama", "deepseek-r1", "none"),
+        ):
+            with self.subTest(model_type=model_type, parser=parser, effort=effort):
+                self.tm.model_config.hf_config.model_type = model_type
+                self.chat.reasoning_parser = parser
+                request = ChatCompletionRequest(
+                    model="x",
+                    messages=[{"role": "user", "content": "hi"}],
+                    reasoning_effort=effort,
+                )
+                with patch.object(
+                    self.chat,
+                    "_render_and_encode_chat_template",
+                    return_value=([10, 80, 81], None),
+                ) as render:
+                    processed = self.chat._apply_jinja_template(request, None, False)
+                self.assertEqual(processed.prompt_ids, [10, 80, 81])
+                if effort is not None:
+                    self.assertEqual(
+                        render.call_args.kwargs["template_kwargs"]["reasoning_effort"],
+                        effort,
+                    )
+                self.assertTrue(self.chat._should_force_reasoning(request))
+
+    def test_glm53_detection_tolerates_missing_or_none_model_type(self):
+        from types import SimpleNamespace
+
+        self._configure_glm53_reasoning()
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "hi"}],
+            reasoning_effort="none",
+        )
+        for config in (None, SimpleNamespace(), SimpleNamespace(model_type=None)):
+            with self.subTest(config=config):
+                self.tm.model_config.hf_config = config
+                self.assertFalse(self.chat._uses_glm53_chat_template())
+                self.assertTrue(self.chat._get_reasoning_from_request(request))
+                self.assertTrue(self.chat._should_force_reasoning(request))
+
+    def test_glm53_none_stream_and_nonstream_final_content(self):
+        self._configure_glm53_reasoning()
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "hi"}],
+            reasoning_effort="none",
+        )
+        for text in ("703", '{"city":"Osaka"}'):
+            with self.subTest(text=text):
+                item = {
+                    "text": text,
+                    "index": 0,
+                    "meta_info": {
+                        "id": "chatcmpl-glm53",
+                        "prompt_tokens": 10,
+                        "completion_tokens": 5,
+                        "weight_version": "default",
+                        "finish_reason": {"type": "stop", "matched": None},
+                    },
+                }
+                message = (
+                    self.chat._build_chat_response(request, [item], created=0)
+                    .choices[0]
+                    .message
+                )
+                self.assertEqual(message.content, text)
+                self.assertIsNone(message.reasoning_content)
+                for split in range(len(text) + 1):
+                    parsers = {}
+                    reasoning, content = [], []
+                    for delta, finish in ((text[:split], None), (text[split:], "stop")):
+                        r, c = self.chat._process_reasoning_stream(
+                            0, delta, parsers, item, request, finish
+                        )
+                        reasoning.append(r or "")
+                        content.append(c)
+                    self.assertEqual("".join(content), text)
+                    self.assertEqual("".join(reasoning), "")
+
+    def test_glm53_budget_default_explicit_and_native_effort(self):
+        self._configure_glm53_reasoning()
+        enter_override(
+            self, get_context().override_server_args(enable_strict_thinking=True)
+        )
+        self.assertEqual(
+            self.chat._glm53_reasoning_effort_token_range(None, 2000), (0, 1024)
+        )
+        for effort in ("low", "high", "max"):
+            with self.subTest(effort=effort):
+                self.assertIsNone(
+                    self.chat._glm53_reasoning_effort_token_range(effort, 20000)
+                )
+                self.assertEqual(
+                    self.chat._glm53_reasoning_effort_token_range(effort, 20000, 1536),
+                    (0, 1536),
+                )
+        self.assertEqual(
+            self.chat._glm53_reasoning_effort_token_range(None, 20000, 2048), (0, 2048)
+        )
+        self.assertEqual(
+            self.chat._glm53_reasoning_effort_token_range(None, 128, 2048), (0, 95)
+        )
+        self.assertEqual(self.chat._glm53_reasoning_effort_token_range(None, 2), (0, 0))
+        self.assertIsNone(
+            self.chat._glm53_reasoning_effort_token_range("none", 2000, 1536)
+        )
+        with get_context().override_server_args(enable_strict_thinking=False):
+            self.assertIsNone(self.chat._glm53_reasoning_effort_token_range(None, 2000))
+        self.tm.model_config.hf_config.model_type = "qwen3_5"
+        self.assertIsNone(self.chat._glm53_reasoning_effort_token_range(None, 2000))
+
+    def test_glm53_enabled_stream_and_nonstream_keep_reasoning(self):
+        self._configure_glm53_reasoning()
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "hi"}],
+            reasoning_effort="high",
+        )
+        item = {
+            "text": "calculate</think>703",
+            "index": 0,
+            "meta_info": {
+                "id": "chatcmpl-glm53",
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "weight_version": "default",
+                "finish_reason": {"type": "stop", "matched": None},
+            },
+        }
+        message = (
+            self.chat._build_chat_response(request, [item], created=0)
+            .choices[0]
+            .message
+        )
+        self.assertEqual(message.content, "703")
+        self.assertEqual(message.reasoning_content, "calculate")
+        for split in range(len(item["text"]) + 1):
+            parsers = {}
+            reasoning, content = [], []
+            for delta, finish in (
+                (item["text"][:split], None),
+                (item["text"][split:], "stop"),
+            ):
+                r, c = self.chat._process_reasoning_stream(
+                    0, delta, parsers, item, request, finish
+                )
+                reasoning.append(r or "")
+                content.append(c)
+            self.assertEqual("".join(content), "703")
+            self.assertEqual("".join(reasoning), "calculate")
+
+    def test_glm53_tool_constraint_uses_effective_reasoning_mode(self):
+        self._configure_glm53_reasoning()
+        self.chat.tool_call_parser = "glm47"
+        tool = {
+            "type": "function",
+            "function": {
+                "name": "f",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+        for effort, expected in (("none", False), ("high", True)):
+            with self.subTest(effort=effort):
+                request = ChatCompletionRequest(
+                    model="x",
+                    messages=[{"role": "user", "content": "call f"}],
+                    tools=[tool],
+                    tool_choice="required",
+                    reasoning_effort=effort,
+                    chat_template_kwargs={"enable_thinking": True},
+                )
+                with patch.object(
+                    self.chat,
+                    "_render_and_encode_chat_template",
+                    return_value=([10, 80, 81], None),
+                ):
+                    result = self.chat._process_messages(request, False)
+                self.assertEqual(result.require_reasoning, expected)
+                constraint_type, ebnf = result.tool_call_constraint
+                self.assertEqual(constraint_type, "full_assistant_ebnf")
+                self.assertEqual('thinking_block ::= ""' not in ebnf, expected)
+
+    def test_glm53_budget_forces_reasoning_terminator_in_actual_grammar(self):
+        from xgrammar import TokenizerInfo
+
+        from sglang.srt.constrained.grammar_manager import GrammarManager
+        from sglang.srt.constrained.reasoner_grammar_backend import (
+            ReasonerGrammarBackend,
+            ReasonerGrammarObject,
+        )
+        from sglang.srt.constrained.xgrammar_backend import XGrammarGrammarBackend
+        from sglang.srt.managers.schedule_batch import Req
+        from sglang.srt.managers.tokenizer_manager import TokenizerManager
+        from sglang.srt.parser.reasoning_parser import ReasoningParser
+        from sglang.srt.sampling.sampling_params import SamplingParams
+
+        self._configure_glm53_reasoning()
+        self.chat.tool_call_parser = "glm47"
+        self.chat.default_sampling_params = {}
+        enter_override(
+            self, get_context().override_server_args(enable_strict_thinking=True)
+        )
+        special = (
+            "<think>",
+            "</think>",
+            "<tool_call>",
+            "</tool_call>",
+            "<arg_key>",
+            "</arg_key>",
+            "<arg_value>",
+            "</arg_value>",
+            "<|assistant|>",
+            "<eop>",
+            "<|user|>",
+            "<|endoftext|>",
+        )
+        vocab = [chr(i) for i in range(128)] + list(special)
+        ids = {token: 128 + i for i, token in enumerate(special)}
+        split_special = re.compile("(" + "|".join(map(re.escape, special)) + ")")
+
+        def encode(text, **_):
+            return [
+                token_id
+                for part in split_special.split(text)
+                if part
+                for token_id in ([ids[part]] if part in ids else list(part.encode()))
+            ]
+
+        info = TokenizerInfo(vocab, stop_token_ids=[ids["<eop>"]])
+        tokenizer = SimpleNamespace(
+            encode=encode,
+            init_xgrammar=lambda: (info, None),
+            bos_token_id=None,
+        )
+        self.tm.tokenizer = tokenizer
+        backend = XGrammarGrammarBackend(tokenizer, len(vocab))
+        self.addCleanup(backend.executor.shutdown)
+        reasoner = ReasonerGrammarBackend(
+            backend, ReasoningParser("glm45"), tokenizer, enable_strict_thinking=True
+        )
+        self.addCleanup(reasoner.executor.shutdown)
+        manager = GrammarManager.__new__(GrammarManager)
+        manager.scheduler = SimpleNamespace(
+            model_config=SimpleNamespace(
+                request_selectable_think_end_id_sequences=None,
+            )
+        )
+        manager.grammar_backend = reasoner
+        manager._enable_strict_thinking = True
+        manager.grammar_queue = []
+        tool = {
+            "type": "function",
+            "function": {
+                "name": "f",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+        cases = (
+            ({}, False, "auto", 1024),
+            ({}, True, "auto", 1024),
+            ({}, True, "required", 1024),
+            ({"reasoning": {"effort": "low", "max_tokens": 2}}, True, "required", 2),
+            ({"reasoning": {"effort": "high", "max_tokens": 3}}, True, "required", 3),
+            ({"reasoning": {"effort": "max", "max_tokens": 4}}, True, "required", 4),
+            ({"reasoning_effort": "none"}, True, "required", None),
+            ({"reasoning_effort": "high"}, True, "required", None),
+        )
+        for controls, with_tools, choice, expected_budget in cases:
+            with self.subTest(controls=controls, tools=with_tools, choice=choice):
+                request = ChatCompletionRequest(
+                    model="x",
+                    messages=[{"role": "user", "content": "hi"}],
+                    max_tokens=2000,
+                    tools=[tool] if with_tools else None,
+                    tool_choice=choice,
+                    **controls,
+                )
+                with patch.object(
+                    self.chat,
+                    "_render_and_encode_chat_template",
+                    return_value=(encode("<|assistant|><think>"), None),
+                ):
+                    adapted, _ = self.chat._convert_to_internal_request(request)
+                token_manager = SimpleNamespace(
+                    preferred_sampling_params={},
+                    sampling_params_class=SamplingParams,
+                    tokenizer=tokenizer,
+                    model_config=SimpleNamespace(vocab_size=len(vocab)),
+                    rid_to_state={adapted.rid: SimpleNamespace(time_stats=Mock())},
+                )
+                tokenized = TokenizerManager._create_tokenized_object(
+                    token_manager, adapted, "", adapted.input_ids
+                )
+                scheduled = Req(
+                    rid="glm53-cpu",
+                    origin_input_text="",
+                    origin_input_ids=tokenized.input_ids,
+                    sampling_params=tokenized.sampling_params,
+                    require_reasoning=tokenized.require_reasoning,
+                    vocab_size=len(vocab),
+                    eos_token_ids={ids["<eop>"]},
+                )
+                key = (
+                    (
+                        "full_assistant_ebnf"
+                        if scheduled.sampling_params.ebnf_full_assistant
+                        else "ebnf"
+                    ),
+                    scheduled.sampling_params.ebnf,
+                )
+                reasoner.set_cache(
+                    key, reasoner._init_value_dispatch(key, scheduled.require_reasoning)
+                )
+                self.assertFalse(manager.process_req_with_grammar(scheduled))
+                grammar = scheduled.grammar
+                self.assertEqual(
+                    isinstance(grammar, ReasonerGrammarObject),
+                    expected_budget is not None,
+                )
+
+                def allowed():
+                    mask = grammar.allocate_vocab_mask(len(vocab), 1, "cpu")
+                    grammar.fill_vocab_mask(mask, 0)
+                    return [
+                        i
+                        for i in range(len(vocab))
+                        if int(mask[0, i // 32]) & (1 << (i % 32))
+                    ]
+
+                if expected_budget is not None:
+                    self.assertEqual(grammar.max_think_tokens, expected_budget)
+                    for _ in range(expected_budget):
+                        self.assertIn(ord("x"), allowed())
+                        grammar.accept_token(ord("x"))
+                    self.assertEqual(allowed(), [ids["</think>"]])
+                    grammar.accept_token(ids["</think>"])
+                    self.assertTrue(grammar._is_generation())
+                elif tokenized.require_reasoning:
+                    for token_id in encode("x</think>"):
+                        self.assertIn(token_id, allowed())
+                        grammar.accept_token(token_id)
+                else:
+                    self.assertEqual(adapted.input_ids[-1], ids["</think>"])
+                if choice == "required":
+                    self.assertNotIn(ids["<eop>"], allowed())
+                output = "<tool_call>f</tool_call>" if with_tools else "OK"
+                for token_id in encode(output):
+                    self.assertIn(token_id, allowed())
+                    grammar.accept_token(token_id)
+                self.assertIn(ids["<eop>"], allowed())
+
+    def test_glm53_budget_preserves_response_format_precedence(self):
+        self._configure_glm53_reasoning()
+        self.chat.tool_call_parser = "glm47"
+        self.chat.default_sampling_params = {}
+        enter_override(
+            self, get_context().override_server_args(enable_strict_thinking=True)
+        )
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[{"type": "function", "function": {"name": "f"}}],
+            tool_choice="required",
+            response_format={"type": "json_object"},
+        )
+        with patch.object(
+            self.chat,
+            "_render_and_encode_chat_template",
+            return_value=([10, 80, 81], None),
+        ):
+            adapted, _ = self.chat._convert_to_internal_request(request)
+        self.assertEqual(
+            json.loads(adapted.sampling_params["json_schema"]), {"type": "object"}
+        )
+        self.assertIsNone(adapted.sampling_params.get("ebnf"))
+        self.assertNotIn("ebnf_full_assistant", adapted.sampling_params)
+
+    def test_glm53_budget_reaches_internal_request(self):
+        self._configure_glm53_reasoning()
+        enter_override(
+            self, get_context().override_server_args(enable_strict_thinking=True)
+        )
+        for controls, expected in (
+            ({}, 1024),
+            ({"reasoning": {"max_tokens": 1536}}, 1499),
+            ({"reasoning_effort": "low"}, None),
+        ):
+            with self.subTest(controls=controls):
+                request = ChatCompletionRequest(
+                    model="x",
+                    messages=[{"role": "user", "content": "hi"}],
+                    max_tokens=2000,
+                    **controls,
+                )
+                with patch.object(
+                    self.chat,
+                    "_render_and_encode_chat_template",
+                    return_value=([10, 80, 81], None),
+                ):
+                    adapted, _ = self.chat._convert_to_internal_request(request)
+                self.assertTrue(adapted.require_reasoning)
+                self.assertEqual(
+                    adapted.min_thinking_tokens, 0 if expected is not None else None
+                )
+                self.assertEqual(adapted.max_thinking_tokens, expected)
 
     @staticmethod
     def _render_tool_results_in_call_order(messages, **kwargs):

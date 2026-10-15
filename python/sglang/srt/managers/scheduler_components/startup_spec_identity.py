@@ -82,7 +82,7 @@ def emit_xing_spec_startup_identity(scheduler):
     ):
         return None
     try:
-        draft = draft_worker.draft_runner
+        draft = draft_worker.draft_worker.draft_runner
         target_inner = getattr(target.model, "model", None)
         draft_inner = getattr(draft.model, "model", None)
         target_head = getattr(getattr(target.model, "lm_head", None), "weight", None)

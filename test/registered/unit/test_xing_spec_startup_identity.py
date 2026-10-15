@@ -11,6 +11,8 @@ import pytest
 import torch
 
 from sglang.srt.managers.scheduler_components import startup_spec_identity as obs
+from sglang.srt.speculative.base_spec_worker import BaseSpecWorker
+from sglang.srt.speculative.eagle_worker_v2 import EagleDraftWorker, EAGLEWorkerV2
 
 
 def runner(layers, quantization):
@@ -56,9 +58,15 @@ def scheduler():
     draft.token_to_kv_pool_allocator = target.token_to_kv_pool_allocator
     draft.model.lm_head.weight = target.model.lm_head.weight
     draft.model.model.embed_tokens.weight = target.model.model.embed_tokens.weight
+    facade = object.__new__(EAGLEWorkerV2)
+    facade._target_worker = NS(model_runner=target)
+    facade._draft_worker = object.__new__(EagleDraftWorker)
+    facade._draft_worker.draft_runner = draft
+    assert EAGLEWorkerV2.draft_worker is BaseSpecWorker.draft_worker
+    assert facade.draft_worker is facade._draft_worker
     return NS(
         tp_worker=NS(model_runner=target),
-        draft_worker=NS(draft_runner=draft),
+        draft_worker=facade,
         spec_algorithm=NS(name="EAGLE", is_none=lambda: False),
     )
 
@@ -121,9 +129,21 @@ def test_eagle3_metadata_supported():
     assert obs.emit_xing_spec_startup_identity(s)["algorithm"] == "EAGLE3"
 
 
+def test_bf16_target_uses_actual_eagle_facade_property():
+    s = scheduler()
+    target = s.tp_worker.model_runner
+    target.model_config.quantization = None
+    target.model.quant_config = None
+    record = obs.emit_xing_spec_startup_identity(s)
+    assert record["target"]["model_quantization"] is None
+    assert record["target"]["quant_config_class"] is None
+    assert record["draft"]["model_quantization"] is None
+    assert record["sharing"]["kv_pool_same_object"] is False
+
+
 def test_wrong_head_method_is_reported_without_changing_it():
     s = scheduler()
-    head = s.draft_worker.draft_runner.model.lm_head
+    head = s.draft_worker.draft_worker.draft_runner.model.lm_head
     method = type("ModelOptFp4LinearMethod", (), {})()
     head.quant_method = method
     assert (
@@ -135,7 +155,7 @@ def test_wrong_head_method_is_reported_without_changing_it():
 
 def test_independent_weights_not_misreported_as_shared():
     s = scheduler()
-    draft = s.draft_worker.draft_runner
+    draft = s.draft_worker.draft_worker.draft_runner
     draft.model.lm_head.weight = draft.model.lm_head.weight.clone()
     draft.model.model.embed_tokens.weight = (
         draft.model.model.embed_tokens.weight.clone()
@@ -165,7 +185,7 @@ def test_metadata_error_is_nonfatal_and_message_is_not_logged(caplog):
         def dtype(self):
             raise ValueError("private sentinel not for logs")
 
-    s.draft_worker.draft_runner.model.lm_head.weight = Broken()
+    s.draft_worker.draft_worker.draft_runner.model.lm_head.weight = Broken()
     assert obs.emit_xing_spec_startup_identity(s) is None
     assert "error_type=ValueError" in caplog.text
     assert "private sentinel" not in caplog.text
@@ -220,9 +240,11 @@ def test_real_scheduler_startup_observes_after_resize_and_weight_finalize(
         None,
     )
     s.tp_worker.get_pad_input_ids_func = lambda: None
-    draft.hicache_draft_plan = None
+    monkeypatch.setattr(
+        BaseSpecWorker, "hicache_draft_plan", property(lambda ignored: None)
+    )
     draft.prewarm_sampling = lambda: events.append("prewarm")
-    draft._draft_model_runners = lambda: (draft.draft_runner,)
+    draft._draft_model_runners = lambda: (draft.draft_worker.draft_runner,)
 
     def resize(**kwargs):
         events.append("resize")

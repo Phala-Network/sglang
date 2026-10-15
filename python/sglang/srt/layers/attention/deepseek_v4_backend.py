@@ -110,6 +110,7 @@ from sglang.srt.layers.dp_attention import (
     get_local_dp_buffer_len,
     set_local_dp_buffer_len,
 )
+from sglang.srt.managers import cc_d2h_helper
 from sglang.srt.mem_cache.deepseek_v4_compress_state import KVAndScore
 from sglang.srt.mem_cache.deepseek_v4_memory_pool import DeepSeekV4TokenToKVPool
 from sglang.srt.model_executor.forward_batch_info import (
@@ -1379,8 +1380,12 @@ class DeepseekV4AttnBackend(
         self._early_verify_metadata_ids: set = set()
 
     def _move_to_device(self, x: List[int]) -> torch.Tensor:
-        pin_tensor = torch.tensor(x, dtype=torch.int32, pin_memory=True)
-        return pin_tensor.to(self.device, non_blocking=True)
+        # Under GPU CC a pinned H2D waits for the stream's pending work; a pageable
+        # one returns once the driver has staged the bytes.
+        host = torch.tensor(
+            x, dtype=torch.int32, pin_memory=not cc_d2h_helper.enabled()
+        )
+        return host.to(self.device, non_blocking=True)
 
     def glue_target_verify_metadata(self) -> str:
         # The static target verify prep reads the runner's slots and own buffers only;

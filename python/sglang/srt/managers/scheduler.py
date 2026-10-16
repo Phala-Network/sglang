@@ -467,6 +467,7 @@ class Scheduler(
         # Prefill tokens processed so far; used as the aging axis for the HRRN scheduling policy. Reqs snapshot this at waiting_queue entry.
         self.processed_tokens_counter: int = 0
         self.cur_batch_for_debug: Optional[ScheduleBatch] = None
+        self.engine_failure_path = port_args.engine_failure_path
         self.init_soft_watchdog()
 
         # Parse args

@@ -667,6 +667,9 @@ class PortArgs:
     # derive the /dev/shm path for load snapshots.
     instance_id: str = ""
 
+    # Created once by the launcher, then shared with every child/HTTP worker.
+    engine_failure_path: str | None = None
+
     @staticmethod
     def init_new(
         server_args: ServerArgs,

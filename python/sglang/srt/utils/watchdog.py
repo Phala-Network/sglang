@@ -16,6 +16,8 @@ from sglang.srt.utils.cudacore_pyspy_dump_utils import pyspy_dump_schedulers
 
 logger = logging.getLogger(__name__)
 
+HARD_WATCHDOG_GRACE_SECONDS = 5.0
+
 
 class Watchdog:
     @staticmethod
@@ -109,6 +111,7 @@ class WatchdogRaw:
         watchdog_timeout: float,
         soft: bool = False,
         dump_info: Optional[Callable[[], str]] = None,
+        on_failure: Optional[Callable[[], None]] = None,
     ):
         self.debug_name = debug_name
         self.get_counter = get_counter
@@ -116,6 +119,7 @@ class WatchdogRaw:
         self.watchdog_timeout = watchdog_timeout
         self.soft = soft
         self.dump_info = dump_info
+        self.on_failure = on_failure
 
         self.parent_process = psutil.Process().parent()
         t = threading.Thread(target=self._watchdog_thread, daemon=True)
@@ -133,23 +137,29 @@ class WatchdogRaw:
     def _watchdog_once(self):
         watchdog_last_counter = 0
         watchdog_last_time = time.perf_counter()
+        was_active = True
 
         while True:
             current = time.perf_counter()
             if self.is_active():
                 current_counter = self.get_counter()
-                if watchdog_last_counter == current_counter:
+                if was_active and watchdog_last_counter == current_counter:
                     if current > watchdog_last_time + self.watchdog_timeout:
                         break
                 else:
                     watchdog_last_counter = current_counter
                     watchdog_last_time = current
+                was_active = True
+            else:
+                # Idle time is not evidence of stalled model execution. Arm a
+                # fresh timeout when work resumes without a completed forward.
+                was_active = False
+                watchdog_last_time = current
             time.sleep(self.watchdog_timeout / 2)
 
-        if self.dump_info is not None and (info_msg := self.dump_info()):
-            logger.error(f"{self.debug_name} debug info:\n{info_msg}")
+        self._handle_timeout()
 
-        pyspy_dump_schedulers()
+    def _handle_timeout(self):
         logger.error(
             f"{self.debug_name} watchdog timeout "
             f"({self.watchdog_timeout=}, {self.soft=})"
@@ -157,10 +167,49 @@ class WatchdogRaw:
         print(file=sys.stderr, flush=True)
         print(file=sys.stdout, flush=True)
 
-        if not self.soft:
-            # Wait for some time so that the parent process can print the error.
-            time.sleep(5)
+        if self.soft:
+            # Diagnostics must never prevent a hard watchdog from terminating.
+            if self.dump_info is not None and (info_msg := self.dump_info()):
+                logger.error(f"{self.debug_name} debug info:\n{info_msg}")
+            pyspy_dump_schedulers()
+            return
+
+        if self.on_failure is not None:
+            try:
+                self.on_failure()
+            except Exception:
+                logger.exception("Failed to publish terminal engine failure")
+        try:
+            # Keep process identities while the parent still exists. Its exit
+            # reparents children, so a later tree walk cannot find the siblings.
+            descendants = self.parent_process.children(recursive=True)
+        except psutil.Error:
+            descendants = []
+        try:
             self.parent_process.send_signal(signal.SIGQUIT)
+            self.parent_process.wait(timeout=HARD_WATCHDOG_GRACE_SECONDS)
+        except psutil.NoSuchProcess:
+            pass
+        except psutil.Error:
+            logger.exception("Parent did not exit after watchdog SIGQUIT")
+
+        self._terminate_engine(descendants)
+
+    def _terminate_engine(self, descendants):
+        # Also runs after a parent exits without cleaning up, or was already
+        # gone. A fatal scheduler must never return to its stalled event loop.
+        try:
+            for process in [*descendants, self.parent_process]:
+                if process.pid == os.getpid():
+                    continue
+                try:
+                    process.kill()
+                except psutil.NoSuchProcess:
+                    pass
+                except psutil.Error:
+                    logger.exception("Failed to kill a failed engine process")
+        finally:
+            os._exit(1)
 
 
 class SubprocessWatchdog:
@@ -179,10 +228,12 @@ class SubprocessWatchdog:
         processes: List[Process],
         process_names: Optional[List[str]] = None,
         interval: float = 1.0,
+        on_failure: Optional[Callable[[], None]] = None,
     ):
         self._processes = processes
         self._names = process_names or [f"process_{i}" for i in range(len(processes))]
         self._interval = interval
+        self._on_failure = on_failure
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -218,6 +269,10 @@ class SubprocessWatchdog:
                 f"with exit code {proc.exitcode}. "
                 f"Triggering SIGQUIT for cleanup..."
             )
-            os.kill(os.getpid(), signal.SIGQUIT)
+            try:
+                if self._on_failure is not None:
+                    self._on_failure()
+            finally:
+                os.kill(os.getpid(), signal.SIGQUIT)
             return True
         return False

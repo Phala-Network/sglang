@@ -706,6 +706,9 @@ async def health_generate(request: Request) -> Response:
     If the server is not running anything, this request will be run, so we know whether the server is healthy.
     """
 
+    if _global_state.tokenizer_manager.is_engine_failed():
+        return Response(status_code=503)
+
     if _global_state.tokenizer_manager.gracefully_exit:
         logger.info("Health check request received during shutdown. Returning 503.")
         return Response(status_code=503)
@@ -2813,8 +2816,11 @@ def _setup_and_run_http_server(
             else:
                 from sglang.srt.utils.framework_log_privacy import configure_framework_log_privacy
                 configure_framework_log_privacy()
-                uvicorn.run(
+                from sglang.srt.utils.uvicorn_supervisor import run_multi_worker_server
+
+                run_multi_worker_server(
                     "sglang.srt.entrypoints.http_server:app",
+                    engine_failure_path=port_args.engine_failure_path,
                     host=get_serving().host,
                     port=get_serving().port,
                     root_path=get_serving().fastapi_root_path,

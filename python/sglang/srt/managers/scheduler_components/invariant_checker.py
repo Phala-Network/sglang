@@ -534,6 +534,8 @@ class SchedulerInvariantChecker:
 def create_scheduler_watchdog(
     scheduler: Scheduler, watchdog_timeout: float, soft: bool = False
 ) -> WatchdogRaw:
+    from sglang.srt.utils.engine_failure import mark_engine_failed
+
     def dump_info() -> str:
         if scheduler.is_initializing:
             return ""
@@ -554,4 +556,5 @@ def create_scheduler_watchdog(
         watchdog_timeout=watchdog_timeout,
         soft=soft,
         dump_info=dump_info,
+        on_failure=lambda: mark_engine_failed(scheduler.engine_failure_path),
     )

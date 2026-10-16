@@ -486,6 +486,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
     ):
         # Parse args
         self.server_args = server_args
+        self.engine_failure_path = port_args.engine_failure_path
         assert_published(server_args, role="tokenizer")
         self.startup_time: Optional[Dict[str, Any]] = None
         self.elastic_worker_count = get_parallel().dp_size
@@ -679,7 +680,13 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             not self.is_pause
             and not self.gracefully_exit
             and self.server_status == ServerStatus.Up
+            and not self.is_engine_failed()
         )
+
+    def is_engine_failed(self) -> bool:
+        from sglang.srt.utils.engine_failure import engine_has_failed
+
+        return engine_has_failed(getattr(self, "engine_failure_path", None))
 
     def init_request_logging_and_dumping(self):
         # TODO: Refactor and organize the log export code.

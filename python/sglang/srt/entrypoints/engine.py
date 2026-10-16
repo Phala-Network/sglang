@@ -150,6 +150,10 @@ from sglang.srt.utils.network import (
 )
 from sglang.srt.utils.torch_memory_saver_adapter import TorchMemorySaverAdapter
 from sglang.srt.utils.watchdog import SubprocessWatchdog
+from sglang.srt.utils.engine_failure import (
+    create_engine_failure_state,
+    mark_engine_failed,
+)
 from sglang.srt.weight_cache.daemon import spawn_weight_cache_daemon
 from sglang.srt.weight_cache.protocol import (
     cleanup_stale_daemon_files,
@@ -1120,6 +1124,7 @@ class Engine(EngineScoreMixin, EngineBase):
             # Allocate ports for inter-process communications
             if port_args is None:
                 port_args = PortArgs.init_new(server_args)
+            port_args.engine_failure_path = create_engine_failure_state()
             logger.info(f"server_args={server_args.resolved_dict()}")
 
             # Start the engine info bootstrap server if per-rank info is needed.
@@ -1229,7 +1234,9 @@ class Engine(EngineScoreMixin, EngineBase):
             processes = list(scheduler_procs or [])
             names = [f"scheduler_{i}" for i in range(len(processes))]
             subprocess_watchdog = SubprocessWatchdog(
-                processes=processes, process_names=names
+                processes=processes,
+                process_names=names,
+                on_failure=lambda: mark_engine_failed(port_args.engine_failure_path),
             )
             subprocess_watchdog.start()
 
@@ -1281,7 +1288,9 @@ class Engine(EngineScoreMixin, EngineBase):
             processes.extend(detoken_procs)
             names.extend(detoken_names)
             subprocess_watchdog = SubprocessWatchdog(
-                processes=processes, process_names=names
+                processes=processes,
+                process_names=names,
+                on_failure=lambda: mark_engine_failed(port_args.engine_failure_path),
             )
             subprocess_watchdog.start()
             startup_complete = True

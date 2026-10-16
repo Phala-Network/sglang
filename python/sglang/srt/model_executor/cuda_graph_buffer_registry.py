@@ -713,6 +713,7 @@ def build_decode_registry(
     if enable_num_token_non_padded:
         from sglang.srt.model_executor.forward_batch_info import (
             compute_local_num_token_non_padded,
+            compute_local_num_token_non_padded_cpu,
         )
 
         def _num_token_non_padded_post_fill(buf, fb, ctx):
@@ -731,6 +732,17 @@ def build_decode_registry(
             sharded = not enable_prefill_cp and attn_tp_sharded_fn(
                 ctx.padded_num_tokens
             )
+            # The host mirror is written with the tensor (init_new, idle
+            # fabrication): one fill instead of sub + clamp + copy kernels.
+            if fb.global_num_token_non_padded_cpu is not None:
+                buf.fill_(
+                    compute_local_num_token_non_padded_cpu(
+                        global_num_token_non_padded=fb.global_num_token_non_padded_cpu,
+                        num_tokens_per_dp=ctx.padded_num_tokens,
+                        sharded=sharded,
+                    )
+                )
+                return
             buf.copy_(
                 compute_local_num_token_non_padded(
                     global_num_token_non_padded=fb.global_num_token_non_padded,

@@ -111,6 +111,7 @@ class _Packer:
         self.helper, self.fallback = helper, fallback
         self.base = slot * helper.slot_bytes
         self.used = 0
+        self.dsts, self.srcs = [], []
 
     def __call__(self, t: torch.Tensor) -> torch.Tensor:
         nbytes = t.numel() * t.element_size()
@@ -123,14 +124,18 @@ class _Packer:
         if not nbytes:
             return torch.empty(t.shape, dtype=t.dtype)
         lo = self.base + self.used
-        self.helper.staging[lo : lo + nbytes].copy_(
-            t.contiguous().view(-1).view(torch.uint8)
-        )
+        self.dsts.append(self.helper.staging[lo : lo + nbytes])
+        self.srcs.append(t.contiguous().view(-1).view(torch.uint8))
         t.record_stream(torch.cuda.current_stream(t.device))
         self.used += -(-nbytes // _ALIGN) * _ALIGN
         return torch.frombuffer(
             self.helper.shm.buf, dtype=t.dtype, count=t.numel(), offset=lo
         ).view(t.shape)
+
+    def flush(self) -> None:
+        # One kernel for all packed tensors instead of one copy each.
+        if self.dsts:
+            torch._foreach_copy_(self.dsts, self.srcs)
 
 
 class _HelperDone:
@@ -169,6 +174,7 @@ def copy_result_to_cpu(result, copy: Callable, d2h: Callable, *args) -> None:
     slot = helper.free.popleft()
     packer = _Packer(helper, slot, d2h)
     copy(packer, *args)
+    packer.flush()
     if not packer.used:
         helper.free.append(slot)
         return

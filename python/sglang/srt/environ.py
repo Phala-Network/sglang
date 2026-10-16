@@ -833,6 +833,9 @@ class Envs:
     SGLANG_CC_D2H_HELPER = EnvBool(False)
     SGLANG_CC_D2H_HELPER_SLOTS = EnvInt(32)
     SGLANG_CC_D2H_HELPER_SLOT_KB = EnvInt(1024)
+    # Move the scheduler's executable mappings onto huge pages before its event loop
+    # (utils/huge_text.py); for guests whose code would otherwise sit on 4 KiB pages.
+    SGLANG_HUGE_PAGE_TEXT = EnvBool(False)
     SGLANG_HICACHE_SKIP_HOST_DUPLICATE_RECLAIM = EnvBool(False)
     SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR = EnvStr(None)
     # File-backend LRU eviction (opt-in; sizes accept SI/IEC suffixes, "0" disables).

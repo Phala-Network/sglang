@@ -6467,6 +6467,11 @@ def run_scheduler_process(
         # Send initialization info back to the parent process
         pipe_writer.send(scheduler.get_init_info())
 
+        if envs.SGLANG_HUGE_PAGE_TEXT.get():
+            from sglang.srt.utils.huge_text import remap_text_to_huge_pages
+
+            remap_text_to_huge_pages()
+
         # Run the event loop (blocks until a ShutdownReq sets gracefully_exit)
         scheduler.run_event_loop()
 

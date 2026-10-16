@@ -48,6 +48,15 @@ Independent source review and canonical62-step replay pass; installed image and
 real dynamic GPU startup,512K,cache,quality and recovery remain separate gates.
 This continues the same officialv0.5.21 compatibility maintenance exception.
 
+The [0.5.21 watchdog and DSPARK repair](https://github.com/Phala-Network/sglang/releases/tag/v0.5.21-phala-watchdog-dspark-fix-20261016)
+binds source `52ffefa675bc4a447bf7649b1a482eb8df99a48b` and its
+[ordered patch record](https://github.com/Phala-Network/sglang-serving-patches/tree/565393487366f12ab8e0d418d860ac2966bed69a/versions/v0.5.21-control).
+It preserves the accepted 0.5.21 native dependencies while making fatal engine
+failure unready across HTTP workers and owning DSPARK accept-result storage.
+The [frozen build recipe and regression scope](https://github.com/Phala-Network/sglang/tree/52ffefa675bc4a447bf7649b1a482eb8df99a48b/docker/phala-watchdog-20261016)
+use the same compatibility maintenance exception; image and target GPU acceptance
+are reported separately in the release receipt.
+
 The PyPI package `sglang` is the upstream distribution; installing it does not
 install this fork's changes. For development, follow the
 [installation guide](https://docs.sglang.io/get_started/install.html) using this

@@ -124,6 +124,12 @@ class RequestStaticYarnConfig:
         )
 
 
+# Output tokens automatic selection reserves above the prompt. A larger max_new_tokens is
+# clipped to the selected table rather than moving the request to a larger factor, whose
+# cache namespace is cold for a conversation that has so far run on a smaller one.
+SELECT_OUTPUT_RESERVE = 32768
+
+
 def admit_request_static_yarn(req, config, context_length: int):
     """Select once, before output clipping, cache lookup or chunked prefill."""
     explicit = (req.sampling_params.custom_params or {}).get("yarn_factor")
@@ -144,6 +150,15 @@ def admit_request_static_yarn(req, config, context_length: int):
         raise ValueError(
             "Prompt plus requested output budget exceeds server context length"
         )
+    if explicit is None:
+        factor = config.select(
+            prompt_len + min(output_budget, SELECT_OUTPUT_RESERVE)
+        ).factor
+        output_budget = min(
+            output_budget, int(config.original_max_position * factor) - prompt_len
+        )
+        req.sampling_params.max_new_tokens = output_budget
+        budget = prompt_len + output_budget
     profile = config.select(budget, explicit)
     mm = getattr(req, "multimodal_inputs", None)
     if mm is not None and mm.mrope_positions is not None:

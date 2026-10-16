@@ -250,9 +250,9 @@ def test_legal_request_after_rejection_keeps_normal_path():
 def test_auto_selection_still_uses_expanded_prompt_before_clipping():
     scheduler, recv, req, proxy = make_case(output=262050, mm=True)
     handle(scheduler, recv, req)
-    assert req.rope_profile.factor == 2
-    assert req.rope_profile.budget == 262145
-    assert req.sampling_params.max_new_tokens == 262050
+    assert req.rope_profile.factor == 1
+    assert req.rope_profile.budget == 262144
+    assert req.sampling_params.max_new_tokens == 262049
     assert not req.finished()
     assert scheduler.waiting_queue == [req]
     scheduler.init_req_max_new_tokens.assert_called_once_with(req)

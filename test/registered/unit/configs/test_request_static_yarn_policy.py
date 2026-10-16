@@ -171,14 +171,26 @@ def test_invalid_explicit_factor_rejected(explicit):
         config().select(32, explicit)
 
 
-def test_explicit_factor_is_test_control_and_none_reserves_full_context():
+def test_explicit_factor_is_test_control_and_none_fills_the_selected_table():
     req = request(10, 10, explicit=4)
     policy.admit_request_static_yarn(req, config(), 1000000)
     assert req.rope_profile.factor == 4
     req = request(10, None)
     policy.admit_request_static_yarn(req, config(), 1000000)
-    assert req.rope_profile.factor == 4
-    assert req.rope_profile.budget == 1000000
+    assert req.rope_profile.factor == 1
+    assert req.sampling_params.max_new_tokens == 262134
+    assert req.rope_profile.budget == 262144
+
+
+def test_large_output_budget_does_not_raise_the_factor():
+    req = request(131893, 131072)
+    policy.admit_request_static_yarn(req, config(), 1000000)
+    assert req.rope_profile.factor == 1
+    assert req.sampling_params.max_new_tokens == 262144 - 131893
+    req = request(240000, 131072)
+    policy.admit_request_static_yarn(req, config(), 1000000)
+    assert req.rope_profile.factor == 2
+    assert req.sampling_params.max_new_tokens == 131072
 
 
 def test_cache_namespace_keeps_user_identity_and_isolates_profiles():

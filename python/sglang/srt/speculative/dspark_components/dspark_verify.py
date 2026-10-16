@@ -1000,7 +1000,8 @@ class DsparkVerifyEpilogue:
         self.future_relay.new_seq_lens[rows] = self.new_seq_lens_buf[:bs]
         self.future_relay.output_tokens[rows] = self.bonus_buf[:bs]
 
-    def read_accept(self, bs: int) -> AcceptOuts:
+    def accept_buffers(self, bs: int) -> AcceptOuts:
+        """Views of the fixed buffers the captured accept writes into."""
         return AcceptOuts(
             correct_len=self.correct_len_buf[:bs],
             bonus=self.bonus_buf[:bs],
@@ -1015,6 +1016,22 @@ class DsparkVerifyEpilogue:
         if self.block_accept_lens_buf is None:
             return None
         return self.block_accept_lens_buf[:bs]
+
+    def read_accept(self, bs: int) -> AcceptOuts:
+        # The next verify graph reuses these fixed buffers while the scheduler
+        # copies this result on another stream. Give each result owned storage.
+        # Upstream: https://github.com/sgl-project/sglang/pull/42812
+        # Only for reading after a replay: the in-graph accept must write
+        # accept_buffers(), or its results land in capture-time clones.
+        views = self.accept_buffers(bs)
+        return AcceptOuts(
+            correct_len=views.correct_len.clone(),
+            bonus=views.bonus.clone(),
+            cap_trim_lens=views.cap_trim_lens.clone(),
+            commit_lens=views.commit_lens.clone(),
+            new_seq_lens=views.new_seq_lens.clone(),
+            out_tokens=views.out_tokens.clone(),
+        )
 
     @property
     def folds_commit(self) -> bool:
@@ -1129,7 +1146,7 @@ class DsparkVerifyEpilogue:
             sync_site=SpecTpSyncSite.DSPARK_ACCEPT_GRAPH,
             simulated_correct_len=self.simulated_correct_len,
             target_logits=None if self.simulate_fold else logits,
-            out=self.read_accept(bs),
+            out=self.accept_buffers(bs),
             block_accept_lens_out=self.read_block_accept_lens(bs),
         )
         return accept.commit_lens

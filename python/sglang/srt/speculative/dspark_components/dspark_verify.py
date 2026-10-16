@@ -652,13 +652,16 @@ class DsparkVerifyEpilogue:
         )
 
     def read_accept(self, bs: int) -> AcceptOuts:
+        # The next verify graph reuses these fixed buffers while the scheduler
+        # copies this result on another stream. Give each result owned storage.
+        # Upstream: https://github.com/sgl-project/sglang/pull/42812
         return AcceptOuts(
-            correct_len=self.correct_len_buf[:bs],
-            bonus=self.bonus_buf[:bs],
-            cap_trim_lens=self.cap_trim_lens_buf[:bs],
-            commit_lens=self.commit_lens_buf[:bs],
-            new_seq_lens=self.new_seq_lens_buf[:bs],
-            out_tokens=self.out_tokens_buf[:bs],
+            correct_len=self.correct_len_buf[:bs].clone(),
+            bonus=self.bonus_buf[:bs].clone(),
+            cap_trim_lens=self.cap_trim_lens_buf[:bs].clone(),
+            commit_lens=self.commit_lens_buf[:bs].clone(),
+            new_seq_lens=self.new_seq_lens_buf[:bs].clone(),
+            out_tokens=self.out_tokens_buf[:bs].clone(),
         )
 
     @property

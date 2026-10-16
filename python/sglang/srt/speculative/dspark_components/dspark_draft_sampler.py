@@ -90,6 +90,9 @@ class DsparkDraftSampler:
                 (self.max_bs,), dtype=torch.float32, device=device
             ),
         )
+        # Leading rows known to be greedy (greedy_mask True, step temperature
+        # 0); the buffers start that way.
+        self._greedy_rows = self.max_bs
         # [max_bs, gamma, vocab] step logits for the sampling accept, sized on
         # the first call; a greedy draft keeps none.
         self.step_logits: Optional[torch.Tensor] = None
@@ -177,7 +180,16 @@ class DsparkDraftSampler:
 
     def stage_sampling_params(self, *, bs: int, sampling_info) -> None:
         """Must run before the draft graph replay that reads these buffers."""
+        if sampling_info is None or sampling_info.is_all_greedy:
+            # Greedy rows take the argmax and the greedy accept, so the
+            # temperature is unused; only extend the all-greedy prefix.
+            if bs > self._greedy_rows:
+                self.params.greedy_mask[:bs].fill_(True)
+                self.params.step_temperatures[:bs].zero_()
+                self._greedy_rows = bs
+            return
         resolve_draft_params(sampling_info=sampling_info, bs=bs, out=self.params)
+        self._greedy_rows = 0
 
     def __call__(self, hidden_states, input_ids):
         bs = hidden_states.shape[0] // self.query_token_num

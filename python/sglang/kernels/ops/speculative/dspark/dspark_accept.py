@@ -12,6 +12,7 @@ from sglang.kernels.ops.speculative.dflash import (
     compute_dflash_correct_drafts_and_bonus,
 )
 from sglang.kernels.ops.speculative.dspark.dispatch import inputs_on_cuda
+from sglang.kernels.ops.speculative.dspark.graph_rng import GraphRng
 from sglang.srt.speculative.dflash_info_v2 import DFlashDraftInputV2
 from sglang.srt.speculative.dflash_utils import (
     _get_or_create_chain_verify_buffers,
@@ -51,6 +52,7 @@ class AcceptSampling:
         verify_num_draft_tokens: int,
         cutoff_verify_lens: Optional[torch.Tensor] = None,
         block_verification: bool = False,
+        rng: Optional[GraphRng] = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         return accept_sampling(
             candidates=candidates,
@@ -62,6 +64,7 @@ class AcceptSampling:
             verify_num_draft_tokens=verify_num_draft_tokens,
             cutoff_verify_lens=cutoff_verify_lens,
             block_verification=block_verification,
+            rng=rng,
         )
 
     @classmethod
@@ -77,6 +80,7 @@ class AcceptSampling:
         verify_num_draft_tokens: int,
         cutoff_verify_lens: Optional[torch.Tensor] = None,
         block_verification: bool = False,
+        rng: Optional[GraphRng] = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         return accept_sampling_triton(
             candidates=candidates,
@@ -88,6 +92,7 @@ class AcceptSampling:
             verify_num_draft_tokens=verify_num_draft_tokens,
             cutoff_verify_lens=cutoff_verify_lens,
             block_verification=block_verification,
+            rng=rng,
         )
 
 
@@ -102,6 +107,7 @@ def _accept_sampling_core(
     verify_num_draft_tokens: int,
     cutoff_verify_lens: Optional[torch.Tensor],
     block_verification: bool,
+    rng: Optional[GraphRng] = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     bs = candidates.shape[0]
     device = candidates.device
@@ -135,10 +141,16 @@ def _accept_sampling_core(
     # The NPU implementation uses the candidate width as its row stride.  The
     # last value is intentionally unused because candidate slot 0 is the root.
     uniform_width = candidates.shape[1] if _is_npu else gamma
-    uniform_samples = torch.rand(
-        (bs, uniform_width), dtype=torch.float32, device=device
-    )
-    uniform_samples_final = torch.rand((bs,), dtype=torch.float32, device=device)
+    if rng is None:
+        uniform_samples = torch.rand(
+            (bs, uniform_width), dtype=torch.float32, device=device
+        )
+        uniform_samples_final = torch.rand((bs,), dtype=torch.float32, device=device)
+    else:
+        # In a CUDA graph: the key advances on the device, so a replay needs no
+        # host-side RNG seed/offset refresh.
+        uniform_samples = rng.rand(bs, uniform_width, device=device)
+        uniform_samples_final = rng.rand(bs, device=device)
     sampling_fn = chain_speculative_sampling_triton
     if block_verification:
         # Startup validation rejects NPU, whose sampler has no block mode.
@@ -180,6 +192,7 @@ def accept_sampling(
     verify_num_draft_tokens: int,
     cutoff_verify_lens: Optional[torch.Tensor] = None,
     block_verification: bool = False,
+    rng: Optional[GraphRng] = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     bs = candidates.shape[0]
     device = candidates.device
@@ -193,6 +206,7 @@ def accept_sampling(
         verify_num_draft_tokens=verify_num_draft_tokens,
         cutoff_verify_lens=cutoff_verify_lens,
         block_verification=block_verification,
+        rng=rng,
     )
     row_ids = torch.arange(bs, dtype=torch.long, device=device)
     accept_pos = accept_index[row_ids, correct_len.to(torch.long)].to(torch.long)
@@ -250,6 +264,7 @@ def accept_sampling_triton(
     verify_num_draft_tokens: int,
     cutoff_verify_lens: Optional[torch.Tensor] = None,
     block_verification: bool = False,
+    rng: Optional[GraphRng] = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     correct_len, cap_trim_lens, accept_index, predicts = _accept_sampling_core(
         candidates=candidates,
@@ -261,6 +276,7 @@ def accept_sampling_triton(
         verify_num_draft_tokens=verify_num_draft_tokens,
         cutoff_verify_lens=cutoff_verify_lens,
         block_verification=block_verification,
+        rng=rng,
     )
     bonus = gather_two_level_bonus_triton(
         accept_index=accept_index, predicts=predicts, correct_len=correct_len

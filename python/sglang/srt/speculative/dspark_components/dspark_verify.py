@@ -29,6 +29,7 @@ from sglang.kernels.ops.speculative.dspark.dspark_verify_window import (
     build_ring_commit_inject_layout,
     scatter_compact_to_strided_into,
 )
+from sglang.kernels.ops.speculative.dspark.graph_rng import GraphRng
 from sglang.kernels.ops.speculative.dspark.simulated_bonus import (
     simulated_bonus_partials_graph,
     simulated_bonus_sample,
@@ -628,6 +629,8 @@ class DsparkVerifyEpilogue:
         # stage the commit's stores into it; the next draft forward runs them.
         self.deferred_commit = deferred_commit
         self.sampling = sampling
+        # The in-graph sampled accept draws from a device-advanced philox key.
+        self._rng = GraphRng(device, salt=1) if sampling is not None else None
         self._block_verification = bool(block_verification)
         # SGLANG_SIMULATE_ACC_LEN with a sampled bonus inside the graph too: the bonus
         # is drawn at the simulated correct_len from these buffers, which
@@ -1145,6 +1148,7 @@ class DsparkVerifyEpilogue:
             verify_num_draft_tokens=self.stride,
             cutoff_verify_lens=cutoff_verify_lens,
             block_verification=self._block_verification,
+            rng=self._rng,
         )
         greedy_len, greedy_bonus, greedy_trim = greedy
         selected = SelectMixedAccept.execute(

@@ -346,7 +346,7 @@ def normalize_json_schema_resources(schema: Any) -> Any:
                 # pinned converter does not support. Empty dependencies is true.
                 continue
             if key == "$ref":
-                needs_intersection |= not legacy_ref and "minLength" in node
+                needs_intersection |= not legacy_ref and ("minLength" in node or "maxLength" in node)
                 referenced_resources.add(resource_uri)
                 resolved = resolve_local_json_pointer(
                     value,

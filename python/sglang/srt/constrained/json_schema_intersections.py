@@ -1,4 +1,4 @@
-"""Bounded exact ref/minLength intersections, after dialect/resource binding.
+"""Bounded exact ref/string-length intersections after dialect/resource binding.
 
 Pure Python: no native compiler or validation-module dependency. Unsupported
 intersections raise rather than approximate an assertion or an empty language.
@@ -67,7 +67,10 @@ def _possible_types(schema):
     return kinds
 
 
-def intersect_ref_min_length(schema: Union[bool, Dict[str, Any]], minimum: int, depth: int = 0, _budget=None):
+def intersect_ref_min_length(
+    schema: Union[bool, Dict[str, Any]], minimum: int, depth: int = 0,
+    _budget=None, *, maximum=None, _types=None,
+):
     """Exact length intersection for leaf values and pure non-reference unions."""
     if _budget is None:
         _budget = [10000]
@@ -80,6 +83,8 @@ def intersect_ref_min_length(schema: Union[bool, Dict[str, Any]], minimum: int, 
         return False
     if schema is True:
         schema = {"type": list(_JSON_TYPES)}
+    if minimum == 0 and maximum is None and _types is None:
+        return schema
     assertions = set(schema).difference(_SCHEMA_METADATA_KEYWORDS)
     for keyword in ("anyOf", "oneOf"):
         if assertions == {keyword} and isinstance(schema[keyword], list):
@@ -93,11 +98,22 @@ def intersect_ref_min_length(schema: Union[bool, Dict[str, Any]], minimum: int, 
                         raise ValueError("JSON Schema cannot prove oneOf branches disjoint for minLength")
                     seen_types.update(branch_types)
             return dict(schema, **{keyword: [
-                intersect_ref_min_length(branch, minimum, depth + 1, _budget)
+                intersect_ref_min_length(
+                    branch, minimum, depth + 1, _budget,
+                    maximum=maximum, _types=_types,
+                )
                 for branch in schema[keyword]
             ]})
     schema_type = schema.get("type")
     types = [schema_type] if isinstance(schema_type, str) else schema_type
+    if _types is not None:
+        current_types = set(types if types is not None else _JSON_TYPES)
+        if "number" in current_types:
+            current_types.add("integer")
+        types = [kind for kind in _JSON_TYPES if kind in current_types and kind in _types]
+        if not types:
+            return False
+        schema = dict(schema, type=types)
     if isinstance(types, list) and types and all(kind in _JSON_TYPES for kind in types) and "string" not in types:
         if assertions.intersection({"allOf", "anyOf", "oneOf", "not", "$ref"}):
             raise ValueError("JSON Schema cannot prove this $ref minLength intersection")
@@ -110,7 +126,8 @@ def intersect_ref_min_length(schema: Union[bool, Dict[str, Any]], minimum: int, 
         if bound in result and (type(result[bound]) is not int or result[bound] < 0):
             raise ValueError("JSON Schema string lengths must be nonnegative integers")
     minimum = max(minimum, result.get("minLength", 0))
-    maximum = result.get("maxLength")
+    if "maxLength" in result:
+        maximum = result["maxLength"] if maximum is None else min(maximum, result["maxLength"])
     if "enum" in result and "const" in result:
         raise ValueError("JSON Schema cannot prove combined const/enum/minLength intersection")
     if maximum is not None and minimum > maximum:
@@ -139,6 +156,8 @@ def intersect_ref_min_length(schema: Union[bool, Dict[str, Any]], minimum: int, 
     if types is None:
         result["type"] = list(_JSON_TYPES)
     result["minLength"] = minimum
+    if maximum is not None:
+        result["maxLength"] = maximum
     return result
 
 
@@ -149,8 +168,12 @@ def normalize_ref_min_length(schema, iter_subschemas):
     resource normalization once more to prune and canonically name definitions.
     Instance-valued data is never traversed. The input is modified in place.
     """
+    # minLength=0 asserts nothing. Remove only the exact integer, never False.
+    for node, _ in iter_subschemas(schema):
+        if type(node.get("minLength")) is int and node["minLength"] == 0:
+            del node["minLength"]
     candidates = [node for node, _ in iter_subschemas(schema)
-                  if "$ref" in node and "minLength" in node]
+                  if "$ref" in node and ("minLength" in node or "maxLength" in node)]
     original_defs = schema.get("$defs", {})
     derived = {}
     cache = {}
@@ -167,23 +190,42 @@ def normalize_ref_min_length(schema, iter_subschemas):
     for candidate in candidates:
         current = candidate
         minimum = 0
+        maximum = None
+        types = None
         seen = set()
         while isinstance(current, dict) and "$ref" in current:
             if id(current) in seen:
                 raise ValueError("JSON Schema cyclic minLength reference")
             seen.add(id(current))
-            if set(current).difference(_SCHEMA_METADATA_KEYWORDS, {"$ref", "minLength"}):
+            if set(current).difference(_SCHEMA_METADATA_KEYWORDS, {"$ref", "minLength", "maxLength", "type"}):
                 raise ValueError("JSON Schema unsupported ref siblings with minLength")
             bound = current.get("minLength", 0)
             if type(bound) is not int or bound < 0:
                 raise ValueError("JSON Schema string lengths must be nonnegative integers")
             minimum = max(minimum, bound)
+            if "maxLength" in current:
+                bound = current["maxLength"]
+                if type(bound) is not int or bound < 0:
+                    raise ValueError("JSON Schema string lengths must be nonnegative integers")
+                maximum = bound if maximum is None else min(maximum, bound)
+            if "type" in current:
+                kinds = current["type"]
+                kinds = [kinds] if isinstance(kinds, str) else kinds
+                if (not isinstance(kinds, list) or not kinds
+                        or any(kind not in _JSON_TYPES for kind in kinds)):
+                    raise ValueError("JSON Schema reference type is invalid")
+                kinds = set(kinds)
+                if "number" in kinds:
+                    kinds.add("integer")
+                types = kinds if types is None else types.intersection(kinds)
             current = resolve(current["$ref"])
-        key = (id(current), minimum)
+        key = (id(current), minimum, maximum, None if types is None else tuple(sorted(types)))
         if key not in cache:
             if len(derived) >= 10000:
                 raise ValueError("JSON Schema minLength intersection resource limit")
-            reduced = intersect_ref_min_length(current, minimum)
+            reduced = intersect_ref_min_length(
+                current, minimum, maximum=maximum, _types=types,
+            )
             if isinstance(reduced, dict):
                 reduced = {k: v for k, v in reduced.items() if k not in ("$defs", "definitions")}
             name = "__sglang_min_length_" + str(len(derived))

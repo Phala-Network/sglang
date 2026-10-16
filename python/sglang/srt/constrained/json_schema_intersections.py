@@ -69,7 +69,7 @@ def _possible_types(schema):
 
 def intersect_ref_min_length(
     schema: Union[bool, Dict[str, Any]], minimum: int, depth: int = 0,
-    _budget=None, *, maximum=None, _types=None,
+    _budget=None, *, maximum=None, _types=None, _leaf_only=False,
 ):
     """Exact length intersection for leaf values and pure non-reference unions."""
     if _budget is None:
@@ -86,6 +86,19 @@ def intersect_ref_min_length(
     if minimum == 0 and maximum is None and _types is None:
         return schema
     assertions = set(schema).difference(_SCHEMA_METADATA_KEYWORDS)
+    if assertions == {"allOf"}:
+        branches = schema["allOf"]
+        if isinstance(branches, list) and len(branches) == 1:
+            branch = branches[0]
+            # References/resources are already bound. Retain an inherited
+            # dialect when lifting the branch: normalization runs again and
+            # must still interpret any retained draft-specific assertions.
+            if isinstance(branch, dict) and "$schema" in schema:
+                branch = {"$schema": schema["$schema"], **branch}
+            return intersect_ref_min_length(
+                branch, minimum, depth + 1, _budget,
+                maximum=maximum, _types=_types, _leaf_only=True,
+            )
     for keyword in ("anyOf", "oneOf"):
         if assertions == {keyword} and isinstance(schema[keyword], list):
             if keyword == "oneOf":
@@ -100,7 +113,7 @@ def intersect_ref_min_length(
             return dict(schema, **{keyword: [
                 intersect_ref_min_length(
                     branch, minimum, depth + 1, _budget,
-                    maximum=maximum, _types=_types,
+                    maximum=maximum, _types=_types, _leaf_only=_leaf_only,
                 )
                 for branch in schema[keyword]
             ]})
@@ -114,11 +127,18 @@ def intersect_ref_min_length(
         if not types:
             return False
         schema = dict(schema, type=types)
-    if isinstance(types, list) and types and all(kind in _JSON_TYPES for kind in types) and "string" not in types:
+    allowed = {"type", "minLength", "maxLength", "pattern", "enum", "const"}
+    # Newly lowered wrappers use only the already proven length/finite leaves.
+    # Arbitrary non-string containers and numeric assertions need a separate
+    # value proof; the legacy non-wrapper passthrough is not such a proof.
+    if _leaf_only and assertions.difference(allowed):
+        raise ValueError("JSON Schema cannot prove this allOf $ref length intersection")
+    if (isinstance(types, list) and types
+            and all(kind in _JSON_TYPES for kind in types) and "string" not in types
+            and (not _leaf_only or not {"enum", "const"}.intersection(schema))):
         if assertions.intersection({"allOf", "anyOf", "oneOf", "not", "$ref"}):
             raise ValueError("JSON Schema cannot prove this $ref minLength intersection")
         return schema
-    allowed = {"type", "minLength", "maxLength", "pattern", "enum", "const"}
     if assertions.difference(allowed):
         raise ValueError("JSON Schema cannot prove this $ref minLength intersection")
     result = dict(schema)

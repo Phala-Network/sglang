@@ -717,18 +717,23 @@ def _strict_arguments_format(
 
 
 
-def _checked_root_arguments_format(parameters, root_schema):
+def _checked_root_arguments_format(parameters, root_schema, *, prove_values=False):
     if not isinstance(parameters, dict):
         if parameters is False:
             raise _EmptyRootLanguage("Kimi K3 root schema accepts no values")
         raise ValueError("Kimi K3 tool parameters must be an object schema")
+    lowered = _lower_presence_conditional(parameters)
+    prove_values = prove_values or lowered is not parameters
+    parameters = lowered
     if "not" in parameters or "oneOf" in parameters:
-        return _root_logic_arguments_format(parameters, root_schema)
+        return _root_logic_arguments_format(parameters, root_schema, prove_values=prove_values)
     unsupported = set(parameters).difference(_ROOT_SCHEMA_KEYWORDS)
     if unsupported:
         raise ValueError("Kimi K3 tool parameters have unsupported root schema keywords: " + repr(sorted(unsupported)))
     if "object" not in _schema_types(parameters, root_schema):
         raise ValueError("Kimi K3 tool parameters must be an object schema")
+    if prove_values:
+        return _finite_constrained_arguments_format(parameters, root_schema, prove_values=True)
     return _strict_arguments_format(parameters, root_schema)
 
 
@@ -748,7 +753,47 @@ def _presence_required(schema):
     return names
 
 
-def _root_logic_arguments_format(parameters, root_schema):
+def _lower_presence_conditional(parameters):
+    """Exact object implication: required(a) => required(b, ...) is a dependency.
+
+    Only the value-proven finite closed-object path consumes the result.
+    A multi-name trigger is a conjunction, so turning it into individual edges
+    would strengthen the schema. Value tests and else clauses need other logic.
+    """
+    if "if" not in parameters and "then" not in parameters and "else" not in parameters:
+        return parameters
+    if "if" not in parameters or "then" not in parameters or "else" in parameters:
+        raise ValueError("Kimi K3 conditional requires singleton required if/then without else")
+    trigger = _presence_required(parameters["if"])
+    targets = _presence_required(parameters["then"])
+    if trigger is None or len(trigger) != 1 or targets is None:
+        raise ValueError("Kimi K3 conditional requires singleton required if/then without else")
+    dependencies = parameters.get("dependentRequired", {})
+    if not isinstance(dependencies, dict) or not all(
+        isinstance(key, str) and isinstance(value, list)
+        and all(isinstance(target, str) for target in value)
+        for key, value in dependencies.items()
+    ):
+        raise ValueError("Kimi K3 dependentRequired must map names to string lists")
+    properties = parameters.get("properties", {})
+    edge_count = sum(len(value) for value in dependencies.values())
+    if (
+        (isinstance(properties, dict) and len(properties) > 64)
+        or len(dependencies) > 4096
+        or edge_count > 4096
+    ):
+        raise ValueError("presence_resource_limit: conditional at most 64 properties and 4096 dependency edges")
+    dependencies = {key: list(value) for key, value in dependencies.items()}
+    dependencies[trigger[0]] = list(dict.fromkeys(dependencies.get(trigger[0], []) + targets))
+    if sum(len(value) for value in dependencies.values()) > 4096:
+        raise ValueError("presence_resource_limit: conditional at most 4096 dependency edges")
+    return {
+        **{key: value for key, value in parameters.items() if key not in ("if", "then")},
+        "dependentRequired": dependencies,
+    }
+
+
+def _root_logic_arguments_format(parameters, root_schema, *, prove_values=False):
     if "not" in parameters and "oneOf" in parameters:
         raise ValueError("Kimi K3 multiple root logic groups are unsupported")
     if "object" not in _schema_types(parameters, root_schema):
@@ -757,7 +802,7 @@ def _root_logic_arguments_format(parameters, root_schema):
         negated = parameters["not"]
         base = {key: value for key, value in parameters.items() if key != "not"}
         if negated is False:
-            return _checked_root_arguments_format(base, root_schema)
+            return _checked_root_arguments_format(base, root_schema, prove_values=prove_values)
         if negated is True:
             raise _EmptyRootLanguage("Kimi K3 not:true accepts no object values")
         if isinstance(negated, dict) and not set(negated).difference(_SCHEMA_METADATA_KEYWORDS, {"type"}):
@@ -767,7 +812,7 @@ def _root_logic_arguments_format(parameters, root_schema):
                 raise ValueError("Kimi K3 not type is invalid")
             if "object" in types:
                 raise _EmptyRootLanguage("Kimi K3 not object type accepts no object values")
-            return _checked_root_arguments_format(base, root_schema)
+            return _checked_root_arguments_format(base, root_schema, prove_values=prove_values)
         names = _presence_required(negated)
         if names is None:
             raise ValueError("Kimi K3 root not shape is unsupported")
@@ -807,6 +852,7 @@ def _disjoint_root_branches_format(parameters, root_schema):
     for branch in branches:
         if not isinstance(branch, dict) or branch.get("type") != "object" or branch.get("additionalProperties") is not False:
             raise ValueError("Kimi K3 oneOf branches must be complete closed objects")
+        branch = _lower_presence_conditional(branch)
         if set(branch).difference(_ROOT_SCHEMA_KEYWORDS):
             raise ValueError("Kimi K3 oneOf branch has unsupported root assertions")
         if not isinstance(branch.get("properties", {}), dict):

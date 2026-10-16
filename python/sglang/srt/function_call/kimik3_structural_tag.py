@@ -258,6 +258,7 @@ def _with_root_definitions(
     result = copy.deepcopy(schema)
     definitions = result.setdefault("$defs", {})
     targets: Dict[int, str] = {}
+    rebound_nodes: Set[int] = set()
     pending = [result]
     next_id = 0
     while pending:
@@ -268,6 +269,12 @@ def _with_root_definitions(
         for node, _ in nodes:
             if "$ref" not in node:
                 continue
+            # Union type restriction may share a target's nested dictionaries.
+            # deepcopy preserves those aliases; a rewritten pointer belongs to
+            # this extracted document and must not be resolved in the old root.
+            if id(node) in rebound_nodes:
+                continue
+            rebound_nodes.add(id(node))
             ref = node["$ref"]
             target = _resolve_local_ref(ref, root_schema) if isinstance(ref, str) else None
             if target is None:

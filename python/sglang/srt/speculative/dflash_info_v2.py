@@ -7,6 +7,7 @@ from typing import List, Optional
 import torch
 
 from sglang.srt.environ import envs
+from sglang.srt.managers import cc_d2h_helper
 from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.srt.mem_cache.allocation import alloc_for_spec_decode
 from sglang.srt.mem_cache.allocation_sizing import page_aligned_decode_alloc_lens
@@ -47,10 +48,9 @@ class DFlashDraftInputV2(SpecInput):
     nxt_kv_lens_cpu: Optional[torch.Tensor] = None
     nxt_kv_lens_sum: Optional[int] = None
     _prepare_batch_seq_lens_cpu_buf: Optional[torch.Tensor] = None
-    _prepare_cur_kv_lens_cpu_buf: Optional[torch.Tensor] = None
-    _prepare_nxt_kv_lens_cpu_buf: Optional[torch.Tensor] = None
-    _prepare_cur_kv_lens_gpu_buf: Optional[torch.Tensor] = None
-    _prepare_nxt_kv_lens_gpu_buf: Optional[torch.Tensor] = None
+    # cur and nxt kv lens side by side ([:bs] and [bs:2*bs]): one H2D per step.
+    _prepare_kv_lens_cpu_buf: Optional[torch.Tensor] = None
+    _prepare_kv_lens_gpu_buf: Optional[torch.Tensor] = None
 
     # Filled by scheduler after dispatch.
     future_indices: Optional[torch.Tensor] = None
@@ -68,36 +68,34 @@ class DFlashDraftInputV2(SpecInput):
     ) -> None:
         pin_memory = is_pin_memory_available(device)
 
-        def needs_cpu_alloc(buf: Optional[torch.Tensor]) -> bool:
-            return buf is None or buf.numel() < bs
+        def needs_cpu_alloc(buf: Optional[torch.Tensor], n: int) -> bool:
+            return buf is None or buf.numel() < n
 
-        def needs_gpu_alloc(buf: Optional[torch.Tensor]) -> bool:
-            return buf is None or buf.numel() < bs or str(buf.device) != str(device)
+        def needs_gpu_alloc(buf: Optional[torch.Tensor], n: int) -> bool:
+            return buf is None or buf.numel() < n or str(buf.device) != str(device)
 
-        def grown_capacity(buf: Optional[torch.Tensor]) -> int:
+        def grown_capacity(buf: Optional[torch.Tensor], n: int) -> int:
             current = 0 if buf is None else int(buf.numel())
-            return max(bs, 32, current * 2 if current > 0 else 0)
+            return max(n, 32, current * 2 if current > 0 else 0)
 
-        # The three CPU scratch buffers grow together; capacity is the only
-        # invariant (batch is int64 non-pinned, cur/nxt are int32 pinned).
-        if needs_cpu_alloc(self._prepare_batch_seq_lens_cpu_buf):
-            capacity = grown_capacity(self._prepare_batch_seq_lens_cpu_buf)
+        # The CPU scratch buffers grow together (batch is int64 non-pinned, the
+        # kv lens pair is int32). Under GPU CC a pinned H2D waits for the
+        # stream's pending work; a pageable one returns once the driver staged it.
+        if needs_cpu_alloc(self._prepare_batch_seq_lens_cpu_buf, bs):
+            capacity = grown_capacity(self._prepare_batch_seq_lens_cpu_buf, bs)
             self._prepare_batch_seq_lens_cpu_buf = torch.empty(
                 (capacity,), dtype=torch.int64, device="cpu"
             )
-            self._prepare_cur_kv_lens_cpu_buf = torch.empty(
-                (capacity,), dtype=torch.int32, device="cpu", pin_memory=pin_memory
-            )
-            self._prepare_nxt_kv_lens_cpu_buf = torch.empty(
-                (capacity,), dtype=torch.int32, device="cpu", pin_memory=pin_memory
+            self._prepare_kv_lens_cpu_buf = torch.empty(
+                (2 * capacity,),
+                dtype=torch.int32,
+                device="cpu",
+                pin_memory=pin_memory and not cc_d2h_helper.enabled(),
             )
 
-        if needs_gpu_alloc(self._prepare_cur_kv_lens_gpu_buf):
-            capacity = grown_capacity(self._prepare_cur_kv_lens_gpu_buf)
-            self._prepare_cur_kv_lens_gpu_buf = torch.empty(
-                (capacity,), dtype=torch.int32, device=device
-            )
-            self._prepare_nxt_kv_lens_gpu_buf = torch.empty(
+        if needs_gpu_alloc(self._prepare_kv_lens_gpu_buf, 2 * bs):
+            capacity = grown_capacity(self._prepare_kv_lens_gpu_buf, 2 * bs)
+            self._prepare_kv_lens_gpu_buf = torch.empty(
                 (capacity,), dtype=torch.int32, device=device
             )
 
@@ -130,13 +128,12 @@ class DFlashDraftInputV2(SpecInput):
 
         self._ensure_prepare_length_buffers(bs, batch.device)
         assert self._prepare_batch_seq_lens_cpu_buf is not None
-        assert self._prepare_cur_kv_lens_cpu_buf is not None
-        assert self._prepare_nxt_kv_lens_cpu_buf is not None
-        assert self._prepare_cur_kv_lens_gpu_buf is not None
-        assert self._prepare_nxt_kv_lens_gpu_buf is not None
+        assert self._prepare_kv_lens_cpu_buf is not None
+        assert self._prepare_kv_lens_gpu_buf is not None
         batch_seq_lens_cpu_t = self._prepare_batch_seq_lens_cpu_buf[:bs]
-        cur_kv_lens_cpu_t = self._prepare_cur_kv_lens_cpu_buf[:bs]
-        nxt_kv_lens_cpu_t = self._prepare_nxt_kv_lens_cpu_buf[:bs]
+        kv_lens_cpu_t = self._prepare_kv_lens_cpu_buf[: 2 * bs]
+        cur_kv_lens_cpu_t = kv_lens_cpu_t[:bs]
+        nxt_kv_lens_cpu_t = kv_lens_cpu_t[bs:]
 
         # For DFLASH, each decode step needs a fixed-size verify block.
         block_size = int(get_spec().speculative_num_draft_tokens)
@@ -189,10 +186,10 @@ class DFlashDraftInputV2(SpecInput):
                 # The plan stream must wait for those writes before reading them.
                 plan_stream.wait_stream(caller_stream)
 
-            cur_kv_lens = self._prepare_cur_kv_lens_gpu_buf[:bs]
-            nxt_kv_lens = self._prepare_nxt_kv_lens_gpu_buf[:bs]
-            cur_kv_lens.copy_(cur_kv_lens_cpu_t, non_blocking=True)
-            nxt_kv_lens.copy_(nxt_kv_lens_cpu_t, non_blocking=True)
+            kv_lens = self._prepare_kv_lens_gpu_buf[: 2 * bs]
+            kv_lens.copy_(kv_lens_cpu_t, non_blocking=True)
+            cur_kv_lens = kv_lens[:bs]
+            nxt_kv_lens = kv_lens[bs:]
 
             alloc_for_spec_decode(
                 batch.tree_cache,

@@ -44,6 +44,7 @@ class DsparkDraftSampler:
         greedy_draft: bool,
         out=None,
         megakernel_sampler: Optional[Callable] = None,
+        sampling_params=None,
     ):
         self.model = model
         self.markov_head = model.markov_head
@@ -92,14 +93,32 @@ class DsparkDraftSampler:
         # [max_bs, gamma, vocab] step logits for the sampling accept, sized on
         # the first call; a greedy draft keeps none.
         self.step_logits: Optional[torch.Tensor] = None
+        # True while the verify epilogue reads this sampler's staged params.
+        self.shares_sampling_params = sampling_params is not None
+        if sampling_params is not None:
+            # The verify epilogue owns these (its graph is captured first) and
+            # accepts sampled batches from them in-graph.
+            assert sampling_params.temperatures.shape == (self.max_bs,)
+            self.params = self.params._replace(
+                temperatures=sampling_params.temperatures,
+                greedy_mask=sampling_params.greedy_mask,
+            )
+            if not greedy_draft:
+                assert sampling_params.step_logits is not None
+                assert sampling_params.step_logits.shape == (
+                    self.max_bs,
+                    self.gamma,
+                    _step_logits_width(model),
+                )
+                self.step_logits = sampling_params.step_logits
         self._megakernel_steps = None
         if megakernel_sampler is not None:
             self._megakernel_steps = self._build_megakernel_steps(megakernel_sampler)
 
     def _build_megakernel_steps(self, megakernel_sampler: Callable):
-        if not self.greedy_draft:
+        if not self.greedy_draft and self.step_logits is None:
             # The megakernel leaves temperature-0 rows' logits unwritten; a mixed accept
-            # still reads them.
+            # still reads them. (A buffer shared with the verify epilogue is zeroed.)
             self.step_logits = torch.zeros(
                 (self.max_bs, self.gamma, _step_logits_width(self.model)),
                 dtype=self.markov_head.step_logits_dtype(torch.bfloat16),
@@ -123,6 +142,23 @@ class DsparkDraftSampler:
         return steps
 
     def _step_logits(self, base_logits: torch.Tensor) -> torch.Tensor:
+        if (
+            self.step_logits is not None
+            and self.shares_sampling_params
+            and self.step_logits.dtype
+            != self.markov_head.step_logits_dtype(base_logits.dtype)
+        ):
+            # The epilogue's buffer was sized from the head's weights; keep the
+            # sampled accept eager rather than feed it mis-typed logits.
+            assert not torch.cuda.is_current_stream_capturing()
+            logger.warning(
+                "DSpark step logits are %s, the verify epilogue's buffer %s; "
+                "sampled batches keep the eager accept.",
+                self.markov_head.step_logits_dtype(base_logits.dtype),
+                self.step_logits.dtype,
+            )
+            self.shares_sampling_params = False
+            self.step_logits = None
         if self.step_logits is None:
             # The runner's warmup calls the tail eagerly before capture.
             # torch.cuda's capture query raises on XPU builds.
@@ -202,6 +238,26 @@ def _step_logits_width(model) -> int:
     return step_logits_width(model.markov_head, int(model.lm_head.org_vocab_size))
 
 
+def _base_logits_dtype(model) -> torch.dtype:
+    """Dtype of the block logits; a quantized head's packed `weight` carries no
+    logits dtype, its kernel emits the activation (draft param) dtype instead."""
+    weight = model.lm_head.weight
+    if weight.is_floating_point():
+        return weight.dtype
+    return next(model.markov_head.parameters()).dtype
+
+
+def alloc_step_logits(model, *, max_bs: int, gamma: int, device) -> torch.Tensor:
+    """The [max_bs, gamma, width] step-logits buffer the sampling accept reads,
+    allocated up front (before any graph capture)."""
+    markov_head = model.markov_head
+    return torch.empty(
+        (int(max_bs), int(gamma), _step_logits_width(model)),
+        dtype=markov_head.step_logits_dtype(_base_logits_dtype(model)),
+        device=device,
+    )
+
+
 def maybe_build_draft_sampler(
     *,
     draft_model,
@@ -213,6 +269,7 @@ def maybe_build_draft_sampler(
     greedy_draft: bool,
     tp_sync: SpecTpSync,
     out=None,
+    sampling_params=None,
 ) -> Optional[DsparkDraftSampler]:
     """Build the graph-folded draft sampler, or None (reason logged) when the
     proposal must stay eager."""
@@ -243,4 +300,5 @@ def maybe_build_draft_sampler(
         greedy_draft=greedy_draft,
         out=out,
         megakernel_sampler=megakernel_sampler,
+        sampling_params=sampling_params,
     )

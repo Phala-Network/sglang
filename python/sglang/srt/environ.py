@@ -553,6 +553,10 @@ class Envs:
     # draft: no step logits kept, lower acceptance at high temperatures.
     SGLANG_DSPARK_USE_GREEDY_DRAFT = EnvBool(False)
     SGLANG_DSPARK_FOLDED_PROPOSAL = EnvBool(True)
+    # With the folded proposal, the target-verify graph also accepts sampled
+    # (temperature-only) batches in-graph instead of falling back to the eager
+    # accept; greedy steps pay a little extra GPU time in the graph.
+    SGLANG_DSPARK_GRAPH_SAMPLED_ACCEPT = EnvBool(True)
     SGLANG_DSPARK_STACKED_CTX_KV = EnvBool(True)
     SGLANG_DSPARK_EMBED_IN_GRAPH = EnvBool(True)
     SGLANG_DSPARK_OPT_MARKOV_W2_BF16 = EnvBool(True)

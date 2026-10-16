@@ -60,6 +60,7 @@ from sglang.srt.speculative.dspark_components.dspark_draft import (
     make_next_draft_input,
 )
 from sglang.srt.speculative.dspark_components.dspark_draft_sampler import (
+    alloc_step_logits,
     maybe_build_draft_sampler,
 )
 from sglang.srt.speculative.dspark_components.dspark_kv_inject import (
@@ -81,6 +82,7 @@ from sglang.srt.speculative.dspark_components.dspark_sampling_accept_graph impor
 from sglang.srt.speculative.dspark_components.dspark_verify import (
     CommitInjectCtx,
     DsparkVerifyEpilogue,
+    FoldedSamplingParams,
     TargetVerifyExecutor,
     target_model_type,
     target_uses_fused_argmax,
@@ -411,8 +413,9 @@ class DSparkWorkerV2(BaseSpecWorker):
             and self._decode_graph_allowed
             and (is_cuda() or (is_cuda_alike() and target_is_dsv41))
         ):
+            max_bs = max(get_exec().graph.cuda_graph_config.decode.bs)
             self._verify_epilogue = DsparkVerifyEpilogue(
-                max_bs=max(get_exec().graph.cuda_graph_config.decode.bs),
+                max_bs=max_bs,
                 verify_num_draft_tokens=self.verify_num_draft_tokens,
                 device=self.device,
                 tp_sync=self._tp_sync,
@@ -429,6 +432,8 @@ class DSparkWorkerV2(BaseSpecWorker):
                     static_epilogue_supported
                     and envs.SGLANG_OPT_DSV41_DSPARK_POST_FOLD.get()
                 ),
+                sampling=self._folded_sampling_params(max_bs),
+                block_verification=get_spec().speculative_use_block_verification,
                 commit_ctx=CommitInjectCtx(
                     draft_model=self.draft_model,
                     block_pos_offsets=self._block_pos_offsets,
@@ -707,6 +712,36 @@ class DSparkWorkerV2(BaseSpecWorker):
                 self._verify_epilogue.draft_tokens_buf
                 if self._verify_epilogue is not None
                 else None
+            ),
+            sampling_params=(
+                self._verify_epilogue.sampling
+                if self._verify_epilogue is not None
+                else None
+            ),
+        )
+
+    def _folded_sampling_params(self, max_bs: int) -> Optional[FoldedSamplingParams]:
+        """Inputs for the verify epilogue's in-graph sampled accept; the folded
+        draft sampler stages into them. Allocated here because the epilogue's
+        graph is captured before the draft sampler first runs."""
+        if not (
+            envs.SGLANG_DSPARK_GRAPH_SAMPLED_ACCEPT.get()
+            and envs.SGLANG_DSPARK_FOLDED_PROPOSAL.get()
+            and self.gamma > 0
+            and getattr(self.draft_model, "markov_head", None) is not None
+        ):
+            return None
+        return FoldedSamplingParams(
+            temperatures=torch.ones((max_bs,), dtype=torch.float32, device=self.device),
+            greedy_mask=torch.ones((max_bs,), dtype=torch.bool, device=self.device),
+            step_logits=(
+                None
+                if self._greedy_draft
+                # Finite until the draft first writes it: greedy rows still
+                # run the (discarded) sampled accept over it.
+                else alloc_step_logits(
+                    self.draft_model, max_bs=max_bs, gamma=self.gamma, device=self.device
+                ).zero_()
             ),
         )
 
@@ -1126,10 +1161,19 @@ class DSparkWorkerV2(BaseSpecWorker):
         fold_eligible = (
             self._verify_executor.verify_epilogue is not None
             and proposal.folded
-            # The epilogue's in-graph accept is greedy (AcceptGreedy);
-            # sampling batches must take the eager accept path even when the
-            # draft proposal itself folded.
-            and (sampling_info is None or sampling_info.is_all_greedy)
+            # The epilogue accepts sampled rows in-graph only from the folded
+            # draft sampler's staged params, and without top-k / top-p.
+            and (
+                sampling_info is None
+                or sampling_info.is_all_greedy
+                or (
+                    self._verify_epilogue.sampling is not None
+                    and self._draft_sampler is not None
+                    and self._draft_sampler.shares_sampling_params
+                    and not sampling_info.need_top_k_sampling
+                    and not sampling_info.need_top_p_sampling
+                )
+            )
             and verify_logits_adjustments_are_noop(sampling_info)
             # The graph accept is greedy: a sampled simulated bonus stays in the graph
             # only when the epilogue draws it there (SGLANG_DSPARK_SIMULATE_FOLD).

@@ -558,6 +558,26 @@ class CommitInjectCtx(msgspec.Struct):
     resolve_engram_hasher: Optional[object] = None
 
 
+class FoldedSamplingParams(msgspec.Struct):
+    """Static per-request sampling inputs the folded draft sampler stages before
+    each draft replay (it writes into these buffers); with them the epilogue
+    also runs the sampled accept inside the target-verify graph."""
+
+    temperatures: torch.Tensor  # (max_bs,) float32, clamped > 0
+    greedy_mask: torch.Tensor  # (max_bs,) bool, rows that accept greedily
+    # (max_bs, gamma, width) markov-corrected step logits; None for a greedy
+    # (argmax) draft, which the accept treats as a one-hot distribution.
+    step_logits: Optional[torch.Tensor]
+
+
+class _FoldedSamplingInfo(msgspec.Struct):
+    # What the sampled accept reads from sampling_info; folding is only taken
+    # without top-k / top-p (dspark_worker_v2 fold_eligible).
+    temperatures: torch.Tensor
+    need_top_k_sampling: bool = False
+    need_top_p_sampling: bool = False
+
+
 class AcceptOuts(msgspec.Struct):
     correct_len: torch.Tensor
     bonus: torch.Tensor
@@ -596,6 +616,8 @@ class DsparkVerifyEpilogue:
         accept_tail_max_bs: int = 0,
         deferred_commit: Optional[DeferredContextCommit] = None,
         post_fold: bool = False,
+        sampling: Optional[FoldedSamplingParams] = None,
+        block_verification: bool = False,
     ) -> None:
         self.max_bs = int(max_bs)
         # SGLANG_OPT_DSV41_DSPARK_POST_FOLD: static graphs also scatter new seq lens
@@ -605,6 +627,8 @@ class DsparkVerifyEpilogue:
         # SGLANG_DSPARK_DEFER_CONTEXT_KV: static graphs join its forked projection and
         # stage the commit's stores into it; the next draft forward runs them.
         self.deferred_commit = deferred_commit
+        self.sampling = sampling
+        self._block_verification = bool(block_verification)
         # SGLANG_SIMULATE_ACC_LEN with a sampled bonus inside the graph too: the bonus
         # is drawn at the simulated correct_len from these buffers, which
         # begin_sim_bonus writes before replay (<= 0 temperature: argmax).
@@ -1058,6 +1082,14 @@ class DsparkVerifyEpilogue:
             cutoff_verify_lens=cutoff_verify_lens,
             fused_argmax=self._fused_argmax,
         )
+        if self.sampling is not None:
+            correct_len, bonus, cap_trim_lens = self._select_sampled(
+                candidates=candidates,
+                logits=logits,
+                draft_tokens=draft_tokens,
+                cutoff_verify_lens=cutoff_verify_lens,
+                greedy=(correct_len, bonus, cap_trim_lens),
+            )
         if self.simulate_fold:
             # Before the TP broadcast in build_accept_outs: every rank commits rank 0's draw.
             bonus = self.sim_bonus(logits, bs).to(bonus.dtype).view_as(bonus)
@@ -1077,6 +1109,54 @@ class DsparkVerifyEpilogue:
             block_accept_lens_out=self.read_block_accept_lens(bs),
         )
         return accept.commit_lens
+
+    def _select_sampled(
+        self, *, candidates, logits, draft_tokens, cutoff_verify_lens, greedy
+    ):
+        """The eager mixed accept (accept_draft_tokens), in-graph: sampled accept
+        for every row, greedy kept where greedy_mask is set. The ranks draw
+        different uniforms; build_accept_outs syncs the selected result."""
+        bs = candidates.shape[0]
+        params = self.sampling
+        temperatures = params.temperatures[:bs]
+        if params.step_logits is None:
+            # An argmax draft is one-hot: rejection accepts at the target probability.
+            draft_probs = torch.zeros(
+                (*draft_tokens.shape, logits.shape[-1]),
+                dtype=torch.float32,
+                device=logits.device,
+            )
+            draft_probs.scatter_(-1, draft_tokens.unsqueeze(-1), 1.0)
+        else:
+            step_logits = params.step_logits[:bs]
+            vocab = step_logits.shape[-1]
+            draft_probs = SoftmaxTemp.execute(
+                logits=step_logits.reshape(bs * self.gamma, vocab),
+                temperatures=temperatures,
+                rows_per_request=self.gamma,
+            ).view(bs, self.gamma, vocab)
+        sampled_len, sampled_bonus, sampled_trim = AcceptSampling.execute(
+            candidates=candidates,
+            target_logits=logits,
+            draft_probs=draft_probs,
+            sampling_info=_FoldedSamplingInfo(temperatures=temperatures),
+            draft_input=None,
+            gamma=self.gamma,
+            verify_num_draft_tokens=self.stride,
+            cutoff_verify_lens=cutoff_verify_lens,
+            block_verification=self._block_verification,
+        )
+        greedy_len, greedy_bonus, greedy_trim = greedy
+        selected = SelectMixedAccept.execute(
+            greedy_mask=params.greedy_mask[:bs],
+            greedy_len=greedy_len,
+            greedy_bonus=greedy_bonus,
+            greedy_trim=greedy_trim,
+            sampling_len=sampled_len,
+            sampling_bonus=sampled_bonus,
+            sampling_trim=sampled_trim,
+        )
+        return selected.correct_len, selected.bonus, selected.cap_trim_lens
 
     def _commit_inject(
         self, commit_lens, verify_lens, seq_lens, req_pool_indices, bs: int

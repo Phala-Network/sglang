@@ -17,6 +17,8 @@ import dataclasses
 import json
 import logging
 import sys
+import threading
+from contextlib import contextmanager
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
@@ -280,6 +282,10 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
 
         self._tokenizer_info = tokenizer_info
         if self.use_cache_budget:
+            self._compile_condition = threading.Condition()
+            self._compile_local = threading.local()
+            self._active_native_compiles = 0
+            self._native_clear_pending = False
             native_limit = envs.SGLANG_XGRAMMAR_CACHE_MAX_BYTES.get()
             native_threads = envs.SGLANG_XGRAMMAR_MAX_THREADS.get()
             if native_limit < 0 or native_threads < 1:
@@ -299,16 +305,52 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
         self.any_whitespace = any_whitespace
         self.max_whitespace_cnt = max_whitespace_cnt
 
-    def _compile(self, compile_fn, *args, **kwargs):
+    @contextmanager
+    def _compile_context(self):
+        if not self.use_cache_budget or getattr(self._compile_local, "active", False):
+            yield
+            return
+        with self._compile_condition:
+            while self._native_clear_pending:
+                self._compile_condition.wait()
+            self._active_native_compiles += 1
+        self._compile_local.active = True
+        self._compile_local.native_called = False
+        self._compile_local.native_failed = False
         try:
-            return compile_fn(*args, **kwargs)
+            yield
         finally:
-            # Python owns the bounded hot cache. Native LRU byte accounting does
-            # not include failed futures or all auxiliary caches. Clear those
-            # after each cold compile, including failures; existing ctx owners
-            # and matchers remain valid. XGrammar's caches support concurrent clear.
+            failed = sys.exc_info()[0] is not None or self._compile_local.native_failed
+            self._compile_local.active = False
+            with self._compile_condition:
+                self._active_native_compiles -= 1
+                # Return completed peers promptly, but drain this batch before
+                # admitting more native work. Failed native futures carry zero
+                # cache charge, so an endless overlap must not defer cleanup.
+                self._native_clear_pending |= self._compile_local.native_called
+                if self._active_native_compiles == 0 and self._native_clear_pending:
+                    try:
+                        self.grammar_compiler.clear_cache()
+                    except BaseException as exc:
+                        if not failed:
+                            raise
+                        logger.error(
+                            "XGrammar cache cleanup failed (%s)", type(exc).__name__
+                        )
+                    finally:
+                        self._native_clear_pending = False
+                        self._compile_condition.notify_all()
+
+    def _compile(self, compile_fn, *args, **kwargs):
+        with self._compile_context():
             if self.use_cache_budget:
-                self.grammar_compiler.clear_cache()
+                self._compile_local.native_called = True
+            try:
+                return compile_fn(*args, **kwargs)
+            except BaseException:
+                if self.use_cache_budget:
+                    self._compile_local.native_failed = True
+                raise
 
     @staticmethod
     def _compiler_error(exc):

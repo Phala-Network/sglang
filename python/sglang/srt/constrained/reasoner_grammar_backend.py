@@ -665,6 +665,9 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
             return (*key[:2], bool(require_reasoning))
         return key[:2]
 
+    def _compile_context(self):
+        return self.grammar_backend._compile_context()
+
     def _get_think_excluded_token_ids(
         self,
         reasoning_parser: ReasoningParser,

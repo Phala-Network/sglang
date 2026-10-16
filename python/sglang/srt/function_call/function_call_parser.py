@@ -430,4 +430,19 @@ class FunctionCallParser:
                 return ("json_schema", json_schema)
         except Exception as e:
             logger.error(f"Error getting structure constraint: {e}")
+            if isinstance(self.detector, KimiK3Detector):
+                try:
+                    from sglang.srt.function_call.kimik3_constraint_diagnostics import (
+                        constraint_failure_summary,
+                    )
+
+                    logger.error(
+                        "Kimi constraint failure metadata: %s",
+                        constraint_failure_summary(
+                            self.tools, tool_choice, self.tool_strict_level
+                        ),
+                    )
+                except Exception:
+                    # Diagnostics must not change the original rejection path.
+                    logger.error("Kimi constraint failure metadata unavailable")
             return None

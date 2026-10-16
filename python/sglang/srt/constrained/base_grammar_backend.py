@@ -21,6 +21,7 @@ import threading
 import time
 from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
@@ -345,30 +346,50 @@ class BaseGrammarBackend:
             else:
                 self._pending[future] = (entry[0], True)
 
+    def _compile_context(self):
+        """Reserve backend compilation admission before checking live waiters."""
+        return nullcontext()
+
     def _run_compile(self, flight_key, key, require_reasoning):
         with self._cache_lock:
-            source, waiters = self._inflight[flight_key]
+            _, waiters = self._inflight[flight_key]
             if all(
                 waiter.cancelled() or self._pending.get(waiter, (0, True))[1]
                 for waiter in waiters
             ):
+                del self._inflight[flight_key]
                 return None
-            self._budget_observations["compiles_started"] += 1
-            started = time.perf_counter()
-            self._budget_observations["compile_queue_seconds"] += (
-                started - source._grammar_submitted_at
-            )
+        started = None
         try:
-            return self._init_value_dispatch(key, require_reasoning)
+            with self._compile_context():
+                with self._cache_lock:
+                    source, waiters = self._inflight[flight_key]
+                    if all(
+                        waiter.cancelled() or self._pending.get(waiter, (0, True))[1]
+                        for waiter in waiters
+                    ):
+                        del self._inflight[flight_key]
+                        return None
+                    self._budget_observations["compiles_started"] += 1
+                    started = time.perf_counter()
+                    self._budget_observations["compile_queue_seconds"] += (
+                        started - source._grammar_submitted_at
+                    )
+                return self._init_value_dispatch(key, require_reasoning)
         finally:
-            elapsed = time.perf_counter() - started
-            with self._cache_lock:
-                self._budget_observations["compiles_finished"] += 1
-                self._budget_observations["compile_wall_seconds"] += elapsed
+            if started is not None:
+                elapsed = time.perf_counter() - started
+                with self._cache_lock:
+                    self._budget_observations["compiles_finished"] += 1
+                    self._budget_observations["compile_wall_seconds"] += elapsed
 
     def _complete_compile(self, flight_key, source):
         with self._cache_lock:
-            _, waiters = self._inflight.pop(flight_key)
+            waiters = source._grammar_waiters
+            del source._grammar_waiters
+            flight = self._inflight.get(flight_key)
+            if flight is not None and flight[0] is source:
+                self._inflight.pop(flight_key)
             for future in waiters:
                 if future.cancelled():
                     self._release_abandoned_compile(future)
@@ -546,6 +567,7 @@ class BaseGrammarBackend:
                     )
                     source._grammar_submitted_at = submitted_at
                     flight = self._inflight[flight_key] = (source, [])
+                    source._grammar_waiters = flight[1]
                 source, waiters = flight
                 waiters.append(future)
                 future._grammar_source = source

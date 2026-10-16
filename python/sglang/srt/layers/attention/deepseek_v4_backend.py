@@ -113,6 +113,7 @@ from sglang.srt.layers.dp_attention import (
 from sglang.srt.managers import cc_d2h_helper
 from sglang.srt.mem_cache.deepseek_v4_compress_state import KVAndScore
 from sglang.srt.mem_cache.deepseek_v4_memory_pool import DeepSeekV4TokenToKVPool
+from sglang.srt.model_executor.cuda_graph_buffer_registry import _grouped_foreach_copy_
 from sglang.srt.model_executor.forward_batch_info import (
     CaptureHiddenMode,
     ForwardBatch,
@@ -1150,9 +1151,10 @@ class DSV4RawVerifyMetadata:
     total_verify_tokens: int = 0
 
     def copy_(self, other: DSV4RawVerifyMetadata):
-        self.req_pool_indices.copy_(other.req_pool_indices)
-        self.seq_lens.copy_(other.seq_lens)
-        self.out_cache_loc.copy_(other.out_cache_loc)
+        _grouped_foreach_copy_(
+            [self.req_pool_indices, self.seq_lens, self.out_cache_loc],
+            [other.req_pool_indices, other.seq_lens, other.out_cache_loc],
+        )
 
         self.extend_seq_lens = other.extend_seq_lens
         self.seq_lens_cpu = other.seq_lens_cpu
@@ -1172,9 +1174,10 @@ class DSV4RawDecodeMetadata:
     out_cache_loc: torch.Tensor
 
     def copy_(self, other: DSV4RawDecodeMetadata):
-        self.req_pool_indices.copy_(other.req_pool_indices)
-        self.seq_lens.copy_(other.seq_lens)
-        self.out_cache_loc.copy_(other.out_cache_loc)
+        _grouped_foreach_copy_(
+            [self.req_pool_indices, self.seq_lens, self.out_cache_loc],
+            [other.req_pool_indices, other.seq_lens, other.out_cache_loc],
+        )
 
 
 def _replan_topk_in_graph(metadata) -> None:

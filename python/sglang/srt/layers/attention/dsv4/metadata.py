@@ -15,6 +15,7 @@ from sglang.srt.layers.attention.mqa_logits_utils import (
     mqa_logits_rows_per_chunk,
     mqa_logits_should_chunk,
 )
+from sglang.srt.model_executor.cuda_graph_buffer_registry import _grouped_foreach_copy_
 from sglang.srt.model_executor.runner_backend_utils.breakable_cuda_graph.context import (
     is_in_breakable_cuda_graph,
 )
@@ -131,19 +132,25 @@ def copy_metadata(
         dst_val = getattr(dst, field_name)
         assert src_val == dst_val, f"{field_name=} {src_val=} {dst_val=}"
 
+    dsts, srcs = [], []
     for field_name in copy_fields:
         src_val = getattr(src, field_name)
         dst_val = getattr(dst, field_name)
         if src_val is None and dst_val is None:
             continue
         assert dst_val is not None, f"{field_name=} {src_val=} {dst_val=}"
-        if hasattr(dst_val, "copy_"):
+        if isinstance(dst_val, torch.Tensor):
+            dsts.append(dst_val)
+            srcs.append(src_val)
+        elif hasattr(dst_val, "copy_"):
             dst_val.copy_(src_val)
         else:
             warnings.warn(
                 f"{field_name=} {type(dst_val)=} does not have copy_, use setattr"
             )
             setattr(dst, field_name, src_val)
+    # One kernel per dtype pair instead of one per field.
+    _grouped_foreach_copy_(dsts, srcs)
 
     for field_name in assign_fields:
         setattr(dst, field_name, getattr(src, field_name))

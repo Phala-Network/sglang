@@ -1584,7 +1584,8 @@ class Xing4_0Detector(BaseReasoningFormatDetector):
 
     ``force_nonempty_content=True`` acts as a safety net: if the model omits
     the ``</think>`` close tag, the accumulated reasoning is reclassified as
-    normal text so the answer is never lost in the text field.
+    normal text so the answer is never lost in the text field. Structured JSON
+    requests disable that fallback and treat markers in the response body as data.
     """
 
     def __init__(
@@ -1594,7 +1595,9 @@ class Xing4_0Detector(BaseReasoningFormatDetector):
         continue_final_message: bool = False,
         previous_content: str = "",
         force_nonempty_content: bool = True,
+        structured_output: bool = False,
     ):
+        self.structured_output = structured_output
         super().__init__(
             "<think>",
             "</think>",
@@ -1603,8 +1606,55 @@ class Xing4_0Detector(BaseReasoningFormatDetector):
             continue_final_message=continue_final_message,
             previous_content=previous_content,
             reasoning_default="enable_thinking",
-            force_nonempty_content=force_nonempty_content,
+            # Before the terminator, reasoning is not constrained by the JSON
+            # grammar. Never promote it to structured response content.
+            force_nonempty_content=force_nonempty_content and not structured_output,
         )
+
+    def detect_and_parse(self, text: str) -> StreamingParseResult:
+        if not self.structured_output:
+            return super().detect_and_parse(text)
+        if not self._in_reasoning:
+            return StreamingParseResult(normal_text=text)
+        text = self._strip_leading_think_start(text)
+        reasoning, end, body = text.partition(self.think_end_token)
+        return StreamingParseResult(
+            reasoning_text=reasoning, normal_text=body if end else ""
+        )
+
+    def parse_streaming_increment(self, new_text: str) -> StreamingParseResult:
+        if not self.structured_output:
+            return super().parse_streaming_increment(new_text)
+        # The request selects whether generation starts inside reasoning. Once
+        # closed, every subsequent byte is body data, including marker literals.
+        if not self._in_reasoning:
+            return StreamingParseResult(normal_text=new_text)
+        self._buffer += new_text
+        if not self.stripped_think_start:
+            if self.think_start_token.startswith(self._buffer):
+                if self._buffer != self.think_start_token:
+                    return StreamingParseResult()
+            self._buffer = self._strip_leading_think_start(self._buffer)
+            self.stripped_think_start = True
+        reasoning, end, body = self._buffer.partition(self.think_end_token)
+        if end:
+            self._buffer = ""
+            self._in_reasoning = False
+            return StreamingParseResult(reasoning_text=reasoning, normal_text=body)
+        if not self.stream_reasoning:
+            return StreamingParseResult()
+        holdback = self._ends_with_partial_token(self._buffer, self.think_end_token)
+        emit_end = len(self._buffer) - holdback
+        reasoning, self._buffer = self._buffer[:emit_end], self._buffer[emit_end:]
+        return StreamingParseResult(reasoning_text=reasoning)
+
+    def finish(self) -> StreamingParseResult:
+        if not self.structured_output:
+            return super().finish()
+        leftover, self._buffer = self._buffer, ""
+        if self._in_reasoning:
+            return StreamingParseResult(reasoning_text=leftover)
+        return StreamingParseResult(normal_text=leftover)
 
 
 class Apertus2509Detector(BaseReasoningFormatDetector):
@@ -2405,6 +2455,13 @@ class ReasoningParser:
                 effort = getattr(reasoning, "effort", None)
             if effort is not None:
                 kwargs["reasoning_effort"] = effort
+
+        if detector_class is Xing4_0Detector:
+            response_format = getattr(request, "response_format", None)
+            kwargs["structured_output"] = getattr(response_format, "type", None) in {
+                "json_schema",
+                "json_object",
+            }
 
         if tokenizer is not None:
             sig = inspect.signature(detector_class)

@@ -32,6 +32,7 @@ _SUBSCHEMA_MAP_KEYWORDS = frozenset(
 _XGRAMMAR_UNSUPPORTED_KEYWORDS = frozenset(
     {
         "contains",
+        "dependencies",
         "dependentRequired",
         "dependentSchemas",
         "else",
@@ -164,6 +165,77 @@ def _can_describe_string(schema: dict[str, Any]) -> bool:
     )
 
 
+_JSON_TYPES = frozenset({"null", "boolean", "number", "string", "array", "object"})
+
+
+def _explicit_types(schema: dict[str, Any]) -> frozenset[str]:
+    types = schema.get("type")
+    if isinstance(types, str):
+        types = [types]
+    if not isinstance(types, list) or not all(isinstance(t, str) for t in types):
+        return _JSON_TYPES
+    # Integer is a subset of number, not a disjoint JSON type.
+    normalized = frozenset("number" if t == "integer" else t for t in types)
+    return normalized if normalized <= _JSON_TYPES else _JSON_TYPES
+
+
+def _scalar_literals(schema: Any) -> list[Any] | None:
+    if not isinstance(schema, dict) or "$ref" in schema:
+        return None
+    if "const" in schema:
+        values = [schema["const"]]
+    else:
+        values = schema.get("enum")
+    if not isinstance(values, list) or any(
+        not isinstance(value, (str, int, float, bool, type(None))) for value in values
+    ):
+        return None
+    return values
+
+
+def _disjoint_scalar_literals(left: Any, right: Any) -> bool:
+    left_values, right_values = _scalar_literals(left), _scalar_literals(right)
+    if left_values is None or right_values is None:
+        return False
+    # JSON booleans are not numbers, unlike Python's bool/int equality.
+    return not any(
+        isinstance(a, bool) == isinstance(b, bool) and a == b
+        for a in left_values
+        for b in right_values
+    )
+
+
+def _provably_disjoint(left: Any, right: Any) -> bool:
+    """Small sufficient proof, not a general JSON Schema satisfiability solver."""
+    if left is False or right is False:
+        return True
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return False
+    if "$ref" in left or "$ref" in right:
+        return False
+    left_types, right_types = _explicit_types(left), _explicit_types(right)
+    if left_types.isdisjoint(right_types):
+        return True
+    if _disjoint_scalar_literals(left, right):
+        return True
+    if left_types != {"object"} or right_types != {"object"}:
+        return False
+    left_required, right_required = left.get("required"), right.get("required")
+    left_props, right_props = left.get("properties"), right.get("properties")
+    if not (
+        isinstance(left_required, list)
+        and isinstance(right_required, list)
+        and all(isinstance(name, str) for name in left_required + right_required)
+        and isinstance(left_props, dict)
+        and isinstance(right_props, dict)
+    ):
+        return False
+    return any(
+        _disjoint_scalar_literals(left_props.get(name), right_props.get(name))
+        for name in set(left_required).intersection(right_required)
+    )
+
+
 def validate_xgrammar_json_schema(schema: Any) -> None:
     """Reject constraints XGrammar 0.2.x accepts without fully enforcing."""
     for subschema, pointer in _iter_subschemas(schema):
@@ -173,6 +245,19 @@ def validate_xgrammar_json_schema(schema: Any) -> None:
                 "xgrammar",
                 pointer,
                 f"keyword(s) {', '.join(unsupported)} would be ignored",
+            )
+
+        branches = subschema.get("oneOf")
+        if isinstance(branches, list) and any(
+            not _provably_disjoint(left, right)
+            for index, left in enumerate(branches)
+            for right in branches[index + 1 :]
+        ):
+            _raise_unsupported(
+                "xgrammar",
+                f"{pointer}/oneOf",
+                "oneOf exclusivity cannot be proved; overlapping or unresolved "
+                "branches would be weakened to anyOf",
             )
 
         if _can_describe_string(subschema) and "format" in subschema:

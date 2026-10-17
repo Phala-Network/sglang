@@ -81,6 +81,9 @@ class DecodeMetadata:
 class PrefillMetadata:
     prefill_wrapper: BatchMLAPagedAttentionWrapper
     use_ragged: bool
+    # Physical rows for the BCG eager attention break, refreshed once per batch.
+    # The wrapper's page-size-1 table addresses this compact cache instead.
+    compact_kv_rows: Optional[torch.Tensor] = None
 
 
 # Reuse this workspace buffer across all flashinfer wrappers
@@ -476,7 +479,22 @@ class FlashInferMLAAttnBackend(AttentionBackend):
                 kv_indptr_cpu = self.fast_plan_kv_indptr_cpu[: bs + 1]
                 kv_len_arr_cpu = self.fast_plan_kv_len_arr_cpu[:bs]
 
-            self.indices_updater_prefill.update(
+            # BCG already runs attention eagerly between captured segments and
+            # refreshes this metadata before every replay. Dynamic unique/reindex
+            # is therefore safe here; Full/TC captured attention must retain its
+            # original static-pool addressing. Deduplicate once, not per layer.
+            compact_kv = (
+                not use_ragged
+                and is_in_breakable_cuda_graph()
+                and not is_in_tc_piecewise_cuda_graph()
+                and not get_parallel().dcp_enabled
+                and forward_batch.attn_dcp_metadata is None
+                and self.token_to_kv_pool.dtype == torch.float8_e4m3fn
+                and not getattr(self.token_to_kv_pool, "use_dsa", False)
+                and not forward_batch.forward_mode.is_draft_extend_v2()
+                and (forward_batch.attn_attend_prefix_cache is None or extend_no_prefix)
+            )
+            compact_kv_rows = self.indices_updater_prefill.update(
                 forward_batch.req_pool_indices,
                 forward_batch.seq_lens,
                 forward_batch.seq_lens_sum,
@@ -484,12 +502,13 @@ class FlashInferMLAAttnBackend(AttentionBackend):
                 prefill_wrapper_paged=self.prefill_wrapper_paged,
                 use_ragged=use_ragged,
                 attn_dcp_metadata=forward_batch.attn_dcp_metadata,
+                compact_kv=compact_kv,
                 qo_indptr_cpu=qo_indptr_cpu,
                 kv_indptr_cpu=kv_indptr_cpu,
                 kv_len_arr_cpu=kv_len_arr_cpu,
             )
             self.forward_metadata = PrefillMetadata(
-                self.prefill_wrapper_paged, use_ragged
+                self.prefill_wrapper_paged, use_ragged, compact_kv_rows
             )
 
     def init_cuda_graph_state(
@@ -748,8 +767,18 @@ class FlashInferMLAAttnBackend(AttentionBackend):
                 and forward_batch.attn_dcp_metadata.dcp_kv_buffer is not None
             ):
                 k_buf = forward_batch.attn_dcp_metadata.dcp_kv_buffer.to(q.dtype)
+                ckv_cache = k_buf[:, :, : layer.v_head_dim]
+                kpe_cache = k_buf[:, :, layer.v_head_dim :]
+            elif self.forward_metadata.compact_kv_rows is not None:
+                # Adapt upstream #34638: the existing kernel gathers logical
+                # FP8 rows directly into BF16 outputs, with no FP8 temporary.
+                ckv_cache, kpe_cache = self.token_to_kv_pool.get_mla_kv_buffer(
+                    layer, self.forward_metadata.compact_kv_rows, dst_dtype=q.dtype
+                )
             else:
                 k_buf = self.token_to_kv_pool.get_key_buffer(layer.layer_id).to(q.dtype)
+                ckv_cache = k_buf[:, :, : layer.v_head_dim]
+                kpe_cache = k_buf[:, :, layer.v_head_dim :]
             if q_rope is None:
                 qall = q.view(-1, layer.tp_q_head_num, layer.head_dim)
                 q, q_rope = (
@@ -760,8 +789,8 @@ class FlashInferMLAAttnBackend(AttentionBackend):
             o = prefill_wrapper_paged.run(
                 q,
                 q_rope,
-                k_buf[:, :, : layer.v_head_dim],
-                k_buf[:, :, layer.v_head_dim :],
+                ckv_cache,
+                kpe_cache,
                 out=o,
             )
 
@@ -1010,6 +1039,7 @@ class FlashInferMLAIndicesUpdaterPrefill:
         qo_indptr_cpu: Optional[torch.Tensor] = None,
         kv_indptr_cpu: Optional[torch.Tensor] = None,
         kv_len_arr_cpu: Optional[torch.Tensor] = None,
+        compact_kv: bool = False,
     ):
         if use_ragged:
             paged_kernel_lens = prefix_lens
@@ -1018,7 +1048,7 @@ class FlashInferMLAIndicesUpdaterPrefill:
             paged_kernel_lens = seq_lens
             paged_kernel_lens_sum = seq_lens_sum
 
-        self.call_begin_forward(
+        return self.call_begin_forward(
             self.prefill_wrapper_ragged,
             prefill_wrapper_paged,
             req_pool_indices,
@@ -1035,6 +1065,7 @@ class FlashInferMLAIndicesUpdaterPrefill:
             qo_indptr_cpu=qo_indptr_cpu,
             kv_indptr_cpu=kv_indptr_cpu,
             kv_len_arr_cpu=kv_len_arr_cpu,
+            compact_kv=compact_kv,
         )
 
     def call_begin_forward(
@@ -1056,9 +1087,11 @@ class FlashInferMLAIndicesUpdaterPrefill:
         qo_indptr_cpu: Optional[torch.Tensor] = None,
         kv_indptr_cpu: Optional[torch.Tensor] = None,
         kv_len_arr_cpu: Optional[torch.Tensor] = None,
+        compact_kv: bool = False,
     ):
         bs = len(seq_lens)
         sm_scale = self.scaling
+        compact_kv_rows = None
 
         if spec_info is None:
             assert len(seq_lens) == len(req_pool_indices)
@@ -1140,6 +1173,17 @@ class FlashInferMLAIndicesUpdaterPrefill:
                 # built from full seq_lens and don't match, so fall back to GPU.
                 qo_indptr_cpu = kv_indptr_cpu = kv_len_arr_cpu = None
 
+            if compact_kv:
+                assert not use_ragged and attn_dcp_metadata is None
+                # Pool pages may be scattered or shared. The existing wrapper
+                # already uses one entry per token (page_size=1), independently
+                # of the allocator's page64 layout. Keep CSR lengths unchanged;
+                # only remap physical row IDs to unique compact row IDs.
+                compact_kv_rows, kv_indices = torch.unique(
+                    kv_indices, sorted=True, return_inverse=True
+                )
+                kv_indices = kv_indices.to(torch.int32)
+
             plan_qo_indptr = qo_indptr if qo_indptr_cpu is None else qo_indptr_cpu
             plan_kv_indptr = kv_indptr if kv_indptr_cpu is None else kv_indptr_cpu
             plan_kv_len_arr = (
@@ -1162,6 +1206,8 @@ class FlashInferMLAIndicesUpdaterPrefill:
                 self.q_data_type,
                 self.data_type,
             )
+
+        return compact_kv_rows
 
 
 class FlashInferMLAMultiStepDraftBackend:

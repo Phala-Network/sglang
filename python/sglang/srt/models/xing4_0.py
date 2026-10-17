@@ -42,6 +42,7 @@ from sglang.srt.configs.model_config import is_deepseek_dsa
 from sglang.srt.configs.xing4_0 import Xing4_0Config
 from sglang.srt.distributed import attention_tensor_model_parallel_all_reduce
 from sglang.srt.distributed.parallel_state import get_pp_group
+from sglang.srt.environ import envs
 from sglang.srt.eplb.expert_location import ModelConfigForExpertLocation
 from sglang.srt.layers.layer_boundary import (
     AttentionInputs,
@@ -178,6 +179,97 @@ def mhc_post(
 logger = logging.getLogger(__name__)
 
 
+def _mhc_reference_pre_fake(
+    residual: torch.Tensor,
+    fn: torch.Tensor,
+    hc_scale: torch.Tensor,
+    hc_base: torch.Tensor,
+    rms_eps: float,
+    hc_eps: float,
+    sinkhorn_iters: int,
+    clamp_min: float,
+    clamp_max: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    rows, streams, hidden = residual.shape
+    return (
+        residual.new_empty(rows, streams, 1),
+        residual.new_empty(rows, streams, streams),
+        residual.new_empty(rows, hidden),
+    )
+
+
+def _mhc_reference_pre(
+    residual: torch.Tensor,
+    fn: torch.Tensor,
+    hc_scale: torch.Tensor,
+    hc_base: torch.Tensor,
+    rms_eps: float,
+    hc_eps: float,
+    sinkhorn_iters: int,
+    clamp_min: float,
+    clamp_max: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Diagnostic HF revision 5f65c589 mHC math, including BF16 boundaries.
+
+    This opaque ATen adapter preserves the official rounding under compilation;
+    it does not change or call the fused mHC kernels.
+    """
+    dtype = residual.dtype
+    if dtype != torch.bfloat16 or any(
+        tensor.dtype != dtype for tensor in (fn, hc_scale, hc_base)
+    ):
+        raise ValueError("Xing mHC reference requires BF16 inputs and loaded operands")
+    streams = residual.shape[1]
+    flat = residual.flatten(start_dim=1).float()
+    flat = flat * torch.rsqrt(flat.square().mean(-1, keepdim=True) + rms_eps)
+    pre_w, post_w, comb_w = (
+        torch.nn.functional.linear(flat.to(dtype), fn.to(dtype))
+        .float()
+        .split([streams, streams, streams * streams], dim=-1)
+    )
+    pre_b, post_b, comb_b = hc_base.split([streams, streams, streams * streams])
+    pre_scale, post_scale, comb_scale = hc_scale.unbind(0)
+    pre = torch.sigmoid(pre_w * pre_scale + pre_b)
+    post = 2 * torch.sigmoid(post_w * post_scale + post_b)
+    comb_logits = comb_w.view(-1, streams, streams) * comb_scale + comb_b.view(
+        streams, streams
+    )
+    comb_logits = torch.clamp(comb_logits, min=clamp_min, max=clamp_max)
+    comb_max = comb_logits.amax(dim=-1, keepdim=True)
+    comb = torch.exp(comb_logits - comb_max)
+    for _ in range(sinkhorn_iters):
+        comb = comb / (comb.sum(dim=-1, keepdim=True) + hc_eps)
+        comb = comb / (comb.sum(dim=-2, keepdim=True) + hc_eps)
+    collapsed = (pre.unsqueeze(-1).to(dtype) * residual).sum(dim=1)
+    return post.to(dtype).unsqueeze(-1), comb.to(dtype), collapsed.to(dtype)
+
+
+mhc_reference_pre = register_custom_op(
+    _mhc_reference_pre,
+    op_name="xing4_0_mhc_reference_pre",
+    mutates_args=[],
+    fake_impl=_mhc_reference_pre_fake,
+)
+
+
+def _mhc_reference_post(
+    x: torch.Tensor,
+    residual: torch.Tensor,
+    post: torch.Tensor,
+    comb: torch.Tensor,
+) -> torch.Tensor:
+    """Official BF16 multiply, matmul, then BF16 addition (comb is untransposed)."""
+    return post * x.unsqueeze(-2) + torch.matmul(comb, residual)
+
+
+mhc_reference_post = register_custom_op(
+    _mhc_reference_post,
+    op_name="xing4_0_mhc_reference_post",
+    mutates_args=[],
+    out_shape="residual",
+)
+
+
 class mHCModule(nn.Module):
     """mHC (Manifold-constrained Hyper-Connection) module.
 
@@ -196,6 +288,11 @@ class mHCModule(nn.Module):
         self.n = config.hc_mult
         self.hidden_size = config.hidden_size
         self.sinkhorn_iterations = config.hc_sinkhorn_iters
+        self.use_hf_reference = envs.SGLANG_DIAGNOSTIC_XING_MHC_REFERENCE.get()
+        if self.use_hf_reference:
+            self.reference_norm_eps = config.rms_norm_eps
+            self.reference_clamp_min = float(config.mhc_h_res_clamp_min)
+            self.reference_clamp_max = float(config.mhc_h_res_clamp_max)
 
         # mHC kernel hyper-parameters
         self.norm_eps = 1e-6
@@ -255,6 +352,24 @@ class mHCModule(nn.Module):
         if residual.dtype != torch.bfloat16:
             residual = residual.to(torch.bfloat16)
 
+        if self.use_hf_reference:
+            post_mix, comb_mix, layer_input = mhc_reference_pre(
+                residual,
+                self.hc_fn,
+                self.hc_scale,
+                self.hc_base,
+                self.reference_norm_eps,
+                self.pre_eps,
+                self.sinkhorn_iterations,
+                self.reference_clamp_min,
+                self.reference_clamp_max,
+            )
+            return (
+                layer_input.view(S, B, C),
+                comb_mix.transpose(-1, -2).contiguous(),
+                post_mix,
+            )
+
         num_tokens = residual.shape[0]
         if num_tokens == 0:
             layer_input = torch.empty(
@@ -312,6 +427,15 @@ class mHCModule(nn.Module):
         residual_flat = original_residual.reshape(S * B, n, C)
         if residual_flat.dtype != torch.bfloat16:
             residual_flat = residual_flat.to(torch.bfloat16)
+
+        if self.use_hf_reference:
+            out = mhc_reference_post(
+                x_flat,
+                residual_flat,
+                h_post,
+                h_res.view(S * B, n, n).transpose(-1, -2).contiguous(),
+            )
+            return out.view(S, B, n * C)
 
         # comb_mix is stored flattened [S*B, n*n]; view as 3D for mhc_post.
         comb_res_mix = h_res.view(S * B, n, n)

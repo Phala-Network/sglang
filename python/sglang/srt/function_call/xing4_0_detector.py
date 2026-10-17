@@ -136,9 +136,9 @@ def _parse_payload(payload: str, tools: Sequence[Tool]) -> tuple[str, Dict[str, 
 
     for key, value in PARAM_REGEX.findall(params_text):
         arg_key = key.strip()
-        arg_val = value.strip()
+        arg_val = value
         if not _is_string_type(tool_name, arg_key, tools):
-            arg_val = _deserialize(arg_val)
+            arg_val = _deserialize(arg_val.strip())
         arguments[arg_key] = arg_val
 
     return tool_name, arguments
@@ -169,6 +169,7 @@ class Xing4_0Detector(BaseFormatDetector):
         self.bot_token = TOOL_START_TOKEN
         self.eot_token = TOOL_END_TOKEN
         self._buffer = ""
+        self._next_stream_call_index = 0
 
     def has_tool_call(self, text: str) -> bool:
         return self.bot_token in text
@@ -207,7 +208,6 @@ class Xing4_0Detector(BaseFormatDetector):
         self._buffer += new_text
         content = ""
         calls: List[ToolCallItem] = []
-        tool_indices = self._get_tool_indices(tools)
 
         while True:
             start_idx = self._buffer.find(self.bot_token)
@@ -234,7 +234,12 @@ class Xing4_0Detector(BaseFormatDetector):
             if not extracted.calls:
                 content += tool_text
             else:
-                calls.extend(extracted.calls)
+                # Streaming indices identify calls in this response, not tool
+                # definitions. Repeated calls to one tool must stay distinct.
+                for call in extracted.calls:
+                    call.tool_index = self._next_stream_call_index
+                    self._next_stream_call_index += 1
+                    calls.append(call)
 
             self._buffer = self._buffer[end_pos:]
 

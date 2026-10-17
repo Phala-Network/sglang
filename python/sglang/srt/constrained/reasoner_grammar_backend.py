@@ -21,7 +21,7 @@ import torch
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from sglang.srt.environ import envs
-from sglang.srt.parser.reasoning_parser import ReasoningParser
+from sglang.srt.parser.reasoning_parser import ReasoningParser, Xing4_0Detector
 from sglang.srt.utils.token_sequence_matcher import TokenSequenceMatcher
 
 from .base_grammar_backend import (
@@ -48,12 +48,16 @@ class ReasonerGrammarObject(BaseGrammarObject):
         allocate_vocab_mask_fn=None,
         move_vocab_mask_fn=None,
         apply_vocab_mask_fn=None,
+        think_stop_token_ids: Optional[List[int]] = None,
     ):
         super().__init__()
         self.grammar = grammar
         self.think_end_ids = tuple(think_end_ids)
         self._think_end_matcher = TokenSequenceMatcher(self.think_end_ids)
         self.think_excluded_token_ids = think_excluded_token_ids
+        self.think_stop_token_ids = list(think_stop_token_ids or [])
+        if set(self.think_stop_token_ids).intersection(self.think_end_ids):
+            raise ValueError("reasoning stop tokens overlap the reasoning terminator")
         self.min_think_tokens = min_think_tokens
         self.max_think_tokens = max_think_tokens
         self.enable_token_filter = enable_token_filter
@@ -68,6 +72,8 @@ class ReasonerGrammarObject(BaseGrammarObject):
         self._thinking_match_history: List[int] = []
 
     def maybe_init_reasoning(self, reasoning: bool):
+        if reasoning and self.think_stop_token_ids and self.token_filter_fn is None:
+            raise ValueError("Xing4 JSON reasoning requires token filtering")
         self._matched_think_end_tokens = 0
         self._thinking_match_history.clear()
         if reasoning:
@@ -93,6 +99,8 @@ class ReasonerGrammarObject(BaseGrammarObject):
                 "request reasoning terminator must be selected before decoding"
             )
 
+        if set(self.think_stop_token_ids).intersection(token_ids):
+            raise ValueError("reasoning stop tokens overlap the reasoning terminator")
         self.think_end_ids = token_ids
         self._think_end_matcher = TokenSequenceMatcher(token_ids)
         self._matched_think_end_tokens = 0
@@ -182,11 +190,17 @@ class ReasonerGrammarObject(BaseGrammarObject):
 
     def _do_token_filter(self, vocab_mask, token_ids, idx, is_allowed=True):
         if self.token_filter_fn is not None:
+            if not is_allowed and self.think_stop_token_ids:
+                token_ids = list(set(token_ids).union(self.think_stop_token_ids))
             self.token_filter_fn(vocab_mask, token_ids, idx, is_allowed)
 
     def fill_vocab_mask(self, vocab_mask: torch.Tensor, idx: int) -> None:
         if self._is_thinking():
             if not self.enable_token_filter:
+                if self.think_stop_token_ids:
+                    self._do_token_filter(
+                        vocab_mask, self.think_stop_token_ids, idx, is_allowed=False
+                    )
                 return
             if self._must_think_more():
                 blocked_token_ids = [self.think_end_ids[self._matched_think_end_tokens]]
@@ -199,10 +213,10 @@ class ReasonerGrammarObject(BaseGrammarObject):
                     is_allowed=False,
                 )
             elif self._can_think_more():
-                if self.think_excluded_token_ids is not None:
+                if self.think_excluded_token_ids is not None or self.think_stop_token_ids:
                     self._do_token_filter(
                         vocab_mask,
-                        self.think_excluded_token_ids,
+                        self.think_excluded_token_ids or [],
                         idx,
                         is_allowed=False,
                     )
@@ -249,6 +263,7 @@ class ReasonerGrammarObject(BaseGrammarObject):
             allocate_vocab_mask_fn=self.allocate_vocab_mask_fn,
             move_vocab_mask_fn=self.move_vocab_mask_fn,
             apply_vocab_mask_fn=self.apply_vocab_mask_fn,
+            think_stop_token_ids=self.think_stop_token_ids,
         )
         new_obj.tokens_in_think = self.tokens_in_think
         new_obj.tokens_after_end = self.tokens_after_end
@@ -298,6 +313,13 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
     ):
         super().__init__()
         self.grammar_backend = grammar_backend
+        self._xing4_json_stop_ids = None
+        if isinstance(reasoning_parser.detector, Xing4_0Detector):
+            eos = getattr(tokenizer, "eos_token_id", None)
+            eos_ids = [eos] if isinstance(eos, int) else list(eos or [])
+            self._xing4_json_stop_ids = eos_ids + list(
+                getattr(tokenizer, "additional_stop_token_ids", None) or []
+            )
         think_end_ids = tokenizer.encode(
             reasoning_parser.detector.think_end_token, add_special_tokens=False
         )
@@ -350,15 +372,26 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
         return excluded_ids
 
     def _make_grammar_object(
-        self, grammar: Optional[BaseGrammarObject], reasoning: bool
+        self,
+        grammar: Optional[BaseGrammarObject],
+        reasoning: bool,
+        think_stop_token_ids: Optional[List[int]] = None,
     ) -> ReasonerGrammarObject:
+        token_filter_fn = self._token_filter_fn
+        if think_stop_token_ids:
+            token_filter_fn = (
+                self.grammar_backend.set_token_filter
+                if self.grammar_backend.is_support_token_filter
+                else None
+            )
         obj = ReasonerGrammarObject(
             grammar=grammar,
             think_end_ids=self.think_end_ids,
             think_excluded_token_ids=self.think_excluded_token_ids,
             max_think_tokens=self.max_think_tokens,
             enable_token_filter=self.enable_token_filter,
-            token_filter_fn=self._token_filter_fn,
+            token_filter_fn=token_filter_fn,
+            think_stop_token_ids=think_stop_token_ids,
             allocate_vocab_mask_fn=self.grammar_backend.allocate_vocab_mask,
             move_vocab_mask_fn=self.grammar_backend.move_vocab_mask,
             apply_vocab_mask_fn=self.grammar_backend.apply_vocab_mask,
@@ -392,4 +425,13 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
                 .model_dump(by_alias=True)
             ):
                 return ret
-        return self._make_grammar_object(ret, reasoning)
+        stop_ids = None
+        # Cache keys omit reasoning mode. Keep the JSON policy on nonthinking
+        # wrappers too; maybe_init_reasoning may enable thinking on a later copy.
+        if key[0] == "json" and self._xing4_json_stop_ids is not None:
+            stop_ids = self._xing4_json_stop_ids
+            if not stop_ids or any(type(t) is not int or t < 0 for t in stop_ids):
+                raise ValueError("Xing4 JSON reasoning requires valid EOS token IDs")
+            if reasoning and not self.grammar_backend.is_support_token_filter:
+                raise ValueError("Xing4 JSON reasoning requires token filtering")
+        return self._make_grammar_object(ret, reasoning, stop_ids)

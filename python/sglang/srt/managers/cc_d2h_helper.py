@@ -47,7 +47,13 @@ def _helper_main(device, staging, event_handles, shm_name, slots, slot_bytes, co
     )
     pinned = torch.empty(slots * slot_bytes, dtype=torch.uint8, pin_memory=True)
     stream = torch.cuda.Stream(device)
-    while (msg := conn.recv()) is not None:
+    while True:
+        try:
+            msg = conn.recv()
+        except EOFError:  # the scheduler process exited
+            return
+        if msg is None:
+            return
         slot, seq, nbytes = msg
         lo, hi = slot * slot_bytes, slot * slot_bytes + nbytes
         stream.wait_event(events[slot])

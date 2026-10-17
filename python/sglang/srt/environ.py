@@ -1562,6 +1562,8 @@ class Envs:
     SGLANG_OPT_DEEPGEMM_HC_PRENORM = EnvBool(True)
     # Fixed-prefix diagnostic only; preserve official Xing mHC BF16 math.
     SGLANG_DIAGNOSTIC_XING_MHC_REFERENCE = EnvBool(False)
+    # Keep official ATen sums; compile only epsilon-add/divide.
+    SGLANG_OPT_XING_MHC_REFERENCE_POINTWISE_COMPILE = EnvBool(False)
     SGLANG_OPT_USE_TILELANG_MHC_PRE = EnvBool(True)
     SGLANG_OPT_USE_TILELANG_MHC_POST = EnvBool(True)
     SGLANG_OPT_USE_FLASHINFER_MHC = EnvBool(False)

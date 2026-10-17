@@ -65,12 +65,15 @@ from sglang.srt.layers.vocab_parallel_embedding import (
     VocabParallelEmbedding,
 )
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, PPProxyTensors
+from sglang.srt.model_executor.runner_utils.capture_mode import (
+    get_is_capture_mode,
+)
 from sglang.srt.models import deepseek_v2
 from sglang.srt.models.deepseek_common.deepseek_weight_loader import (
     DeepseekV2WeightLoaderMixin,
 )
 from sglang.srt.runtime_context import get_forward, get_parallel
-from sglang.srt.utils import add_prefix, is_npu, make_layers
+from sglang.srt.utils import add_prefix, get_compiler_backend, is_npu, make_layers
 from sglang.srt.utils.custom_op import register_custom_op
 
 _is_npu = is_npu()
@@ -198,6 +201,51 @@ def _mhc_reference_pre_fake(
     )
 
 
+def _mhc_reference_normalize(
+    comb: torch.Tensor, denominator: torch.Tensor, hc_eps: float
+) -> torch.Tensor:
+    """Fuse only the original FP32 epsilon-add and rounded division."""
+    return comb / (denominator + hc_eps)
+
+
+_MHC_REFERENCE_POINTWISE_COMPILE_OPTIONS = {
+    "emulate_precision_casts": True,
+    "eager_numerics.division_rounding": True,
+    "epilogue_fusion": False,
+    "cpp.enable_unsafe_math_opt_flag": False,
+    "cpp.enable_floating_point_contract_flag": "off",
+    "max_autotune": False,
+    "max_autotune_pointwise": False,
+    "max_autotune_gemm": False,
+    "coordinate_descent_tuning": False,
+    "triton.autotune_pointwise": False,
+    "triton.autotune_at_compile_time": False,
+}
+_mhc_reference_normalize_compiled = None
+if envs.SGLANG_OPT_XING_MHC_REFERENCE_POINTWISE_COMPILE.get():
+    _mhc_reference_normalize_compiled = torch.compile(
+        _mhc_reference_normalize,
+        backend=get_compiler_backend(),
+        dynamic=True,
+        fullgraph=True,
+        options=_MHC_REFERENCE_POINTWISE_COMPILE_OPTIONS,
+    )
+
+
+def _mhc_reference_sinkhorn_pointwise(
+    comb: torch.Tensor, hc_eps: float, sinkhorn_iters: int
+) -> torch.Tensor:
+    """Keep both original ATen reductions outside the compiled pointwise body."""
+    for _ in range(sinkhorn_iters):
+        comb = _mhc_reference_normalize_compiled(
+            comb, comb.sum(dim=-1, keepdim=True), hc_eps
+        )
+        comb = _mhc_reference_normalize_compiled(
+            comb, comb.sum(dim=-2, keepdim=True), hc_eps
+        )
+    return comb
+
+
 def _mhc_reference_pre(
     residual: torch.Tensor,
     fn: torch.Tensor,
@@ -237,9 +285,16 @@ def _mhc_reference_pre(
     comb_logits = torch.clamp(comb_logits, min=clamp_min, max=clamp_max)
     comb_max = comb_logits.amax(dim=-1, keepdim=True)
     comb = torch.exp(comb_logits - comb_max)
-    for _ in range(sinkhorn_iters):
-        comb = comb / (comb.sum(dim=-1, keepdim=True) + hc_eps)
-        comb = comb / (comb.sum(dim=-2, keepdim=True) + hc_eps)
+    if (
+        _mhc_reference_normalize_compiled is not None
+        and comb.shape[0] != 0
+        and get_is_capture_mode()
+    ):
+        comb = _mhc_reference_sinkhorn_pointwise(comb, hc_eps, sinkhorn_iters)
+    else:
+        for _ in range(sinkhorn_iters):
+            comb = comb / (comb.sum(dim=-1, keepdim=True) + hc_eps)
+            comb = comb / (comb.sum(dim=-2, keepdim=True) + hc_eps)
     collapsed = (pre.unsqueeze(-1).to(dtype) * residual).sum(dim=1)
     return post.to(dtype).unsqueeze(-1), comb.to(dtype), collapsed.to(dtype)
 

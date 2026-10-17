@@ -208,6 +208,38 @@ def _mhc_reference_normalize(
     return comb / (denominator + hc_eps)
 
 
+def _mhc_reference_sinkhorn_sum4_tree(
+    comb: torch.Tensor, hc_eps: float, sinkhorn_iters: int
+) -> torch.Tensor:
+    """Preserve the pinned CUDA sum4 association for finite nonnegative comb."""
+    for _ in range(sinkhorn_iters):
+        a, b, c, d = comb.unbind(dim=-1)
+        row_sum = ((a + c) + (b + d)).unsqueeze(-1)
+        comb = comb / (row_sum + hc_eps)
+        a, b, c, d = comb.unbind(dim=-2)
+        column_sum = (((a + b) + c) + d).unsqueeze(-2)
+        comb = comb / (column_sum + hc_eps)
+    return comb
+
+
+def _mhc_reference_in_sum4_domain(
+    comb: torch.Tensor, hc_eps: float, sinkhorn_iters: int
+) -> bool:
+    """Metadata qualification only; finite nonnegative values follow model math."""
+    return (
+        comb.device.type == "cuda"
+        and comb.layout == torch.strided
+        and comb.dtype == torch.float32
+        and not comb.requires_grad
+        and comb.dim() == 3
+        and 1 <= comb.shape[0] <= 8192
+        and comb.shape[1:] == (4, 4)
+        and comb.stride() == (16, 4, 1)
+        and hc_eps == 1e-6
+        and sinkhorn_iters == 20
+    )
+
+
 _MHC_REFERENCE_POINTWISE_COMPILE_OPTIONS = {
     "emulate_precision_casts": True,
     "eager_numerics.division_rounding": True,
@@ -222,9 +254,17 @@ _MHC_REFERENCE_POINTWISE_COMPILE_OPTIONS = {
     "triton.autotune_at_compile_time": False,
 }
 _mhc_reference_normalize_compiled = None
+_mhc_reference_sinkhorn_sum4_compiled = None
 if envs.SGLANG_OPT_XING_MHC_REFERENCE_POINTWISE_COMPILE.get():
     _mhc_reference_normalize_compiled = torch.compile(
         _mhc_reference_normalize,
+        backend=get_compiler_backend(),
+        dynamic=True,
+        fullgraph=True,
+        options=_MHC_REFERENCE_POINTWISE_COMPILE_OPTIONS,
+    )
+    _mhc_reference_sinkhorn_sum4_compiled = torch.compile(
+        _mhc_reference_sinkhorn_sum4_tree,
         backend=get_compiler_backend(),
         dynamic=True,
         fullgraph=True,
@@ -286,6 +326,11 @@ def _mhc_reference_pre(
     comb_max = comb_logits.amax(dim=-1, keepdim=True)
     comb = torch.exp(comb_logits - comb_max)
     if (
+        _mhc_reference_sinkhorn_sum4_compiled is not None
+        and _mhc_reference_in_sum4_domain(comb, hc_eps, sinkhorn_iters)
+    ):
+        comb = _mhc_reference_sinkhorn_sum4_compiled(comb, hc_eps, sinkhorn_iters)
+    elif (
         _mhc_reference_normalize_compiled is not None
         and comb.shape[0] != 0
         and get_is_capture_mode()

@@ -41,6 +41,7 @@ PY
 esac
 cd "$root"
 python -m pytest -q --junitxml="${JUNIT_XML:-/tmp/xing4-cpu.xml}" \
+  test/registered/unit/function_call/test_xing4_tool_streaming.py \
   test/registered/unit/configs/test_xing_request_static_yarn_policy.py \
   test/registered/unit/model_executor/test_xing_request_static_yarn_torch.py \
   test/registered/unit/managers/test_xing_request_static_yarn_lifecycle.py \

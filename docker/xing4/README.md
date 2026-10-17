@@ -61,3 +61,14 @@ mocked at production-signature boundaries. They preserve official dimensions
 and cover BF16/FP8 config, native/dynamic profiles and empty/nonempty rows.
 The unified [ordered patch stack](https://github.com/Phala-Network/sglang-serving-patches/tree/codex/xing4-v0521-20261014/versions/v0.5.21)
 preserves the published49-step prefix. No embedded Governor is selected.
+
+## Native Xing production image
+
+The fixed RC5.2 parent retains stable v0.5.21 dependencies, including
+`mooncake-transfer-engine-cuda13==0.3.13`. This recipe combines the exact
+Xing4 tool-streaming repair with the native Static64 EAGLE public-budget
+repair; request-static dynamic YaRN and kernel implementations are unchanged.
+The same resulting image serves SGLang, direct `hf download`, Mooncake
+`mooncake_master`, and `python -m mooncake.mooncake_store_service`.
+The existing committed-only exporter and wheel-RECORD installer remain the
+source of installed runtime bytes.

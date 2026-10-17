@@ -465,6 +465,8 @@ class MultimemAllGatherer:
     ):
         self._max_tokens = int(max_tokens)
         self._skip_entry_sync = skip_entry_sync
+        self._fallback = None
+        self._fallback_key = None
         # None => always NCCL; _UNINIT => build on first eager call.
         self._state = self._UNINIT if enabled else None
         if self._state is self._UNINIT:
@@ -515,10 +517,30 @@ class MultimemAllGatherer:
                 skip_entry_sync=self._skip_entry_sync,
                 safe=False,
             )
-        # Lazy import avoids a module-load dependency on the distributed facade.
-        from sglang.srt.distributed import tensor_model_parallel_all_gather
+        if x.dim() != 2 or not x.is_contiguous():
+            # Lazy import avoids a module-load dependency on the distributed facade.
+            from sglang.srt.distributed import tensor_model_parallel_all_gather
 
-        return tensor_model_parallel_all_gather(x, dim=-1)
+            return tensor_model_parallel_all_gather(x, dim=-1)
+        return self._fallback_gather(x)(x)
+
+    def _fallback_gather(self, x: torch.Tensor):
+        # NVLink push gather where the custom all-reduce has a push plane (e.g. no
+        # multicast under GPU CC), NCCL otherwise; same layout as an all-gather on
+        # the last dim.
+        key = (x.shape[-1], x.dtype)
+        if self._fallback_key != key:
+            # Lazy imports avoid a module-load dependency on the distributed facade.
+            from sglang.srt.distributed import get_tp_group
+            from sglang.srt.distributed.device_communicators.vocab_gather import (
+                make_vocab_gather,
+            )
+
+            self._fallback = make_vocab_gather(
+                get_tp_group(), local_width=x.shape[-1], dtype=x.dtype, symm_rows=0
+            )
+            self._fallback_key = key
+        return self._fallback
 
     def _build(self, x: torch.Tensor):
         if x.dim() != 2 or x.dtype != torch.bfloat16:

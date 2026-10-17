@@ -11,6 +11,7 @@ from sglang.kernels.ops.speculative.spec_tree import (
     sgl_build_tree_kernel_efficient_triton,
     verify_tree_greedy_kernel_triton,
 )
+from sglang.srt.environ import envs
 from sglang.srt.hardware_backend.npu.dsv4.dsv4_common_hooks import (
     maybe_build_dsv4_verify_bundle,
 )
@@ -816,6 +817,28 @@ def eagle_sample(
     ):
         target_predict = torch.argmax(next_token_logits, dim=-1)
         target_predict = target_predict.reshape(bs, verify_input.draft_token_num)
+        budget_rows = []
+        if grammar_mask is not None and envs.SGLANG_ENABLE_JSON_BUDGET_CLOSE.get():
+            from sglang.srt.constrained.json_budget_close import (
+                maybe_apply_json_budget_close,
+            )
+
+            original_target_predict = target_predict
+            target_predict = maybe_apply_json_budget_close(
+                verify_input,
+                batch,
+                target_predict,
+                tp_size=get_parallel().tp_size,
+                pp_size=get_parallel().pp_size,
+            )
+            if target_predict is not original_target_predict:
+                budget_rows = (
+                    (target_predict != original_target_predict)
+                    .any(dim=1)
+                    .nonzero()
+                    .flatten()
+                    .tolist()
+                )
         predict, accept_index, num_correct_drafts = verify_tree_greedy_func(
             predicts=predict,  # mutable
             accept_index=accept_index,  # mutable
@@ -827,6 +850,15 @@ def eagle_sample(
             target_predict=target_predict,
             topk=verify_input.tree_topk,
         )
+        for row in budget_rows:
+            correct = int(num_correct_drafts[row].item())
+            logger.info(
+                "JSON budget close verify: row=%d accepted_drafts=%d accepted_tokens=%d accepted_nodes=%s",
+                row,
+                correct,
+                correct + 1,
+                accept_index[row, : correct + 1].tolist(),
+            )
 
         if _is_hip:
             # On ROCm, the per-rank draft tokens can differ, so ranks accept a

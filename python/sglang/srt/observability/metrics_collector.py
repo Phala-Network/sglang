@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Set, Union
 
 from sglang.srt.disaggregation.utils import DisaggregationMode
+from sglang.srt.environ import envs
 from sglang.srt.model_executor.forward_batch_info import ForwardMode
 from sglang.srt.observability.scheduler_stage_metrics import (
     SCHEDULER_STAGE_CATEGORIES,
@@ -1654,6 +1655,16 @@ class TokenizerMetricsCollector(_StatLoggerDIMixin):
             labelnames=labels.keys(),
         )
 
+        self.openai_so_responses_total = None
+        if envs.SGLANG_ENABLE_OPENAI_SO_VALIDATION_METRICS.get():
+            self.openai_so_responses_total = Counter(
+                name="sglang:openai_so_responses_total",
+                documentation="Final OpenAI response_format SO requests, once per "
+                "request. Unknown and aborted remain in the denominator; "
+                "this is not the grammar/tool processed counter.",
+                labelnames=("format", "streaming", "outcome", "finish"),
+            )
+
         self.num_aborted_requests_total = Counter(
             name="sglang:num_aborted_requests_total",
             documentation="Number of requests aborted.",
@@ -1758,6 +1769,25 @@ class TokenizerMetricsCollector(_StatLoggerDIMixin):
             labelnames=list(labels.keys()) + ["is_streaming"],
             buckets=bucket_e2e_request_latency,
         )
+
+    def observe_openai_so_response(self, format, streaming, outcome, finish):
+        if (
+            format not in ("json_schema", "json_object")
+            or outcome not in (
+                "valid", "json_invalid", "schema_invalid",
+                "truncated", "unknown", "aborted",
+            )
+            or finish not in (
+                "stop", "length", "tool_calls", "abort", "other", "missing", "mixed",
+            )
+        ):
+            raise ValueError("Invalid fixed SO observation label")
+        self.openai_so_responses_total.labels(
+            format=format,
+            streaming="true" if streaming else "false",
+            outcome=outcome,
+            finish=finish,
+        ).inc()
 
     def emit_startup_time(self, startup_time: Mapping[str, Any]) -> None:
         for phase in (

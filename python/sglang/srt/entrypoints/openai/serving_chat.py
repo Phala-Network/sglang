@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import logging
@@ -74,6 +75,10 @@ from sglang.srt.entrypoints.openai.protocol import (
     TopLogprob,
 )
 from sglang.srt.entrypoints.openai.serving_base import OpenAIServingBase
+from sglang.srt.entrypoints.openai.so_response_observer import (
+    ObservedSOStream,
+    SOResponseObserver,
+)
 from sglang.srt.entrypoints.openai.sse_utils import build_sse_content
 from sglang.srt.entrypoints.openai.usage_processor import UsageProcessor
 from sglang.srt.entrypoints.openai.utils import (
@@ -333,6 +338,12 @@ class OpenAIServingChat(OpenAIServingBase):
         template_manager: TemplateManager,
     ):
         super().__init__(tokenizer_manager)
+        self._so_response_metrics = None
+        if envs.SGLANG_ENABLE_OPENAI_SO_VALIDATION_METRICS.get():
+            collector = getattr(tokenizer_manager, "metrics_collector", None)
+            if collector is None or collector.openai_so_responses_total is None:
+                raise ValueError("SO validation metrics require --enable-metrics")
+            self._so_response_metrics = collector.observe_openai_so_response
         self.template_manager = template_manager
         self.tool_call_parser = self.tokenizer_manager.config_value("tool_call_parser")
         self.reasoning_parser = self.tokenizer_manager.config_value("reasoning_parser")
@@ -2206,6 +2217,37 @@ class OpenAIServingChat(OpenAIServingBase):
             modalities=modalities,
             stop=stop,
         )
+
+    async def handle_request(self, request, raw_request):
+        emit = self._so_response_metrics
+        if emit is None:
+            return await super().handle_request(request, raw_request)
+        try:
+            observer = SOResponseObserver.create(request, emit)
+        except Exception:
+            # Observer setup is metadata-only and must fail open. Preserve a
+            # request in the denominator even when observation cannot start.
+            try:
+                format = getattr(getattr(request, "response_format", None), "type", None)
+                if format in ("json_schema", "json_object"):
+                    emit(format, bool(request.stream), "unknown", "missing")
+            except Exception:
+                pass
+            return await super().handle_request(request, raw_request)
+        if observer is None:
+            return await super().handle_request(request, raw_request)
+        try:
+            response = await super().handle_request(request, raw_request)
+        except BaseException as exc:
+            observer.finish(
+                aborted=isinstance(exc, (asyncio.CancelledError, GeneratorExit))
+            )
+            raise
+        if isinstance(response, StreamingResponse):
+            response.body_iterator = ObservedSOStream(response.body_iterator, observer)
+        else:
+            observer.response(response)
+        return response
 
     async def _handle_streaming_request(
         self,

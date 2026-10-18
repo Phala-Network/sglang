@@ -112,11 +112,15 @@ class MetadataGlueGraph:
             self._capture_stream = torch.cuda.Stream()
         graph = torch.cuda.CUDAGraph()
         try:
-            # captured while serving: other threads may use CUDA meanwhile
-            with torch.cuda.graph(
-                graph, stream=self._capture_stream, capture_error_mode="thread_local"
-            ):
-                attn_backend.init_forward_metadata_out_graph(fb_view)
+            # Captured mid-serving: skip torch.cuda.graph's device sync and
+            # cache flushes, and let other threads (e.g. KV cache offload)
+            # keep synchronizing their own streams meanwhile.
+            with torch.cuda.stream(self._capture_stream):
+                graph.capture_begin(capture_error_mode="thread_local")
+                try:
+                    attn_backend.init_forward_metadata_out_graph(fb_view)
+                finally:
+                    graph.capture_end()
         except Exception:
             logger.warning(
                 "Metadata glue-graph capture failed for key %s; falling back "

@@ -57,6 +57,14 @@ The [frozen build recipe and regression scope](https://github.com/Phala-Network/
 use the same compatibility maintenance exception; image and target GPU acceptance
 are reported separately in the release receipt.
 
+The [Kimi ref5 DFlash grammar-mask release](https://github.com/Phala-Network/sglang/releases/tag/phala-v0.5.21-3-k3protocol3-ref5-dflashmask1)
+binds complete source `e77dff2b12ef22ac67b2ea2905e066cedb3f69c3` and the immutable image digest in its
+[archived build recipe](docker/phala/kimi-protocol3-ref5-dflashmask1/README.md).
+Its [32-step patch record](https://github.com/Phala-Network/sglang-serving-patches/tree/phala-v0.5.21-3-k3protocol3-ref5-dflashmask1/versions/v0.5.21)
+preserves the ref5 native dependencies and repairs stale verify masks. This
+uses the same 0.5.21 maintenance exception; remaining protocol errors and
+limited natural-traffic acceptance are documented in the release.
+
 The PyPI package `sglang` is the upstream distribution; installing it does not
 install this fork's changes. For development, follow the
 [installation guide](https://docs.sglang.io/get_started/install.html) using this

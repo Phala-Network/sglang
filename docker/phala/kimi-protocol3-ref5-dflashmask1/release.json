@@ -1,0 +1,37 @@
+{
+  "runtime_source_commit": "e77dff2b12ef22ac67b2ea2905e066cedb3f69c3",
+  "runtime_source_tag": "phala-v0.5.21-3-k3protocol3-ref5-dflashmask1",
+  "source_repository": "https://github.com/Phala-Network/sglang",
+  "upstream_commit": "e00930c5489053f26d86b179cee0d087f846acbb",
+  "base_source_commit": "9d263bb062181b040edf85877607b2fc4e6cd9f3",
+  "base_image": "ghcr.io/phala-network/sglang:v0.5.21-phala-3-k3protocol3-ref5@sha256:31c9f4a2ef390161664f639b0245a60c4963d734bc8b6157097c46bd5ab3cd95",
+  "image": "ghcr.io/phala-network/sglang:v0.5.21-phala-3-k3protocol3-ref5-dflashmask1@sha256:eca5f09ba72beddb55fa79e6e975827d31c7444400b6e41c96be241f1370326d",
+  "patches_repository": "https://github.com/Phala-Network/sglang-serving-patches",
+  "patches_release_tag": "phala-v0.5.21-3-k3protocol3-ref5-dflashmask1",
+  "patches_manifest": "versions/v0.5.21/releases/phala-v0.5.21-3-k3protocol3-ref5-dflashmask1.json",
+  "xgrammar": {
+    "version": "0.2.6rc2+phala.feedback.20261017.p6",
+    "source_commit": "d645e9d0dbaf6cc85c2ca27acc8f9b4a4b83cbdc",
+    "source_tree": "908cc3af608ca4072717aece838d64273482b51e",
+    "wheel_sha256": "ee7d54fb8b77e712e8d5e8b9f7aee59f4ead18409d6f00a4c0fb5e63ca5b7832",
+    "serialization_version": "v21-phala-unordered-constraints-v3",
+    "source_record": "docker/phala/kimi-protocol3-ref5/release-inputs.json"
+  },
+  "embedded_governor": "Not selected; external PIG deployment identity is unchanged and separate.",
+  "build_arg_ENGINE_REVISION": "e77dff2b12ef22ac67b2ea2905e066cedb3f69c3",
+  "dflash_source_sha256": "91dd3d419b390dd92e573ca0d3747d6821475bcea5cde65bd06eb7a6f9d66cf5",
+  "dockerfile_sha256": "ab1eaebdf3f94beaf8bc7a8aa6cbfd2babdc85031d504a66789fb95f8c9b36f4",
+  "historical_recipe_archival": "Exact original Dockerfile archived after image publication; does not change source tag or existing image digest.",
+  "checks": {
+    "installed_mask_cases": 5,
+    "failures": 0,
+    "errors": 0,
+    "hf_direct_entrypoint_help": "passed",
+    "hf_direct_entrypoint_download_help": "passed"
+  },
+  "limits": [
+    "Natural production observation is not randomized error-rate or throughput evidence.",
+    "HTTP400 and aborts remain; do not claim complete protocol repair.",
+    "No new GPU load test, rebuild, deployment or production restart in this release-record repair."
+  ]
+}

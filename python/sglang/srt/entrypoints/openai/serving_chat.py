@@ -1612,7 +1612,11 @@ class OpenAIServingChat(OpenAIServingBase):
                 # guards against hand-crafted cyclic schemas so the request gets
                 # a 400 instead of crashing into a 500.
                 normalize_json_schema_types(tool.function.parameters)
-                Draft202012Validator.check_schema(tool.function.parameters)
+                # Structure only: `format: regex` compiles patterns with Python's re, which
+                # refuses valid ECMA-262 patterns such as \p{Z}.
+                Draft202012Validator.check_schema(
+                    tool.function.parameters, format_checker=None
+                )
             except SchemaError as e:
                 return f"Tool {i} function has invalid 'parameters' schema: {str(e)}"
             except RecursionError:

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import copy
+import glob
+import json
 import logging
+import os
 from contextlib import nullcontext
 from typing import Iterable, List, Optional, Tuple
 
@@ -682,6 +685,29 @@ class DSparkV4PlatformStage(
 DSparkV4Stage = DSparkV4CudaStage if _is_cuda else DSparkV4PlatformStage
 
 
+def _shards_glob(model_path: str, prefix: str) -> Optional[str]:
+    """One glob matching every shard the index lists for `prefix` (and possibly a few more): the loader
+    uses only the first allow pattern that matches anything."""
+    index = os.path.join(model_path, "model.safetensors.index.json")
+    if not os.path.isfile(index):
+        return None
+    with open(index) as f:
+        weight_map = json.load(f)["weight_map"]
+    files = {file for name, file in weight_map.items() if name.startswith(prefix)}
+    if not files or len({len(f) for f in files}) != 1:
+        return None
+    pattern = ""
+    for column in zip(*files):
+        chars = sorted(set(column))
+        if len(chars) == 1:
+            pattern += glob.escape(chars[0])
+        elif all(c.isalnum() for c in chars):
+            pattern += "[" + "".join(chars) + "]"
+        else:
+            return None
+    return pattern
+
+
 class DeepseekV4ForCausalLMDSpark(nn.Module):
     draft_parallel_spec = DraftParallelSpec(tp_execution=DraftTPExecution.TARGET_LAYOUT)
 
@@ -722,6 +748,12 @@ class DeepseekV4ForCausalLMDSpark(nn.Module):
         super().__init__()
         self.config = config
         self.quant_config = quant_config
+        if not _is_npu:
+            # The draft keeps only `mtp.*` weights (_remap_dspark_weight_name): read just the
+            # shards that hold them instead of the whole checkpoint a second time.
+            pattern = _shards_glob(config._name_or_path, "mtp.")
+            if pattern is not None:
+                self.allow_patterns_overrides = [pattern]
         self.num_fused_shared_experts = get_num_fused_shared_experts()
 
         dspark_config = parse_dspark_draft_config(draft_hf_config=config)

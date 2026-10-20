@@ -861,6 +861,10 @@ class Envs:
     # modes stay sync.
     SGLANG_ENABLE_HICACHE_ASYNC_ACK_SYNC = EnvBool(False)
     SGLANG_HICACHE_SKIP_HOST_DUPLICATE_RECLAIM = EnvBool(False)
+    # Back up SWA to host only for the sliding window that ends each backup
+    # chain (an insert's end), not for every SWA page the chain carries. A host
+    # hit can only end where SWA covers the window, which is such an end.
+    SGLANG_HICACHE_SWA_SPARSE_BACKUP = EnvBool(False)
     SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR = EnvStr(None)
     # File-backend LRU eviction (opt-in; sizes accept SI/IEC suffixes, "0" disables).
     SGLANG_HICACHE_FILE_BACKEND_MAX_SIZE = EnvStr(None)

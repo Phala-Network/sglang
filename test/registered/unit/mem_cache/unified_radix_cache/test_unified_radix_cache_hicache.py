@@ -840,6 +840,107 @@ class UnifiedRadixCacheHiCacheSuite(UnifiedRadixCacheHiCacheFixtures):
         lambda cfg: not cfg.has_mamba,
         "SWA-only path keeps the chain construction simple",
     )
+    def test_hicache_swa_sparse_backup_keeps_only_the_target_window(self):
+        """SGLANG_HICACHE_SWA_SPARSE_BACKUP: write-through backs up SWA only for
+        the window ending at the insert (and later at an insert ending on an
+        older node); a host hit at the end still matches the whole sequence,
+        and one ending on a node without host SWA is shortened."""
+        if not self.cfg.has_swa or self.cfg.has_mamba:
+            self.skipTest("requires SWA-only")
+        if selected_tree_core_test_backend() == "rust":
+            self.skipTest("sparse SWA backup is Python-core only")
+        ps = self.cfg.page_size
+        sw = self.cfg.sliding_window_size
+        tail = (sw + ps - 1) // ps * ps
+        seq = self._make_seq(1, tail // ps + 3)
+        if 2 * len(seq) > self.cfg.kv_size // 2:
+            self.skipTest("kv_size too small for the sequence")
+
+        for sparse in (False, True):
+            with self.subTest(sparse=sparse):
+                cache, allocator, req_to_token_pool = self._build_hicache_fixture()
+                cache.components[ComponentType.SWA]._sparse_backup = sparse
+                cache.write_through_threshold = 1
+                root = cache.root_node_handle()
+
+                # One leaf with live SWA everywhere (a request that finished at
+                # prefill): the insert caps it into an older node + a tail window.
+                cache.insert(
+                    InsertParams(
+                        key=RadixKey(array("q", seq)),
+                        value=self._alloc(allocator, len(seq)),
+                    )
+                )
+                cache.writing_check(write_back=True)
+                (older,) = node_children(cache, root)
+                (leaf,) = node_children(cache, older)
+                older_len = node_key_length(cache, older)
+                self.assertEqual(node_key_length(cache, leaf), tail)
+                for node in (older, leaf):
+                    self.assertTrue(cache.tree_core.is_backuped(node))
+                self.assertIsNotNone(node_host_value(cache, leaf, ComponentType.SWA))
+                older_swa_host = node_host_value(cache, older, ComponentType.SWA)
+                if sparse:
+                    self.assertIsNone(older_swa_host)
+                else:
+                    self.assertIsNotNone(older_swa_host)
+
+                # Device eviction leaves host-only nodes.
+                cache.evict(
+                    EvictParams(num_tokens=len(seq), swa_num_tokens=len(seq))
+                )
+                for node in (older, leaf):
+                    self.assertTrue(cache.tree_core.is_full_device_evicted(node))
+
+                # A hit ending inside the sequence needs host SWA at its end.
+                diverged = seq[:older_len] + self._make_seq(90000, 1)
+                m = cache.match_prefix(
+                    MatchPrefixParams(key=RadixKey(array("q", diverged)))
+                )
+                self.assertEqual(
+                    len(m.device_indices) + m.host_hit_length,
+                    0 if sparse else older_len,
+                )
+
+                # The full sequence still hits on host, restoring the tail window.
+                m = cache.match_prefix(MatchPrefixParams(key=RadixKey(array("q", seq))))
+                self.assertEqual(len(m.device_indices) + m.host_hit_length, len(seq))
+                self.assertEqual(m.best_match_node, leaf)
+                self._load_back_node(cache, leaf)
+                self._release_ongoing_load_back_locks(cache)
+                self.assertIsNotNone(node_device_value(cache, leaf, ComponentType.SWA))
+                if sparse:
+                    self.assertIsNone(node_device_value(cache, older, ComponentType.SWA))
+                cache.sanity_check()
+
+    def test_hicache_swa_sparse_backup_insert_end_on_older_node(self):
+        """An insert that ends on an existing node backs up that node's window."""
+        if not self.cfg.has_swa or self.cfg.has_mamba:
+            self.skipTest("requires SWA-only")
+        if selected_tree_core_test_backend() == "rust":
+            self.skipTest("sparse SWA backup is Python-core only")
+        ps = self.cfg.page_size
+        sw = self.cfg.sliding_window_size
+        tail = (sw + ps - 1) // ps * ps
+        seq = self._make_seq(1, tail // ps + 3)
+        if 2 * len(seq) > self.cfg.kv_size // 2:
+            self.skipTest("kv_size too small for the sequence")
+
+        cache, allocator, req_to_token_pool = self._build_hicache_fixture()
+        cache.components[ComponentType.SWA]._sparse_backup = True
+        cache.write_through_threshold = 1
+        self._insert(cache, allocator, req_to_token_pool, seq)
+        cache.writing_check(write_back=True)
+        (older,) = node_children(cache, cache.root_node_handle())
+        self.assertIsNone(node_host_value(cache, older, ComponentType.SWA))
+
+        self._insert(
+            cache, allocator, req_to_token_pool, seq[: node_key_length(cache, older)]
+        )
+        cache.writing_check(write_back=True)
+        self.assertIsNotNone(node_host_value(cache, older, ComponentType.SWA))
+        cache.sanity_check()
+
     def test_hicache_swa_host_hit_counts_tombstones_inside_the_window(self):
         """A host-backed SWA tombstone inside the trailing sliding window stops
         the device match before it: the Full-backed tail from the tombstone on

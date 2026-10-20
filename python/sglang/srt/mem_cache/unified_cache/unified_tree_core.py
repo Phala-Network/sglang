@@ -144,6 +144,9 @@ class UnifiedTreeNode:
         self.id = UnifiedTreeNode.counter
         UnifiedTreeNode.counter += 1
         self.write_through_pending_id: Optional[int] = None
+        # Tokens from this node's end to the end of the backup chain that last
+        # scheduled it (0: the chain's target). Sparse SWA backup reads it.
+        self.backup_chain_tail_len = 0
         # Anchor NodeId of an in-flight H->D load-back reading this node's
         # host slots; such host copies must not be reclaimed until the ack.
         self.load_back_pending_id: Optional[int] = None
@@ -2641,6 +2644,10 @@ class UnifiedTreeCore(UnifiedTreeCoreInterface):
                 ancestor = ancestor.parent
             # write_through: Ancestors first to preserve backup invariant
             chain.reverse()
+        tail_len = 0
+        for target in reversed(chain):
+            target.backup_chain_tail_len = tail_len
+            tail_len += len(target.key)
         return BackupKV([target.id for target in chain])
 
     def commit_hicache_transfers(

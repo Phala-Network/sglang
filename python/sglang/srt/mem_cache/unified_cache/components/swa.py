@@ -97,6 +97,7 @@ class SWAComponent(TreeComponent):
         ) // params.page_size
         # HiCache state: set to host SWA pool when HiCache enabled
         self._swa_kv_pool_host = None
+        self._sparse_backup = envs.SGLANG_HICACHE_SWA_SPARSE_BACKUP.get()
 
     component_type = ComponentType.SWA
     pool_name = PoolName.SWA
@@ -108,30 +109,31 @@ class SWAComponent(TreeComponent):
         )
 
     def _collect_unbacked_swa_nodes(
-        self, node: UnifiedTreeNode
+        self, node: UnifiedTreeNode, window: Optional[int] = None
     ) -> list[UnifiedTreeNode]:
         """Nodes whose SWA data needs a host backup, deepest first.
 
         Buffer mode stages one node per FIFO backup intent; cache mode backs
-        up every device-only node within one sliding window of ``node``.
+        up every device-only node within ``window`` tokens (default: one
+        sliding window) of ``node``.
         """
         if not self.tree_core.has_swa_host_pool:
             return []
         if self.tree_core.is_host_memory_buffer_only:
             cd = node.component_data[self.component_type]
             return [node] if cd.value is not None else []
-        return self._collect_unbacked_swa_nodes_in_window(node)
+        return self._collect_unbacked_swa_nodes_in_window(node, window)
 
     def _collect_unbacked_swa_nodes_in_window(
-        self, node: UnifiedTreeNode
+        self, node: UnifiedTreeNode, window: Optional[int] = None
     ) -> list[UnifiedTreeNode]:
         ct = self.component_type
+        if window is None:
+            window = self.sliding_window_size
         covered = 0
         unbacked: list[UnifiedTreeNode] = []
         cur = node
-        while (
-            cur is not self.tree_core.root_node and covered < self.sliding_window_size
-        ):
+        while cur is not self.tree_core.root_node and covered < window:
             if cur.write_through_pending_id is not None:
                 break
 
@@ -1142,7 +1144,13 @@ class SWAComponent(TreeComponent):
             return None
 
         if phase == CacheTransferPhase.BACKUP_HOST:
-            unbacked_swa_nodes = self._collect_unbacked_swa_nodes(node)
+            window = None
+            if self._sparse_backup:
+                # A host hit ends only where host SWA covers the window, and the
+                # end a backup chain makes is its target: back up just the window
+                # ending there. Chain nodes a window or more above it get none.
+                window = self.sliding_window_size - node.backup_chain_tail_len
+            unbacked_swa_nodes = self._collect_unbacked_swa_nodes(node, window)
             if not unbacked_swa_nodes:
                 return None
             unbacked_swa_nodes.reverse()

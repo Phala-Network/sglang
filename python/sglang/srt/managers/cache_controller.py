@@ -619,6 +619,11 @@ class HiCacheController:
             self.storage_backend.register_mem_pool_host(self.storage_host_pool)
             if not self._registers_host_pools_after_super_attach:
                 self.storage_backend.on_host_pools_registered()
+            # A backend whose host pools keep only one TP rank's share of the
+            # rank-replicated pages (ccbridge's TP-sharded pools) publishes each
+            # page from the rank holding it, so every rank backs up.
+            if getattr(self.storage_backend, "backup_on_every_rank", False) is True:
+                self.backup_skip = False
 
             self.enable_storage = True
             # todo: threshold policy for prefetching

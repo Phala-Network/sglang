@@ -146,7 +146,9 @@ def test_native_model_api_import():
     assert "Xing4_0ForCausalLM" in inspect.getsource(ModelConfig._derive_model_shapes)
 
 
-def _construct_cpu_xing_model(kind, dense_tp_size, monkeypatch, *, config_changes=None):
+def _construct_cpu_xing_model(
+    kind, dense_tp_size, monkeypatch, *, config_changes=None, actual_ffn=False
+):
     from sglang.srt.layers import logits_processor
     from sglang.srt import runtime_context
     from sglang.srt.layers.layer_boundary import layout
@@ -163,20 +165,30 @@ def _construct_cpu_xing_model(kind, dense_tp_size, monkeypatch, *, config_change
     monkeypatch.setattr(runtime_context, "_CONTEXT", context_owner)
     runtime_context.publish(ServerArgs(model_path="dummy", boundary_reduction="ar",
         moe_dense_tp_size=dense_tp_size), role="scheduler")
+    if actual_ffn:
+        parallel.override_permanently(
+            tp_rank=0, attn_tp_rank=0, moe_tp_rank=0, moe_ep_rank=0
+        )
     pp = SimpleNamespace(
         is_first_rank=True, is_last_rank=True, rank_in_group=0, world_size=1
     )
     context = attention.AttnTpContext()
     stage_calls = []
 
-    def storage_stub(original, *, attention_module=False, moe_module=False):
+    def storage_stub(original, *, attention_module=False, moe_module=False, dense_module=False):
         signature = inspect.signature(original.__init__)
 
         class StorageStub(nn.Module):
             def __init__(self, *args, **kwargs):
                 nn.Module.__init__(self)
-                signature.bind(self, *args, **kwargs)
+                bound = signature.bind(self, *args, **kwargs)
+                bound.apply_defaults()
                 self.constructor_kwargs = kwargs
+                if dense_module:
+                    self.down_proj = nn.Module()
+                    self.down_proj.reduce_results = bound.arguments["reduce_results"]
+                if moe_module:
+                    self.reduce_results = bound.arguments["reduce_results"]
                 if attention_module:
                     self.prepare_qkv_latent = lambda *_: None
                 if moe_module:
@@ -193,10 +205,11 @@ def _construct_cpu_xing_model(kind, dense_tp_size, monkeypatch, *, config_change
     monkeypatch.setattr(deepseek_v2, "DeepseekV2AttentionMLA", storage_stub(
         deepseek_v2.DeepseekV2AttentionMLA, attention_module=True
     ))
-    monkeypatch.setattr(deepseek_v2, "DeepseekV2MLP", storage_stub(deepseek_v2.DeepseekV2MLP))
-    monkeypatch.setattr(deepseek_v2, "DeepseekV2MoE", storage_stub(
-        deepseek_v2.DeepseekV2MoE, moe_module=True
-    ))
+    if not actual_ffn:
+        monkeypatch.setattr(deepseek_v2, "DeepseekV2MLP", storage_stub(deepseek_v2.DeepseekV2MLP, dense_module=True))
+        monkeypatch.setattr(deepseek_v2, "DeepseekV2MoE", storage_stub(
+            deepseek_v2.DeepseekV2MoE, moe_module=True
+        ))
     for name in ("VocabParallelEmbedding", "ParallelLMHead"):
         monkeypatch.setattr(xing4_0, name, storage_stub(getattr(xing4_0, name)))
     monkeypatch.setattr(logits_processor, "LogitsProcessor", storage_stub(
@@ -216,31 +229,70 @@ def _construct_cpu_xing_model(kind, dense_tp_size, monkeypatch, *, config_change
 
 @pytest.mark.parametrize("kind", ["bf16", "fp8"])
 @pytest.mark.parametrize("dense_tp_size", [1])
+@pytest.mark.parametrize("hc_mult", [1, 4])
 def test_actual_full_constructor_uses_stable_layer_boundary_api(
-    kind, dense_tp_size, monkeypatch
+    kind, dense_tp_size, hc_mult, monkeypatch
 ):
     """Run every official constructor with signature-constrained GPU storage."""
 
     model, stage_calls, context = _construct_cpu_xing_model(
-        kind, dense_tp_size, monkeypatch
+        kind, dense_tp_size, monkeypatch, config_changes={"hc_mult": hc_mult}
     )
     config = model.config
 
+    from sglang.srt.layers.layer_boundary.stage import check_stage_producers
+
     assert len(model.model.layers) == config.num_hidden_layers
-    assert len(stage_calls) == config.num_hidden_layers
+    assert len(stage_calls) == (config.num_hidden_layers if hc_mult == 1 else 0)
     for idx, layer in enumerate(model.model.layers):
         sparse = idx >= config.first_k_dense_replace and idx % config.moe_layer_freq == 0
         assert layer.is_layer_sparse is sparse
-        assert layer.enable_mhc
-        assert layer.attn_hc.hc_fn.shape[-1] == config.hidden_size * config.hc_mult
+        assert layer.enable_mhc is (hc_mult > 1)
+        producer = layer.mlp if sparse else layer.mlp.down_proj
+        assert producer.reduce_results is (hc_mult > 1)
+        if hc_mult > 1:
+            assert layer.attn_hc.hc_fn.shape[-1] == config.hidden_size * config.hc_mult
+            assert layer.attn_boundary is None and layer.ffn_boundary is None
+        else:
+            stages, kwargs = stage_calls[idx]
+            assert stages[1][0].sparse is sparse
+            assert stages[1][0].output_complete is False
+            assert kwargs == {}
+            assert layer.ffn_boundary is not None
         if not sparse:
             assert layer.mlp.constructor_kwargs["parallel_group"] == "replicated"
-        stages, kwargs = stage_calls[idx]
-        assert stages[1][0].sparse is sparse
-        assert stages[1][0].output_complete is False
-        assert kwargs == {}
-        assert layer.ffn_boundary is not None
+            assert layer.mlp.constructor_kwargs["allow_fused_down"] is False
+    check_stage_producers(model)
     assert context.allow_input_scattered is False
+
+
+@pytest.mark.parametrize("hc_mult", [1, 4])
+def test_real_ffn_construction_passes_official_stage_producer_check(hc_mult, monkeypatch):
+    """Construct real dense/MoE producers with meta weights, then run loader's check."""
+    from sglang.srt.layers.layer_boundary.stage import check_stage_producers
+    from sglang.srt.models import deepseek_v2
+
+    changes = dict(hc_mult=hc_mult, num_hidden_layers=3, first_k_dense_replace=1,
+        hidden_size=64, intermediate_size=128, moe_intermediate_size=64,
+        n_routed_experts=4, n_shared_experts=1, num_experts_per_tok=2,
+        n_group=1, topk_group=1, num_attention_heads=4, vocab_size=128)
+    with torch.device("meta"):
+        model, _, _ = _construct_cpu_xing_model(
+            "bf16", 1, monkeypatch, config_changes=changes, actual_ffn=True
+        )
+    dense = model.model.layers[0].mlp
+    moe = model.model.layers[1].mlp
+    assert isinstance(dense, deepseek_v2.DeepseekV2MLP)
+    assert isinstance(moe, deepseek_v2.DeepseekV2MoE)
+    assert dense.down_proj.reduce_results is (hc_mult > 1)
+    assert moe.reduce_results is (hc_mult > 1)
+    assert dense.down_proj.weight.device.type == "meta"
+    check_stage_producers(model)
+    if hc_mult == 1:
+        dense.down_proj.reduce_results = True
+        moe.reduce_results = True
+        with pytest.raises(ValueError, match=r"model.layers.0.mlp.down_proj, model.layers.1.mlp"):
+            check_stage_producers(model)
 
 
 @pytest.mark.parametrize("kind", ["bf16", "fp8"])

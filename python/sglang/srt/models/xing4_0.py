@@ -574,6 +574,8 @@ class Xing4_0DecoderLayer(nn.Module):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.config = config
+        self.n = getattr(config, "hc_mult", 1)
+        self.enable_mhc = self.n > 1
 
         if getattr(config, "rope_parameters", None) is not None:
             rope_theta = config.rope_parameters["rope_theta"]
@@ -629,6 +631,7 @@ class Xing4_0DecoderLayer(nn.Module):
                 prefix=add_prefix("mlp", prefix),
                 alt_stream=alt_stream,
                 is_deepseek_v4=False,
+                reduce_results=self.enable_mhc,
             )
         else:
             mlp_parallel_group = "replicated" if is_dense_ffn_fully_dp() else "tp"
@@ -640,6 +643,8 @@ class Xing4_0DecoderLayer(nn.Module):
                 prefix=add_prefix("mlp", prefix),
                 parallel_group=mlp_parallel_group,
                 swiglu_limit=getattr(config, "swiglu_limit", None),
+                reduce_results=self.enable_mhc,
+                allow_fused_down=False,
             )
 
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -648,8 +653,6 @@ class Xing4_0DecoderLayer(nn.Module):
         )
         self.routed_scaling_factor = getattr(config, "routed_scaling_factor", 1.0)
 
-        self.n = getattr(config, "hc_mult", 1)
-        self.enable_mhc = self.n > 1
         if self.enable_mhc:
             self.attn_hc = mHCModule(config, config.num_hidden_layers)
             self.ffn_hc = mHCModule(config, config.num_hidden_layers)
@@ -662,21 +665,26 @@ class Xing4_0DecoderLayer(nn.Module):
         self.is_kt_moe = isinstance(self.mlp, deepseek_v2.DeepseekV2MoE) and isinstance(
             self.mlp.experts.quant_method, KTEPWrapperMethod
         )
-        self.attn_boundary, self.ffn_boundary = append_stages(
-            (
-                declare_attn(),
-                self.input_layernorm,
-                {"qkv_latent_func": self.self_attn.prepare_qkv_latent},
-            ),
-            (
-                declare_ffn(
-                    sparse=self.is_layer_sparse,
-                    next_layer_sparse=self._stage_next_sparse,
-                    output_complete=self.is_kt_moe,
+        # mHC consumes complete FFN outputs before mixing its residual streams;
+        # its producers keep their own reductions and never enter stage boundaries.
+        # Ordinary residual layers instead hand partial outputs to the boundaries.
+        self.attn_boundary = self.ffn_boundary = None
+        if not self.enable_mhc:
+            self.attn_boundary, self.ffn_boundary = append_stages(
+                (
+                    declare_attn(),
+                    self.input_layernorm,
+                    {"qkv_latent_func": self.self_attn.prepare_qkv_latent},
                 ),
-                self.post_attention_layernorm,
-            ),
-        )
+                (
+                    declare_ffn(
+                        sparse=self.is_layer_sparse,
+                        next_layer_sparse=self._stage_next_sparse,
+                        output_complete=self.is_kt_moe,
+                    ),
+                    self.post_attention_layernorm,
+                ),
+            )
 
     def forward(
         self,

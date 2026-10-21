@@ -4283,7 +4283,25 @@ class Scheduler(
                 adder.rem_chunk_tokens or 0,
                 self.page_size,
             )
-            self.chunked_req = adder.add_chunked_req(self.chunked_req)
+            reserve_tokens = envs.SGLANG_CHUNKED_PREFILL_SHORT_RESERVE.get()
+            # Reserve only if the next waiting request may fit whole: admission takes
+            # the sorted queue in order and stops at the first request that would need
+            # cutting. Its fill ids are built later by init_next_round_input, and a
+            # prefix not matched yet counts as 0, which over-estimates the extend length.
+            if reserve_tokens > 0:
+                head = self.waiting_queue[0] if self.waiting_queue else None
+                if head is None or (
+                    len(head.origin_input_ids)
+                    + len(head.output_ids)
+                    - head.prefix_len
+                    > reserve_tokens
+                ):
+                    reserve_tokens = 0
+            self.chunked_req = adder.add_chunked_req(
+                self.chunked_req,
+                reserve_tokens=reserve_tokens,
+                truncation_align_size=self.truncation_align_size,
+            )
 
         if self.enable_lora:
             running_loras = {

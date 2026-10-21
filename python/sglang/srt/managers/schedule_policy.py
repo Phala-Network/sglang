@@ -1147,7 +1147,12 @@ class PrefillAdder:
             else AddReqResult.CONTINUE
         )
 
-    def add_chunked_req(self, req: Req):
+    def add_chunked_req(
+        self,
+        req: Req,
+        reserve_tokens: int = 0,
+        truncation_align_size: Optional[int] = None,
+    ):
         if self.dllm_config is not None:
             _rem_tokens = self._get_dllm_remain_tokens(req)
         else:
@@ -1188,6 +1193,26 @@ class PrefillAdder:
         )
         if _rem_tokens is None:
             return req
+        if (
+            reserve_tokens > 0
+            and self.waiting_queue_len > 0
+            and self.dllm_config is None
+            and not self.kv_shard_granule
+            and cand_extend_input_len > _rem_tokens
+        ):
+            # A non-final chunk leaves `reserve_tokens` of the chunk budget to
+            # waiting requests, unless that would leave it no aligned length.
+            reserved_len = (
+                (self.rem_chunk_tokens - reserve_tokens)
+                // self.page_size
+                * self.page_size
+            )
+            if truncation_align_size is not None:
+                reserved_len = (
+                    reserved_len // truncation_align_size * truncation_align_size
+                )
+            if reserved_len > 0:
+                _rem_tokens = min(_rem_tokens, reserved_len)
         truncated = cand_extend_input_len > _rem_tokens
         new_len = self.floor_chunked_tokens(
             min(cand_extend_input_len, _rem_tokens), cand_extend_input_len
@@ -1248,7 +1273,7 @@ class PrefillAdder:
             if host_lock_params is not None:
                 self.tree_cache.dec_host_lock_ref(last_node, host_lock_params)
 
-    def add_one_req_ignore_eos(self, req: Req):
+    def add_one_req_ignore_eos(self, req: Req, has_chunked_req: bool):
         cand_extend_input_len = len(req.full_untruncated_fill_ids) - req.prefix_len
         paged_input = (
             self.ceil_paged_tokens(cand_extend_input_len) + self.per_req_token_overhead
@@ -1360,7 +1385,8 @@ class PrefillAdder:
                 request_slot_reserve=self._request_slot_reserve_for_req(req),
             )
         else:
-            if self.rem_chunk_tokens <= 0:
+            # Only one chunked request at a time: a continuing one keeps it.
+            if self.rem_chunk_tokens <= 0 or has_chunked_req:
                 return AddReqResult.OTHER
 
             # Chunked prefill
@@ -1409,7 +1435,7 @@ class PrefillAdder:
             return AddReqResult.OTHER
 
         if req.sampling_params.ignore_eos and getattr(self.tree_cache, "disable", True):
-            return self.add_one_req_ignore_eos(req)
+            return self.add_one_req_ignore_eos(req, has_chunked_req)
 
         # Reserve page_size for page-alignment overhead: the paged allocator may
         # consume one extra page per request (see alloc_extend), which
@@ -1667,11 +1693,9 @@ class PrefillAdder:
                 return AddReqResult.OTHER
             max_new_tokens = 0
         elif chunk_tokens_limit is not None and chunk_fit_tokens > chunk_tokens_limit:
-            if (
-                has_chunked_req
-                and get_schedule().schedule_policy == "shortest-prefill-first"
-            ):
-                # Only one unfinished chunked request can be tracked.
+            if has_chunked_req:
+                # Only one unfinished chunked request can be tracked; a
+                # continuing one may leave budget (short reserve, last chunk).
                 return AddReqResult.OTHER
             if self.exact_chunk_fill:
                 # Take the remainder verbatim so the batch hits exactly

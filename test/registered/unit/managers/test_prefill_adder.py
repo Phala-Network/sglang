@@ -1925,6 +1925,109 @@ class TestPrefillAdder(CustomTestCase):
         self.assertEqual((req.prefix_len, req.extend_end), (0, 200))
         self.assertIn(req, adder.can_run_list)
 
+    def _create_prefill_req(self, rid, num_tokens, prefix_len=0):
+        req = self.create_mock_req(rid, priority=0, max_new_tokens=8)
+        req.prefix_len = prefix_len
+        req.full_untruncated_fill_ids = list(range(num_tokens))
+        req.origin_input_ids = req.full_untruncated_fill_ids
+        req.last_node = MagicMock()
+        req.sampling_params.ignore_eos = False
+        req.extend_end = None
+        return req
+
+    def _create_short_reserve_case(self, *, remaining=32768, waiting_queue_len=1):
+        """A long prompt mid chunked prefill: one 8192-token chunk done, page 64."""
+        self.mock_token_allocator.available_size.return_value = 1_000_000
+        self.mock_token_allocator.page_size = 64
+        adder = self.create_adder(
+            self.create_running_batch(),
+            page_size=64,
+            rem_input_tokens=16384,
+            rem_chunk_tokens=8192,
+            waiting_queue_len=waiting_queue_len,
+        )
+        chunked = self._create_prefill_req("long-prompt", 8192 + remaining, 8192)
+        return adder, chunked
+
+    def test_short_reserve_zero_keeps_whole_chunk(self):
+        adder, chunked = self._create_short_reserve_case()
+
+        self.assertIs(adder.add_chunked_req(chunked, reserve_tokens=0), chunked)
+        self.assertEqual((chunked.prefix_len, chunked.extend_end), (8192, 16384))
+        self.assertEqual(adder.rem_chunk_tokens, 0)
+
+        short = self._create_prefill_req("short", 1000)
+        result = adder.add_one_req(
+            short, has_chunked_req=True, truncation_align_size=None
+        )
+        self.assertEqual(result, AddReqResult.OTHER)
+        self.assertEqual(adder.can_run_list, [chunked])
+
+    def test_short_reserve_admits_only_whole_waiting_reqs(self):
+        adder, chunked = self._create_short_reserve_case()
+
+        self.assertIs(adder.add_chunked_req(chunked, reserve_tokens=2048), chunked)
+        self.assertEqual((chunked.prefix_len, chunked.extend_end), (8192, 8192 + 6144))
+        self.assertEqual(adder.rem_chunk_tokens, 2048)
+
+        short = self._create_prefill_req("short", 1000)
+        result = adder.add_one_req(
+            short, has_chunked_req=True, truncation_align_size=None
+        )
+        self.assertEqual(result, AddReqResult.CONTINUE)
+        self.assertEqual((short.prefix_len, short.extend_end), (0, 1000))
+
+        # Needs truncation, but the continuing request owns the chunk slot.
+        longer = self._create_prefill_req("longer", 5000)
+        result = adder.add_one_req(
+            longer, has_chunked_req=True, truncation_align_size=None
+        )
+        self.assertEqual(result, AddReqResult.OTHER)
+        self.assertEqual(adder.can_run_list, [chunked, short])
+        self.assertIsNone(adder.new_chunked_req)
+
+    def test_short_reserve_refuses_second_chunked_ignore_eos_req(self):
+        self.mock_tree_cache.disable = True
+        adder, chunked = self._create_short_reserve_case()
+        adder.add_chunked_req(chunked, reserve_tokens=2048)
+
+        longer = self._create_prefill_req("longer", 5000)
+        longer.sampling_params.ignore_eos = True
+        result = adder.add_one_req(
+            longer, has_chunked_req=True, truncation_align_size=None
+        )
+        self.assertEqual(result, AddReqResult.OTHER)
+        self.assertEqual(adder.can_run_list, [chunked])
+        self.assertIsNone(adder.new_chunked_req)
+
+    def test_short_reserve_needs_waiting_reqs(self):
+        adder, chunked = self._create_short_reserve_case(waiting_queue_len=0)
+
+        self.assertIs(adder.add_chunked_req(chunked, reserve_tokens=2048), chunked)
+        self.assertEqual(chunked.extend_end - chunked.prefix_len, 8192)
+
+    def test_short_reserve_keeps_last_chunk_whole(self):
+        adder, chunked = self._create_short_reserve_case(remaining=7000)
+
+        self.assertIsNone(adder.add_chunked_req(chunked, reserve_tokens=2048))
+        self.assertEqual(chunked.extend_end - chunked.prefix_len, 7000)
+
+    def test_short_reserve_cap_is_aligned(self):
+        # (reserve, truncation_align_size) -> continuing chunk length
+        cases = {
+            (2000, None): 6144,  # page-aligned down
+            (2048, 4096): 4096,  # truncation-aligned down
+            (6144, 4096): 8192,  # nothing aligned left: reserve not applied
+            (8192, None): 8192,  # reserve covers the whole chunk: not applied
+        }
+        for (reserve, align), expected in cases.items():
+            with self.subTest(reserve=reserve, truncation_align_size=align):
+                adder, chunked = self._create_short_reserve_case()
+                adder.add_chunked_req(
+                    chunked, reserve_tokens=reserve, truncation_align_size=align
+                )
+                self.assertEqual(chunked.extend_end - chunked.prefix_len, expected)
+
     def _adder_with_extend_lens(self, extend_lens):
         adder = PrefillAdder.__new__(PrefillAdder)
         adder.can_run_list = [

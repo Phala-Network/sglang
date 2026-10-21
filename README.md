@@ -1,3 +1,5 @@
+The [Kimi model-cache maintenance release](https://github.com/Phala-Network/sglang/releases/tag/phala-v0.5.21-3-k3protocol3-ref5-modelcache1) preserves ref5/DFlash serving behavior and adds opt-in checkpoint-cache release. Its [recipe and scope](docker/phala/kimi-model-cache-20261021/README.md) separate CPU qualification from full-model GPU acceptance.
+
 # Phala SGLang
 
 Phala's downstream [SGLang](https://github.com/sgl-project/sglang) engine is based

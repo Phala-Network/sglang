@@ -1,0 +1,41 @@
+{
+  "source_commit": "cebb7c6ce132ef1030b3dbb271862658257b7ac2",
+  "source_tree": "8bcc409771d0960d95965d8461cafddae1c38be9",
+  "base_commit": "e77dff2b12ef22ac67b2ea2905e066cedb3f69c3",
+  "upstream_commit": "e00930c5489053f26d86b179cee0d087f846acbb",
+  "patch_count": 33,
+  "all_intermediate_trees_match": true,
+  "new_patch": "patches/common/0033-model-checkpoint-cache.patch",
+  "new_patch_sha256": "43464b8f0b2f08374716db0c684747d87000ec2675ae5f7458d9a5dceac46c06",
+  "tag": "phala-v0.5.21-3-k3protocol3-ref5-modelcache1",
+  "branch": "codex/kimi-model-cache-20261021",
+  "maintenance_line_preserved": true,
+  "embedded_governor": "none; external PIG unchanged",
+  "previous_32_patches_unchanged": true,
+  "base_image": "ghcr.io/phala-network/sglang:v0.5.21-phala-3-k3protocol3-ref5-dflashmask1@sha256:eca5f09ba72beddb55fa79e6e975827d31c7444400b6e41c96be241f1370326d",
+  "final_image_cpu_checks": {
+    "installed-files": {
+      "exit": 0,
+      "sha256": "2b877637ad2aa3fa04fed7d125e65a70f7645fe1ca74c10f9390fae0a1109d26"
+    },
+    "unit": {
+      "exit": 0,
+      "sha256": "86e6917b48adb059b2c99ba201373ef9b3e72eadc78c9b06405881133cfd5375"
+    },
+    "hf-help": {
+      "exit": 0,
+      "sha256": "a6080257c945eafa4cec9a317732a0b4a6643404b1378d6c6bee980543ba7ebc"
+    },
+    "hf-download-help": {
+      "exit": 0,
+      "sha256": "c24ef844ace1c07796422b5d8231277d0b456f6cb3057653988f7b528be617c3"
+    },
+    "sglang-serve-help": {
+      "exit": 0,
+      "sha256": "d015c30ddcfe48bea8a6d9eed4abab1a989ce95752bacb87b95a67cac9be1cfb"
+    }
+  },
+  "final_image_id": "sha256:facb8fb7d1008406644ae6f50c199091723cbd9f3c981bba73717331a898d53d",
+  "gpu_and_full_kimi_cold_start_verified": false,
+  "image_published": false
+}

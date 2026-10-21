@@ -9,17 +9,22 @@ shadow root, matching test_chunked_prefill_physical_budget.py.
 import ast
 import logging
 import os
-from pathlib import Path
+import queue
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 SOURCE = (
     Path(sys.argv.pop(1))
     if len(sys.argv) > 1 and not sys.argv[1].startswith("-")
-    else Path(os.environ.get("HICACHE_ACK_TEST_SOURCE_ROOT", Path(__file__).resolve().parents[2]))
+    else Path(
+        os.environ.get(
+            "HICACHE_ACK_TEST_SOURCE_ROOT", Path(__file__).resolve().parents[2]
+        )
+    )
 )
 RUN_GLOO = "--gloo" in sys.argv or os.environ.get("HICACHE_ACK_TEST_GLOO") == "1"
 # Spawn imports this file afresh after the CLI arguments have been consumed.
@@ -33,6 +38,7 @@ if RUN_GLOO:
     import torch.distributed as dist
     import torch.multiprocessing as mp
 else:
+
     class Tensor:
         def __init__(self, values):
             self.values = list(values)
@@ -50,12 +56,15 @@ else:
             self.values[index] = value
 
     dist = SimpleNamespace(
-        all_reduce=MagicMock(), get_world_size=MagicMock(),
+        all_reduce=MagicMock(),
+        get_world_size=MagicMock(),
         ReduceOp=SimpleNamespace(MIN="MIN"),
     )
     torch = SimpleNamespace(
         tensor=lambda values, **kwargs: Tensor(values),
-        int64="int64", int="int", distributed=dist,
+        int64="int64",
+        int="int",
+        distributed=dist,
     )
 
 logger = logging.getLogger(__name__)
@@ -64,22 +73,61 @@ get_disagg = lambda: SimpleNamespace(disaggregation_mode="null")
 get_parallel = lambda: SimpleNamespace(dp_size=1)
 UnifiedCacheLinkerWrapper = lambda cache, linker: linker
 METHODS = {
-    "_single_ready_counts_group", "_ready_counts_tensor", "_parse_ready_counts",
-    "_sync_hicache_ready_counts", "_async_ready_counts_eligible",
-    "_issue_async_ready_counts", "_consume_async_ready_counts",
-    "_drain_pending_ready_counts", "_count_ready_acks", "_apply_ready_counts",
-    "check_hicache_events", "reset", "release_host_resources",
-    "init_cache_linker", "attach_storage_backend", "detach_storage_backend",
-    "enable_storage", "is_write_back",
+    "_single_ready_counts_group",
+    "_ready_counts_tensor",
+    "_parse_ready_counts",
+    "_sync_hicache_ready_counts",
+    "_async_ready_counts_eligible",
+    "_issue_async_ready_counts",
+    "_consume_async_ready_counts",
+    "_drain_pending_ready_counts",
+    "_count_ready_acks",
+    "_apply_ready_counts",
+    "_drain_storage_control_queues_impl",
+    "check_hicache_events",
+    "reset",
+    "release_host_resources",
+    "init_cache_linker",
+    "attach_storage_backend",
+    "detach_storage_backend",
+    "shutdown",
+    "enable_storage",
+    "is_write_back",
 }
 source_path = SOURCE / "python/sglang/srt/mem_cache/unified_radix_cache.py"
 tree = ast.parse(source_path.read_text(encoding="utf-8"))
-cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "UnifiedRadixCache")
+cls = next(
+    n
+    for n in tree.body
+    if isinstance(n, ast.ClassDef) and n.name == "UnifiedRadixCache"
+)
 cls.bases = []
 cls.body = [n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name in METHODS]
-exec(compile(ast.fix_missing_locations(ast.Module(body=[
-    ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), cls
-], type_ignores=[])), str(source_path), "exec"), globals())
+cache_namespace = globals()
+exec(
+    compile(
+        ast.fix_missing_locations(
+            ast.Module(
+                body=[
+                    ast.ImportFrom(
+                        module="__future__",
+                        names=[ast.alias(name="annotations")],
+                        level=0,
+                    ),
+                    cls,
+                ],
+                type_ignores=[],
+            )
+        ),
+        str(source_path),
+        "exec",
+    ),
+    cache_namespace,
+)
+UnifiedRadixCache = cache_namespace["UnifiedRadixCache"]
+# v0.5.22 submits queued D2H backups at the top of check_hicache_events; that is
+# outside the ACK sync these tests cover.
+UnifiedRadixCache.flush_pending_backups = lambda self: None
 
 
 def _gloo_min_worker(rank, world_size, init_method):
@@ -97,9 +145,7 @@ def _gloo_min_worker(rank, world_size, init_method):
         )
         cache.cache_controller = SimpleNamespace(
             ack_write_queue=[
-                SimpleNamespace(
-                    finish_event=SimpleNamespace(query=lambda: True)
-                )
+                SimpleNamespace(finish_event=SimpleNamespace(query=lambda: True))
                 for _ in range(2 if rank == 0 else 1)
             ],
             ack_load_queue=[],
@@ -131,6 +177,43 @@ class _FakeWork:
             self.on_wait()
 
 
+class _StrictQueue(queue.Queue):
+    """Fails instead of blocking: the drain must never take more than is queued."""
+
+    def get(self, block=True, timeout=None):
+        if self.empty():
+            raise AssertionError("drained past the end of a storage queue")
+        return super().get(block=False)
+
+
+class _MinCollective:
+    """Pairs each rank's n-th async all_reduce and MIN-reduces it on wait()."""
+
+    def __init__(self, world_size):
+        self.world_size = world_size
+        self.rounds = {}
+
+    def all_reduce_for(self, rank):
+        issued = [0]
+
+        def all_reduce(tensor, *, op, group, async_op):
+            assert async_op and op == dist.ReduceOp.MIN
+            members = self.rounds.setdefault(issued[0], [])
+            members.append(tensor)
+            issued[0] += 1
+
+            def reduce():
+                assert len(members) == self.world_size, "a rank never issued"
+                columns = zip(*(member.tolist() for member in members))
+                for index, column in enumerate(columns):
+                    for member in members:
+                        member[index] = min(column)
+
+            return _FakeWork(reduce)
+
+        return all_reduce
+
+
 class TestHiCacheAsyncAckSync(unittest.TestCase):
     def _cache(self, write_ready=(True, True, False), load_ready=()):
         cache = object.__new__(UnifiedRadixCache)
@@ -141,6 +224,8 @@ class TestHiCacheAsyncAckSync(unittest.TestCase):
         )
         cache.pp_rank = 0
         cache.pp_size = 1
+        cache.page_size = 1
+        cache._transfer_page_size = 1
         cache.work_list = []
         cache.enable_storage_metrics = False
         cache.storage_metrics_collector = None
@@ -154,6 +239,7 @@ class TestHiCacheAsyncAckSync(unittest.TestCase):
         cache._drain_async_work = MagicMock()
         cache._async_ready_counts_eligible = MagicMock(return_value=True)
         cache.cache_controller = SimpleNamespace(
+            page_size=1,
             ack_write_queue=[
                 SimpleNamespace(
                     finish_event=SimpleNamespace(query=MagicMock(return_value=ready))
@@ -327,8 +413,12 @@ class TestHiCacheAsyncAckSync(unittest.TestCase):
             self.assertFalse(cache._async_ready_counts_eligible())
             cache._ready_counts_group = object()
 
+            # L3 storage rides the same pipeline; the flag still gates it.
             cache.tree_core.enable_storage = True
+            self.assertTrue(cache._async_ready_counts_eligible())
+            cache._hicache_async_ack_sync_requested = False
             self.assertFalse(cache._async_ready_counts_eligible())
+            cache._hicache_async_ack_sync_requested = True
             cache.tree_core.enable_storage = False
             cache.buffer_pipeline = object()
             self.assertFalse(cache._async_ready_counts_eligible())
@@ -347,7 +437,10 @@ class TestHiCacheAsyncAckSync(unittest.TestCase):
         cache.cache_controller.write_policy = "write_back"
         self.assertFalse(eligible())
         cache.cache_controller.write_policy = "write_through"
-        with patch(__name__ + ".get_memory", return_value=SimpleNamespace(hicache_write_policy="write_back")):
+        with patch(
+            __name__ + ".get_memory",
+            return_value=SimpleNamespace(hicache_write_policy="write_back"),
+        ):
             self.assertFalse(eligible())
 
     def test_selective_write_through_requires_matching_controller_policy(self):
@@ -363,9 +456,17 @@ class TestHiCacheAsyncAckSync(unittest.TestCase):
 
     def test_single_process_group_selection(self):
         cache = self._cache()
-        cache.attn_cp_group, cache.attn_tp_group, cache.tp_group = object(), object(), object()
+        cache.attn_cp_group, cache.attn_tp_group, cache.tp_group = (
+            object(),
+            object(),
+            object(),
+        )
         cache.tp_world_size = 8
-        with patch.object(dist, "get_world_size", side_effect=lambda group: 1 if group is cache.attn_cp_group else 8):
+        with patch.object(
+            dist,
+            "get_world_size",
+            side_effect=lambda group: 1 if group is cache.attn_cp_group else 8,
+        ):
             self.assertIs(cache._single_ready_counts_group(), cache.attn_tp_group)
         with patch.object(dist, "get_world_size", return_value=2):
             self.assertIsNone(cache._single_ready_counts_group())
@@ -378,7 +479,12 @@ class TestHiCacheAsyncAckSync(unittest.TestCase):
         cache = self._cache(write_ready=(True,))
         cache.tree_core.enable_storage = True
         cc = cache.cache_controller
-        for name, count in [("prefetch_hit_queue", 3), ("ack_prefetch_queue", 4), ("ack_backup_queue", 5), ("host_mem_release_queue", 6)]:
+        for name, count in [
+            ("prefetch_hit_queue", 3),
+            ("ack_prefetch_queue", 4),
+            ("ack_backup_queue", 5),
+            ("host_mem_release_queue", 6),
+        ]:
             setattr(cc, name, SimpleNamespace(qsize=lambda count=count: count))
         cc.extra_host_mem_release_queues = {"mamba": SimpleNamespace(qsize=lambda: 7)}
         tensor, names, digest = cache._ready_counts_tensor()
@@ -394,11 +500,114 @@ class TestHiCacheAsyncAckSync(unittest.TestCase):
         cache.check_hicache_events()
         cache._all_reduce.assert_called_once()
         cache._drain_storage_control_queues_impl.assert_called_once_with(
-            n_storage_hit=3, n_ack_prefetch=4, n_backup=5, n_release=6,
-            extra_release_counts={"mamba": 7}, log_metrics=True,
+            n_storage_hit=3,
+            n_ack_prefetch=4,
+            n_backup=5,
+            n_release=6,
+            extra_release_counts={"mamba": 7},
+            log_metrics=True,
         )
         cache.buffer_pipeline.flush_pending_writes.assert_called_once()
         self.assertIsNone(cache._pending_ready_counts)
+
+    def _storage_rank(self):
+        cache = self._cache(write_ready=())
+        cache._async_ready_counts_eligible = (
+            UnifiedRadixCache._async_ready_counts_eligible.__get__(cache)
+        )
+        cache.tree_core.enable_storage = True
+        cache.ongoing_prefetch = {}
+        cache.ongoing_backup = {}
+        cache.unlocked = []
+        cache.freed = []
+        cache.dec_host_lock_ref = lambda node_id, params: cache.unlocked.append(
+            node_id
+        )
+        cc = cache.cache_controller
+        cc.prefetch_hit_queue = _StrictQueue()
+        cc.ack_prefetch_queue = _StrictQueue()
+        cc.ack_backup_queue = _StrictQueue()
+        cc.host_mem_release_queue = _StrictQueue()
+        cc.extra_host_mem_release_queues = {"swa": _StrictQueue()}
+        cc.mem_pool_host = SimpleNamespace(
+            free=lambda indices, pool="kv": cache.freed.append((pool, list(indices)))
+        )
+        return cache
+
+    def _backup_acked(self, cache, op_id):
+        cache.ongoing_backup[op_id] = (f"node{op_id}", None)
+        cache.cache_controller.ack_backup_queue.put(
+            SimpleNamespace(id=op_id, completed_tokens=1)
+        )
+
+    def test_storage_queues_drain_one_round_late_in_rank_lockstep(self):
+        """Backup acks and host releases arrive at different times on each rank
+        (storage threads); the lagged MIN must pop the same FIFO prefix on every
+        rank and never more than a rank holds, even as its queues keep growing."""
+        ranks = [self._storage_rank(), self._storage_rank()]
+        collective = _MinCollective(world_size=2)
+        reducers = [collective.all_reduce_for(rank) for rank in range(2)]
+
+        def step():
+            for rank, cache in enumerate(ranks):
+                with patch.object(torch.distributed, "all_reduce", reducers[rank]):
+                    cache.check_hicache_events()
+
+        a, b = ranks
+        for op_id in (1, 2):
+            self._backup_acked(a, op_id)
+        self._backup_acked(b, 1)
+        a.cache_controller.host_mem_release_queue.put([10, 11])
+        a.cache_controller.extra_host_mem_release_queues["swa"].put([5])
+        b.cache_controller.extra_host_mem_release_queues["swa"].put([5])
+
+        with patch.object(
+            torch, "cat", lambda xs, dim=0: [v for x in xs for v in x], create=True
+        ):
+            step()  # issue round 0 only: nothing drained yet
+            for cache in ranks:
+                self.assertEqual(cache.unlocked, [])
+                self.assertEqual(cache.freed, [])
+
+            # More storage completions land before the next step.
+            self._backup_acked(a, 3)
+            for op_id in (2, 3):
+                self._backup_acked(b, op_id)
+            b.cache_controller.host_mem_release_queue.put([10, 11])
+
+            step()  # applies round 0: MIN(backup)=1, MIN(release)=0, MIN(swa)=1
+            for cache in ranks:
+                self.assertEqual(cache.unlocked, ["node1"])
+                self.assertEqual(cache.freed, [("swa", [5])])
+
+            step()  # applies round 1: backup 2/3, release [10, 11] on both
+            for cache in ranks:
+                self.assertEqual(cache.unlocked, ["node1", "node2", "node3"])
+                self.assertEqual(cache.freed, [("swa", [5]), ("kv", [10, 11])])
+                self.assertEqual(cache.ongoing_backup, {})
+                self.assertIsNotNone(cache._pending_ready_counts)
+
+            # reset drains the outstanding (empty) round before the tree reset.
+            for cache in ranks:
+                cache._reset_full = MagicMock()
+                cache.reset()
+                self.assertIsNone(cache._pending_ready_counts)
+                for q in (
+                    cache.cache_controller.ack_backup_queue,
+                    cache.cache_controller.host_mem_release_queue,
+                ):
+                    self.assertTrue(q.empty())
+
+    def test_shutdown_drops_pending_round_without_waiting(self):
+        cache = self._cache(write_ready=(True,))
+        work = _FakeWork(on_wait=lambda: self.fail("shutdown waited on a peer"))
+        cache._pending_ready_counts = (work, torch.tensor([1, 0, 0, 0]), (), 0)
+        cache._storage_attachment = SimpleNamespace(shutdown=MagicMock())
+        cache.shutdown()
+        self.assertIsNone(cache._pending_ready_counts)
+        cache._storage_attachment.shutdown.assert_called_once_with()
+        cache._drain_pending_ready_counts()
+        self.assertEqual(cache.write_counts, [])
 
     def test_fallback_drains_pending_then_syncs_remaining_queues(self):
         cache = self._cache(write_ready=(True, True))
@@ -416,12 +625,17 @@ class TestHiCacheAsyncAckSync(unittest.TestCase):
                 cache = self._cache(write_ready=(True,))
                 work = _FakeWork()
                 cache._pending_ready_counts = (work, torch.tensor([1, 0, 0, 0]), (), 0)
+
                 def observe(**kwargs):
                     self.assertTrue(work.waited)
                     self.assertEqual(cache.write_counts, [1])
                     self.assertIsNone(cache._pending_ready_counts)
                     return True, "ok"
-                cache._storage_attachment = SimpleNamespace(attach=MagicMock(side_effect=observe), detach=MagicMock(side_effect=observe))
+
+                cache._storage_attachment = SimpleNamespace(
+                    attach=MagicMock(side_effect=observe),
+                    detach=MagicMock(side_effect=observe),
+                )
                 if operation == "attach":
                     self.assertEqual(cache.attach_storage_backend("file"), (True, "ok"))
                 elif operation == "detach":

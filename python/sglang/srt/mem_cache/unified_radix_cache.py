@@ -3432,6 +3432,10 @@ class UnifiedRadixCache(BasePrefixCache):
 
     def shutdown(self) -> None:
         """Best-effort auto-detach of the storage backend on process shutdown."""
+        # atexit: peers may be gone, so drop (do not wait on) a pending ACK
+        # round. The detach below drains the queues locally, after which that
+        # round's counts would over-drain them.
+        self._pending_ready_counts = None
         if self._storage_attachment is not None:
             self._storage_attachment.shutdown()
 
@@ -3528,7 +3532,16 @@ class UnifiedRadixCache(BasePrefixCache):
         return self._parse_ready_counts(ready_counts, extra_pool_names, digest)
 
     def _async_ready_counts_eligible(self) -> bool:
-        """Guard the host-only ACK pipeline for validated write-through modes."""
+        """Guard the pipelined ACK sync for validated write-through modes.
+
+        The counts are MIN-reduced one round late. That stays sound for the
+        storage (L3) queues as well: the scheduler thread is the only consumer
+        of every counted queue, so a rank's lagged count never exceeds what it
+        still holds, and each rank drains the same FIFO prefix at the same
+        point of the step. Every other consumer (reset, attach/detach) drains
+        the pending round first. A late drain only holds host locks and
+        staging one round longer.
+        """
         memory_write_policy = get_memory().hicache_write_policy
         return (
             self._hicache_async_ack_sync_requested
@@ -3542,7 +3555,6 @@ class UnifiedRadixCache(BasePrefixCache):
             and get_disagg().disaggregation_mode == "null"
             and self.host_memory_mode == "cache"
             and self.buffer_pipeline is None
-            and not self.enable_storage
             and self.linker is None
         )
 

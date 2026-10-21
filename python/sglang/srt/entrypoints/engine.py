@@ -125,7 +125,7 @@ from sglang.srt.runtime_context import (
     restore_context,
     snapshot_context,
 )
-from sglang.srt.sampling.watermarking.core import redact_watermark_secrets
+from sglang.srt.arg_groups.token_auth import redact_diagnostic_config
 from sglang.srt.server_args import PortArgs, ServerArgs
 from sglang.srt.utils import (
     MultiprocessingSerializer,
@@ -168,7 +168,7 @@ _is_cuda = is_cuda()
 
 
 def _server_args_for_logging(server_args: ServerArgs) -> Dict[str, Any]:
-    return redact_watermark_secrets(server_args.resolved_dict())
+    return redact_diagnostic_config(server_args.resolved_dict())
 
 
 @dataclasses.dataclass
@@ -298,7 +298,7 @@ class Engine(EngineScoreMixin, EngineBase):
                 "_launch_command",
                 "Engine("
                 + ", ".join(
-                    f"{k}={v!r}" for k, v in redact_watermark_secrets(kwargs).items()
+                    f"{k}={v!r}" for k, v in redact_diagnostic_config(kwargs).items()
                 )
                 + ")",
             )
@@ -1560,7 +1560,7 @@ class Engine(EngineScoreMixin, EngineBase):
             self.tokenizer_manager.get_internal_state()
         )
         return msgspec_to_builtins(
-            redact_watermark_secrets(
+            redact_diagnostic_config(
                 {
                     **self.tokenizer_manager.server_args.resolved_dict(),
                     "launch_command": self.tokenizer_manager.server_args.launch_command,

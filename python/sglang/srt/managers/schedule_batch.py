@@ -1898,6 +1898,13 @@ class Req(ReqDllmMixin):
 
         return False
 
+    def _effective_max_new_tokens(self) -> int:
+        if self.sampling_params.json_structural_grace_base_max_new_tokens is None:
+            return self.sampling_params.max_new_tokens
+        from sglang.srt.constrained.json_structural_grace import request_grace_limit
+
+        return request_grace_limit(self)
+
     def _cap_finished_len_at_max_new_tokens(self) -> None:
         """Demote a stop matched beyond the length budget to a length finish.
 
@@ -1905,10 +1912,21 @@ class Req(ReqDllmMixin):
         ``max_new_tokens`` and contains a stop; a stop located past the cap
         must not extend the emitted output beyond the cap.
         """
-        max_new_tokens = self.sampling_params.max_new_tokens
+        max_new_tokens = self._effective_max_new_tokens()
         if self.finished_len is not None and self.finished_len > max_new_tokens:
             self.finished_reason = FINISH_LENGTH(length=max_new_tokens)
             self.finished_len = max_new_tokens
+        self._cap_reasoning_tokens_at_finished_len()
+
+    def _cap_reasoning_tokens_at_finished_len(self) -> None:
+        """Bound reasoning usage by the emitted prefix after speculative finish.
+
+        Backport of sgl-project/sglang PR #37450 (e27d2d464151): the counter
+        advances over the accepted run before output_ids_through_stop applies
+        the length/stop boundary. Generated tokens and KV ownership are unchanged.
+        """
+        if self.finished_len is not None and self.reasoning_tokens > self.finished_len:
+            self.reasoning_tokens = self.finished_len
 
     def update_finish_state(self, new_accepted_len: int = 1):
         if self.finished():
@@ -1941,11 +1959,11 @@ class Req(ReqDllmMixin):
             self._cap_finished_len_at_max_new_tokens()
             return
 
-        if len(self.output_ids) >= self.sampling_params.max_new_tokens:
-            self.finished_reason = FINISH_LENGTH(
-                length=self.sampling_params.max_new_tokens
-            )
-            self.finished_len = self.sampling_params.max_new_tokens
+        max_new_tokens = self._effective_max_new_tokens()
+        if len(self.output_ids) >= max_new_tokens:
+            self.finished_reason = FINISH_LENGTH(length=max_new_tokens)
+            self.finished_len = max_new_tokens
+            self._cap_reasoning_tokens_at_finished_len()
             return
 
         if self.grammar is not None and self.grammar.is_terminated():

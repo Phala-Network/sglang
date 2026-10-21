@@ -856,6 +856,11 @@ class SchedulerBatchResultProcessor:
         retained = []
         try:
             for token_id in tokens:
+                if req.sampling_params.json_structural_grace_base_max_new_tokens is not None:
+                    from sglang.srt.constrained.json_structural_grace import grammar_grace_at_limit
+
+                    if grammar_grace_at_limit(req):
+                        break
                 req.grammar.accept_token(token_id)
                 retained.append(token_id)
                 if req.grammar.is_terminated():

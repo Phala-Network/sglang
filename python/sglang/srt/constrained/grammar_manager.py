@@ -14,6 +14,7 @@ from sglang.srt.constrained.base_grammar_backend import (
 from sglang.srt.constrained.reasoner_grammar_backend import ReasonerGrammarObject
 from sglang.srt.distributed.communication_tags import P2PTag
 from sglang.srt.environ import envs
+from sglang.srt.function_call.xing4_native_tool_schema import NativeToolSchemaTag
 from sglang.srt.runtime_context import get_parallel, get_serving
 from sglang.srt.sampling.sampling_params import (
     get_request_reasoning_end_token_ids,
@@ -118,12 +119,19 @@ class GrammarManager:
                     req.grammar.cancel()
                 req.set_finish_with_abort("Aborted by AbortReq.")
 
-    def _get_request_thinking_budget(self, req: Req) -> int | None:
+    def _get_request_thinking_bounds(self, req: Req) -> tuple[int | None, int | None]:
         custom_params = req.sampling_params.custom_params
         if not isinstance(custom_params, dict):
-            return None
-        thinking_budget = custom_params.get("thinking_budget")
-        return thinking_budget if isinstance(thinking_budget, int) else None
+            return None, None
+        return tuple(value if type(value) is int else None for value in (
+            custom_params.get("min_thinking_budget"), custom_params.get("thinking_budget")
+        ))
+
+    def _bind_json_structural_grace(self, req: Req) -> None:
+        if req.sampling_params.json_structural_grace_base_max_new_tokens is not None:
+            from sglang.srt.constrained.json_structural_grace import bind_json_structural_grace
+
+            bind_json_structural_grace(req)
 
     def _apply_request_reasoning_config(self, req: Req) -> None:
         if not isinstance(req.grammar, ReasonerGrammarObject):
@@ -138,9 +146,43 @@ class GrammarManager:
         )
         if think_end_ids is not None:
             req.grammar.set_request_think_end_ids(think_end_ids)
-        thinking_budget = self._get_request_thinking_budget(req)
+        min_thinking_budget, thinking_budget = self._get_request_thinking_bounds(req)
+        if min_thinking_budget is not None:
+            req.grammar.min_think_tokens = min_thinking_budget
         if thinking_budget is not None:
             req.grammar.max_think_tokens = thinking_budget
+
+    def _strict_thinking_grammar_disabled(self, req: Req) -> bool:
+        custom_params = req.sampling_params.custom_params
+        return (
+            isinstance(custom_params, dict)
+            and custom_params.get("disable_strict_thinking_grammar") is True
+        )
+
+    def _fallback_native_tool_schema(self, req: Req) -> bool:
+        if not isinstance(req.sampling_params.structural_tag, NativeToolSchemaTag):
+            return False
+        if any(
+            getattr(req.sampling_params, name) is not None
+            for name in ("json_schema", "regex", "ebnf")
+        ):
+            return False
+        req.sampling_params.structural_tag = None
+        req.grammar = None
+        req.grammar_key = None
+        req.grammar_wait_ct = 0
+        if (
+            self._enable_strict_thinking
+            and not self._strict_thinking_grammar_disabled(req)
+        ):
+            grammar_obj = self.grammar_backend.init_strict_reasoning_grammar(
+                req.require_reasoning
+            )
+            if grammar_obj is not None:
+                req.grammar = grammar_obj
+                self._apply_request_reasoning_config(req)
+        logger.warning("Xing4 native parameter assistance failed; restored original request path")
+        return True
 
     def process_req_with_grammar(self, req: Req) -> bool:
         # Init grammar cache for this request
@@ -153,7 +195,8 @@ class GrammarManager:
         ):
             if self.grammar_backend is None:
                 error_msg = "Grammar-based generation (json_schema, regex, ebnf, structural_tag) is not supported when the server is launched with --grammar-backend none"
-                req.set_finish_with_abort(error_msg)
+                if not self._fallback_native_tool_schema(req):
+                    req.set_finish_with_abort(error_msg)
             else:
                 if req.sampling_params.json_schema is not None:
                     key = ("json", req.sampling_params.json_schema)
@@ -181,13 +224,15 @@ class GrammarManager:
                     if isinstance(
                         value, InvalidGrammarObject
                     ):  # We hit a cached invalid grammar.
-                        error_msg = (
-                            f"Failed to compile {key[0]} grammar: {value.error_message}"
-                        )
-                        req.set_finish_with_abort(error_msg)
+                        if not self._fallback_native_tool_schema(req):
+                            error_msg = (
+                                f"Failed to compile {key[0]} grammar: {value.error_message}"
+                            )
+                            req.set_finish_with_abort(error_msg)
                     else:
                         self._apply_request_reasoning_config(req)
-        elif self._enable_strict_thinking:
+                        self._bind_json_structural_grace(req)
+        elif self._enable_strict_thinking and not self._strict_thinking_grammar_disabled(req):
             grammar_obj = self.grammar_backend.init_strict_reasoning_grammar(
                 req.require_reasoning
             )
@@ -303,7 +348,11 @@ class GrammarManager:
                 )
                 req.grammar = InvalidGrammarObject(f"Grammar compilation failed: {e}")
             self.grammar_backend.set_cache(req.grammar_key, req.grammar.copy())
+            if isinstance(req.grammar, InvalidGrammarObject):
+                if self._fallback_native_tool_schema(req):
+                    continue
             self._apply_request_reasoning_config(req)
+            self._bind_json_structural_grace(req)
             if isinstance(req.grammar, InvalidGrammarObject):
                 error_msg = f"Failed to compile {req.grammar_key[0]} grammar: {req.grammar.error_message}"
                 req.set_finish_with_abort(error_msg)
@@ -314,6 +363,12 @@ class GrammarManager:
             return_reqs.append(req)
 
             assert isinstance(req.grammar, futures.Future) and req.grammar_key
+            if isinstance(req.sampling_params.structural_tag, NativeToolSchemaTag):
+                self.grammar_backend.set_cache(
+                    req.grammar_key, InvalidGrammarObject("Grammar preprocessing timed out")
+                )
+                self._fallback_native_tool_schema(req)
+                continue
             req.grammar.cancel()
             self.grammar_backend.set_cache(
                 req.grammar_key, InvalidGrammarObject("Grammar preprocessing timed out")

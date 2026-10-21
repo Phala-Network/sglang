@@ -403,6 +403,52 @@ class DetokenizerManager(MultiHttpWorkerDetokenizerMixin):
                     # commit (token offsets stay so the next iteration retries
                     # with more tokens).
                     printable = find_printable_text(new_text)
+                    # Xing/SentencePiece can prove that bytes before its
+                    # still-completable UTF-8 suffix are stable. Generic
+                    # tokenizers and unsupported SP settings keep this path.
+                    stable_prefix = getattr(
+                        self.tokenizer, "get_stable_decode_prefix_length", None
+                    )
+                    # skip=true can join byte pieces across removed special
+                    # tokens; raw token suffixes do not describe that stream.
+                    if (
+                        new_text.endswith("�")
+                        and not recv_obj.skip_special_tokens[i]
+                        and stable_prefix is not None
+                    ):
+                        stable_count = stable_prefix(read_ids[i])
+                        if stable_count is not None:
+                            stable_end = s.surr_offset + stable_count
+                            if stable_end > s.read_offset:
+                                stable_ids = read_ids[i][:stable_count]
+                                if not self.disable_tokenizer_batch_decode:
+                                    stable_text = decode_without_hf_kwargs(
+                                        self.tokenizer,
+                                        stable_ids,
+                                        recv_obj.skip_special_tokens[i],
+                                    )
+                                else:
+                                    stable_text = self.tokenizer.decode(
+                                        stable_ids,
+                                        skip_special_tokens=recv_obj.skip_special_tokens[i],
+                                        spaces_between_special_tokens=recv_obj.spaces_between_special_tokens[i],
+                                    )
+                                stable_text = stable_text[len(surr_texts[i]) :]
+                                # Preserve every character already emitted by
+                                # the printable recovery branch. Never infer a
+                                # byte boundary from replacement text alone.
+                                if (
+                                    stable_text
+                                    and new_text.startswith(stable_text)
+                                    and printable.startswith(stable_text)
+                                    and 0 <= pending <= len(stable_text)
+                                ):
+                                    s.append_decoded_text(stable_text)
+                                    s.surr_offset = s.read_offset
+                                    s.read_offset = stable_end
+                                    s.sent_offset = s.decoded_text_len
+                                    output_strs.append(stable_text[pending:])
+                                    continue
                     s.sent_offset = s.decoded_text_len + len(printable)
                     output_strs.append(printable[pending:] if pending else printable)
                 continue

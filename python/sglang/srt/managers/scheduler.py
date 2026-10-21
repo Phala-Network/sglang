@@ -2584,12 +2584,46 @@ class Scheduler(
 
     def init_req_max_new_tokens(self, req):
         input_len = len(req.origin_input_ids)
+        preserve_public_budget = bool(
+            getattr(self.model_config, "xing_eagle_context_headroom", 0)
+        )
         max_new_tokens = (
             req.sampling_params.max_new_tokens
             if req.sampling_params.max_new_tokens is not None
             else 1 << 30
         )
-        if self.max_new_tokens_limit is not None and self.max_new_tokens_limit > 0:
+        grace_base = req.sampling_params.json_structural_grace_base_max_new_tokens
+        if grace_base is not None and (
+            input_len + max_new_tokens > self.model_config.context_len
+            or (self.max_new_tokens_limit is not None and self.max_new_tokens_limit > 0
+                and max_new_tokens > self.max_new_tokens_limit)
+            or (not preserve_public_budget and max_new_tokens > self.max_req_len - input_len - 1)
+        ):
+            max_new_tokens = grace_base
+            req.sampling_params.max_new_tokens = grace_base
+            req.sampling_params.json_structural_grace_base_max_new_tokens = None
+        if preserve_public_budget:
+            if req.sampling_params.max_new_tokens is None:
+                max_new_tokens = max(0, self.model_config.context_len - input_len)
+            if input_len + max_new_tokens > self.model_config.context_len:
+                req.set_finish_with_abort(
+                    "Requested input plus output budget exceeds public Xing context; "
+                    "the admitted budget is not clipped",
+                    status_code=HTTPStatus.BAD_REQUEST,
+                )
+                return
+            if (
+                self.max_new_tokens_limit is not None
+                and self.max_new_tokens_limit > 0
+                and max_new_tokens > self.max_new_tokens_limit
+            ):
+                req.set_finish_with_abort(
+                    "Requested output budget exceeds SGLANG_MAX_NEW_TOKENS_LIMIT; "
+                    "the admitted budget is not clipped",
+                    status_code=HTTPStatus.BAD_REQUEST,
+                )
+                return
+        if not preserve_public_budget and self.max_new_tokens_limit is not None and self.max_new_tokens_limit > 0:
             if max_new_tokens > self.max_new_tokens_limit:
                 logger.warning(
                     f"Capping max_new_tokens of request {req.rid} to "
@@ -2599,13 +2633,12 @@ class Scheduler(
             max_new_tokens = min(max_new_tokens, self.max_new_tokens_limit)
 
         # Keep this bound consistent with PrefillAdder's admission budget.
-        max_new_tokens = max(
-            0,
-            min(
-                max_new_tokens,
-                self.max_req_len - input_len - 1,
-            ),
-        )
+        if not preserve_public_budget:
+            max_new_tokens = max(
+                0,
+                min(max_new_tokens, self.max_req_len - input_len - 1),
+            )
+        requested_new_tokens = max_new_tokens
         # PrefillAdder reserves one page per shard; the allocator reserves one.
         # Subtract the other N - 1 pages to keep queue admission schedulable.
         token_capacity = (
@@ -2619,6 +2652,31 @@ class Scheduler(
             sliding_window_size=self.sliding_window_size,
             chunk_size=self.chunked_prefill_size,
         )
+        grace_base = req.sampling_params.json_structural_grace_base_max_new_tokens
+        if grace_base is not None and (
+            input_len + requested_new_tokens > token_capacity
+            or max_new_tokens is None or max_new_tokens < requested_new_tokens
+        ):
+            req.sampling_params.json_structural_grace_base_max_new_tokens = None
+            req.sampling_params.max_new_tokens = grace_base
+            requested_new_tokens = grace_base
+            max_new_tokens = self.token_to_kv_pool_allocator.max_new_tokens_for_memory(
+                input_len, grace_base, token_capacity=token_capacity,
+                sliding_window_size=self.sliding_window_size,
+                chunk_size=self.chunked_prefill_size,
+            )
+        if preserve_public_budget and (
+            input_len + requested_new_tokens > token_capacity
+            or max_new_tokens is None
+            or max_new_tokens < requested_new_tokens
+        ):
+            req.set_finish_with_abort(
+                "Requested input plus output budget does not fit the KV pool "
+                "including independent page padding/headroom; the admitted budget "
+                "is not clipped",
+                status_code=HTTPStatus.BAD_REQUEST,
+            )
+            return
         if max_new_tokens is None:
             req.set_finish_with_abort(
                 f"Request prompt exceeds the KV memory budget: input_len={input_len}."
@@ -3114,6 +3172,9 @@ class Scheduler(
 
         # initialize before returning
         self.init_req_max_new_tokens(req)
+        if getattr(self.model_config, "xing_eagle_context_headroom", 0) and req.to_finish is not None:
+            self._release_aborted_request(req)
+            return
 
         # Validate prompt length
         error_msg = validate_input_length(

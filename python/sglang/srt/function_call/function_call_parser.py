@@ -59,6 +59,7 @@ from sglang.srt.function_call.utils import (
     _get_tool_schema_defs,
     get_json_schema_constraint,
 )
+from sglang.srt.function_call.xing4_0_detector import Xing4_0Detector
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,7 @@ class FunctionCallParser:
         "spark25": Spark25Detector,
         "step3": Step3Detector,
         "step3p5": Qwen3CoderDetector,
+        "xing4_0": Xing4_0Detector,
         "minimax-m2": MinimaxM2Detector,
         "minimax-m3": MinimaxM3Detector,
         "nanbeige": Qwen3CoderDetector,
@@ -224,7 +226,7 @@ class FunctionCallParser:
         return sp_result.normal_text, sp_result.calls
 
     def get_legacy_structural_tag(
-        self, at_least_one: bool = False
+        self, at_least_one: bool = False, tool_name: Optional[str] = None
     ) -> StructuralTagResponseFormat:
         """
         Generate a structural tag response format for all available tools.
@@ -234,18 +236,23 @@ class FunctionCallParser:
         Args:
             at_least_one: If True, the grammar forces at least one tool call
                 (no free text allowed). Used for required/named tool_choice.
+            tool_name: If set, only this tool contributes a structure and its
+                schema definitions. Used for a named tool_choice.
 
         Raises:
             ValueError: If tools have conflicting $defs schemas.
         """
-        # Validate $defs consistency before building structural tags
-        _get_tool_schema_defs(self.tools)
+        # Only selected tools contribute schemas or reference definitions.
+        tools = self.tools
+        if tool_name is not None:
+            tools = [tool for tool in tools if tool.function.name == tool_name]
+        _get_tool_schema_defs(tools)
 
         tool_structures: List[StructuresResponseFormat] = list()
         tool_trigger_set: Set[str] = set()
 
         get_structure_info = self.detector.structure_info()
-        for tool in self.tools:
+        for tool in tools:
             function = tool.function
             name = function.name
             assert name is not None
@@ -364,7 +371,14 @@ class FunctionCallParser:
                     # model's native tool call format. Schema is only included when
                     # strict=True, per OpenAI protocol semantics.
                     # For "auto": only constrain when strict is enabled.
-                    tag = self.get_legacy_structural_tag(at_least_one=is_required)
+                    tag = self.get_legacy_structural_tag(
+                        at_least_one=is_required,
+                        tool_name=(
+                            tool_choice.function.name
+                            if isinstance(tool_choice, ToolChoice)
+                            else None
+                        ),
+                    )
                     return ("structural_tag", tag)
 
             if (

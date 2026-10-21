@@ -164,6 +164,8 @@ class SamplingParams(msgspec.Struct, kw_only=True, array_like=True):
     stop_regex_max_len: int = 0  # set by normalize()
     is_normalized: bool = False  # set by normalize()
     ebnf_full_assistant: bool = False
+    # Server-assigned original wire budget; max_new_tokens reserves B + 32.
+    json_structural_grace_base_max_new_tokens: Optional[int] = None
 
     def __post_init__(self):
         # For non-optional params, treat None as "use default" so that callers

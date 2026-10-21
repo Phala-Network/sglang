@@ -355,8 +355,12 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbedding):
         mscale: float = 1,
         mscale_all_dim: float = 0,
         device: Optional[str] = None,
+        speculative_headroom: int = 0,
     ) -> None:
         self.scaling_factor = scaling_factor
+        if type(speculative_headroom) is not int or speculative_headroom not in (0, 8):
+            raise ValueError("Xing EAGLE RoPE headroom must be zero or eight")
+        self.speculative_headroom = speculative_headroom
         self.extrapolation_factor = extrapolation_factor
         self.attn_factor = attn_factor
         self.beta_fast = beta_fast
@@ -406,7 +410,7 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbedding):
     def _compute_cos_sin_cache(self) -> torch.Tensor:
         inv_freq = self._compute_inv_freq(self.scaling_factor)
         t = torch.arange(
-            self.max_position_embeddings * self.scaling_factor,
+            self.max_position_embeddings * self.scaling_factor + self.speculative_headroom,
             device=self.device,
             dtype=torch.float32,
         )

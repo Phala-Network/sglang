@@ -92,6 +92,7 @@ class XGrammarGrammar(BaseGrammarObject):
         self.accepted_tokens = []
         self.key_string = key_string
         self.grammar_stats = grammar_stats
+        self.json_structural_grace = None
 
     def accept_token(self, token: int):
         if not self.is_terminated():
@@ -121,6 +122,8 @@ class XGrammarGrammar(BaseGrammarObject):
 
     def fill_vocab_mask(self, vocab_mask: torch.Tensor, idx: int) -> None:
         self.matcher.fill_next_token_bitmask(vocab_mask, idx)
+        if self.json_structural_grace is not None:
+            self.json_structural_grace.fill_vocab_mask(self, vocab_mask, idx)
 
     @staticmethod
     def move_vocab_mask(vocab_mask: torch.Tensor, device) -> torch.Tensor:

@@ -1,0 +1,13 @@
+diff --git a/cpp/json_schema_converter.cc b/cpp/json_schema_converter.cc
+index 5ca329f..002f578 100644
+--- a/cpp/json_schema_converter.cc
++++ b/cpp/json_schema_converter.cc
+@@ -2390,7 +2390,7 @@ int32_t JSONSchemaConverter::GenerateString(const StringSpec& spec, const std::s
+   // Check for length constraints
+   if (spec.min_length != 0 || spec.max_length != -1) {
+     int32_t character =
+-        builder_.AddCharacterClass({{'"', '"'}, {'\\', '\\'}, {'\r', '\r'}, {'\n', '\n'}}, true);
++        builder_.AddCharacterClass({{'"', '"'}, {'\\', '\\'}, {0x00, 0x1f}}, true);
+     int32_t body = Repeat(rule_name + "_characters", character, spec.min_length, spec.max_length);
+     return Sequence({ByteString("\""), body, ByteString("\"")});
+   }

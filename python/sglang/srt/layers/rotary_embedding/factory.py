@@ -397,6 +397,7 @@ def get_rope(
                 is_neox_style,
                 scaling_factor,
                 dtype,
+                speculative_headroom=rope_scaling.get("_xing_eagle_rope_headroom", 0),
                 **extra_kwargs,
             )
         elif scaling_type == "longrope":

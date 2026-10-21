@@ -55,6 +55,7 @@ import zmq
 import zmq.asyncio
 from fastapi import BackgroundTasks
 
+from sglang.srt.arg_groups.token_auth import redact_diagnostic_config
 from sglang.srt.beam_search.output import (
     build_beam_search_out,
     try_build_beam_search_out_dict,
@@ -163,7 +164,6 @@ from sglang.srt.sampling.custom_logit_processor import supports_sampling_mask
 from sglang.srt.sampling.sampling_params import SamplingParams
 from sglang.srt.sampling.watermarking.core import (
     redact_watermark_command_line,
-    redact_watermark_secrets,
     resolve_watermark_request,
 )
 from sglang.srt.server_args import (
@@ -903,15 +903,19 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         # Normalize the request
         obj.normalize_batch_and_arguments()
         self._set_default_priority(obj)
-        if (
-            isinstance(obj, GenerateReqInput)
-            and obj.max_thinking_tokens is not None
-            and not get_serving().enable_strict_thinking
-        ):
-            raise ValueError(
-                "max_thinking_tokens requires the server to be launched with "
-                "--enable-strict-thinking"
-            )
+        has_thinking_bounds = isinstance(obj, GenerateReqInput) and (
+            obj.min_thinking_tokens is not None or obj.max_thinking_tokens is not None
+        )
+        if has_thinking_bounds and not get_serving().enable_strict_thinking:
+            raise ValueError("thinking token bounds require --enable-strict-thinking")
+        if has_thinking_bounds:
+            if obj.min_thinking_tokens is not None and obj.min_thinking_tokens < 0:
+                raise ValueError("min_thinking_tokens must be non-negative")
+            if obj.max_thinking_tokens is not None and obj.max_thinking_tokens < 0:
+                raise ValueError("max_thinking_tokens must be non-negative")
+            if (obj.min_thinking_tokens is not None and obj.max_thinking_tokens is not None
+                    and obj.min_thinking_tokens > obj.max_thinking_tokens):
+                raise ValueError("min_thinking_tokens must not exceed max_thinking_tokens")
 
         if isinstance(obj, GenerateReqInput) and obj.routed_dp_rank is not None:
             num_dp_ranks = self.elastic_worker_count
@@ -1337,11 +1341,15 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         self._validate_joint_schema_request(obj, input_ids)
         _max_req_len = self.context_len
         input_token_num = len(input_ids) if input_ids is not None else 0
-        input_token_num += self.num_reserved_tokens
+        xing_eagle_public_budget = bool(
+            getattr(self.model_config, "xing_eagle_context_headroom", 0)
+        )
+        if not xing_eagle_public_budget:
+            input_token_num += self.num_reserved_tokens
 
         # Validate input length
         if input_token_num >= self.context_len:
-            if self.allow_auto_truncate:
+            if self.allow_auto_truncate and not xing_eagle_public_budget:
                 logger.warning(
                     f"The input ({input_token_num} tokens) is longer than the "
                     f"model's context length ({self.context_len} tokens). "
@@ -1355,6 +1363,16 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     f"model's context length ({self.context_len} tokens)."
                 )
 
+        if isinstance(obj, GenerateReqInput):
+            if envs.SGLANG_ENABLE_JSON_STRUCTURAL_GRACE.get():
+                from sglang.srt.constrained.json_structural_grace import reserve_json_structural_grace
+
+                reserve_json_structural_grace(
+                    obj, input_token_num, _max_req_len, self.server_args, self.model_config
+                )
+            else:
+                obj.sampling_params.pop("json_structural_grace_base_max_new_tokens", None)
+
         # Validate total tokens (input + max_new_tokens)
         max_new_tokens = obj.sampling_params.get("max_new_tokens")
         if (
@@ -1362,7 +1380,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             and max_new_tokens is not None
             and (max_new_tokens + input_token_num) > _max_req_len
         ):
-            if self.allow_auto_truncate:
+            if self.allow_auto_truncate and not xing_eagle_public_budget:
                 logger.warning(
                     f"Requested token count ({input_token_num} input + {max_new_tokens} new) "
                     f"exceeds the model's context length ({self.context_len} tokens). "
@@ -1559,10 +1577,15 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     "inside sampling_params, not both"
                 )
             sampling_kwargs["watermark"] = obj.watermark
-        if isinstance(obj, GenerateReqInput) and obj.max_thinking_tokens is not None:
+        if isinstance(obj, GenerateReqInput) and (
+            obj.min_thinking_tokens is not None or obj.max_thinking_tokens is not None
+        ):
             sampling_kwargs = dict(sampling_kwargs)
             custom_params = dict(sampling_kwargs.get("custom_params") or {})
-            custom_params["thinking_budget"] = obj.max_thinking_tokens
+            if obj.min_thinking_tokens is not None:
+                custom_params["min_thinking_budget"] = obj.min_thinking_tokens
+            if obj.max_thinking_tokens is not None:
+                custom_params["thinking_budget"] = obj.max_thinking_tokens
             sampling_kwargs["custom_params"] = custom_params
         sampling_params = self.sampling_params_class(**sampling_kwargs)
         sampling_params.normalize(self.tokenizer)
@@ -2342,17 +2365,17 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         part that cannot be reconstructed afterwards.
         """
         try:
-            return redact_watermark_secrets(
+            return redact_diagnostic_config(
                 self.resolved_config_dict(self.server_args.resolved_dict())
             )
         except Exception as e:
             logger.error(f"Failed to snapshot the resolved config for the dump: {e!r}")
             return None
 
-    def _server_args_for_dump(self) -> Union[ServerArgs, Dict[str, Any]]:
-        if not get_exec().features.enable_watermark:
-            return self.server_args
-        return redact_watermark_secrets(self.server_args.resolved_dict())
+    def _server_args_for_dump(self) -> Dict[str, Any]:
+        # Dumps are diagnostics: resolved auth may live in the pickled argument
+        # resolution state even when the corresponding raw field is None.
+        return redact_diagnostic_config(self.server_args.resolved_dict())
 
     def resolved_config_dict(self, base: Dict[str, Any]) -> Dict[str, Any]:
         """``base`` (a serialized ``ServerArgs``) with the control-plane changes on top."""
@@ -3359,9 +3382,9 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         logger.info(log_message)
         to_dump_with_server_args = {
             "server_args": self._server_args_for_dump(),
-            "config_updates": redact_watermark_secrets(get_context().overrides_log()),
+            "config_updates": redact_diagnostic_config(get_context().overrides_log()),
             "resolved_config": self._dump_config_snapshot(),
-            "requests": redact_watermark_secrets(data_list.copy()),
+            "requests": redact_diagnostic_config(data_list.copy()),
         }
 
         def background_task():
@@ -3444,14 +3467,12 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 # Write the data to the file
                 data_to_dump_with_server_args = {
                     "server_args": self._server_args_for_dump(),
-                    "config_updates": redact_watermark_secrets(
+                    "config_updates": redact_diagnostic_config(
                         get_context().overrides_log()
                     ),
                     "resolved_config": self._dump_config_snapshot(),
-                    "requests": redact_watermark_secrets(data_to_dump),
-                    "launch_command": redact_watermark_command_line(
-                        sys.argv, self.server_args.watermark_config
-                    ),
+                    "requests": redact_diagnostic_config(data_to_dump),
+                    "launch_command": self.server_args.launch_command,
                 }
                 with open(filename, "wb") as f:
                     try:

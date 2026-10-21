@@ -202,6 +202,7 @@ def is_deepseek_dsa(config) -> bool:
             "Glm5NextForConditionalGeneration",
             "LongcatFlashForCausalLM",
             "LongcatFlashForCausalLMNextN",
+            "Xing4_0ForCausalLM",
             "Dots3NoteForCausalLM",
             "Dots3NoteForCausalLMNextN",
             "HYV4ForCausalLM",
@@ -518,6 +519,7 @@ class ModelConfig:
         self.is_draft_model = is_draft_model
         self.is_draft_quantization_explicit = is_draft_quantization_explicit
         self.speculative_algorithm = speculative_algorithm
+        self.xing_eagle_context_headroom = 0
         self.model_impl = model_impl
         self.sampling_defaults = sampling_defaults
         self.quantize_and_serve = quantize_and_serve
@@ -861,7 +863,7 @@ class ModelConfig:
             if is_draft_model
             else cfg.decrypted_config_file
         )
-        return ModelConfig(
+        model_config = ModelConfig(
             model_path=model_path or cfg.model_path,
             trust_remote_code=cfg.trust_remote_code,
             revision=model_revision or cfg.revision,
@@ -890,6 +892,45 @@ class ModelConfig:
             speculative_algorithm=cfg.speculative_algorithm,
             **kwargs,
         )
+        rope = getattr(model_config.hf_text_config, "rope_scaling", None)
+        if (
+            getattr(model_config.hf_text_config, "model_type", None) == "xing4_0"
+            and model_config.context_len == 262144
+            and model_config.dtype == torch.bfloat16
+            and model_config.quantization is None
+            and isinstance(rope, dict)
+            and rope.get("factor") == 64
+            and rope.get("original_max_position_embeddings") == 4096
+            and cfg.device == "cuda"
+            and cfg.kv_cache_dtype == "fp8_e4m3"
+            and cfg.page_size == 64
+            and cfg.attention_backend == "trtllm_mla"
+            and all(
+                backend in (None, "trtllm_mla")
+                for backend in (
+                    cfg.prefill_attention_backend,
+                    cfg.decode_attention_backend,
+                    cfg.speculative_draft_attention_backend,
+                )
+            )
+            and cfg.speculative_attention_mode == "prefill"
+            and (
+                cfg.tp_size, cfg.pp_size, cfg.dp_size, cfg.attn_cp_size, cfg.dcp_size
+            ) == (1, 1, 1, 1, 1)
+            and cfg.speculative_algorithm == "EAGLE"
+            and (
+                cfg.speculative_num_steps,
+                cfg.speculative_eagle_topk,
+                cfg.speculative_num_draft_tokens,
+            ) in ((3, 1, 4), (1, 1, 2))
+            and not cfg.speculative_adaptive
+            and not cfg.enable_multi_layer_eagle
+        ):
+            # Public context counts accepted input/output. Fixed EAGLE lookahead
+            # uses independent KV/req-row and RoPE-table storage; it is not input.
+            model_config.xing_eagle_context_headroom = 8
+            rope["_xing_eagle_rope_headroom"] = 8
+        return model_config
 
     def _derive_multimodal_cuda_graph_support(self, enable_multimodal: bool) -> None:
         """Declare graph capabilities before deriving shapes and validating config.
@@ -931,6 +972,12 @@ class ModelConfig:
             "DeepseekV32ForCausalLM",
         ]:
             self.hf_config.architectures[0] = "DeepseekV3ForCausalLMNextN"
+
+        # Xing4_0 bundles a DeepSeek-V3-compatible MTP head (layer index ==
+        # num_hidden_layers); reuse DeepseekV3ForCausalLMNextN as the draft arch.
+        if is_draft_model and self.hf_config.architectures[0] == "Xing4_0ForCausalLM":
+            self.hf_config.architectures[0] = "DeepseekV3ForCausalLMNextN"
+            self.hf_config.num_nextn_predict_layers = 1
 
         if is_draft_model and self.hf_config.architectures[0] == "GlmMoeDsaForCausalLM":
             self.hf_config.architectures[0] = "GlmMoeDsaForCausalLMNextN"
@@ -1283,6 +1330,7 @@ class ModelConfig:
             or "Eagle3DeepseekV2ForCausalLM" in self.hf_config.architectures
             or "GigaChat35ForCausalLM" in self.hf_config.architectures
             or "GigaChat35ForCausalLMNextN" in self.hf_config.architectures
+            or "Xing4_0ForCausalLM" in self.hf_config.architectures
         ):
             self.head_dim = 256
             self.attention_arch = AttentionArch.MLA
@@ -1469,6 +1517,16 @@ class ModelConfig:
             self.spec_hidden_size, self.hc_hidden_size = resolve_spec_hidden_size(
                 self.hf_config, self.hidden_size, hc_mult
             )
+            # Models that declare ``hc_contract_for_draft`` (e.g. Xing4_0)
+            # merge the mHC streams back to hidden_size before the Eagle draft
+            # (so spec_hidden_size stays contracted, as resolved above) but
+            # still carry an mHC-internal residual stream (n * hidden_size)
+            # used to size the main model's activation buffers. Restore that
+            # width here; resolve_spec_hidden_size only sizes it for DSV4.
+            if hc_mult > 1 and getattr(
+                self.hf_text_config, "hc_contract_for_draft", False
+            ):
+                self.hc_hidden_size = self.hidden_size * hc_mult
         self.num_hidden_layers = self.hf_text_config.num_hidden_layers
         self.num_attention_layers = self.num_hidden_layers
         if "LongcatFlashForCausalLM" in self.hf_config.architectures:

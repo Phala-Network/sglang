@@ -1,4 +1,4 @@
-"""Actual native 262144/Q2 admission and scratch checks, without 512K profiles."""
+"""Actual native 262144 AR/Q2 admission and scratch checks, without 512K profiles."""
 from array import array
 from types import MethodType, SimpleNamespace as NS
 from unittest.mock import patch
@@ -15,11 +15,11 @@ from sglang.srt.mem_cache.allocator.base import BaseTokenToKVPoolAllocator
 from sglang.srt.sampling.sampling_params import SamplingParams
 from sglang.srt.server_args import ServerArgs
 
-def manager(enabled=True):
+def manager(enabled=True, headroom=8):
     obj = object.__new__(TokenizerManager)
     obj.context_len, obj.allow_auto_truncate, obj.validate_total_tokens = 262144, False, True
     obj.num_reserved_tokens = 4
-    obj.model_config = NS(request_static_yarn_config=None, xing_eagle_context_headroom=8 if enabled else 0)
+    obj.model_config = NS(request_static_yarn_config=None, xing_native_public_budget=enabled, xing_eagle_context_headroom=headroom if enabled else 0)
     obj._validate_joint_schema_request = lambda *_: None
     return obj
 
@@ -30,30 +30,33 @@ def validate(obj, prompt, output):
         obj._validate_one_request(req, list(range(prompt)))
     return req
 
-def test_exact_frozen_request_budget_does_not_count_four_draft_slots_as_input():
-    req = validate(manager(), 261888, 256)
+@pytest.mark.parametrize("headroom", [0,8])
+def test_exact_frozen_request_budget_does_not_count_four_draft_slots_as_input(headroom):
+    req = validate(manager(headroom=headroom), 261888, 256)
     assert req.sampling_params["max_new_tokens"] == 256
-    assert validate(manager(), 262143, 1).sampling_params["max_new_tokens"] == 1
+    assert validate(manager(headroom=headroom), 262143, 1).sampling_params["max_new_tokens"] == 1
     with pytest.raises(ValueError, match="261889 tokens from the input"):
-        validate(manager(), 261889, 256)
+        validate(manager(headroom=headroom), 261889, 256)
     with pytest.raises(ValueError):
         validate(manager(enabled=False), 261888, 256)
 
-def test_real_worker_advertises_public_context_without_legacy_minus_one_or_five():
+@pytest.mark.parametrize("headroom", [0,8])
+def test_real_worker_advertises_public_context_without_legacy_minus_one_or_five(headroom):
     runner = NS(effective_logical_max_total_num_tokens=262336,
         logical_max_total_num_tokens=262336, token_to_kv_pool_allocator=object(),
         max_running_requests=512, forward_stream=None,
         req_to_token_pool=NS(size=512, max_context_len=262215), token_to_kv_pool=NS(size=262336))
     worker = NS(model_config=NS(context_len=262144, request_static_yarn_config=None,
-        xing_eagle_context_headroom=8), model_runner=runner, dllm_algorithm=None, random_seed=1, device="cuda")
+        xing_native_public_budget=True, xing_eagle_context_headroom=headroom), model_runner=runner, dllm_algorithm=None, random_seed=1, device="cuda")
     with patch("sglang.srt.managers.tp_worker.page_interleave_shard_size", return_value=1), patch(
         "sglang.srt.managers.tp_worker.get_schedule", return_value=NS(max_prefill_tokens=8192, max_queued_requests=None)):
         assert TpModelWorker.get_worker_info(worker)[4:6] == (262144, 262144)
-        worker.model_config.xing_eagle_context_headroom = 0
+        worker.model_config.xing_native_public_budget = False
         assert TpModelWorker.get_worker_info(worker)[4:6] == (262143, 262138)
 
-def test_auto_truncate_cannot_shrink_native_public_input_or_output():
-    obj = manager()
+@pytest.mark.parametrize("headroom", [0,8])
+def test_auto_truncate_cannot_shrink_native_public_input_or_output(headroom):
+    obj = manager(headroom=headroom)
     obj.allow_auto_truncate = True
     req = NS(sampling_params={"max_new_tokens": 256})
     ids = list(range(261889))
@@ -64,11 +67,11 @@ def test_auto_truncate_cannot_shrink_native_public_input_or_output():
     assert len(ids) == 261889 and req.sampling_params["max_new_tokens"] == 256
 
 
-def admission(prompt, output, capacity=262336, hard_limit=None):
+def admission(prompt, output, capacity=262336, hard_limit=None, headroom=8):
     allocator = NS(page_size=64)
     allocator.max_new_tokens_for_memory = MethodType(
         BaseTokenToKVPoolAllocator.max_new_tokens_for_memory, allocator)
-    scheduler = NS(model_config=NS(context_len=262144, xing_eagle_context_headroom=8),
+    scheduler = NS(model_config=NS(context_len=262144, xing_native_public_budget=True, xing_eagle_context_headroom=headroom),
         max_req_len=262144, max_total_num_tokens=capacity, kv_shard_widening=1,
         max_new_tokens_limit=hard_limit, page_size=64, sliding_window_size=None,
         chunked_prefill_size=8192, token_to_kv_pool_allocator=allocator)
@@ -81,13 +84,14 @@ def admission(prompt, output, capacity=262336, hard_limit=None):
     return req
 
 
+@pytest.mark.parametrize("headroom", [0,8])
 @pytest.mark.parametrize("prompt,output,capacity,accepted", [
     (261888,256,262336,True), (261888,None,262336,True),
     (261889,256,262336,False), (262143,1,262272,True),
     (262143,1,262208,False), (261889,255,262272,True),
 ])
-def test_native_admission_preserves_budget_or_rejects(prompt, output, capacity, accepted):
-    req = admission(prompt, output, capacity)
+def test_native_admission_preserves_budget_or_rejects(prompt, output, capacity, accepted, headroom):
+    req = admission(prompt, output, capacity, headroom=headroom)
     assert (req.to_finish is None) is accepted
     assert req.sampling_params.max_new_tokens == (262144-prompt if output is None else output)
 
@@ -109,11 +113,11 @@ def test_real_model_config_native_q2_q4_only(tmp_path, steps, tokens, draft):
         speculative_num_steps=steps, speculative_eagle_topk=1, speculative_num_draft_tokens=tokens,
         speculative_attention_mode="prefill", chunked_prefill_size=8192)
     model=ModelConfig.from_server_args(ServerArgs(**fields), is_draft_model=draft)
-    assert model.context_len == 262144 and model.xing_eagle_context_headroom == 8
+    assert model.context_len == 262144 and model.xing_native_public_budget and model.xing_eagle_context_headroom == 8
     assert model.hf_text_config.rope_scaling["_xing_eagle_rope_headroom"] == 8
     for override in [{"page_size":1}, {"speculative_eagle_topk":2}, {"prefill_attention_backend":"flashmla"}]:
         control=ModelConfig.from_server_args(ServerArgs(**{**fields,**override}))
-        assert control.xing_eagle_context_headroom == 0
+        assert not control.xing_native_public_budget and control.xing_eagle_context_headroom == 0
         assert "_xing_eagle_rope_headroom" not in control.hf_text_config.rope_scaling
 
 
@@ -138,3 +142,18 @@ def test_speculative_finish_caps_reasoning_to_emitted_tokens():
     req.update_finish_state(new_accepted_len=4)
     assert req.finished_len == 2 and len(req.output_ids_through_stop) == 2
     assert req.reasoning_tokens == 2 and len(req.output_ids) == 4
+
+
+def test_true_ar_native_budget_has_no_speculative_scratch(tmp_path):
+    fixture = Path(__file__).parents[1] / "models/xing4_configs/bf16.json"
+    (tmp_path/"config.json").write_text(fixture.read_text())
+    fields=dict(model_path=str(tmp_path), trust_remote_code=False, context_length=262144,
+        device="cuda", dtype="bfloat16", kv_cache_dtype="fp8_e4m3", tp_size=1,
+        page_size=64, attention_backend="trtllm_mla", speculative_algorithm=None,
+        chunked_prefill_size=8192)
+    model=ModelConfig.from_server_args(ServerArgs(**fields))
+    assert model.speculative_algorithm is None and model.xing_native_public_budget
+    assert model.context_len == 262144 and model.xing_eagle_context_headroom == 0
+    assert "_xing_eagle_rope_headroom" not in model.hf_text_config.rope_scaling
+    control=ModelConfig.from_server_args(ServerArgs(**{**fields,"page_size":1}))
+    assert not control.xing_native_public_budget and control.xing_eagle_context_headroom == 0

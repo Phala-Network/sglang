@@ -236,5 +236,55 @@ class AllowedToolsOutputTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("private", "".join(emitted))
 
 
+    def message_only_request(self, role, stream=False):
+        body = request(stream=stream).model_dump()
+        declared = body.pop("tools")
+        body["messages"].insert(0, {"role": role, "content": "Available tools", "tools": declared})
+        return ChatCompletionRequest(**body)
+
+    def test_message_only_allowed_nonstream_xing(self):
+        self.chat.tool_call_parser = "xing4_0"
+        for role in ("system", "developer"):
+            with self.subTest(role=role):
+                req = self.message_only_request(role)
+                text = '<tool_call>{"name":"get_weather","arguments":{"value":"ok"}}</tool_call>'
+                response = self.chat._build_chat_response(req, [result(text)], 0)
+                calls = response.choices[0].message.tool_calls
+                self.assertEqual([x.function.name for x in calls], ["get_weather"])
+                self.assertEqual(json.loads(calls[0].function.arguments), {"value": "ok"})
+                self.assertEqual(response.choices[0].finish_reason, "tool_calls")
+
+    def test_message_only_disallowed_nonstream_xing(self):
+        self.chat.tool_call_parser = "xing4_0"
+        for role in ("system", "developer"):
+            with self.subTest(role=role):
+                text = '<tool_call>{"name":"old_tool","arguments":{"value":"private"}}</tool_call>'
+                response = self.chat._build_chat_response(self.message_only_request(role), [result(text)], 0)
+                self.assertEqual(response.status_code, 500)
+                self.assertNotIn("private", response.body.decode())
+
+    async def test_message_only_allowed_stream_xing(self):
+        self.chat.tool_call_parser = "xing4_0"
+        for role in ("system", "developer"):
+            with self.subTest(role=role):
+                text = '<tool_call>{"name":"get_weather","arguments":{"value":"ok"}}</tool_call>'
+                chunks = await self.stream(self.message_only_request(role, stream=True), [result(text)])
+                choices = [c for chunk in chunks for c in chunk.get("choices", [])]
+                calls = [c for choice in choices for c in choice.get("delta", {}).get("tool_calls", [])]
+                self.assertEqual([c["function"]["name"] for c in calls if c["function"].get("name")], ["get_weather"])
+                self.assertFalse(any("error" in chunk for chunk in chunks))
+                self.assertNotIn("<tool_call>", json.dumps(chunks))
+
+    async def test_message_only_disallowed_stream_xing(self):
+        self.chat.tool_call_parser = "xing4_0"
+        for role in ("system", "developer"):
+            with self.subTest(role=role):
+                text = '<tool_call>{"name":"old_tool","arguments":{"value":"private"}}</tool_call>'
+                chunks = await self.stream(self.message_only_request(role, stream=True), [result(text)])
+                self.assertEqual([c["error"]["code"] for c in chunks if "error" in c], [500])
+                self.assertNotIn("private", json.dumps(chunks))
+                self.assertNotIn("old_tool", json.dumps(chunks))
+
+
 if __name__ == "__main__":
     unittest.main()

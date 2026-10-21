@@ -519,6 +519,7 @@ class ModelConfig:
         self.is_draft_model = is_draft_model
         self.is_draft_quantization_explicit = is_draft_quantization_explicit
         self.speculative_algorithm = speculative_algorithm
+        self.xing_native_public_budget = False
         self.xing_eagle_context_headroom = 0
         self.model_impl = model_impl
         self.sampling_defaults = sampling_defaults
@@ -913,23 +914,31 @@ class ModelConfig:
                     cfg.speculative_draft_attention_backend,
                 )
             )
-            and cfg.speculative_attention_mode == "prefill"
             and (
                 cfg.tp_size, cfg.pp_size, cfg.dp_size, cfg.attn_cp_size, cfg.dcp_size
             ) == (1, 1, 1, 1, 1)
-            and cfg.speculative_algorithm == "EAGLE"
             and (
-                cfg.speculative_num_steps,
-                cfg.speculative_eagle_topk,
-                cfg.speculative_num_draft_tokens,
-            ) in ((3, 1, 4), (1, 1, 2))
-            and not cfg.speculative_adaptive
-            and not cfg.enable_multi_layer_eagle
+                cfg.speculative_algorithm is None
+                or (
+                    cfg.speculative_algorithm == "EAGLE"
+                    and cfg.speculative_attention_mode == "prefill"
+                    and (
+                        cfg.speculative_num_steps,
+                        cfg.speculative_eagle_topk,
+                        cfg.speculative_num_draft_tokens,
+                    ) in ((3, 1, 4), (1, 1, 2))
+                    and not cfg.speculative_adaptive
+                    and not cfg.enable_multi_layer_eagle
+                )
+            )
         ):
-            # Public context counts accepted input/output. Fixed EAGLE lookahead
-            # uses independent KV/req-row and RoPE-table storage; it is not input.
-            model_config.xing_eagle_context_headroom = 8
-            rope["_xing_eagle_rope_headroom"] = 8
+            # Public input/output admission is independent of draft lookahead.
+            # True AR has no speculative scratch; fixed EAGLE keeps its exact
+            # separate KV/req-row and RoPE-table allowance.
+            model_config.xing_native_public_budget = True
+            if cfg.speculative_algorithm == "EAGLE":
+                model_config.xing_eagle_context_headroom = 8
+                rope["_xing_eagle_rope_headroom"] = 8
         return model_config
 
     def _derive_multimodal_cuda_graph_support(self, enable_multimodal: bool) -> None:

@@ -2540,7 +2540,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 allowed_names = self._allowed_tool_names(request)
                 # Recognize declared historical tools before enforcing the output
                 # subset; filtering parser definitions would silently drop them.
-                output_tools = request.tools if allowed_names is not None else effective_tools
+                output_tools = self._all_tools(request) if allowed_names is not None else effective_tools
                 history_tool_calls_cnt = self._get_history_tool_calls_cnt(request)
                 tool_calls, text, finish_reason = self._process_tool_calls(
                     text,
@@ -3192,7 +3192,7 @@ class OpenAIServingChat(OpenAIServingBase):
         held back waiting for a marker that can no longer arrive.
         """
         effective_tools = (
-            request.tools
+            self._all_tools(request)
             if self._allowed_tool_names(request) is not None
             else self._effective_tools(request)
         )

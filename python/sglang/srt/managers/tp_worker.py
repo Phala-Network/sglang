@@ -550,7 +550,7 @@ class TpModelWorker(BaseTpWorker):
             self.model_config.context_len - 1,
             kv_capacity - 1,
         )
-        if getattr(self.model_config, "xing_eagle_context_headroom", 0):
+        if getattr(self.model_config, "xing_native_public_budget", False):
             max_req_len = self.model_config.context_len
             max_req_input_len = max_req_len
         else:

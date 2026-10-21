@@ -2585,7 +2585,7 @@ class Scheduler(
     def init_req_max_new_tokens(self, req):
         input_len = len(req.origin_input_ids)
         preserve_public_budget = bool(
-            getattr(self.model_config, "xing_eagle_context_headroom", 0)
+            getattr(self.model_config, "xing_native_public_budget", False)
         )
         max_new_tokens = (
             req.sampling_params.max_new_tokens
@@ -3172,7 +3172,7 @@ class Scheduler(
 
         # initialize before returning
         self.init_req_max_new_tokens(req)
-        if getattr(self.model_config, "xing_eagle_context_headroom", 0) and req.to_finish is not None:
+        if getattr(self.model_config, "xing_native_public_budget", False) and req.to_finish is not None:
             self._release_aborted_request(req)
             return
 

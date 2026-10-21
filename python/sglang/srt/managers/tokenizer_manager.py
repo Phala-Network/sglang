@@ -1341,15 +1341,15 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         self._validate_joint_schema_request(obj, input_ids)
         _max_req_len = self.context_len
         input_token_num = len(input_ids) if input_ids is not None else 0
-        xing_eagle_public_budget = bool(
-            getattr(self.model_config, "xing_eagle_context_headroom", 0)
+        xing_native_public_budget = bool(
+            getattr(self.model_config, "xing_native_public_budget", False)
         )
-        if not xing_eagle_public_budget:
+        if not xing_native_public_budget:
             input_token_num += self.num_reserved_tokens
 
         # Validate input length
         if input_token_num >= self.context_len:
-            if self.allow_auto_truncate and not xing_eagle_public_budget:
+            if self.allow_auto_truncate and not xing_native_public_budget:
                 logger.warning(
                     f"The input ({input_token_num} tokens) is longer than the "
                     f"model's context length ({self.context_len} tokens). "
@@ -1380,7 +1380,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             and max_new_tokens is not None
             and (max_new_tokens + input_token_num) > _max_req_len
         ):
-            if self.allow_auto_truncate and not xing_eagle_public_budget:
+            if self.allow_auto_truncate and not xing_native_public_budget:
                 logger.warning(
                     f"Requested token count ({input_token_num} input + {max_new_tokens} new) "
                     f"exceeds the model's context length ({self.context_len} tokens). "

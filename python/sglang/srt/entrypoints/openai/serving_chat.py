@@ -148,6 +148,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Reasoning parsers that split at the control token IDs when output IDs are known.
+_TOKEN_BOUNDARY_PARSERS = frozenset({"qwen3"})
+
 _GLM53_DEFAULT_REASONING_BUDGET = 1024
 
 _QWEN35_REASONING_EFFORT_GUIDANCE = {
@@ -3432,7 +3435,14 @@ class OpenAIServingChat(OpenAIServingBase):
                         tokenizer=self.tokenizer_manager.tokenizer,
                         tool_call_parser_active=self._tool_call_parsing_active(request),
                     )
-                    reasoning_text, text = parser.parse_non_stream(text)
+                    reasoning_text, text = parser.parse_non_stream(
+                        text,
+                        **(
+                            {"output_ids": ret_item.get("output_ids")}
+                            if self.reasoning_parser in _TOKEN_BOUNDARY_PARSERS
+                            else {}
+                        ),
+                    )
                     answer_started = self._answer_started(parser)
                 except Exception as e:
                     logger.error(f"Reasoning parsing error: {e}")
@@ -3826,7 +3836,18 @@ class OpenAIServingChat(OpenAIServingBase):
                 tool_call_parser_active=self._tool_call_parsing_active(request),
             )
         reasoning_parser = reasoning_parser_dict[index]
-        reasoning_text, normal_text = reasoning_parser.parse_stream_chunk(delta)
+        token_context = {}
+        if (
+            self.reasoning_parser in _TOKEN_BOUNDARY_PARSERS
+            and content.get("output_ids") is not None
+        ):
+            token_context = {
+                "output_ids": content["output_ids"],
+                "incremental_output": get_serving().incremental_streaming_output,
+            }
+        reasoning_text, normal_text = reasoning_parser.parse_stream_chunk(
+            delta, **token_context
+        )
         if finish_reason_type is not None and finish_reason_type != "abort":
             end_reasoning_text, end_normal_text = reasoning_parser.parse_stream_end()
             if end_reasoning_text:

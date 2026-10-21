@@ -457,10 +457,6 @@ class InputFormat(Enum):
 _MANAGER_OWNED_FIELDS = ("model_path", "served_model_name")
 
 
-# Grace period from ShutdownReq to SIGKILL for each scheduler.
-_SCHEDULER_EXIT_TIMEOUT_SECS = 15
-
-
 class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
     """TokenizerManager is a process that tokenizes the text."""
 
@@ -3623,7 +3619,11 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         while not self.gracefully_exit:
             await asyncio.sleep(5)
 
-        # Drain requests
+        # Drain requests, for at most SGLANG_SHUTDOWN_DRAIN_TIMEOUT (< 0: unbounded).
+        drain_timeout = envs.SGLANG_SHUTDOWN_DRAIN_TIMEOUT.get()
+        drain_deadline = (
+            time.monotonic() + drain_timeout if drain_timeout >= 0 else None
+        )
         while True:
             remain_num_req = len(self.rid_to_state)
             remaining_rids = list(self.rid_to_state.keys())
@@ -3648,10 +3648,16 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             logger.info(
                 f"Gracefully exiting... Remaining number of requests {remain_num_req}. Remaining requests {remaining_rids=}."
             )
-            if remain_num_req > 0:
-                await asyncio.sleep(5)
-            else:
+            if remain_num_req == 0:
                 break
+            if drain_deadline is not None and time.monotonic() >= drain_deadline:
+                logger.warning(
+                    f"Gracefully exiting: {remain_num_req} request(s) still running "
+                    f"after {drain_timeout:.0f}s (SGLANG_SHUTDOWN_DRAIN_TIMEOUT); "
+                    "shutting down the schedulers anyway."
+                )
+                break
+            await asyncio.sleep(5)
 
         # Stop the watchdog: child exits are expected during shutdown, not crashes.
         if self._subprocess_watchdog is not None:
@@ -3659,7 +3665,8 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         # Ask schedulers to release resources in userspace and exit (see
         # ShutdownReq), then wait for them before hard-killing the rest.
         self._dispatch_to_scheduler(ShutdownReq())
-        deadline = time.monotonic() + _SCHEDULER_EXIT_TIMEOUT_SECS
+        exit_timeout = envs.SGLANG_SCHEDULER_EXIT_TIMEOUT.get()
+        deadline = time.monotonic() + exit_timeout
         while time.monotonic() < deadline and collect_scheduler_processes():
             time.sleep(0.1)
         stragglers = [proc.pid for proc in collect_scheduler_processes()]
@@ -3667,7 +3674,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             # SIGKILL here lands mid-release,
             # which is how GPU memory survives a shutdown. Name the pids.
             logger.warning(
-                f"Schedulers still alive {_SCHEDULER_EXIT_TIMEOUT_SECS}s after "
+                f"Schedulers still alive {exit_timeout:.0f}s after "
                 f"ShutdownReq, killing them before they released: {stragglers}"
             )
         kill_process_tree(os.getpid(), include_parent=False, wait_timeout=60)

@@ -6504,9 +6504,14 @@ def run_scheduler_process(
             # Graceful path only: on the exception path the GPU may be wedged
             # and the synchronize() in destroy() could itself hang.
             if scheduler.gracefully_exit:
-                scheduler.release_host_resources()
-                # Last: anything above may still need a working communicator.
-                abort_distributed_environment()
+                if envs.SGLANG_STAGED_SHUTDOWN.get():
+                    from sglang.srt.managers.staged_shutdown import staged_release
+
+                    staged_release(scheduler, tp_rank)
+                else:
+                    scheduler.release_host_resources()
+                    # Last: anything above may still need a working communicator.
+                    abort_distributed_environment()
 
 
 def _make_abort_req(

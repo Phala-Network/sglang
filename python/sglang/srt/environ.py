@@ -688,6 +688,21 @@ class Envs:
     SGLANG_SCHEDULER_SKIP_ALL_GATHER = EnvBool(False)
     SGLANG_SCHEDULER_DECREASE_PREFILL_IDLE = EnvBool(False)
     SGLANG_KILLPG_ON_SCHEDULER_EXCEPTION = EnvBool(False)
+    # Graceful shutdown (SIGTERM). Drain wait for in-flight requests before the
+    # schedulers are told to exit, in seconds; < 0 waits as long as it takes.
+    SGLANG_SHUTDOWN_DRAIN_TIMEOUT = EnvFloat(-1)
+    # From ShutdownReq to SIGKILL of the schedulers still alive, in seconds.
+    # With SGLANG_STAGED_SHUTDOWN it must cover every rank's turn.
+    SGLANG_SCHEDULER_EXIT_TIMEOUT = EnvFloat(15.0)
+    # Release each rank's external host pool (e.g. ccbridge), KV pools and NCCL
+    # explicitly and one rank at a time before exiting, instead of leaving it all
+    # to process exit; see srt/managers/staged_shutdown.py.
+    SGLANG_STAGED_SHUTDOWN = EnvBool(False)
+    # The lock file the ranks take turns on ("" = no turns). A path on a volume
+    # shared by several instances also serializes their shutdowns.
+    SGLANG_STAGED_SHUTDOWN_LOCK = EnvStr("/tmp/sglang-staged-shutdown.lock")
+    # How long a rank waits for its turn before releasing anyway, in seconds.
+    SGLANG_STAGED_SHUTDOWN_LOCK_TIMEOUT = EnvFloat(150.0)
     SGLANG_REQ_WAITING_TIMEOUT = EnvFloat(-1)  # in seconds
     SGLANG_REQ_RUNNING_TIMEOUT = EnvFloat(-1)  # in seconds
     # Non-streaming requests flush intermediate outputs every N decoded tokens.

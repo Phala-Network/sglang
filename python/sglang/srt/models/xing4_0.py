@@ -105,6 +105,53 @@ def _mhc_pre_fake(
     return (post_mix, comb_mix, layer_input)
 
 
+def _mhc_pre_xing_splitk(
+    residual, fn, hc_scale, hc_base, rms_eps, hc_pre_eps,
+    hc_sinkhorn_eps, hc_post_mult_value, sinkhorn_repeat, n_splits, n_splits_pre,
+):
+    """Route Xing's production 14336 shape to the unchanged fused kernels."""
+    from sglang.kernels.ops.layernorm import mhc as kernels
+
+    assert residual.dtype == torch.bfloat16
+    assert fn.dtype == hc_scale.dtype == hc_base.dtype == torch.float32
+    assert residual.shape[1:] == (4, 3584)
+    assert fn.shape == (24, 14336)
+    assert hc_scale.shape == (3,) and hc_base.shape == (24,)
+    assert n_splits == 1
+    num_tokens = residual.shape[0]
+    post_mix = torch.empty(num_tokens, 4, dtype=torch.float32, device=residual.device)
+    comb_mix = torch.empty(num_tokens, 16, dtype=torch.float32, device=residual.device)
+    # Preserve mhc_pre's allocation policy for downstream TP collectives.
+    with kernels.use_symmetric_memory(
+        kernels.get_parallel().tp_group,
+        disabled=not kernels.is_allocation_symmetric(),
+    ):
+        layer_input = torch.empty(
+            num_tokens, 3584, dtype=torch.bfloat16, device=residual.device
+        )
+    kernel_0, _ = kernels.mhc_pre_gemm_sqrsum_splitk_kernel(
+        24, 14336, split_k=n_splits_pre, token_block=32, hidden_block=256
+    )
+    partial_out = torch.empty(
+        n_splits_pre, num_tokens, 32, dtype=torch.float32, device=residual.device
+    )
+    partial_sqrsum = torch.empty(
+        n_splits_pre, num_tokens, dtype=torch.float32, device=residual.device
+    )
+    kernel_0(residual.view(num_tokens, 14336), fn, partial_out, partial_sqrsum)
+    kernels.mhc_pre_big_fuse_tilelang(
+        partial_out, partial_sqrsum, hc_scale, hc_base, residual,
+        post_mix, comb_mix, layer_input, 3584, rms_eps, hc_pre_eps,
+        hc_sinkhorn_eps, hc_post_mult_value, sinkhorn_repeat,
+        n_splits_pre, 4, 32,
+    )
+    return (
+        post_mix.view(num_tokens, 4, 1),
+        comb_mix.view(num_tokens, 4, 4),
+        layer_input,
+    )
+
+
 @register_custom_op(
     op_name="xing4_0_mhc_pre",
     mutates_args=[],
@@ -143,6 +190,18 @@ def mhc_pre(
             hc_eps=hc_pre_eps,
         )
         return post_mix.unsqueeze(-1), comb_mix, layer_input
+
+    # v0.5.22 omits Xing's already-qualified 4*3584 host dispatch case.
+    # The existing split-K and big-fuse kernels accept it unchanged.
+    if residual.shape[1:] == (4, 3584) and 0 < residual.shape[0] <= 2048:
+        from sglang.kernels.ops.layernorm import mhc as kernels
+
+        if not kernels._use_deep_gemm_hc_prenorm():
+            return _mhc_pre_xing_splitk(
+                residual, fn, hc_scale, hc_base, rms_eps, hc_pre_eps,
+                hc_sinkhorn_eps, hc_post_mult_value, sinkhorn_repeat,
+                n_splits, n_splits_pre,
+            )
 
     return _mhc_pre_orig(
         residual=residual,

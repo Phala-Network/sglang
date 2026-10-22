@@ -18,6 +18,7 @@ from sglang.srt.mem_cache.unified_cache.components.base import (
     ComponentType,
 )
 from sglang.srt.mem_cache.unified_cache.components.swa import SWAComponent
+from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
 from sglang.srt.utils import runtime_switches
 from sglang.srt.utils.runtime_switches import RuntimeSwitchSync, RuntimeSwitchUpdate
 from sglang.test.test_utils import published_topology
@@ -164,6 +165,22 @@ class TestSchedulerIntegration(_SwitchTestCase):
             self.assertEqual(runtime_switches.get(field), "best_effort")
             Scheduler.ingest_requests(scheduler)
         self.assertEqual(len(applied), 1)
+
+    def test_prefetch_termination_rereads_the_policy(self):
+        cache = SimpleNamespace(prefetch_stop_policy="wait_complete", pp_rank=0)
+        cache._all_reduce = lambda tensor, op: None
+        cache._prefetch_timeout_check_linear_func = lambda op: True
+        can_terminate = UnifiedRadixCache._can_terminate_prefetch
+        can_terminate = getattr(can_terminate, "__wrapped__", can_terminate)
+        sync = RuntimeSwitchSync()
+        name = envs.SGLANG_HICACHE_PREFETCH_POLICY_OVERRIDE.name
+        operation = object()
+
+        self.assertFalse(can_terminate(cache, operation))
+        for value, expected in (("best_effort", True), ("timeout", True), ("", False)):
+            os.environ[name] = value
+            sync.apply(sync.poll())
+            self.assertEqual(can_terminate(cache, operation), expected)
 
     def test_sparse_swa_backup_is_decided_per_backup(self):
         component = SimpleNamespace(

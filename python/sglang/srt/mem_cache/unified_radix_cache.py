@@ -119,6 +119,7 @@ from sglang.srt.runtime_context import (
     get_parallel,
 )
 from sglang.srt.session.streaming_session import StreamingSession, is_virtual_node
+from sglang.srt.utils import runtime_switches
 from sglang.srt.utils.common import ceil_align
 from sglang.srt.utils.poll_timer import PollTimer
 
@@ -2337,13 +2338,18 @@ class UnifiedRadixCache(BasePrefixCache):
 
     @rank_consensus(same_results=True)
     def _can_terminate_prefetch(self, operation: PrefetchOperation) -> bool:
-        if self.prefetch_stop_policy == "best_effort":
+        # The only reader of the policy, consulted on every progress check, so
+        # a runtime override (rank-agreed, see runtime_switches) applies to
+        # in-flight prefetches too: a later check may stop one early on the
+        # same path a best_effort/timeout prefetch always takes.
+        policy = runtime_switches.prefetch_policy(self.prefetch_stop_policy)
+        if policy == "best_effort":
             return True
-        if self.prefetch_stop_policy == "wait_complete":
+        if policy == "wait_complete":
             # Completion is committed by the ACK drain (sync-thread MIN-reduced
             # progress, rank-min queue drain); a vote here only adds collectives.
             return False
-        if self.prefetch_stop_policy == "timeout":
+        if policy == "timeout":
             # Wall clocks differ across ranks: PP0 decides, TP takes MAX (any
             # rank timed out) and _all_reduce broadcasts the verdict along PP.
             should_terminate = False

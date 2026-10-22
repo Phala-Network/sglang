@@ -13,6 +13,7 @@ ROOT = Path("/sgl-workspace/sglang")
 MANIFEST = Path("/opt/phala/candidate-source.json")
 TESTS = [
     "models/test_xing4_native.py",
+    "models/test_xing4_moe_alt_stream.py",
     "models/test_xing4_runtime_auth.py",
     "models/test_xing4_tokenizer.py",
     "managers/test_xing_native_eagle_public_budget.py",

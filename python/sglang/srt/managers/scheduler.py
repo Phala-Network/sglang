@@ -388,6 +388,8 @@ from sglang.srt.utils.hf_transformers_utils import (
     resolve_image_processor_backend,
 )
 from sglang.srt.utils.numa_utils import get_numa_node_if_available, numa_bind_to_node
+from sglang.srt.utils import runtime_switches
+from sglang.srt.utils.runtime_switches import RuntimeSwitchSync, RuntimeSwitchUpdate
 from sglang.srt.utils.torch_memory_saver_adapter import TorchMemorySaverAdapter
 from sglang.srt.utils.weight_versions import (
     compute_weight_version_spans,
@@ -673,6 +675,7 @@ class Scheduler(
         self.hot_reloader = maybe_create_hot_reloader(
             envs.SGLANG_DEBUG_HOT_RELOAD_SCRIPT.get()
         )
+        self.runtime_switch_sync = RuntimeSwitchSync()
 
         # Init chunked prefill
         self.init_chunked_prefill()
@@ -1849,6 +1852,7 @@ class Scheduler(
     def init_request_dispatcher(self):
         self._request_dispatcher = TypeBasedDispatcher(
             [
+                (RuntimeSwitchUpdate, self.runtime_switch_sync.apply),
                 (TokenizedGenerateReqInput, self.handle_generate_request),
                 (TokenizedEmbeddingReqInput, self.handle_embedding_request),
                 (BatchTokenizedGenerateReqInput, self.handle_batch_generate_request),
@@ -2224,6 +2228,11 @@ class Scheduler(
             and get_parallel().attn_cp_rank == 0
         ):
             local_reqs = self._poll_timeout_aborts()
+            # Runtime switch changes ride the same broadcast, so every rank
+            # adopts them at the same point of the request stream.
+            switch_update = self.runtime_switch_sync.poll()
+            if switch_update is not None:
+                local_reqs = [*local_reqs, switch_update]
         recv_start_ns = time.monotonic_ns()
         self._deferred_input_requests.extend(
             self.request_receiver.recv_requests(local_reqs=local_reqs)
@@ -4283,7 +4292,9 @@ class Scheduler(
                 adder.rem_chunk_tokens or 0,
                 self.page_size,
             )
-            reserve_tokens = envs.SGLANG_CHUNKED_PREFILL_SHORT_RESERVE.get()
+            reserve_tokens = runtime_switches.get(
+                envs.SGLANG_CHUNKED_PREFILL_SHORT_RESERVE
+            )
             # Reserve only if the next waiting request may fit whole: admission takes
             # the sorted queue in order and stops at the first request that would need
             # cutting. Its fill ids are built later by init_next_round_input, and a

@@ -72,7 +72,11 @@ class EnvField:
             assert value == str(None)
             return None
 
-        # Not set, return default
+        return self.get_from(value)
+
+    def get_from(self, value: Optional[str]) -> Any:
+        """The value this field takes when its raw environment string is `value`
+        (None: unset)."""
         if value is None:
             return self._resolve_default()
 
@@ -678,6 +682,8 @@ class Envs:
     # requests that fit whole, so a short request need not wait out a long
     # prompt. Read every prefill pass; 0 disables.
     SGLANG_CHUNKED_PREFILL_SHORT_RESERVE = EnvInt(0)
+    # Runtime override of --prefill-decode-interval (empty: the server arg).
+    SGLANG_PREFILL_DECODE_INTERVAL_OVERRIDE = EnvStr("")
 
     # ===================================================================
     # Scheduler polling, timeouts, and output
@@ -865,6 +871,10 @@ class Envs:
     # chain (an insert's end), not for every SWA page the chain carries. A host
     # hit can only end where SWA covers the window, which is such an end.
     SGLANG_HICACHE_SWA_SPARSE_BACKUP = EnvBool(False)
+    # Runtime override of --hicache-storage-prefetch-policy (empty: the server
+    # arg, or the policy set by the attach API): best_effort, wait_complete or
+    # timeout. Timeout uses the storage backend's prefetch_timeout_* config.
+    SGLANG_HICACHE_PREFETCH_POLICY_OVERRIDE = EnvStr("")
     # Share of --hicache-size for the mamba host pool of hybrid models; unset splits it
     # in proportion to the device pools.
     SGLANG_HICACHE_MAMBA_SHARE = EnvFloat(None)

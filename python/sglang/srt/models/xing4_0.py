@@ -72,9 +72,10 @@ from sglang.srt.models.deepseek_common.deepseek_weight_loader import (
     DeepseekV2WeightLoaderMixin,
 )
 from sglang.srt.runtime_context import get_forward, get_parallel
-from sglang.srt.utils import add_prefix, get_compiler_backend, is_npu, make_layers
+from sglang.srt.utils import add_prefix, get_compiler_backend, is_cuda, is_npu, make_layers
 from sglang.srt.utils.custom_op import register_custom_op
 
+_is_cuda = is_cuda()
 _is_npu = is_npu()
 
 
@@ -629,6 +630,7 @@ class Xing4_0DecoderLayer(nn.Module):
         moe_quant_config_override: QuantizationConfig | None = None,
         prefix: str = "",
         alt_stream: torch.cuda.Stream | None = None,
+        moe_alt_stream: torch.cuda.Stream | None = None,
     ) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
@@ -688,7 +690,7 @@ class Xing4_0DecoderLayer(nn.Module):
                 layer_id=self.layer_id,
                 quant_config=moe_quant_config_override or quant_config,
                 prefix=add_prefix("mlp", prefix),
-                alt_stream=alt_stream,
+                alt_stream=moe_alt_stream if moe_alt_stream is not None else alt_stream,
                 is_deepseek_v4=False,
                 reduce_results=self.enable_mhc,
             )
@@ -1020,6 +1022,9 @@ class Xing4_0Model(nn.Module):
         else:
             self.embed_tokens = PPMissingLayer()
 
+        # Reuse one target-only MoE stream across layers and graph captures.
+        self.moe_alt_stream = torch.cuda.Stream() if _is_cuda else None
+
         self.layers, self.start_layer, self.end_layer = make_layers(
             config.num_hidden_layers,
             lambda idx, prefix: Xing4_0DecoderLayer(
@@ -1027,6 +1032,7 @@ class Xing4_0Model(nn.Module):
                 layer_id=idx,
                 quant_config=quant_config,
                 prefix=prefix,
+                moe_alt_stream=self.moe_alt_stream,
             ),
             pp_rank=self.pp_group.rank_in_group,
             pp_size=self.pp_group.world_size,

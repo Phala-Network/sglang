@@ -188,7 +188,7 @@ class GrammarManager:
                 key = self.grammar_backend.get_request_grammar_key(
                     key,
                     input_ids=req.origin_input_ids,
-                    thinking_budget=self._get_request_thinking_budget(req),
+                    thinking_budget=self._get_request_thinking_bounds(req)[1],
                 )
 
                 value, cache_hit = self.grammar_backend.get_cached_or_future_value(

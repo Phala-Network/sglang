@@ -5,7 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-from test_unified_radix_cache_unittest import CacheConfig, build_fixture
+from sglang.test.kits.unified_radix_cache.config import CacheConfig
+from sglang.test.kits.unified_radix_cache.fixtures import build_fixture
 
 from sglang.srt.configs.request_static_yarn import (
     RequestStaticYarnConfig,

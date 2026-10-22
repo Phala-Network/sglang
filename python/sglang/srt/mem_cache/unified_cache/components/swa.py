@@ -43,6 +43,7 @@ from sglang.srt.mem_cache.unified_cache.components.base import (
     TreeComponent,
     next_component_uuid,
 )
+from sglang.srt.utils import runtime_switches
 
 if TYPE_CHECKING:
     from sglang.srt.managers.schedule_batch import Req
@@ -97,7 +98,6 @@ class SWAComponent(TreeComponent):
         ) // params.page_size
         # HiCache state: set to host SWA pool when HiCache enabled
         self._swa_kv_pool_host = None
-        self._sparse_backup = envs.SGLANG_HICACHE_SWA_SPARSE_BACKUP.get()
 
     component_type = ComponentType.SWA
     pool_name = PoolName.SWA
@@ -1145,7 +1145,11 @@ class SWAComponent(TreeComponent):
 
         if phase == CacheTransferPhase.BACKUP_HOST:
             window = None
-            if self._sparse_backup:
+            # Read per backup: a runtime switch. Flipping it mid-run is safe:
+            # every chain build records backup_chain_tail_len whatever the
+            # setting, and a node left without host SWA only shortens host
+            # hits ending on it (the match validator), never corrupts one.
+            if runtime_switches.get(envs.SGLANG_HICACHE_SWA_SPARSE_BACKUP):
                 # A host hit ends only where host SWA covers the window, and the
                 # end a backup chain makes is its target: back up just the window
                 # ending there. Chain nodes a window or more above it get none.

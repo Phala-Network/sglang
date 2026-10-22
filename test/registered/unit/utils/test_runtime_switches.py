@@ -13,6 +13,11 @@ maybe_stub_sgl_kernel()
 
 from sglang.srt.environ import envs
 from sglang.srt.managers.scheduler import Scheduler
+from sglang.srt.mem_cache.unified_cache.components.base import (
+    CacheTransferPhase,
+    ComponentType,
+)
+from sglang.srt.mem_cache.unified_cache.components.swa import SWAComponent
 from sglang.srt.utils import runtime_switches
 from sglang.srt.utils.runtime_switches import RuntimeSwitchSync, RuntimeSwitchUpdate
 from sglang.test.test_utils import published_topology
@@ -159,6 +164,32 @@ class TestSchedulerIntegration(_SwitchTestCase):
             self.assertEqual(runtime_switches.get(field), "best_effort")
             Scheduler.ingest_requests(scheduler)
         self.assertEqual(len(applied), 1)
+
+    def test_sparse_swa_backup_is_decided_per_backup(self):
+        component = SimpleNamespace(
+            component_type=ComponentType.SWA,
+            tree_core=SimpleNamespace(has_swa_host_pool=True, enable_hicache=True),
+            sliding_window_size=128,
+            _collect_unbacked_swa_nodes=Mock(return_value=[]),
+        )
+        node = SimpleNamespace(backup_chain_tail_len=100)
+        sync = RuntimeSwitchSync()
+        name = envs.SGLANG_HICACHE_SWA_SPARSE_BACKUP.name
+
+        def window():
+            SWAComponent.build_hicache_transfers(
+                component, node, CacheTransferPhase.BACKUP_HOST
+            )
+            return component._collect_unbacked_swa_nodes.call_args.args[1]
+
+        self.assertIsNone(window())  # default: the full trailing window
+        os.environ[name] = "1"
+        self.assertIsNone(window())  # not adopted until the update is applied
+        sync.apply(sync.poll())
+        self.assertEqual(window(), 128 - 100)
+        os.environ[name] = "0"
+        sync.apply(sync.poll())
+        self.assertIsNone(window())
 
 
 if __name__ == "__main__":

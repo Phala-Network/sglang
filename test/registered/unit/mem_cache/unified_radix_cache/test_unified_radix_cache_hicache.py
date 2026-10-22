@@ -3,6 +3,7 @@ from array import array
 from dataclasses import replace
 from unittest import mock
 
+from sglang.srt.environ import envs
 from sglang.srt.mem_cache.base_prefix_cache import (
     EvictParams,
     InitLoadBackParams,
@@ -858,8 +859,10 @@ class UnifiedRadixCacheHiCacheSuite(UnifiedRadixCacheHiCacheFixtures):
 
         for sparse in (False, True):
             with self.subTest(sparse=sparse):
+                self.enterContext(
+                    envs.SGLANG_HICACHE_SWA_SPARSE_BACKUP.override(sparse)
+                )
                 cache, allocator, req_to_token_pool = self._build_hicache_fixture()
-                cache.components[ComponentType.SWA]._sparse_backup = sparse
                 cache.write_through_threshold = 1
                 root = cache.root_node_handle()
 
@@ -926,8 +929,8 @@ class UnifiedRadixCacheHiCacheSuite(UnifiedRadixCacheHiCacheFixtures):
         if 2 * len(seq) > self.cfg.kv_size // 2:
             self.skipTest("kv_size too small for the sequence")
 
+        self.enterContext(envs.SGLANG_HICACHE_SWA_SPARSE_BACKUP.override(True))
         cache, allocator, req_to_token_pool = self._build_hicache_fixture()
-        cache.components[ComponentType.SWA]._sparse_backup = True
         cache.write_through_threshold = 1
         self._insert(cache, allocator, req_to_token_pool, seq)
         cache.writing_check(write_back=True)

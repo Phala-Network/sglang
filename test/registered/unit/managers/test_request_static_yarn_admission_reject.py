@@ -104,6 +104,7 @@ def make_case(*, output, factor=None, mm=False, stream=False, logprob=False):
     scheduler.enable_hicache_storage = False
     scheduler.enable_lmcache = False
     scheduler.processed_tokens_counter = 0
+    scheduler.kv_events_publisher = SimpleNamespace(enable_kv_cache_events=False)
     scheduler._add_request_to_queue = MagicMock(wraps=scheduler._add_request_to_queue)
     scheduler.tree_cache = MagicMock()
     scheduler.tree_cache.cache_controller = SimpleNamespace()

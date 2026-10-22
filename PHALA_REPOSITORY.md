@@ -29,6 +29,10 @@ engine commit, component versions, build inputs, image digest, validation scope
 and limitations. Do not move published tags or overwrite image versions. Source
 completion, image publication and deployment acceptance are distinct states.
 
+Official 0.5.22 uses a [scoped compatibility maintenance branch](docs/phala/SGLANG-0.5.22.md).
+Shared `main` keeps its 0.5.20 consumers; the linked complete 0.5.22 engine/tag
+and this documentation entrypoint have distinct commit identities.
+
 Images belong to `ghcr.io/phala-network/sglang` and identify the complete engine
 revision. Build and validate selected artifacts through the authorized release
 process; repository cleanup does not initiate model deployment.

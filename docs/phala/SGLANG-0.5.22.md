@@ -5,7 +5,7 @@ The shared0.5.20 main remains the integration source for its current consumers. 
 - Official baseline: `baa9befa381511cd4d56f83980951e5a45fffc6d`.
 - Complete engine: [`386bc8376cac5121fe93ccdb75954631a7a4e64c`](https://github.com/Phala-Network/sglang/commit/386bc8376cac5121fe93ccdb75954631a7a4e64c), tree `af69b818250468199e696d43b83b092eb0481c43`; [source compare](https://github.com/Phala-Network/sglang/compare/baa9befa381511cd4d56f83980951e5a45fffc6d...386bc8376cac5121fe93ccdb75954631a7a4e64c).
 - Ordered [patch export and replay](https://github.com/Phala-Network/sglang-serving-patches/tree/79ac4c5f552a5b435283073b9e9d0d67a0881a29/versions/v0.5.22): patch commit `79ac4c5f552a5b435283073b9e9d0d67a0881a29`, six exact intermediate-tree matches; original four patch bytes preserved.
-- Planned immutable source tag/image version: `phala-v0.5.22-xing4-altstream-20261022`. Publication, immutable image digest and final-image/GPU acceptance are pending.
+- Immutable source tag: [`phala-v0.5.22-xing4-altstream-20261022`](https://github.com/Phala-Network/sglang/releases/tag/phala-v0.5.22-xing4-altstream-20261022). The Release records installed-image, GPU, performance and deployment status.
 
 The stack retains necessary common serving contracts and scoped Xing model/native compatibility repairs, then the measured target MoE stream. Its stdlib CPU harness passed3 tests/144 dispatch subcases. The frozen recipe retains BF16 weights, FP8 KV, TP1, native262144, EAGLE1/1/2, chunk8192, graph2048 and HRRN. Governor is not added; external PIG and shared Mooncake remain independently pinned. No kernel-source, graph8192, varlen, DualGemm, global-prefix or interval change is selected.
 

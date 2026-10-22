@@ -47,10 +47,12 @@ from sglang.srt.model_executor.forward_batch_info import CaptureHiddenMode, Forw
 from sglang.srt.speculative.dflash_info import DFlashVerifyInput
 from sglang.srt.speculative.dflash_info_v2 import DFlashDraftInputV2
 from sglang.srt.speculative.dflash_utils import (
+    _get_or_create_chain_verify_buffers,
     apply_dflash_verify_logits_adjustments,
     build_speculative_verify_target_probs,
 )
 from sglang.srt.speculative.dspark_components.dspark_deferred_commit import (
+    _get_or_create_chain_verify_buffers,
     DeferredContextCommit,
 )
 from sglang.srt.speculative.dspark_components.dspark_draft import DraftBlockResult
@@ -559,6 +561,13 @@ class CommitInjectCtx(msgspec.Struct):
     resolve_engram_hasher: Optional[object] = None
 
 
+def _with_index(device: torch.device) -> torch.device:
+    # The chain-verify cache is keyed by device.index, as the kernels' tensors carry.
+    if device.type == "cuda" and device.index is None:
+        return torch.device("cuda", torch.cuda.current_device())
+    return device
+
+
 class FoldedSamplingParams(msgspec.Struct):
     """Static per-request sampling inputs the folded draft sampler stages before
     each draft replay (it writes into these buffers); with them the epilogue
@@ -631,6 +640,18 @@ class DsparkVerifyEpilogue:
         self.sampling = sampling
         # The in-graph sampled accept draws from a device-advanced philox key.
         self._rng = GraphRng(device, salt=1) if sampling is not None else None
+        # The sampled accept's chain-verify scratch is a process-wide cache that
+        # an eager batch past max_bs regrows; size it now (outside any capture)
+        # and keep these tensors alive for the graphs that captured them.
+        self._chain_verify_buffers = (
+            _get_or_create_chain_verify_buffers(
+                bs=self.max_bs,
+                draft_token_num=int(verify_num_draft_tokens),
+                device=_with_index(torch.device(device)),
+            )
+            if sampling is not None
+            else None
+        )
         self._block_verification = bool(block_verification)
         # SGLANG_SIMULATE_ACC_LEN with a sampled bonus inside the graph too: the bonus
         # is drawn at the simulated correct_len from these buffers, which

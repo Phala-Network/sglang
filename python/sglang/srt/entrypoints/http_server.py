@@ -783,7 +783,7 @@ async def health_generate(request: Request) -> Response:
             }
             if str(exc) not in expected:
                 raise
-            logger.debug("Health probe client disconnected.")
+            logger.debug("Health probe client disconnected: %s", rid)
 
     task = asyncio.create_task(gen())
 
@@ -2828,8 +2828,6 @@ def _run_granian_server(
     from granian.http import HTTP2Settings
     from granian.server.embed import Server as GranianEmbeddedServer
 
-    from sglang.srt.utils.framework_log_privacy import configure_granian_log_privacy
-
     Server = GranianEmbeddedServer if tokenizer_worker_num == 1 else Granian
     target = (
         app if tokenizer_worker_num == 1 else envs.SGLANG_HTTP_SERVER_APP_PATH.get()
@@ -2846,7 +2844,6 @@ def _run_granian_server(
             max_concurrent_streams=http2_max_concurrent_streams,
         ),
         log_level=log_level,
-        log_dictconfig=configure_granian_log_privacy(),
         ssl_cert=ssl_certfile,
         ssl_key=ssl_keyfile,
         ssl_key_password=ssl_keyfile_password,

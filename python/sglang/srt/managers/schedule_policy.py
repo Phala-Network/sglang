@@ -848,7 +848,7 @@ class PrefillAdder:
         """
         if not self._mamba_slot_cost:
             return 0
-        req_pool = self.tree_cache.req_to_token_pool
+        req_pool = getattr(self.tree_cache, "req_to_token_pool", None)
         if isinstance(req_pool, HybridReqToTokenPool):
             slots = req_pool.mamba_admission_slots(req.kv)
         else:
@@ -1537,7 +1537,7 @@ class PrefillAdder:
                                     for candidate in [*self.can_run_list, req]
                                 )
                                 if isinstance(
-                                    self.tree_cache.req_to_token_pool,
+                                    getattr(self.tree_cache, "req_to_token_pool", None),
                                     HybridReqToTokenPool,
                                 )
                                 else 0

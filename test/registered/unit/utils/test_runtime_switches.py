@@ -92,10 +92,12 @@ class TestRuntimeSwitchSync(_SwitchTestCase):
         follower.apply(RuntimeSwitchUpdate(((field.name, "true"),)))
         self.assertTrue(runtime_switches.get(field))
 
-    def test_unknown_names_in_an_update_are_ignored(self):
+    def test_unregistered_names_in_an_update_are_kept_for_late_registration(self):
         sync = RuntimeSwitchSync()
         sync.apply(RuntimeSwitchUpdate((("SGLANG_SOMETHING_ELSE", "1"),)))
-        self.assertNotIn("SGLANG_SOMETHING_ELSE", runtime_switches._agreed)
+        # Kept (a plugin may register it after the update arrived), and harmless:
+        # no switch reads it.
+        self.assertEqual(runtime_switches.get_raw("SGLANG_SOMETHING_ELSE"), "1")
 
     def test_prefetch_policy_override(self):
         name = envs.SGLANG_HICACHE_PREFETCH_POLICY_OVERRIDE.name
@@ -233,6 +235,35 @@ class TestSchedulerIntegration(_SwitchTestCase):
         os.environ[name] = "0"
         sync.apply(sync.poll())
         self.assertIsNone(window())
+
+
+
+class TestRegisteredRawSwitches(unittest.TestCase):
+    def setUp(self):
+        runtime_switches._reset_for_tests()
+
+    def tearDown(self):
+        runtime_switches._reset_for_tests()
+        os.environ.pop("CCBRIDGE_TEST_SWITCH", None)
+
+    def test_registered_name_is_agreed_and_rides_updates(self):
+        os.environ["CCBRIDGE_TEST_SWITCH"] = "0"
+        runtime_switches.register("CCBRIDGE_TEST_SWITCH")
+        sync = runtime_switches.RuntimeSwitchSync()
+        self.assertEqual(runtime_switches.get_raw("CCBRIDGE_TEST_SWITCH"), "0")
+        os.environ["CCBRIDGE_TEST_SWITCH"] = "1"
+        # Not adopted until the update is applied.
+        self.assertEqual(runtime_switches.get_raw("CCBRIDGE_TEST_SWITCH"), "0")
+        update = sync.poll()
+        self.assertIsNotNone(update)
+        sync.apply(update)
+        self.assertEqual(runtime_switches.get_raw("CCBRIDGE_TEST_SWITCH"), "1")
+
+    def test_update_for_a_name_registered_later_is_kept(self):
+        sync = runtime_switches.RuntimeSwitchSync()
+        sync.apply(runtime_switches.RuntimeSwitchUpdate((("CCBRIDGE_TEST_SWITCH", "1"),)))
+        runtime_switches.register("CCBRIDGE_TEST_SWITCH")
+        self.assertEqual(runtime_switches.get_raw("CCBRIDGE_TEST_SWITCH"), "1")
 
 
 if __name__ == "__main__":

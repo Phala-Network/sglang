@@ -36,7 +36,8 @@ SWITCHES: Tuple[EnvField, ...] = (
     envs.SGLANG_PREFILL_DECODE_INTERVAL_OVERRIDE,
     envs.SGLANG_CHUNKED_PREFILL_SHORT_RESERVE,
 )
-_NAMES = frozenset(field.name for field in SWITCHES)
+# Mutable: plugins (ccbridge) register raw environment names of their own.
+_NAMES = set(field.name for field in SWITCHES)
 
 PREFETCH_POLICIES = ("best_effort", "wait_complete", "timeout")
 
@@ -55,6 +56,23 @@ class RuntimeSwitchUpdate:
 
 def _sample() -> Dict[str, Optional[str]]:
     return {name: os.environ.get(name) for name in sorted(_NAMES)}
+
+
+def register(*names: str) -> None:
+    """Also agree on these raw environment names (plugins such as ccbridge)."""
+    for name in names:
+        if name not in _NAMES:
+            _NAMES.add(name)
+            if _agreed is not None:
+                _agreed.setdefault(name, os.environ.get(name))
+
+
+def get_raw(name: str) -> Optional[str]:
+    """The agreed raw string of a switch; the environment outside a scheduler or for
+    an unregistered name."""
+    if _agreed is None or name not in _agreed:
+        return os.environ.get(name)
+    return _agreed[name]
 
 
 def get(field: EnvField) -> Any:
@@ -127,7 +145,8 @@ class RuntimeSwitchSync:
 
     def apply(self, update: RuntimeSwitchUpdate) -> None:
         global _agreed
-        values = {name: raw for name, raw in update.values if name in _NAMES}
+        # Every name: a rank may apply an update before its plugin registered the name.
+        values = dict(update.values)
         agreed = _agreed or {}
         changed = {
             name: raw for name, raw in values.items() if agreed.get(name) != raw

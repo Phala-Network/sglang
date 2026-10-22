@@ -1422,6 +1422,10 @@ class Scheduler(
         if sizer.profile_and_fit():
             self.dynamic_chunk_sizer = sizer
 
+    def _effective_prefill_decode_interval(self) -> int:
+        # Rank-agreed runtime override (see runtime_switches), read per decision.
+        return runtime_switches.prefill_decode_interval(self.prefill_decode_interval)
+
     def _should_defer_prefill(self, running_batch: ScheduleBatch) -> bool:
         if self._prefill_decode_interval_remaining == 0:
             return False
@@ -1432,11 +1436,21 @@ class Scheduler(
             self._prefill_decode_interval_remaining = 0
             return False
 
+        # A countdown armed before a runtime change never outlasts the new
+        # interval (0 releases the deferred prefill at once).
+        self._prefill_decode_interval_remaining = min(
+            self._prefill_decode_interval_remaining,
+            self._effective_prefill_decode_interval(),
+        )
+        if self._prefill_decode_interval_remaining == 0:
+            return False
+
         self._prefill_decode_interval_remaining -= 1
         return True
 
     def _arm_prefill_decode_interval(self, batch: Optional[ScheduleBatch]) -> None:
-        if self.prefill_decode_interval == 0 or batch is None:
+        interval = self._effective_prefill_decode_interval()
+        if interval == 0 or batch is None:
             return
 
         # DP attention synchronizes this flag across ranks. This keeps every
@@ -1448,7 +1462,7 @@ class Scheduler(
             else batch.forward_mode.is_extend()
         )
         if is_extend:
-            self._prefill_decode_interval_remaining = self.prefill_decode_interval
+            self._prefill_decode_interval_remaining = interval
 
     def init_metrics_reporter(self) -> None:
         # Override point for deployments that need a specialized reporter.

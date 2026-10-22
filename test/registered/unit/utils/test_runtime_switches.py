@@ -166,10 +166,36 @@ class TestSchedulerIntegration(_SwitchTestCase):
             Scheduler.ingest_requests(scheduler)
         self.assertEqual(len(applied), 1)
 
+    def test_prefill_decode_interval_override_is_read_per_decision(self):
+        scheduler = Scheduler.__new__(Scheduler)
+        scheduler.prefill_decode_interval = 0
+        scheduler._prefill_decode_interval_remaining = 0
+        scheduler.prefill_decode_interval_min_bs = 0
+        scheduler.require_mlp_sync = False
+        running = SimpleNamespace(batch_size=lambda: 1)
+        extend = SimpleNamespace(forward_mode=SimpleNamespace(is_extend=lambda: True))
+        sync = RuntimeSwitchSync()
+        name = envs.SGLANG_PREFILL_DECODE_INTERVAL_OVERRIDE.name
+
+        scheduler._arm_prefill_decode_interval(extend)
+        self.assertFalse(scheduler._should_defer_prefill(running))
+
+        os.environ[name] = "3"
+        sync.apply(sync.poll())
+        scheduler._arm_prefill_decode_interval(extend)
+        self.assertTrue(scheduler._should_defer_prefill(running))
+
+        # Lowering it mid-countdown releases the deferred prefill early.
+        os.environ[name] = "0"
+        sync.apply(sync.poll())
+        self.assertFalse(scheduler._should_defer_prefill(running))
+        self.assertEqual(scheduler._prefill_decode_interval_remaining, 0)
+
     def test_prefetch_termination_rereads_the_policy(self):
         cache = SimpleNamespace(prefetch_stop_policy="wait_complete", pp_rank=0)
         cache._all_reduce = lambda tensor, op: None
         cache._prefetch_timeout_check_linear_func = lambda op: True
+        cache._prefetch_deadline_expired = lambda op: True
         can_terminate = UnifiedRadixCache._can_terminate_prefetch
         can_terminate = getattr(can_terminate, "__wrapped__", can_terminate)
         sync = RuntimeSwitchSync()

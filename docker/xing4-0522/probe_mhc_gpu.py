@@ -2,16 +2,19 @@
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import time
 
 import torch
 
 from sglang.srt.environ import envs
-from sglang.srt.runtime_context import publish
+from sglang.srt.runtime_context import publish, get_parallel
 from sglang.srt.server_args import ServerArgs
 
 envs.SGLANG_OPT_DEEPGEMM_HC_PRENORM.set(False)  # Actual Xing model hook.
-publish(ServerArgs(model_path="dummy", tp_size=1), role="scheduler")
+publish(ServerArgs(model_path="dummy", device="cuda", tp_size=1), role="scheduler")
+get_parallel().override_permanently(tp_group=SimpleNamespace(world_size=1),
+    tp_rank=0, attn_tp_rank=0, moe_tp_rank=0, moe_ep_rank=0)
 
 from sglang.kernels.ops.layernorm.mhc import mhc_pre_big_fuse_tilelang
 from sglang.srt.models.xing4_0 import mhc_pre, mhc_post
@@ -32,6 +35,7 @@ def maxabs(a, b):
 
 def main():
     assert torch.cuda.is_available()
+    torch.backends.cuda.matmul.allow_tf32 = False
     torch.manual_seed(20261023)
     device = "cuda"
     hidden = 3584

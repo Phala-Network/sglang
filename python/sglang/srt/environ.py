@@ -702,15 +702,29 @@ class Envs:
     # schedulers are told to exit, in seconds; < 0 waits as long as it takes.
     SGLANG_SHUTDOWN_DRAIN_TIMEOUT = EnvFloat(-1)
     # From ShutdownReq to SIGKILL of the schedulers still alive, in seconds.
-    # With SGLANG_STAGED_SHUTDOWN it must cover every rank's turn.
+    # Unset: 15, or with SGLANG_STAGED_SHUTDOWN the staged release's whole bound
+    # (SGLANG_STAGED_SHUTDOWN_TIMEOUT + SGLANG_STAGED_SHUTDOWN_STEP_TIMEOUT + 20).
     SGLANG_SCHEDULER_EXIT_TIMEOUT = EnvFloat(15.0)
-    # Release each rank's external host pool (e.g. ccbridge), KV pools and NCCL
-    # explicitly and one rank at a time before exiting, instead of leaving it all
-    # to process exit; see srt/managers/staged_shutdown.py.
+    # Release each rank's driver objects while it is alive on a graceful exit
+    # (CUDA graphs, plugins such as ccbridge, communicators, tensors, then a
+    # primary context reset), instead of leaving them to process exit, which
+    # frees them in one hold of the NVIDIA driver's global lock and stalls every
+    # other process on the host; see srt/managers/staged_shutdown.py.
     SGLANG_STAGED_SHUTDOWN = EnvBool(False)
-    # The lock file the ranks take turns on ("" = no turns). A path on a volume
-    # shared by several instances also serializes their shutdowns.
-    SGLANG_STAGED_SHUTDOWN_LOCK = EnvStr("/tmp/sglang-staged-shutdown.lock")
+    # Budget of the whole release, in seconds: past it the remaining steps are
+    # skipped, except the context reset, which gets what is left and at least
+    # one step's bound.
+    SGLANG_STAGED_SHUTDOWN_TIMEOUT = EnvFloat(120.0)
+    # Bound of any one step, in seconds.
+    SGLANG_STAGED_SHUTDOWN_STEP_TIMEOUT = EnvFloat(60.0)
+    # End with cuDevicePrimaryCtxReset and os._exit(0).
+    SGLANG_STAGED_SHUTDOWN_CTX_RESET = EnvBool(True)
+    # TP0 logs what it holds at start-up end and at shutdown start.
+    SGLANG_STAGED_SHUTDOWN_INVENTORY = EnvBool(True)
+    # A lock file the ranks take turns on ("" = no turns, the default: every free
+    # is a short hold of the driver lock, so turns only make the release longer).
+    # A path on a volume shared by several instances serializes them too.
+    SGLANG_STAGED_SHUTDOWN_LOCK = EnvStr("")
     # How long a rank waits for its turn before releasing anyway, in seconds.
     SGLANG_STAGED_SHUTDOWN_LOCK_TIMEOUT = EnvFloat(150.0)
     SGLANG_REQ_WAITING_TIMEOUT = EnvFloat(-1)  # in seconds

@@ -6521,6 +6521,11 @@ def run_scheduler_process(
 
             remap_text_to_huge_pages()
 
+        if envs.SGLANG_STAGED_SHUTDOWN.get():
+            from sglang.srt.managers.staged_shutdown import log_startup_inventory
+
+            log_startup_inventory(tp_rank)
+
         # Run the event loop (blocks until a ShutdownReq sets gracefully_exit)
         scheduler.run_event_loop()
 

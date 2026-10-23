@@ -3665,7 +3665,10 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         # Ask schedulers to release resources in userspace and exit (see
         # ShutdownReq), then wait for them before hard-killing the rest.
         self._dispatch_to_scheduler(ShutdownReq())
-        exit_timeout = envs.SGLANG_SCHEDULER_EXIT_TIMEOUT.get()
+        from sglang.srt.managers.staged_shutdown import scheduler_exit_timeout
+
+        exit_timeout = scheduler_exit_timeout()
+        logger.info(f"Waiting up to {exit_timeout:.0f}s for the schedulers to exit.")
         deadline = time.monotonic() + exit_timeout
         while time.monotonic() < deadline and collect_scheduler_processes():
             time.sleep(0.1)

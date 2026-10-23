@@ -530,6 +530,7 @@ def mhc_pre_big_fuse_tilelang(
     n_splits: int = 16,
     hc_mult: int = 4,
     gemm_last_dim: int = -1,
+    xing_sinkhorn: bool = False,
 ):
     num_tokens = T.dynamic("num_tokens")
     hc_mult3 = hc_mult * (2 + hc_mult)
@@ -576,35 +577,59 @@ def mhc_pre_big_fuse_tilelang(
                     )
                     * hc_post_mult_value
                 )
-            for j, k in T.Parallel(hc_mult, hc_mult):
-                cm[j, k] = (
-                    mixes_shared[j * hc_mult + k + hc_mult * 2] * hc_scale[2]
-                    + hc_base[j * hc_mult + k + hc_mult * 2]
-                )
+            if xing_sinkhorn:
+                # Xing reference uses clamped logits and complete row/column
+                # rounds. Store its transpose for mhc_post's input/output layout.
+                for j, k in T.Parallel(hc_mult, hc_mult):
+                    cm[j, k] = T.clamp(
+                        mixes_shared[k * hc_mult + j + hc_mult * 2] * hc_scale[2]
+                        + hc_base[k * hc_mult + j + hc_mult * 2],
+                        -30,
+                        30,
+                    )
+                row_sum = T.alloc_fragment(hc_mult, T.float32)
+                col_sum = T.alloc_fragment(hc_mult, T.float32)
+                col_max = T.alloc_fragment(hc_mult, T.float32)
+                T.reduce_max(cm, col_max, dim=0)
+                for j, k in T.Parallel(hc_mult, hc_mult):
+                    cm[j, k] = T.exp(cm[j, k] - col_max[k])
+                for _ in T.serial(sinkhorn_repeat):
+                    T.reduce_sum(cm, col_sum, dim=0)
+                    for j, k in T.Parallel(hc_mult, hc_mult):
+                        cm[j, k] = cm[j, k] / (col_sum[k] + hc_sinkhorn_eps)
+                    T.reduce_sum(cm, row_sum, dim=1)
+                    for j, k in T.Parallel(hc_mult, hc_mult):
+                        cm[j, k] = cm[j, k] / (row_sum[j] + hc_sinkhorn_eps)
+            else:
+                for j, k in T.Parallel(hc_mult, hc_mult):
+                    cm[j, k] = (
+                        mixes_shared[j * hc_mult + k + hc_mult * 2] * hc_scale[2]
+                        + hc_base[j * hc_mult + k + hc_mult * 2]
+                    )
 
-            row_sum = T.alloc_fragment(hc_mult, T.float32)
-            col_sum = T.alloc_fragment(hc_mult, T.float32)
+                row_sum = T.alloc_fragment(hc_mult, T.float32)
+                col_sum = T.alloc_fragment(hc_mult, T.float32)
 
-            row_max = T.alloc_fragment(hc_mult, T.float32)
-            T.reduce_max(cm, row_max, dim=1)
-            for j, k in T.Parallel(hc_mult, hc_mult):
-                cm[j, k] = T.exp(cm[j, k] - row_max[j])
-            T.reduce_sum(cm, row_sum, dim=1)
-            for j, k in T.Parallel(hc_mult, hc_mult):
-                cm[j, k] = cm[j, k] / row_sum[j] + hc_sinkhorn_eps
-
-            T.reduce_sum(cm, col_sum, dim=0)
-            for j, k in T.Parallel(hc_mult, hc_mult):
-                cm[j, k] = cm[j, k] / (col_sum[k] + hc_sinkhorn_eps)
-
-            for _ in T.serial(sinkhorn_repeat - 1):
+                row_max = T.alloc_fragment(hc_mult, T.float32)
+                T.reduce_max(cm, row_max, dim=1)
+                for j, k in T.Parallel(hc_mult, hc_mult):
+                    cm[j, k] = T.exp(cm[j, k] - row_max[j])
                 T.reduce_sum(cm, row_sum, dim=1)
                 for j, k in T.Parallel(hc_mult, hc_mult):
-                    cm[j, k] = cm[j, k] / (row_sum[j] + hc_sinkhorn_eps)
+                    cm[j, k] = cm[j, k] / row_sum[j] + hc_sinkhorn_eps
 
                 T.reduce_sum(cm, col_sum, dim=0)
                 for j, k in T.Parallel(hc_mult, hc_mult):
                     cm[j, k] = cm[j, k] / (col_sum[k] + hc_sinkhorn_eps)
+
+                for _ in T.serial(sinkhorn_repeat - 1):
+                    T.reduce_sum(cm, row_sum, dim=1)
+                    for j, k in T.Parallel(hc_mult, hc_mult):
+                        cm[j, k] = cm[j, k] / (row_sum[j] + hc_sinkhorn_eps)
+
+                    T.reduce_sum(cm, col_sum, dim=0)
+                    for j, k in T.Parallel(hc_mult, hc_mult):
+                        cm[j, k] = cm[j, k] / (col_sum[k] + hc_sinkhorn_eps)
 
             for j, k in T.Parallel(hc_mult, hc_mult):
                 comb_mix[i, j * hc_mult + k] = cm[j, k]
@@ -1113,6 +1138,7 @@ def mhc_pre(
     *,
     norm_weight: torch.Tensor | None = None,
     norm_eps: float | None = None,
+    xing_sinkhorn: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     assert residual.dtype == torch.bfloat16
     assert fn.dtype == torch.float32
@@ -1240,6 +1266,8 @@ def mhc_pre(
             gemm_last_dim = hc_mult3
             big_fuse_n_splits = n_splits
 
+    if xing_sinkhorn and norm_weight is not None:
+        raise ValueError("Xing mHC does not use the fused norm variant")
     if norm_weight is not None:
         assert norm_eps is not None, "norm_eps required when norm_weight is provided"
         assert norm_weight.shape == (hidden_size,), (
@@ -1292,6 +1320,7 @@ def mhc_pre(
             big_fuse_n_splits,
             hc_mult,
             gemm_last_dim,
+            xing_sinkhorn=xing_sinkhorn,
         )
 
     post_mix = post_mix.view(*outer_shape, hc_mult, 1)

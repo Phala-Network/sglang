@@ -144,7 +144,7 @@ def _mhc_pre_xing_splitk(
         partial_out, partial_sqrsum, hc_scale, hc_base, residual,
         post_mix, comb_mix, layer_input, 3584, rms_eps, hc_pre_eps,
         hc_sinkhorn_eps, hc_post_mult_value, sinkhorn_repeat,
-        n_splits_pre, 4, 32,
+        n_splits_pre, 4, 32, xing_sinkhorn=True,
     )
     return (
         post_mix.view(num_tokens, 4, 1),
@@ -216,6 +216,7 @@ def mhc_pre(
         sinkhorn_repeat=sinkhorn_repeat,
         n_splits=n_splits,
         n_splits_pre=n_splits_pre,
+        xing_sinkhorn=_is_cuda,
     )
 
 
@@ -363,9 +364,11 @@ def _mhc_reference_pre(
     """
     dtype = residual.dtype
     if dtype != torch.bfloat16 or any(
-        tensor.dtype != dtype for tensor in (fn, hc_scale, hc_base)
+        tensor.dtype != dtype for tensor in (fn, hc_base)
     ):
         raise ValueError("Xing mHC reference requires BF16 inputs and loaded operands")
+    if hc_scale.dtype not in (torch.bfloat16, torch.float32):
+        raise ValueError("Xing mHC scale must retain BF16 or FP32 checkpoint precision")
     streams = residual.shape[1]
     flat = residual.flatten(start_dim=1).float()
     flat = flat * torch.rsqrt(flat.square().mean(-1, keepdim=True) + rms_eps)
@@ -468,7 +471,7 @@ class mHCModule(nn.Module):
         # (``attn_hc.hc_fn`` / ``attn_hc.hc_scale`` / ``attn_hc.hc_base``).
         # These are exactly the fp32 op operands consumed by the fused kernels.
         self.hc_fn = nn.Parameter(torch.empty(out_features, self.n * self.hidden_size))
-        self.hc_scale = nn.Parameter(torch.empty(3))
+        self.hc_scale = nn.Parameter(torch.empty(3, dtype=torch.float32))
         self.hc_base = nn.Parameter(torch.empty(out_features))
 
         # fp32 op operands, filled by finalize() after weight loading.
@@ -534,9 +537,9 @@ class mHCModule(nn.Module):
             layer_input = torch.empty(
                 0, C, dtype=torch.bfloat16, device=residual.device
             )
-            post_mix = torch.empty(0, n, dtype=torch.float32, device=residual.device)
+            post_mix = torch.empty(0, n, 1, dtype=torch.float32, device=residual.device)
             comb_mix = torch.empty(
-                0, n * n, dtype=torch.float32, device=residual.device
+                0, n, n, dtype=torch.float32, device=residual.device
             )
         else:
             post_mix, comb_mix, layer_input = mhc_pre(
@@ -554,7 +557,9 @@ class mHCModule(nn.Module):
             )
 
         aggregated = layer_input.view(S, B, C)
-        comb_mix = comb_mix.transpose(-1, -2).contiguous()
+        # CUDA Xing kernels return the input/output layout consumed by mhc_post.
+        if not _is_cuda:
+            comb_mix = comb_mix.transpose(-1, -2).contiguous()
         return aggregated, comb_mix, post_mix
 
     def fused_h_res_h_post_bda_inference(
@@ -630,7 +635,6 @@ class Xing4_0DecoderLayer(nn.Module):
         moe_quant_config_override: QuantizationConfig | None = None,
         prefix: str = "",
         alt_stream: torch.cuda.Stream | None = None,
-        moe_alt_stream: torch.cuda.Stream | None = None,
     ) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
@@ -690,7 +694,7 @@ class Xing4_0DecoderLayer(nn.Module):
                 layer_id=self.layer_id,
                 quant_config=moe_quant_config_override or quant_config,
                 prefix=add_prefix("mlp", prefix),
-                alt_stream=moe_alt_stream if moe_alt_stream is not None else alt_stream,
+                alt_stream=alt_stream,
                 is_deepseek_v4=False,
                 reduce_results=self.enable_mhc,
             )
@@ -1022,9 +1026,6 @@ class Xing4_0Model(nn.Module):
         else:
             self.embed_tokens = PPMissingLayer()
 
-        # Reuse one target-only MoE stream across layers and graph captures.
-        self.moe_alt_stream = torch.cuda.Stream() if _is_cuda else None
-
         self.layers, self.start_layer, self.end_layer = make_layers(
             config.num_hidden_layers,
             lambda idx, prefix: Xing4_0DecoderLayer(
@@ -1032,7 +1033,6 @@ class Xing4_0Model(nn.Module):
                 layer_id=idx,
                 quant_config=quant_config,
                 prefix=prefix,
-                moe_alt_stream=self.moe_alt_stream,
             ),
             pp_rank=self.pp_group.rank_in_group,
             pp_size=self.pp_group.world_size,

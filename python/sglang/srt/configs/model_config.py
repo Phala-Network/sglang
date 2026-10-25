@@ -563,6 +563,17 @@ def get_num_indexer_layers(config) -> int:
     return getattr(config, "num_indexer_layers", 0)
 
 
+def _is_dflash_draft(model_path: Optional[str]) -> bool:
+    """A DFlash drafter has its own rope and no text_config, so the target's
+    --json-model-override-args (e.g. YaRN rope_parameters) must not reach it."""
+    try:
+        with open(os.path.join(model_path or "", "config.json")) as f:
+            archs = json.load(f).get("architectures") or []
+    except (OSError, ValueError):
+        return False
+    return any(a.startswith("DFlash") for a in archs)
+
+
 class ModelConfig:
     def __init__(
         self,
@@ -971,7 +982,11 @@ class ModelConfig:
             context_length=(
                 context_length if context_length is not None else cfg.context_length
             ),
-            model_override_args=cfg.json_model_override_args,
+            model_override_args=(
+                "{}"
+                if is_draft_model and _is_dflash_draft(model_path)
+                else cfg.json_model_override_args
+            ),
             is_embedding=cfg.is_embedding,
             enable_multimodal=cfg.enable_multimodal,
             dtype=cfg.dtype,

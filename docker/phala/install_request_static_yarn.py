@@ -87,7 +87,9 @@ if new_info != old_info:
     for row in rows:
         if row[0].startswith(old_info.name + "/"):
             row[0] = new_info.name + row[0][len(old_info.name):]
-    old_info.rename(new_info)
+    # A base-image directory can live in OverlayFS's lower layer. rename(2)
+    # returns EXDEV for that directory; move handles copy/remove in that case.
+    shutil.move(str(old_info), str(new_info))
     record = new_info / "RECORD"
 with record.open("w", encoding="utf8", newline="") as stream:
     csv.writer(stream, lineterminator="\n").writerows(rows)

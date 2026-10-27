@@ -196,6 +196,7 @@ class TestStreamingOwnership(unittest.IsolatedAsyncioTestCase):
 class TestResponsesOwnership(unittest.IsolatedAsyncioTestCase):
     async def test_non_harmony_send_failure_closes_inner_events_and_generation(self):
         serving = object.__new__(OpenAIServingResponses)
+        serving.tool_call_parser = None
         request = ResponsesRequest(
             model="model", input="hello", stream=True, store=False
         )

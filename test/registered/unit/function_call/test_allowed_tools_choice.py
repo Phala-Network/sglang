@@ -96,6 +96,7 @@ class AllowedToolsServingTest(unittest.TestCase):
     def setUp(self):
         self.chat = object.__new__(OpenAIServingChat)
         self.chat._grammar_backend = "xgrammar"
+        self.chat.is_minimax_m3 = False
         self.chat.tokenizer_manager = SimpleNamespace(
             model_config=SimpleNamespace(is_multimodal=True),
             server_args=SimpleNamespace(

@@ -836,11 +836,6 @@ class UnifiedRadixCacheHiCacheSuite(UnifiedRadixCacheHiCacheFixtures):
         self.assertIsNone(cache.tree_core.get_write_through_pending_id(d))
         cache.sanity_check()
 
-    @requires_swa
-    @requires(
-        lambda cfg: not cfg.has_mamba,
-        "SWA-only path keeps the chain construction simple",
-    )
     def test_hicache_swa_sparse_backup_keeps_only_the_target_window(self):
         """SGLANG_HICACHE_SWA_SPARSE_BACKUP: write-through backs up SWA only for
         the window ending at the insert (and later at an insert ending on an
@@ -944,6 +939,11 @@ class UnifiedRadixCacheHiCacheSuite(UnifiedRadixCacheHiCacheFixtures):
         self.assertIsNotNone(node_host_value(cache, older, ComponentType.SWA))
         cache.sanity_check()
 
+    @requires_swa
+    @requires(
+        lambda cfg: not cfg.has_mamba,
+        "SWA-only path keeps the chain construction simple",
+    )
     def test_hicache_swa_host_hit_counts_tombstones_inside_the_window(self):
         """A host-backed SWA tombstone inside the trailing sliding window stops
         the device match before it: the Full-backed tail from the tombstone on

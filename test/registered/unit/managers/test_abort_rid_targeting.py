@@ -61,6 +61,7 @@ def _make_scheduler(*, waiting_reqs=(), running_reqs=()) -> Scheduler:
     sched.disaggregation_mode = None
     sched.enable_hicache_storage = False
     sched.mm_receiver = None
+    sched.rust_server = None
     sched.running_batch = SimpleNamespace(reqs=list(running_reqs))
     sched.last_batch = None
     sched.ipc_channels = Mock()

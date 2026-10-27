@@ -739,7 +739,9 @@ class OpenAIServingResponses(OpenAIServingChat):
                 )
                 return result
             except HTTPException as exc:
-                return self.create_error_response(exc.detail, status_code=exc.status_code)
+                return self.create_error_response(
+                    exc.detail, status_code=exc.status_code
+                )
             except Exception as e:
                 return self.create_error_response(str(e))
         return self.create_error_response("Unknown error")
@@ -2232,7 +2234,7 @@ class OpenAIServingResponses(OpenAIServingChat):
             created_time,
             require_reasoning=require_reasoning,
             tool_adapter=tool_adapter,
-                )
+        )
         async with aclosing(events):
             async for event in events:
                 if not event:

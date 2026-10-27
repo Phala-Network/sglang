@@ -17,6 +17,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    Union,
 )
 
 from sglang.srt.runtime_context import get_model, get_serving

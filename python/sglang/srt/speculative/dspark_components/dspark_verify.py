@@ -52,7 +52,6 @@ from sglang.srt.speculative.dflash_utils import (
     build_speculative_verify_target_probs,
 )
 from sglang.srt.speculative.dspark_components.dspark_deferred_commit import (
-    _get_or_create_chain_verify_buffers,
     DeferredContextCommit,
 )
 from sglang.srt.speculative.dspark_components.dspark_draft import DraftBlockResult

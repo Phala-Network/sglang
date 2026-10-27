@@ -98,7 +98,6 @@ from sglang.srt.entrypoints.openai.serving_chat import (
     _incomplete_tool_call_indices,
 )
 from sglang.srt.entrypoints.openai.serving_base import GenerationStreamingResponse
-from sglang.srt.entrypoints.openai.serving_chat import OpenAIServingChat
 from sglang.srt.entrypoints.openai.tool_server import MCPToolServer, ToolServer
 from sglang.srt.entrypoints.openai.utils import to_openai_style_logprobs
 from sglang.srt.entrypoints.request_disconnect import await_response_or_disconnect

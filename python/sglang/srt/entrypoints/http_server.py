@@ -2609,7 +2609,7 @@ def _freeze_gc_after_server_warmup(server_args: ServerArgs):
             time.sleep(1)
         except requests.exceptions.RequestException:
             break
-    logger.warning("post-warmup freeze_gc failed", exc_info=True)
+    logger.warning("post-warmup freeze_gc failed")
 
 
 def _wait_and_warmup(

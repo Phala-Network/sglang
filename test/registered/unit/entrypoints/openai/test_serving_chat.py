@@ -15,11 +15,9 @@ import copy
 import gc
 import json
 import re
-import tempfile
 import unittest
 import uuid
 from http import HTTPStatus
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
 from unittest.mock import Mock, patch

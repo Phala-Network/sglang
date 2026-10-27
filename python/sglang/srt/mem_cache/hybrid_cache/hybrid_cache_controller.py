@@ -1666,12 +1666,12 @@ class HybridCacheController(BaseHiCacheController):
                         )
                     )
                 pool_hits = count_pool_hits(results)
-        except Exception as exc:
+        except Exception:
             # Empty pool hits fail the hybrid all-or-nothing check. Always
             # publish this slot, even when only one TP rank's I/O failed.
-            logger.error(
-                "HiCache sidecar prefetch failed (%s); discarding this prefetch.",
-                type(exc).__name__,
+            logger.exception(
+                "HiCache sidecar prefetch failed for request %s; discarding it",
+                operation.request_id,
             )
             pool_hits = {}
         # Emit PrefetchAck to prefetch_sync_queue, even the operation has been canceled by the

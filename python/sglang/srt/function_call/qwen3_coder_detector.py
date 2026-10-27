@@ -362,7 +362,9 @@ class Qwen3CoderDetector(BaseFormatDetector):
                     ):
                         continue
 
-                    param_config, parameters = self._get_arguments_config(func_name, tools)
+                    param_config, parameters = self._get_arguments_config(
+                        func_name, tools
+                    )
                     parsed_params = {}
 
                     for p_match in self.tool_call_parameter_regex.findall(params_str):
@@ -390,8 +392,8 @@ class Qwen3CoderDetector(BaseFormatDetector):
                     )
                     tool_idx += 1
 
-        except Exception as e:
-            logger.error("Error parsing complete Qwen tool block: <redacted>")
+        except Exception:
+            logger.exception("error parsing complete Qwen tool block")
             return []
         return calls
 

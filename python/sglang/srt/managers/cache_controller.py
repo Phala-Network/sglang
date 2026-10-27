@@ -42,7 +42,7 @@ from sglang.srt.layers.dp_attention import (
 from sglang.srt.mem_cache.l2_transfer import L2Transfer, L2TransferEngine
 from sglang.srt.mem_cache.memory_pool import MLATokenToKVPool
 from sglang.srt.mem_cache.utils import get_storage_hash_str
-from sglang.srt.runtime_context import get_parallel
+from sglang.srt.runtime_context import get_parallel, get_spec
 from sglang.srt.utils import get_device_module
 
 logger = logging.getLogger(__name__)
@@ -533,6 +533,52 @@ class HiCacheController:
         """
         if self.enable_storage:
             raise RuntimeError("Storage backend already attached.")
+        if get_parallel().attn_dcp_size > 1:
+            if self.host_memory_mode == "buffer_only":
+                raise NotImplementedError(
+                    "HiCache L3 with DCP does not support buffer_only host memory."
+                )
+            if storage_backend != "mooncake":
+                raise NotImplementedError(
+                    "HiCache L3 with DCP requires Mooncake storage."
+                )
+            from sglang.srt.mem_cache.pool_host.mamba import MambaPoolHost
+            from sglang.srt.mem_cache.pool_host.mha import MHATokenToKVPoolHost
+            from sglang.srt.mem_cache.pool_host.mla import MLATokenToKVPoolHost
+
+            if (
+                not isinstance(self.storage_host_pool, MLATokenToKVPoolHost)
+                or self.storage_host_pool.kv_buffer is None
+            ):
+                raise NotImplementedError(
+                    "HiCache L3 with DCP requires a materialized MLA host pool."
+                )
+            if self.storage_host_pool.layout not in (
+                "layer_first",
+                "page_first",
+                "page_first_direct",
+            ):
+                raise NotImplementedError(
+                    "HiCache L3 with DCP requires a generic MLA page layout."
+                )
+            for entry in getattr(self.mem_pool_host, "entries", ()):
+                if entry.host_pool is self.storage_host_pool:
+                    continue
+                if entry.name == PoolName.MAMBA and isinstance(
+                    entry.host_pool, MambaPoolHost
+                ):
+                    continue
+                if (
+                    entry.name == PoolName.DRAFT
+                    and get_spec().speculative_algorithm == "DSPARK"
+                    and isinstance(entry.host_pool, MHATokenToKVPoolHost)
+                    and entry.host_pool.page_size == self.page_size
+                ):
+                    continue
+                raise NotImplementedError(
+                    "HiCache L3 with DCP supports only MLA KV, optional KDA state, "
+                    "and DSPARK draft KV."
+                )
 
         # Defensive: a previous partial detach may have flipped `enable_storage` but
         # left background threads alive. Attaching on top of them is unsafe.
@@ -552,12 +598,7 @@ class HiCacheController:
         self.storage_config = self._generate_storage_config(
             model_name, storage_backend_extra_config
         )
-        # for MLA models, only one rank needs to backup the KV cache
-        self.backup_skip = (
-            self.storage_config.is_mla_model
-            # todo: load balancing
-            and self.storage_config.tp_rank != 0
-        )
+        self.backup_skip = not self.storage_config.is_storage_writer
 
         # Use storage backend factory for dynamic backend creation
         from sglang.srt.mem_cache.storage import StorageBackendFactory
@@ -579,8 +620,10 @@ class HiCacheController:
                     HICACHE_LOAD_POOL_USAGE_FRACTION * self.mem_pool_host.size
                 )
             else:
-                # Budget speculative prefetch at half the host pool, leaving the rest for the write-back staging path.
-                self.prefetch_capacity_limit = int(0.5 * self.mem_pool_host.size)
+                # Occupancy and prefetch requests count logical DCP tokens.
+                self.prefetch_capacity_limit = int(
+                    0.5 * self.mem_pool_host.logical_size
+                )
             # tracking the number of tokens locked in prefetching, updated by the main scheduler thread
             self.prefetch_tokens_occupied = 0
 
@@ -732,6 +775,7 @@ class HiCacheController:
             )
 
         attn_cp_rank, attn_cp_size = self.get_attn_cp_rank_and_size()
+        dcp_size = get_parallel().attn_dcp_size
 
         return HiCacheStorageConfig(
             tp_rank=self.tp_rank,
@@ -749,6 +793,9 @@ class HiCacheController:
             should_split_heads=should_split_heads,
             dp_rank=self.dp_rank,
             extra_config=storage_backend_extra_config,
+            dcp_size=dcp_size,
+            dcp_rank=get_parallel().attn_dcp_rank,
+            logical_page_size=self.page_size if dcp_size > 1 else None,
         )
 
     def reset(self):

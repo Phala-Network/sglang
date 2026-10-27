@@ -199,8 +199,9 @@ def check_server_args(server_args: Any):
         assert cfg.schedule_policy in [
             "fcfs",
             "lof",
+            "hrrn",
         ], (
-            f"To use priority scheduling, schedule_policy must be 'fcfs' or 'lof'. '{cfg.schedule_policy}' is not supported."
+            f"To use priority scheduling, schedule_policy must be 'fcfs', 'lof' or 'hrrn'. '{cfg.schedule_policy}' is not supported."
         )
         if cfg.default_priority_value is None:
             logger.warning(

@@ -12,6 +12,14 @@ official 0.2.7. Combining those unported interfaces would change the tested
 runtime. This release therefore continues the established v0.5.21 maintenance
 line rather than replacing main or claiming unrelated model qualification.
 
+The HRRN priority maintenance release adds request-priority ordering within
+the existing runtime. Enable `--enable-priority-scheduling`,
+`--disable-priority-preemption` and `--default-priority-value 1`; higher
+numeric values run first, with HRRN ordering within each tier. The large-queue
+FCFS fallback also preserves priority and FCFS order within a tier. With
+priority scheduling disabled, the existing ordering is unchanged. This is
+the equivalent of engine PR124 plus the over-128-request fallback repair.
+
 Use an explicit output budget when short requests should select 1x. Automatic
 admission chooses the smallest profile covering the expanded input plus the
 original output budget. The global context limit separately reserves the four
@@ -31,7 +39,7 @@ has its separate guard. Retain `SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1`.
 The release notes contain the exact qualified override and launch parameters.
 
 `request-static-yarn.Dockerfile` builds from the immutable phala-v0.5.21-5 base.
-Prepare a minimal context containing the 11 changed runtime modules, focused
+Prepare a minimal context containing the 13 changed runtime modules, focused
 tests, root LICENSE, the recipe/installer and `source-manifest.json` with
 `engine_commit`, `tested_candidate_identity`, and `runtime_sha256`. Read every
 input from the exact engine Git commit. The installer verifies actual installed

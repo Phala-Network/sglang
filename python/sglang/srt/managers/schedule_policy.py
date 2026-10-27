@@ -278,7 +278,7 @@ class SchedulePolicy:
             for r in waiting_queue:
                 match_prefix_for_req(self.tree_cache, r, include_req=True)
 
-        if self.policy == CacheAgnosticPolicy.FCFS:
+        if policy == CacheAgnosticPolicy.FCFS:
             if self.enable_priority_scheduling:
                 SchedulePolicy._sort_by_priority_and_fcfs(
                     waiting_queue, self.priority_sign
@@ -297,7 +297,10 @@ class SchedulePolicy:
                 SchedulePolicy._sort_by_dfs_weight(waiting_queue, self.tree_cache)
             elif policy == CacheAwarePolicy.HRRN:
                 SchedulePolicy._sort_by_hrrn(
-                    waiting_queue, temporary_deprioritized, processed_tokens
+                    waiting_queue,
+                    temporary_deprioritized,
+                    processed_tokens,
+                    self.priority_sign if self.enable_priority_scheduling else 0,
                 )
             elif policy == CacheAwarePolicy.SHORTEST_PREFILL_FIRST:
                 SchedulePolicy._sort_by_shortest_prefill(
@@ -498,8 +501,13 @@ class SchedulePolicy:
         waiting_queue: List[Req],
         temporary_deprioritized: Set[int],
         processed_tokens: int,
+        priority_sign: int = 0,
     ) -> None:
         """Highest Response Ratio Next, with token-based aging.
+
+        With priority scheduling (`priority_sign` is +1 or -1), requests are
+        ordered by priority first and by response ratio within a priority;
+        `priority_sign` 0 (priority scheduling off) keeps the pure HRRN order.
 
         Equivalence with classic HRRN when throughput is constant:
             ratio = 1 + wait_sec / est_prefill_time
@@ -517,15 +525,16 @@ class SchedulePolicy:
 
         def _key(r: Req):
             rid = r.rid
+            tier = (r.priority or 0) * priority_sign if priority_sign else 0
             if rid in temporary_deprioritized:
-                return (float("inf"), rid)
+                return (tier, float("inf"), rid)
             uncached = SchedulePolicy._uncached_len(r)
             if uncached <= 0:
                 # No prefill work; drain immediately.
-                return (-float("inf"), rid)
+                return (tier, -float("inf"), rid)
             waited_tokens = max(0, processed_tokens - r.arrival_processed_tokens)
             ratio_delta = waited_tokens / uncached
-            return (-ratio_delta, rid)
+            return (tier, -ratio_delta, rid)
 
         waiting_queue.sort(key=_key)
 

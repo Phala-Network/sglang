@@ -18,6 +18,7 @@ from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer
 from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
     HybridCacheController,
 )
+from sglang.srt.runtime_context import get_parallel
 from sglang.test.ci.ci_register import register_cpu_ci
 
 register_cpu_ci(est_time=5, suite="base-a-test-cpu")
@@ -27,18 +28,30 @@ def _attach(backend, *, tp_rank, controller_cls=HiCacheController):
     cc = controller_cls.__new__(controller_cls)
     cc.enable_storage = False
     cc.storage_host_pool = object()
-    cc.mem_pool_host = SimpleNamespace(size=1024, layout_lease=nullcontext)
+    cc.mem_pool_host = SimpleNamespace(
+        size=1024, logical_size=1024, layout_lease=nullcontext
+    )
     cc.host_memory_mode = "default"
     cc.page_size = 2
     cc.storage_stop_event = threading.Event()
-    config = SimpleNamespace(is_mla_model=True, tp_rank=tp_rank, extra_config={})
-    with patch.object(controller_cls, "_stop_storage_threads"), patch.object(
-        controller_cls, "_generate_storage_config", return_value=config
-    ), patch.object(controller_cls, "_create_sync_groups", return_value=[]), patch.object(
-        controller_cls, "_start_storage_threads"
-    ), patch(
-        "sglang.srt.mem_cache.storage.StorageBackendFactory.create_backend",
-        return_value=backend,
+    cc.pp_group = None
+    cc.pp_prefetch_command_group = None
+    config = SimpleNamespace(
+        is_mla_model=True,
+        tp_rank=tp_rank,
+        is_storage_writer=tp_rank == 0,
+        extra_config={},
+    )
+    with (
+        get_parallel().override(attn_dcp_size=1),
+        patch.object(controller_cls, "_stop_storage_threads"),
+        patch.object(controller_cls, "_generate_storage_config", return_value=config),
+        patch.object(controller_cls, "_create_sync_groups", return_value=[]),
+        patch.object(controller_cls, "_start_storage_threads"),
+        patch(
+            "sglang.srt.mem_cache.storage.StorageBackendFactory.create_backend",
+            return_value=backend,
+        ),
     ):
         cc.attach_storage_backend("dynamic", storage_backend_extra_config={})
     return cc
@@ -67,7 +80,9 @@ class TestBackupRanks(unittest.TestCase):
 
     def test_every_rank_then_backs_up_the_kv_and_every_sidecar(self):
         backend = _Backend(backup_on_every_rank=True)
-        backend.batch_set_v1 = Mock(side_effect=lambda keys, *a, **k: [True] * len(keys))
+        backend.batch_set_v1 = Mock(
+            side_effect=lambda keys, *a, **k: [True] * len(keys)
+        )
         backend.batch_set_v2 = Mock(
             side_effect=lambda transfers, *a, **k: {
                 t.name: [True] * len(t.keys) for t in transfers
@@ -83,10 +98,13 @@ class TestBackupRanks(unittest.TestCase):
             PoolTransfer(name=PoolName.SWA, keys=["a", "b"]),
         ]
         operation.pool_storage_result = Mock()
-        with patch.object(
-            HybridCacheController, "_resolve_sidecar_kv_derived_pool_transfers"
-        ), patch.object(
-            HybridCacheController, "_resolve_sidecar_nonkv_derived_pool_transfers"
+        with (
+            patch.object(
+                HybridCacheController, "_resolve_sidecar_kv_derived_pool_transfers"
+            ),
+            patch.object(
+                HybridCacheController, "_resolve_sidecar_nonkv_derived_pool_transfers"
+            ),
         ):
             cc._page_backup(operation)
         backend.batch_set_v1.assert_called_once()

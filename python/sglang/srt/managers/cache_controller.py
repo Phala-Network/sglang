@@ -622,8 +622,9 @@ class HiCacheController:
             # A backend whose host pools keep only one TP rank's share of the
             # rank-replicated pages (ccbridge's TP-sharded pools) publishes each
             # page from the rank holding it, so every rank backs up.
-            if getattr(self.storage_backend, "backup_on_every_rank", False) is True:
-                self.backup_skip = False
+            self._backup_on_every_rank = (
+                getattr(self.storage_backend, "backup_on_every_rank", False) is True
+            )
 
             self.enable_storage = True
             # todo: threshold policy for prefetching
@@ -748,9 +749,13 @@ class HiCacheController:
         # Now it's safe to clear the stop event for future re-attach.
         self.storage_stop_event.clear()
 
+    _backup_on_every_rank = False
+
     @property
     def backup_skip(self) -> bool:
-        return not self.storage_config.is_storage_writer
+        return not (
+            self._backup_on_every_rank or self.storage_config.is_storage_writer
+        )
 
     def _generate_storage_config(
         self,

@@ -17,6 +17,7 @@ register_cpu_ci(est_time=10, suite="base-a-test-cpu")
 probe = OpenAIServingChat._probe_prompt_text_round_trip
 engine_prompt = OpenAIServingChat._engine_prompt
 render_and_encode = OpenAIServingChat._render_and_encode_chat_template
+can_reuse_prompt_ids = OpenAIServingChat._can_reuse_prompt_ids
 
 
 class FakeTokenizer:
@@ -52,6 +53,7 @@ def _messages(prompt_ids, prompt="rendered", **media):
         image_data=media.get("image_data"),
         video_data=media.get("video_data"),
         audio_data=media.get("audio_data"),
+        modalities=media.get("modalities"),
     )
 
 
@@ -130,6 +132,30 @@ class TestEnginePrompt(unittest.TestCase):
             )
             self.assertEqual(key, "input_ids")
             self.assertEqual(value, [1, 3, 4])
+
+
+class TestReusePromptIds(unittest.TestCase):
+    def _server(self, sends_with_media, ids_match_text=True):
+        return SimpleNamespace(
+            _sends_prompt_ids_with_media=sends_with_media,
+            _prompt_ids_match_text=lambda: ids_match_text,
+        )
+
+    def test_media_sends_ids_only_to_a_processor_that_expands_them(self):
+        messages = _messages([1, 3, 4], image_data=["img"])
+        self.assertTrue(can_reuse_prompt_ids(self._server(True), messages, True))
+        self.assertFalse(can_reuse_prompt_ids(self._server(False), messages, True))
+
+    def test_text_only_sends_ids_when_they_match_the_text(self):
+        messages = _messages([1, 3, 4])
+        self.assertTrue(can_reuse_prompt_ids(self._server(False), messages, True))
+        self.assertFalse(
+            can_reuse_prompt_ids(self._server(False, False), messages, True)
+        )
+
+    def test_no_ids_keep_the_text(self):
+        messages = _messages([], image_data=["img"])
+        self.assertFalse(can_reuse_prompt_ids(self._server(True), messages, True))
 
 
 if __name__ == "__main__":

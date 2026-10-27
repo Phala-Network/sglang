@@ -418,6 +418,11 @@ class QwenVLImageProcessor(MediaArtifactCacheMixin, SGLangBaseProcessor):
             video_token_id=self.VIDEO_TOKEN_ID,
             audio_token_id=self.audio_token_id,
         ).build(_processor)
+        # The artifact path expands the placeholder ids of a tokenized prompt, so
+        # an image request need not tokenize its whole text a second time.
+        self.prefer_tokenized_input = (
+            self.mm_preprocess_cache.enabled or self.uses_media_artifacts_without_cache
+        )
 
     @property
     def spatial_merge_size(self):

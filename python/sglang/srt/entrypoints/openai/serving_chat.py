@@ -527,6 +527,13 @@ class OpenAIServingChat(OpenAIServingBase):
         except Exception:
             self._tokenizer_auto_adds_specials = True
         self._prompt_text_round_trip_is_lossy = self._probe_prompt_text_round_trip()
+        # A processor that expands the placeholders of a tokenized prompt gets the
+        # rendered prompt's ids with the media, not text it would tokenize again.
+        mm_processor = getattr(self.tokenizer_manager, "mm_processor", None)
+        self._sends_prompt_ids_with_media = (
+            getattr(mm_processor, "prefer_tokenized_input", False) is True
+            and self._prompt_ids_match_text()
+        )
         self._template_reads_reasoning_content = (
             self._chat_template_reads_reasoning_content()
         )
@@ -1701,9 +1708,9 @@ class OpenAIServingChat(OpenAIServingBase):
             return "text", processed_messages.prompt_ids
         return "input_ids", processed_messages.prompt_ids
 
-    def _can_reuse_text_only_prompt_ids(
-        self, processed_messages: MessageProcessingResult, is_multimodal: bool
-    ) -> bool:
+    def _prompt_ids_match_text(self) -> bool:
+        """Whether the rendered prompt's ids are what the tokenizer manager would
+        tokenize from its text."""
         # Moss-VL invokes its processor for text-only requests, and that processor
         # requires the rendered text rather than pre-tokenized ids.
         is_moss_vl = (
@@ -1711,18 +1718,31 @@ class OpenAIServingChat(OpenAIServingBase):
             in self.tokenizer_manager.model_config.hf_config.architectures
         )
         return (
-            is_multimodal
-            and not is_moss_vl
+            not is_moss_vl
             and self.chat_encoding_spec is None
             and self.template_manager.chat_template_name is None
             and not self._prompt_text_round_trip_is_lossy
             and not self._tokenizer_auto_adds_specials
+        )
+
+    def _can_reuse_prompt_ids(
+        self, processed_messages: MessageProcessingResult, is_multimodal: bool
+    ) -> bool:
+        has_media = (
+            processed_messages.image_data
+            or processed_messages.video_data
+            or processed_messages.audio_data
+            or processed_messages.modalities
+        )
+        return (
+            is_multimodal
             and isinstance(processed_messages.prompt_ids, list)
             and bool(processed_messages.prompt_ids)
-            and not processed_messages.image_data
-            and not processed_messages.video_data
-            and not processed_messages.audio_data
-            and not processed_messages.modalities
+            and (
+                self._sends_prompt_ids_with_media
+                if has_media
+                else self._prompt_ids_match_text()
+            )
         )
 
     def _convert_to_internal_request(
@@ -1815,7 +1835,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 sampling_params.pop("ebnf_full_assistant", None)
 
         # Handle single vs multiple requests
-        if request.input_ids is not None or self._can_reuse_text_only_prompt_ids(
+        if request.input_ids is not None or self._can_reuse_prompt_ids(
             processed_messages, is_multimodal
         ):
             prompt_kwargs = {"input_ids": processed_messages.prompt_ids}
@@ -2741,7 +2761,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 # The cached decode corresponds to prompt_ids before the prefix.
                 decoded_prompt = None
 
-            if is_multimodal:
+            if is_multimodal and not self._sends_prompt_ids_with_media:
                 prompt = (
                     decoded_prompt
                     if decoded_prompt is not None
@@ -2840,7 +2860,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 )
         decoded_prompt = (
             self.tokenizer_manager.tokenizer.decode(prompt_ids)
-            if cache_key is not None
+            if cache_key is not None and not self._sends_prompt_ids_with_media
             else None
         )
 

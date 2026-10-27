@@ -276,7 +276,7 @@ class SchedulePolicy:
             for r in waiting_queue:
                 match_prefix_for_req(self.tree_cache, r, include_req=True)
 
-        if self.policy == CacheAgnosticPolicy.FCFS:
+        if policy == CacheAgnosticPolicy.FCFS:
             if self.enable_priority_scheduling:
                 SchedulePolicy._sort_by_priority_and_fcfs(
                     waiting_queue, self.priority_sign

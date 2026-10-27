@@ -1,5 +1,6 @@
 import unittest
 from array import array
+from unittest.mock import patch
 
 from sglang.srt.managers.schedule_batch import Req
 from sglang.srt.managers.schedule_policy import SchedulePolicy
@@ -156,6 +157,64 @@ class TestSchedulePolicyHRRN(CustomTestCase):
             waiting_queue, {"high"}, processed_tokens=1000, priority_sign=-1
         )
         self.assertEqual([r.rid for r in waiting_queue], ["warm", "high", "low"])
+
+
+    def test_calc_priority_hrrn_tiers_and_direction(self):
+        for enabled, low_first, expected in (
+            (False, False, ["flex", "default", "priority"]),
+            (True, False, ["priority", "default", "flex"]),
+            (True, True, ["flex", "default", "priority"]),
+        ):
+            with self.subTest(enabled=enabled, low_first=low_first):
+                reqs = [
+                    _make_req("default", "x" * 10, list(range(10)), priority=1),
+                    _make_req("priority", "x" * 100, list(range(100)), priority=2),
+                    _make_req("flex", "x", [1], priority=0),
+                ]
+                for req in reqs:
+                    req.num_matched_prefix_tokens = 0
+                    req.arrival_processed_tokens = 0
+                reqs[1].arrival_processed_tokens = 1000
+                policy = SchedulePolicy(
+                    policy="hrrn",
+                    tree_cache=RadixCache.create_simulated(),
+                    enable_hierarchical_cache=True,
+                    enable_priority_scheduling=enabled,
+                    schedule_low_priority_values_first=low_first,
+                )
+                with patch.object(policy, "_compute_prefix_matches", return_value=set()):
+                    policy.calc_priority(reqs, processed_tokens=1000)
+                self.assertEqual([req.rid for req in reqs], expected)
+
+    def test_calc_priority_hrrn_large_queue_keeps_priority_in_fcfs_fallback(self):
+        for enabled, low_first in ((False, False), (True, False), (True, True)):
+            with self.subTest(enabled=enabled, low_first=low_first):
+                reqs = [
+                    _make_req(str(index), "x", [index], priority=index % 3)
+                    for index in range(129)
+                ]
+                for index, req in enumerate(reqs):
+                    req.time_stats.wait_queue_entry_time = float(index)
+                expected = list(reqs)
+                if enabled:
+                    sign = 1 if low_first else -1
+                    expected.sort(
+                        key=lambda req: (
+                            req.priority * sign,
+                            req.time_stats.wait_queue_entry_time,
+                        )
+                    )
+                policy = SchedulePolicy(
+                    policy="hrrn",
+                    tree_cache=RadixCache.create_simulated(),
+                    enable_hierarchical_cache=True,
+                    enable_priority_scheduling=enabled,
+                    schedule_low_priority_values_first=low_first,
+                )
+                with patch.object(policy, "_compute_prefix_matches") as prefix_matches:
+                    policy.calc_priority(reqs, processed_tokens=1000)
+                prefix_matches.assert_not_called()
+                self.assertEqual([req.rid for req in reqs], [req.rid for req in expected])
 
 
 if __name__ == "__main__":

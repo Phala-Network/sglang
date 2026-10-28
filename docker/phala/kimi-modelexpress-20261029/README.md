@@ -5,6 +5,20 @@ This opt-in image adds ModelExpress weight loading to the existing Kimi
 current main runtime, change inference settings, enable ModelExpress by default,
 or qualify GPU-to-GPU loading. Deployment remains a separate operation.
 
+Canonical release: [phala-v0.5.21-11](https://github.com/Phala-Network/sglang/releases/tag/phala-v0.5.21-11).
+
+```text
+ghcr.io/phala-network/sglang:phala-v0.5.21-11@sha256:a98ddaa49c6a2597128b19f851d953e23149690b51b8f18bcc8df150551dc67c
+```
+
+This corrects the original model/date naming to the sequential release scheme.
+The published bytes and CPU qualification are unchanged. The embedded OCI
+version `phala-kimi-modelexpress-20261029-rc1` and frozen Dockerfile retain the
+historical build identifier; that old registry tag is a historical alias.
+The recipe/source tag resolves to `d5f595f8331774211134407ef855f5b5f30a5f25`.
+The engine revision remains the distinct maintenance revision below; the
+sequence number does not add unrelated Qwen runtime changes from releases 9/10.
+
 ## Frozen inputs
 
 - Engine source: `cebb7c6ce132ef1030b3dbb271862658257b7ac2`,
@@ -58,7 +72,7 @@ docker run --rm --network none --entrypoint python3 -e MX_SKIP_EXT=1 \
   -v /path/to/new-mx-source:/mx -v "$PWD/dist":/dist \
   PINNED_BASE -m pip wheel --no-deps --no-build-isolation --wheel-dir /dist /mx
 docker build --network none --build-arg RECIPE_COMMIT=FULL_MAIN_COMMIT \
-  -t ghcr.io/phala-network/sglang:phala-kimi-modelexpress-20261029-rc1 .
+  -t ghcr.io/phala-network/sglang:phala-v0.5.21-11 .
 ```
 
 Wheel preparation may need a writable copy of the source for setuptools;

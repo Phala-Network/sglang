@@ -32,6 +32,7 @@ assert not [
     for e in md.distribution("modelexpress").entry_points
     if e.name == "modelexpress_rl"
 ]
+assert not [p for p in md.files("modelexpress") if str(p).endswith(".so")]
 for module in [
     "modelexpress.engines.sglang.loader",
     "modelexpress.p2p_pb2_grpc",

@@ -49,12 +49,12 @@ mixed-strategy GPU recovery and donor inference impact still require testing.
 
 Use a dedicated CPU builder directory. `prepare.py` verifies the fixed upstream
 archive and applies the patch without fuzz. Build the wheel with the pinned base
-using `pip wheel --no-deps --no-build-isolation`, writing it to this recipe's
+using `MX_SKIP_EXT=1 pip wheel --no-deps --no-build-isolation`, writing it to this recipe's
 `dist/`. Build the image once after source checks pass:
 
 ```sh
 python3 prepare.py --output /path/to/new-mx-source
-docker run --rm --network none --entrypoint python3 \
+docker run --rm --network none --entrypoint python3 -e MX_SKIP_EXT=1 \
   -v /path/to/new-mx-source:/mx -v "$PWD/dist":/dist \
   PINNED_BASE -m pip wheel --no-deps --no-build-isolation --wheel-dir /dist /mx
 docker build --network none --build-arg RECIPE_COMMIT=FULL_MAIN_COMMIT \
@@ -74,6 +74,8 @@ checks by immutable builder image ID, with no source/executable mounts:
 CPU tests exercise two real Gloo ranks for mixed native/RDMA and all-RDMA file
 cleanup. Only file advice is intercepted; engine synchronization executes.
 These tests do not instantiate a model or prove RDMA/GPU correctness.
+The optional VMM allocator extension is deliberately omitted; this candidate
+uses ordinary per-tensor registration and does not qualify VMM arena mode.
 
 ## Later deployment prerequisites
 

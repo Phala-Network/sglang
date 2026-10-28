@@ -1,0 +1,2 @@
+# Unified-diff context prefixes intentionally contain a space on blank lines.
+modelexpress.patch -whitespace

@@ -1,0 +1,181 @@
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -7,7 +7,7 @@
+ 
+ [project]
+ name = "modelexpress"
+-version = "0.8.0"
++version = "0.8.0+phala.mx1"
+ description = "Python client for ModelExpress P2P GPU transfer service"
+ readme = "README.md"
+ license = "Apache-2.0"
+@@ -28,11 +28,9 @@
+     "google-crc32c>=1.5.0",
+     "huggingface_hub>=0.20.0",
+     "numpy>=1.24.0",
+-    "protobuf>=5.27.2,<7.0.0",
++    "protobuf>=5.27.2,<8.0.0",
+     "pydantic>=2.0.0",
+     "torch>=2.6.0",
+-    "runai-model-streamer[azure,gcs,s3]>=0.17.0 ; sys_platform == 'linux'",
+-    "instanttensor>=0.1.9 ; sys_platform == 'linux'",
+     # First release with IfNoneMatch on CompleteMultipartUpload.
+     "boto3>=1.35.2",
+     "zstandard>=0.22.0",
+@@ -41,6 +39,8 @@
+ ]
+ 
+ [project.optional-dependencies]
++streaming = ["runai-model-streamer[azure,gcs,s3]>=0.17.0 ; sys_platform == 'linux'"]
++instanttensor = ["instanttensor>=0.1.9 ; sys_platform == 'linux'"]
+ dev = [
+     "opentelemetry-api>=1.41.1",
+     "opentelemetry-sdk>=1.41.1",
+@@ -84,10 +84,6 @@
+ 
+ [project.entry-points."vllm.general_plugins"]
+ modelexpress = "modelexpress:register_modelexpress"
+-modelexpress_rl = "modelexpress_rl.inference.engines.vllm.registration:register"
+-
+-[project.entry-points."sglang.srt.plugins"]
+-modelexpress_rl = "modelexpress_rl.inference.engines.sglang.registration:register"
+ 
+ [tool.pytest.ini_options]
+ markers = [
+--- a/modelexpress/engines/sglang/adapter.py
++++ b/modelexpress/engines/sglang/adapter.py
+@@ -48,6 +48,7 @@
+         self.model_config = model_config
+         self.device_config = device_config
+         self.target_device = torch.device(device_config.device)
++        self.native_checkpoint_files: list[str] = []
+         self.accelerator_backend = accelerator_backend_for(self.target_device)
+ 
+     def build_identity(self) -> p2p_pb2.SourceIdentity:
+@@ -205,10 +206,17 @@
+         weights_iter = disk_loader._get_all_weights(self.model_config, result.model)
+         # Same capture as the target path so the source publishes the derived
+         # MLA tensors under matching buffer names (symmetric manifest).
+-        with capture_tensor_attrs(self.accelerator_backend):
+-            DefaultModelLoader.load_weights_and_postprocess(
+-                result.model, weights_iter, self.target_device,
++        try:
++            with capture_tensor_attrs(self.accelerator_backend):
++                DefaultModelLoader.load_weights_and_postprocess(
++                    result.model, weights_iter, self.target_device,
++                )
++        finally:
++            self.native_checkpoint_files.extend(
++                getattr(disk_loader, "_files_to_drop_after_load", ())
+             )
++        # Cleanup must run after every rank finishes its selected strategy.
++        # A barrier here would deadlock a native rank against an RDMA rank.
+         return result
+ 
+     def reinit_for_retry(self, result: LoadResult) -> LoadResult:
+--- a/modelexpress/engines/sglang/loader.py
++++ b/modelexpress/engines/sglang/loader.py
+@@ -48,6 +48,7 @@
+     schedule_sglang_cache_artifact_publish,
+ )
+ from .draft_weights import draft_tensor_namespace, draft_weight_adapter_for
++from .checkpoint_cache import release_native_checkpoint_cache
+ 
+ logger = logging.getLogger("modelexpress.engines.sglang.loader")
+ 
+@@ -313,6 +314,7 @@
+             ctx.global_rank,
+             total_time,
+         )
++        release_native_checkpoint_cache(ctx.adapter, self.load_config)
+         return model.eval()
+ 
+     def _run_nixl_load(self, model: nn.Module, ctx: LoadContext) -> nn.Module:
+@@ -382,6 +384,7 @@
+             )
+             ctx.tensors = {}
+             self.remote_instance_transfer_engine_weight_info = {}
++            release_native_checkpoint_cache(ctx.adapter, self.load_config)
+             return result.model.eval()
+         self._ctx = ctx
+ 
+@@ -470,6 +473,7 @@
+                 )
+                 ctx.tensors = tensors
+                 self.remote_instance_transfer_engine_weight_info = {}
++                release_native_checkpoint_cache(ctx.adapter, self.load_config)
+                 return result.model.eval()
+         ctx.tensors = tensors
+         self.remote_instance_transfer_engine_weight_info = weight_info
+@@ -491,6 +495,7 @@
+             ctx.global_rank,
+             total_time,
+         )
++        release_native_checkpoint_cache(ctx.adapter, self.load_config)
+         return result.model.eval()
+ 
+     def _find_transfer_engine_source(self, ctx: LoadContext):
+--- /dev/null
++++ b/modelexpress/engines/sglang/checkpoint_cache.py
+@@ -0,0 +1,34 @@
++# SPDX-FileCopyrightText: Copyright (c) 2026 Phala Network
++# SPDX-License-Identifier: Apache-2.0
++"""Coordinate native-loader cache release across mixed RDMA/native ranks."""
++
++import torch
++
++
++def release_native_checkpoint_cache(adapter, load_config):
++    extra = getattr(load_config, "model_loader_extra_config", None) or {}
++    if not extra.get("drop_checkpoint_cache_after_model_load", False):
++        return
++
++    files = sorted(set(getattr(adapter, "native_checkpoint_files", ())))
++    nnodes = 1
++    if torch.distributed.is_initialized():
++        from sglang.srt.runtime_context import get_parallel
++
++        parallel = get_parallel()
++        group = parallel.world_group
++        nnodes = parallel.nnodes
++        per_rank = [None] * group.world_size
++        torch.distributed.all_gather_object(per_rank, files, group=group.cpu_group)
++        files = sorted({path for rank_files in per_rank for path in rank_files})
++
++    if files:
++        # Reuse the engine's CUDA/TP synchronization and per-node distribution.
++        # All ranks see the same union, including ranks that loaded via RDMA.
++        from sglang.srt.model_loader.weight_utils import (
++            drop_checkpoint_cache_after_model_load,
++        )
++
++        drop_checkpoint_cache_after_model_load(files, nnodes)
++    if hasattr(adapter, "native_checkpoint_files"):
++        adapter.native_checkpoint_files.clear()
+--- a/modelexpress/ucx_utils.py
++++ b/modelexpress/ucx_utils.py
+@@ -561,6 +561,24 @@
+     if raw == "" or raw.lower() in ("off", "0", "false", "no"):
+         return None
+ 
++    if ";" in raw:
++        # One semicolon-delimited group per CUDA device; commas within a
++        # group select that rank's UCX devices (e.g. one HCA on each rail).
++        groups = raw.split(";")
++        if not 0 <= device_id < len(groups):
++            raise ValueError("MX_RDMA_NIC_PIN rank is outside the grouped NIC map")
++        import re
++
++        validated = []
++        for group in groups:
++            devices = [device.strip() for device in group.split(",")]
++            if (not devices or len(set(devices)) != len(devices)
++                    or any(re.fullmatch(r"[A-Za-z0-9_.-]+:[1-9][0-9]*", d) is None
++                           for d in devices)):
++                raise ValueError("MX_RDMA_NIC_PIN contains an invalid NIC group")
++            validated.append(",".join(devices))
++        return validated[device_id]
++
+     if "," in raw:
+         nic_list = [n.strip() for n in raw.split(",") if n.strip()]
+         if 0 <= device_id < len(nic_list):

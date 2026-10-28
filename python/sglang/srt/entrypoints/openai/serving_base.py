@@ -15,7 +15,7 @@ from sglang.srt.entrypoints.openai.encoding_dsv32 import DS32EncodingError
 from sglang.srt.entrypoints.openai.protocol import ErrorResponse, OpenAIServingRequest
 from sglang.srt.managers.io_struct import EmbeddingReqInput, GenerateReqInput
 from sglang.srt.observability.req_time_stats import monotonic_time
-from sglang.srt.runtime_context import get_observability
+from sglang.srt.runtime_context import get_observability, get_serving
 from sglang.srt.server_args import ServerArgs
 
 if TYPE_CHECKING:
@@ -51,6 +51,26 @@ class OpenAIServingBase(ABC):
         adapter_name = parts[1].strip() or None
 
         return base_model, adapter_name
+
+    def _apply_preferred_sampling_params(self, request, sampling_params):
+        """Apply opt-in numeric defaults only to omitted request values."""
+        preferred = get_serving().preferred_sampling_params
+        if preferred:
+            for name in (
+                "temperature",
+                "top_p",
+                "top_k",
+                "min_p",
+                "repetition_penalty",
+                "frequency_penalty",
+                "presence_penalty",
+            ):
+                if name in preferred and (
+                    name not in request.model_fields_set
+                    or getattr(request, name) is None
+                ):
+                    sampling_params[name] = preferred[name]
+        return sampling_params
 
     def _resolve_lora_path(
         self,

@@ -1343,6 +1343,7 @@ class OpenAIServingChat(OpenAIServingBase):
             tool_call_constraint=processed_messages.tool_call_constraint,
             renderer_handles_response_format=self.chat_encoding_spec == "kimi_k3",
         )
+        sampling_params = self._apply_preferred_sampling_params(request, sampling_params)
         from sglang.srt.function_call.xing4_native_tool_schema import (
             maybe_apply_native_schema,
         )

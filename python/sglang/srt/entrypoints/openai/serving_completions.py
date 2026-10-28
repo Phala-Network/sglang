@@ -191,7 +191,7 @@ class OpenAIServingCompletion(OpenAIServingBase):
                 request.response_format.model_dump(by_alias=True)
             )
 
-        return sampling_params
+        return self._apply_preferred_sampling_params(request, sampling_params)
 
     async def _handle_streaming_request(
         self,

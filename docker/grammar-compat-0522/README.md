@@ -1,0 +1,9 @@
+# SGLang 0.5.22 common grammar and sampling repairs
+
+This CPU-only incremental recipe derives from the immutable qualified `b07063ac…` Phala image. It installs four Python files and their two regression modules from one exact complete engine commit. All other runtime source, package versions and native libraries remain inherited. It does not add or select Governor; external PIG remains separate. The image requires no source overlays or installation at startup.
+
+The reasoner fix delegates vocabulary masks to an existing inner grammar. The OpenAI fix makes the existing opt-in `--preferred-sampling-params` numeric defaults effective for omitted fields in chat and completions, preserving explicit request priority. It adds no flag, model-specific branch or sampling default. A service can opt in with `--preferred-sampling-params '{"repetition_penalty":1.05}'`.
+
+From the engine checkout, export an exact committed source with `python docker/grammar-compat-0522/build_context.py <commit> <new-context-directory>`. Build that context on CPU 201 with this Dockerfile, passing the exact commit as `ENGINE_REVISION` and immutable release tag as `IMAGE_VERSION`. The context uses canonical Git bytes and the build verifies installed source, package versions and the inherited XGrammar binary. Verify direct `hf --help`, `hf download --help`, SGLang CLI and the focused tests in the actual image without source mounts before publication. Real model, long-context and colocation acceptance remain separate GPU gates.
+
+This release intentionally advances `codex/sglang-v0.5.22-maintenance`: shared `main` serves a separate 0.5.20 consumer line. It does not merge or upgrade that main. Publish the exact source tag and Release before publishing the image; use one publisher and read back the immutable image digest.

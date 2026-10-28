@@ -3065,7 +3065,10 @@ class UnifiedRadixCache(BasePrefixCache):
         n_release: Optional[int],
         extra_release_counts: Optional[dict[PoolName, int]],
         log_metrics: bool,
+        n_backup_written: Optional[int] = None,
     ) -> None:
+        """``n_backup_written`` is the rank-agreed (MIN) count of leading
+        storage-write acks every rank fully wrote; None trusts local results."""
         cc = self.cache_controller
 
         def _drain_queue(q: Queue[T], n: Optional[int]) -> Iterator[T]:
@@ -3296,12 +3299,22 @@ class UnifiedRadixCache(BasePrefixCache):
                         )
 
         def _drain_backup():
-            drained = 0
-            for operation in _drain_queue(cc.ack_backup_queue, n_backup):
-                drained += 1
+            operations = list(_drain_queue(cc.ack_backup_queue, n_backup))
+            if buffer_mode:
+                pipeline = self.buffer_pipeline
+                written_pages = [
+                    pipeline.storage_written_pages(op) for op in operations
+                ]
+                if n_backup_written is not None and n_backup_written < n_backup:
+                    # Some rank missed a page in this window; every rank agreed
+                    # on that, so all enter this collective.
+                    written_pages = self._min_written_pages(
+                        written_pages, n_backup_written
+                    )
+            for i, operation in enumerate(operations):
                 if buffer_mode:
                     # Storage write acked: free the staging.
-                    self.buffer_pipeline.finish_storage_write_ack(operation.id)
+                    pipeline.finish_storage_write_ack(operation.id, written_pages[i])
                 else:
                     entry = self.ongoing_backup.pop(operation.id, None)
                     if entry is not None:
@@ -3315,7 +3328,7 @@ class UnifiedRadixCache(BasePrefixCache):
                     self.storage_metrics_collector.log_backuped_tokens(
                         operation.completed_tokens
                     )
-            return drained
+            return len(operations)
 
         def _drain_release():
             host_indices_list = []
@@ -3362,6 +3375,7 @@ class UnifiedRadixCache(BasePrefixCache):
             cc.ack_prefetch_queue.qsize(),
             cc.ack_backup_queue.qsize(),
             cc.host_mem_release_queue.qsize(),
+            self._backup_acks_written(cc.ack_backup_queue),
             *[
                 extra_release_queues[pool_name].qsize()
                 for pool_name in extra_pool_names
@@ -3373,10 +3387,12 @@ class UnifiedRadixCache(BasePrefixCache):
         )
         self._all_reduce(qsizes, torch.distributed.ReduceOp.MIN)
         qsize_list = list(map(int, qsizes.tolist()))
-        n_storage_hit, n_ack_prefetch, n_backup, n_release = qsize_list[:4]
+        n_storage_hit, n_ack_prefetch, n_backup, n_release, n_backup_written = (
+            qsize_list[:5]
+        )
         extra_release_counts = {
             pool_name: count
-            for pool_name, count in zip(extra_pool_names, qsize_list[4:])
+            for pool_name, count in zip(extra_pool_names, qsize_list[5:])
         }
         self._drain_storage_control_queues_impl(
             n_storage_hit=n_storage_hit,
@@ -3385,7 +3401,32 @@ class UnifiedRadixCache(BasePrefixCache):
             n_release=n_release,
             extra_release_counts=extra_release_counts,
             log_metrics=True,
+            n_backup_written=n_backup_written,
         )
+
+    def _backup_acks_written(self, ack_backup_queue: Queue) -> int:
+        """Leading storage-write acks this rank fully wrote. Rides the
+        ack-count MIN, so a window every rank wrote needs no extra collective;
+        outside buffer mode every ack counts."""
+        if self.host_memory_mode != "buffer_only":
+            return ack_backup_queue.qsize()
+        with ack_backup_queue.mutex:
+            operations = list(ack_backup_queue.queue)
+        for i, operation in enumerate(operations):
+            if not self.buffer_pipeline.storage_write_complete(operation):
+                return i
+        return len(operations)
+
+    def _min_written_pages(
+        self, written_pages: list[list[int]], start: int
+    ) -> list[list[int]]:
+        """MIN-reduce the written pages of acks from ``start`` on, over the
+        group the buffer-mode ack counts are reduced on."""
+        tail = written_pages[start:]
+        reduced = torch.tensor([w for pages in tail for w in pages], dtype=torch.int64)
+        self._all_reduce_attn_groups(reduced, torch.distributed.ReduceOp.MIN)
+        values = iter(reduced.tolist())
+        return written_pages[:start] + [[next(values) for _ in pages] for pages in tail]
 
     def drain_storage_control_queues_local(self) -> None:
         """Drain the storage control queues without cross-rank synchronization.
@@ -3485,7 +3526,7 @@ class UnifiedRadixCache(BasePrefixCache):
             # received tensor back in place, so all ranks must build the same
             # length or PP1+ would recv into a mismatched buffer.
             storage_queue_sizes = (
-                (0,) * (4 + len(extra_pool_names)) if self.enable_storage else ()
+                (0,) * (5 + len(extra_pool_names)) if self.enable_storage else ()
             )
         else:
             write_acks = self._count_ready_acks(cc.ack_write_queue)
@@ -3496,6 +3537,7 @@ class UnifiedRadixCache(BasePrefixCache):
                     cc.ack_prefetch_queue.qsize(),
                     cc.ack_backup_queue.qsize(),
                     cc.host_mem_release_queue.qsize(),
+                    self._backup_acks_written(cc.ack_backup_queue),
                     *(extra_release_queues[name].qsize() for name in extra_pool_names),
                 )
                 if self.enable_storage
@@ -3866,14 +3908,14 @@ class UnifiedRadixCache(BasePrefixCache):
         self.loading_check(finish_count=load_finish_count)
 
         if self.enable_storage and storage_queue_sizes:
-            n_storage_hit, n_ack_prefetch, n_backup, n_release = storage_queue_sizes[
-                :4
-            ]
+            n_storage_hit, n_ack_prefetch, n_backup, n_release, n_backup_written = (
+                storage_queue_sizes[:5]
+            )
             extra_release_counts = {
                 pool_name: count
                 for pool_name, count in zip(
                     extra_pool_names,
-                    storage_queue_sizes[4:],
+                    storage_queue_sizes[5:],
                 )
             }
             self._drain_storage_control_queues_impl(
@@ -3883,6 +3925,7 @@ class UnifiedRadixCache(BasePrefixCache):
                 n_release=n_release,
                 extra_release_counts=extra_release_counts,
                 log_metrics=True,
+                n_backup_written=n_backup_written,
             )
 
     def ready_to_load_host_cache(self) -> int:

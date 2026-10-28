@@ -84,6 +84,7 @@ METHODS = {
     "_count_ready_acks",
     "_apply_ready_counts",
     "_drain_storage_control_queues_impl",
+    "_backup_acks_written",
     "check_hicache_events",
     "reset",
     "release_host_resources",
@@ -488,10 +489,10 @@ class TestHiCacheAsyncAckSync(unittest.TestCase):
             setattr(cc, name, SimpleNamespace(qsize=lambda count=count: count))
         cc.extra_host_mem_release_queues = {"mamba": SimpleNamespace(qsize=lambda: 7)}
         tensor, names, digest = cache._ready_counts_tensor()
-        self.assertEqual(tensor.tolist(), [1, 0, 3, 4, 5, 6, 7, 0, 0])
+        self.assertEqual(tensor.tolist(), [1, 0, 3, 4, 5, 6, 5, 7, 0, 0])
         self.assertEqual(names, ("mamba",))
         cache.pp_rank = 1
-        self.assertEqual(cache._ready_counts_tensor()[0].tolist(), [0] * 9)
+        self.assertEqual(cache._ready_counts_tensor()[0].tolist(), [0] * 10)
         cache.pp_rank = 0
         cache._async_ready_counts_eligible.return_value = False
         cache._all_reduce = MagicMock()
@@ -506,6 +507,7 @@ class TestHiCacheAsyncAckSync(unittest.TestCase):
             n_release=6,
             extra_release_counts={"mamba": 7},
             log_metrics=True,
+            n_backup_written=5,
         )
         cache.buffer_pipeline.flush_pending_writes.assert_called_once()
         self.assertIsNone(cache._pending_ready_counts)

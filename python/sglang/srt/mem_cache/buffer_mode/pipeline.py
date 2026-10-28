@@ -1203,17 +1203,38 @@ class BufferModePipeline:
             )
         return list(merged.values())
 
-    def finish_storage_write_ack(self, operation_id: int) -> None:
-        """Storage ack (rank-synced drain): free the staging and feed each
-        written pool's beliefs unconditionally, keeping admission
-        TP-deterministic under per-rank backend failures."""
+    def storage_written_pages(self, operation) -> list[int]:
+        """Leading pages of each pool's keys this rank wrote, in
+        ``keys_by_pool`` order; a pool another rank writes counts as written."""
+        entry = self.ongoing_backup.get(operation.id)
+        if entry is None:
+            return []
+        return [
+            min(operation.written_pages.get(pool, len(keys)), len(keys))
+            for pool, keys in entry.keys_by_pool.items()
+        ]
+
+    def storage_write_complete(self, operation) -> bool:
+        entry = self.ongoing_backup.get(operation.id)
+        return entry is None or self.storage_written_pages(operation) == [
+            len(keys) for keys in entry.keys_by_pool.values()
+        ]
+
+    def finish_storage_write_ack(
+        self, operation_id: int, written_pages: list[int]
+    ) -> None:
+        """Storage ack (rank-synced drain): free the staging and believe the
+        pages every rank wrote (``written_pages``, MIN across ranks); an
+        unwritten page lost its only copy, so the next backup rewrites it."""
         entry = self.ongoing_backup.pop(operation_id, None)
         if entry is None:
             return
         beliefs = self._cache.storage_existence_cache
-        for pool, keys in entry.keys_by_pool.items():
+        for (pool, keys), written in zip(
+            entry.keys_by_pool.items(), written_pages, strict=True
+        ):
             pool_beliefs = beliefs.pool(pool)
-            pool_beliefs.add(keys)
+            pool_beliefs.add(keys[:written])
             pool_beliefs.untrack_inflight(keys)
         self._free_staging_now(entry.host_indices, entry.aux_xfers)
         self.write_staged_tokens_ -= entry.occupied_units

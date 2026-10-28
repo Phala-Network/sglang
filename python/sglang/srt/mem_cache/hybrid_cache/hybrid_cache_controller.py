@@ -1716,6 +1716,11 @@ class HybridCacheController(BaseHiCacheController):
             if self.should_backup(transfer)
         ]
 
+        written_pages = operation.written_pages
+        written_pages.update((transfer.name, 0) for transfer in backup_transfers)
+        if not self.backup_skip:
+            written_pages[PoolName.KV] = 0
+
         if backup_transfers:
             self._resolve_sidecar_kv_derived_pool_transfers(operation)
             self._resolve_sidecar_nonkv_derived_pool_transfers(operation)
@@ -1728,9 +1733,11 @@ class HybridCacheController(BaseHiCacheController):
                 )
             pool_hits = count_pool_hits(results)
             operation.pool_storage_result.update_extra_pool_hit_pages(pool_hits)
+            written_pages.update(pool_hits)
 
         if not self.backup_skip:
             super()._page_backup(operation)
+            written_pages[PoolName.KV] = operation.completed_tokens // self.page_size
         else:
             sidecar_ok = bool(backup_transfers)
             if sidecar_ok:

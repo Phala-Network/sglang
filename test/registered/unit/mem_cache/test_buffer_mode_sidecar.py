@@ -3,6 +3,7 @@
 import unittest
 from array import array
 from pathlib import Path
+from queue import Queue
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -13,6 +14,8 @@ import torch
 from sglang.srt.mem_cache.base_prefix_cache import CacheRequestHandle
 from sglang.srt.mem_cache.buffer_mode.pipeline import (
     BufferModePipeline,
+    _UnifiedBackupIntent,
+    _UnifiedBufferBackupEntry,
     validate_buffer_only_stack,
 )
 from sglang.srt.mem_cache.buffer_mode.storage_existence_cache import (
@@ -29,6 +32,7 @@ from sglang.srt.mem_cache.hicache_storage import (
 from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
     HybridCacheController,
     PrefetchOperation,
+    StorageOperation,
 )
 from sglang.srt.mem_cache.radix_cache import RadixKey
 from sglang.srt.mem_cache.unified_cache.components.base import (
@@ -530,11 +534,112 @@ class TestBufferModeSidecar(unittest.TestCase):
             self.assertEqual(storage_sidecar.indices_from_pool, spec.indices_from_pool)
             self.assertIsNone(storage_sidecar.host_indices)
         self.assertEqual(set(pipeline.ongoing_backup), {98, 99})
-        pipeline.finish_storage_write_ack(98)
-        self.assertTrue(pipeline.backup_pending(7))
-        pipeline.finish_storage_write_ack(99)
+        for operation_id in (98, 99):
+            entry = pipeline.ongoing_backup[operation_id]
+            written = [len(keys) for keys in entry.keys_by_pool.values()]
+            pipeline.finish_storage_write_ack(operation_id, written)
+            self.assertEqual(operation_id == 98, pipeline.backup_pending(7))
         self.assertFalse(pipeline.backup_pending(7))
         self.assertEqual(pipeline.write_staged_tokens_, 0)
+
+    def test_storage_ack_believes_only_pages_every_rank_wrote(self):
+        """A buffer-mode write's staging is the page's only copy: a page the
+        backend did not persist must not be believed stored, or no backup
+        rewrites it. Rank 0 writes the replicated KV and loses the sidecar's
+        second page; rank 1 writes nothing and must not mask the loss."""
+        c4 = PoolName.DEEPSEEK_V4_C4
+        snapshot = self._backup_snapshot()
+        keys = list(snapshot.hash_values)
+
+        def rank(rank_id):
+            controller = HybridCacheController.__new__(HybridCacheController)
+            controller.page_size = 2
+            controller.storage_config = SimpleNamespace(is_storage_writer=rank_id == 0)
+            controller.storage_backend_type = "file"
+            controller.page_set_func = lambda *_: True
+            controller.storage_backend = SimpleNamespace(
+                batch_set_v2=lambda transfers, extra_info: {
+                    t.name: [True, t.keys != keys] for t in transfers
+                }
+            )
+            cache = UnifiedRadixCache.__new__(UnifiedRadixCache)
+            cache.host_memory_mode = "buffer_only"
+            cache.storage_existence_cache = StorageExistenceCache()
+            cache.cache_controller = SimpleNamespace(
+                mem_pool_host=MagicMock(),
+                prefetch_hit_queue=Queue(),
+                ack_prefetch_queue=Queue(),
+                ack_backup_queue=Queue(),
+                host_mem_release_queue=Queue(),
+                extra_host_mem_release_queues={},
+            )
+            pipeline = BufferModePipeline.__new__(BufferModePipeline)
+            pipeline._cache = cache
+            pipeline.reset()
+            cache.buffer_pipeline = pipeline
+            # A clean write of other keys, then the write that loses a page.
+            for op_keys in (["other-0", "other-1"], keys):
+                operation = StorageOperation(
+                    torch.arange(4),
+                    [1, 2, 3, 4],
+                    hash_value=list(op_keys),
+                    pool_transfers=[
+                        PoolTransfer(name=c4, indices_from_pool=PoolName.KV)
+                    ],
+                )
+                controller._page_backup_with_stable_layout(operation)
+                keys_by_pool = {PoolName.KV: list(op_keys), c4: list(op_keys)}
+                pipeline.ongoing_backup[operation.id] = _UnifiedBufferBackupEntry(
+                    intent=_UnifiedBackupIntent(snapshot, PoolName.KV, op_keys),
+                    host_indices=torch.arange(4),
+                    aux_xfers=[],
+                    lock_params=None,
+                    occupied_units=0,
+                    keys_by_pool=keys_by_pool,
+                )
+                for pool, pool_keys in keys_by_pool.items():
+                    cache.storage_existence_cache.pool(pool).track_inflight(pool_keys)
+                cache.cache_controller.ack_backup_queue.put(operation)
+            return cache
+
+        writer, follower = rank(0), rank(1)
+        operations = list(writer.cache_controller.ack_backup_queue.queue)
+        peer_written = [
+            follower.buffer_pipeline.storage_written_pages(op)
+            for op in follower.cache_controller.ack_backup_queue.queue
+        ]
+        n_backup_written = min(
+            cache._backup_acks_written(cache.cache_controller.ack_backup_queue)
+            for cache in (writer, follower)
+        )
+        self.assertEqual(n_backup_written, 1)
+
+        reduced = []
+
+        def reduce(values, op):
+            self.assertEqual(op, torch.distributed.ReduceOp.MIN)
+            peer = torch.tensor([w for pages in peer_written[1:] for w in pages])
+            values.copy_(torch.minimum(values, peer))
+            reduced.append(values.tolist())
+
+        writer._all_reduce_attn_groups = reduce
+        writer._drain_storage_control_queues_impl(
+            n_storage_hit=0,
+            n_ack_prefetch=0,
+            n_backup=len(operations),
+            n_release=0,
+            extra_release_counts={},
+            log_metrics=False,
+            n_backup_written=n_backup_written,
+        )
+        # Only the window past the agreed fully-written prefix is reduced.
+        self.assertEqual(reduced, [[2, 1]])
+        self.assertFalse(writer.buffer_pipeline.ongoing_backup)
+        beliefs = writer.storage_existence_cache
+        self.assertTrue(beliefs.pool(PoolName.KV).contains_all(["other-0", *keys]))
+        self.assertEqual([beliefs.pool(c4).contains(k) for k in keys], [True, False])
+        # Neither believed nor in flight: the next backup rewrites the page.
+        self.assertFalse(beliefs.pool(c4).covered(keys))
 
     def test_completed_prefetch_keeps_dsv4_full_and_swa_sidecars_for_h2d(self):
         swa = PoolTransfer(

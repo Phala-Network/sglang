@@ -239,6 +239,9 @@ class StorageOperation:
         self.token_ids = token_ids
         self.last_hash = last_hash
         self.completed_tokens = 0
+        # Storage write: leading pages of each pool's keys this rank wrote. A
+        # pool another rank writes is absent; one this rank failed stays 0.
+        self.written_pages: dict[str, int] = {}
         self.hash_value = hash_value if hash_value is not None else []
         self.prefix_keys = prefix_keys
         # Full queried page-hash chain, set by _storage_hit_query before

@@ -345,6 +345,8 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
     def _make_grammar_object(
         self, grammar: Optional[BaseGrammarObject], reasoning: bool
     ) -> ReasonerGrammarObject:
+        # An inner grammar owns its mask operations; backend hooks are only
+        # needed by strict-thinking-only objects that have no inner grammar.
         obj = ReasonerGrammarObject(
             grammar=grammar,
             think_end_ids=self.think_end_ids,
@@ -352,9 +354,15 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
             max_think_tokens=self.max_think_tokens,
             enable_token_filter=self.enable_token_filter,
             token_filter_fn=self._token_filter_fn,
-            allocate_vocab_mask_fn=self.grammar_backend.allocate_vocab_mask,
-            move_vocab_mask_fn=self.grammar_backend.move_vocab_mask,
-            apply_vocab_mask_fn=self.grammar_backend.apply_vocab_mask,
+            allocate_vocab_mask_fn=(
+                self.grammar_backend.allocate_vocab_mask if grammar is None else None
+            ),
+            move_vocab_mask_fn=(
+                self.grammar_backend.move_vocab_mask if grammar is None else None
+            ),
+            apply_vocab_mask_fn=(
+                self.grammar_backend.apply_vocab_mask if grammar is None else None
+            ),
         )
         obj.maybe_init_reasoning(reasoning)
         return obj

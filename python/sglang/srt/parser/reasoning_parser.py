@@ -1,4 +1,5 @@
 import inspect
+import logging
 import re
 from typing import Dict, List, Optional, Tuple, Type
 
@@ -49,6 +50,8 @@ from sglang.srt.parser.response_template import (
     ResponseTemplateReasoningDetector,
     grammar_holds_calls,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class StreamingParseResult:
@@ -485,9 +488,17 @@ class _ControlTokenBoundaryMixin:
             )
         return super()._has_reasoning_start(text)
 
+    _token_boundary_failed = False
+
     def _reasoning_end_index(self, text: str) -> int:
-        if self._token_boundary is not None:
-            return self._token_boundary.end_index(text)
+        if self._token_boundary is not None and not self._token_boundary_failed:
+            try:
+                return self._token_boundary.end_index(text)
+            except ValueError as e:
+                # Detokenized text that does not line up with the token IDs must
+                # not fail the request: use the text boundary for the rest of it.
+                self._token_boundary_failed = True
+                logger.warning("%s; ending reasoning at the text boundary", e)
         return super()._reasoning_end_index(text)
 
     def _has_stream_reasoning_start(self, text: str) -> bool:

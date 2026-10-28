@@ -12,6 +12,7 @@ import anyio
 import orjson
 from fastapi import HTTPException, Request
 from fastapi.responses import ORJSONResponse, StreamingResponse
+from PIL.Image import DecompressionBombError
 
 from sglang.srt.entrypoints.openai.encoding_dsv32 import DS32EncodingError
 from sglang.srt.entrypoints.openai.protocol import ErrorResponse, OpenAIServingRequest
@@ -155,7 +156,7 @@ class OpenAIServingBase(ABC):
             return self.create_error_response(
                 message=e.detail, err_type=str(e.status_code), status_code=e.status_code
             )
-        except ValueError as e:
+        except (ValueError, DecompressionBombError) as e:
             return self.create_error_response(
                 message=str(e),
                 err_type="BadRequest",

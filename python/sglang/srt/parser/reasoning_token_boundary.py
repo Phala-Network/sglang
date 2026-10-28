@@ -57,9 +57,15 @@ class ReasoningTokenBoundary:
             return -1
         index = self.end_offset - (self.text_length - len(buffer))
         if index < 0:
-            raise ValueError("reasoning boundary preceded buffered text")
+            raise ValueError(
+                f"reasoning boundary preceded buffered text (offset {self.end_offset}, "
+                f"text {self.text_length}, buffer {len(buffer)})"
+            )
         if index + len(self.end_token) > len(buffer):
             return -1
         if buffer[index : index + len(self.end_token)] != self.end_token:
-            raise ValueError("reasoning token boundary differs from detokenized text")
+            raise ValueError(
+                "reasoning token boundary differs from detokenized text: "
+                f"{buffer[max(0, index - 16) : index + len(self.end_token) + 16]!r}"
+            )
         return index

@@ -82,11 +82,16 @@ def load_source():
         for n in tree.body
         if isinstance(n, ast.ClassDef) and n.name == "SchedulerBatchResultProcessor"
     )
-    helper = next(
+    helpers = [
         n
         for n in cls.body
-        if isinstance(n, ast.FunctionDef) and n.name == "_maybe_update_reasoning_tokens"
-    )
+        if isinstance(n, ast.FunctionDef)
+        and n.name
+        in (
+            "_maybe_update_reasoning_tokens",
+            "_maybe_update_retained_reasoning_tokens",
+        )
+    ]
     # Only the unrelated request-custom-parameter resolver is stubbed here.
     ns["get_request_reasoning_end_token_ids"] = lambda params, **kw: params.get(
         "test_end_ids"
@@ -97,7 +102,7 @@ def load_source():
                 name="Processor",
                 bases=[],
                 keywords=[],
-                body=[helper],
+                body=helpers,
                 decorator_list=[],
             )
         ],

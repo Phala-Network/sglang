@@ -176,6 +176,11 @@ def _nvlink_ca_comm(group, *, local_width: int, dtype: torch.dtype):
         return None
     if comm.push is None or comm.world_size != group.world_size:
         return None
+    # The push all-gather stores through the multicast plane from 8 ranks up
+    # (nvlink_comm.cuh); without one (GPU CC with NVLink encryption) it would
+    # write through a null address.
+    if group.world_size >= 8 and not ca_comm.has_multicast:
+        return None
     # the kernels move 16-byte vectors along the row
     if local_width % (128 // torch.finfo(dtype).bits) != 0:
         return None

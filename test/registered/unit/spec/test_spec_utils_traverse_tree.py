@@ -106,6 +106,32 @@ class TestTraverseTreePassesIntsToGrammar(unittest.TestCase):
         self.assertEqual(accept_calls, [5])
         self.assertEqual(fill_calls, [0, 1])
 
+    def test_matcher_refusal_prunes_branch_and_clears_mask_bit(self):
+        # The parent's mask can allow a token the matcher still refuses (seen with
+        # <|im_end|> under a reasoner + JSON-schema grammar): prune that node's
+        # subtree, clear its bit, and keep visiting its siblings.
+        #   0 -+- 1 (tok 31, refused) --- 3
+        #      +- 2 (tok 63)
+        rnt = torch.tensor([1, 3, -1, -1], dtype=torch.int32)
+        rns = torch.tensor([-1, 2, -1, -1], dtype=torch.int32)
+        draft_tokens = torch.tensor([100, 31, 63, 5], dtype=torch.int64)
+        bitmask = torch.full((4, 4), -1, dtype=torch.int32)
+
+        grammar, accept_calls, fill_calls = self._record_grammar()
+
+        def refuse_31(token):
+            if token == 31:
+                raise ValueError(f"Tokens not accepted: {token}")
+            accept_calls.append(token)
+
+        grammar.accept_token.side_effect = refuse_31
+        traverse_tree(rnt, rns, draft_tokens, grammar, bitmask)
+
+        self.assertEqual(accept_calls, [63])
+        self.assertEqual(fill_calls, [0, 2])
+        self.assertEqual(bitmask[0, 0].item(), 0x7FFFFFFF)
+        self.assertEqual(bitmask[0, 1].item(), -1)
+
 
 if __name__ == "__main__":
     unittest.main()

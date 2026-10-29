@@ -7,6 +7,7 @@ import time
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Callable, List, Literal, Optional, Tuple
 
+import numpy as np
 import torch
 from huggingface_hub import snapshot_download
 
@@ -581,6 +582,17 @@ def generate_simulated_accept_index(
     return sim_accept_index
 
 
+def _try_accept(grammar: BaseGrammarObject, token: int) -> bool:
+    # A refused token leaves the matcher untouched; only restore the last-token mark.
+    current = grammar.current_token
+    try:
+        grammar.accept_token(token)
+        return True
+    except ValueError:
+        grammar.current_token = current
+        return False
+
+
 def traverse_tree(
     retrieve_next_token: torch.Tensor,
     retrieve_next_sibling: torch.Tensor,
@@ -618,10 +630,16 @@ def traverse_tree(
                     & (1 << (current_token % 32))
                 ) != 0
 
+        if is_accepted and curr != 0:
+            is_accepted = _try_accept(grammar, tokens[curr])
+            if not is_accepted:
+                # The parent's mask allowed a token the grammar refuses (seen with a
+                # stop token under a reasoner grammar): prune the branch and clear the
+                # bit so verification cannot accept it either.
+                word = bitmask[parent_pos].view(np.uint32)
+                word[current_token // 32] &= ~np.uint32(1 << (current_token % 32))
+
         if is_accepted:
-            if curr != 0:
-                # Accept the current token
-                grammar.accept_token(tokens[curr])
             if not grammar.is_terminated():
                 # Generate the bitmask for the current token
                 grammar.fill_vocab_mask(allocate_token_bitmask, curr)

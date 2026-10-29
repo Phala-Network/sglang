@@ -1770,14 +1770,16 @@ class HybridCacheController(BaseHiCacheController):
 
         # Mooncake gives MHA draft and draft-SWA objects rank-specific keys.
         # MLA/DeepSeek-V4 draft pools remain TP0-only.
-        if self.storage_backend_type == "mooncake" and transfer.name in (
-            PoolName.DRAFT,
-            PoolName.DRAFT_SWA,
-        ):
+        if transfer.name in (PoolName.DRAFT, PoolName.DRAFT_SWA):
             entry = self.mem_pool_host.entry_map.get(transfer.name)
-            return entry is not None and isinstance(
-                entry.host_pool, MHATokenToKVPoolHost
-            )
+            if entry is None:
+                return False
+            if self.storage_backend_type == "mooncake":
+                return isinstance(entry.host_pool, MHATokenToKVPoolHost)
+            # A backend's own host pool (ccbridge) says whether it holds this rank's
+            # heads only (Kimi-K3's DFlash draft: MHA, KV heads split over TP): then
+            # every rank backs up its share.
+            return getattr(entry.host_pool, "tp_replicated", True) is False
 
         return False
 

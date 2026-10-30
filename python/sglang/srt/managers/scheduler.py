@@ -3844,13 +3844,25 @@ class Scheduler(
     def stash_chunked_request(self, req: Req):
         if self.disaggregation_mode == DisaggregationMode.PREFILL:
             self.checkpoint_disagg_prefill(req)
-        elif (
-            every := envs.SGLANG_CHUNKED_PREFILL_CHECKPOINT_TOKENS.get()
-        ) > 0 and req.extend_end // every == req.kv.cache_inserted_len // every:
+        elif self._defer_chunk_checkpoint(req):
             # The request keeps this chunk's KV and state until a later checkpoint.
             req.prefix_len = req.extend_end
         else:
             checkpoint_kv_cache(req, self.tree_cache)
+
+    @staticmethod
+    def _defer_chunk_checkpoint(req: Req) -> bool:
+        every = envs.SGLANG_CHUNKED_PREFILL_CHECKPOINT_TOKENS.get()
+        if every <= 0:
+            return False
+        # A chunk that tracked the mamba branching point checkpoints it: that
+        # state is where requests sharing this prefix diverge.
+        branching = req.mamba_branching_seqlen
+        if branching is not None and req.prefix_len < branching <= req.extend_end:
+            return False
+        # The tree owns [0, cache_protected_len): what the request matched or
+        # inserted last. Checkpoint when this chunk crosses a multiple of N past it.
+        return req.extend_end // every == req.kv.cache_protected_len // every
 
     def process_pending_chunked_abort(self) -> None:
         """Abort an in-flight chunked-prefill request once it is safe to do so.

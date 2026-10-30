@@ -886,7 +886,8 @@ class Envs:
     # hit can only end where SWA covers the window, which is such an end.
     SGLANG_HICACHE_SWA_SPARSE_BACKUP = EnvBool(False)
     # Checkpoint a chunked prefill into the radix tree only when it crosses a multiple
-    # of this many tokens (0: after every chunk); the prompt's end is always checkpointed.
+    # of this many tokens (0: after every chunk); the prompt's end and a mamba branching
+    # point are always checkpointed.
     # A hybrid model's state is checkpointed (and written through, and published) with
     # each insert, so this sets how many states a long prompt leaves behind.
     SGLANG_CHUNKED_PREFILL_CHECKPOINT_TOKENS = EnvInt(0)

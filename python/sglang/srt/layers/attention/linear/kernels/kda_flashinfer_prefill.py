@@ -85,6 +85,26 @@ class FlashInferKDAPrefillKernel(LinearAttnKernelBase):
             kda, "RecurrentKDAPrefillWrapper", None
         )
 
+    def precompile(self, lower_bound: float, state_dtype: torch.dtype) -> None:
+        """Compile the packed prefill's two variants (with and without radix-cache
+        checkpoints) now, keyed as `extend` calls it (an initial state is also the
+        final one). Prefill graphs bake theirs in at capture, but an eager extend
+        (a prefix past the graphs) compiles its own at first use: ~9-11 s per
+        variant, every TP rank waiting on the slowest, in the first long request
+        of each process."""
+        from flashinfer.kda_prefill_cute import _get_compiled_cute_dsl_kda
+
+        for ckpt in (False, True):
+            _get_compiled_cute_dsl_kda(
+                lower_bound=float(lower_bound),
+                state_dtype=state_dtype,
+                has_state_in=True,
+                has_state_out=True,
+                has_state_ckpt=ckpt,
+                has_state_indices=True,
+                has_checkpoint_state_indices=ckpt,
+            )
+
     def decode(self, *args, **kwargs):
         raise NotImplementedError("FlashInferKDAPrefillKernel is prefill-only")
 

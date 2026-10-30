@@ -71,17 +71,19 @@ def _validate_flashinfer_kda_prefill(
         )
 
 
-def flashinfer_kda_prefill_default(model_runner: ModelRunner) -> Optional[str]:
-    """Default safe-gate KDA prefill to FlashInfer on SM100/SM103."""
+def _kda_lower_bound(model_runner: ModelRunner) -> Optional[float]:
     from sglang.srt.configs.bailing_hybrid import BailingHybridConfig
     from sglang.srt.configs.hybrid_arch import hybrid_kda_config
 
     config = hybrid_kda_config(model_runner.model_config)
-    lower_bound = (
-        config.kda_lower_bound
-        if isinstance(config, BailingHybridConfig)
-        else config.linear_attn_config.get("gate_lower_bound")
-    )
+    if isinstance(config, BailingHybridConfig):
+        return config.kda_lower_bound
+    return config.linear_attn_config.get("gate_lower_bound")
+
+
+def flashinfer_kda_prefill_default(model_runner: ModelRunner) -> Optional[str]:
+    """Default safe-gate KDA prefill to FlashInfer on SM100/SM103."""
+    lower_bound = _kda_lower_bound(model_runner)
     execution = get_exec()
     if (
         lower_bound is not None
@@ -519,6 +521,12 @@ class KDAAttnBackend(MambaAttnBackendBase):
                 enable_two_batch_overlap=get_exec().overlap.enable_two_batch_overlap,
                 prefill_cuda_graph_backend=get_exec().graph.cuda_graph_config.prefill.backend,
             )
+            lower_bound = _kda_lower_bound(model_runner)
+            if lower_bound is not None:
+                mamba_cache = model_runner.req_to_token_pool.mamba_pool.mamba_cache
+                self.kernel_dispatcher.extend_kernel.precompile(
+                    lower_bound, mamba_cache.temporal.dtype
+                )
         # One-shot; emitted at the first fused-decode interception below.
         self._fused_override_notice = (
             "K3 fused KDA decode engaged: --linear-attn-decode-backend "

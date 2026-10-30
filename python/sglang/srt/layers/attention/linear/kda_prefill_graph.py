@@ -361,6 +361,14 @@ def kda_extend_in_graph(
     if gate_was_flat:
         a = a.unflatten(-1, (-1, layer.head_k_dim))
 
+    # Rows past the batch hold whatever the graph's memory pool last kept there
+    # (the conv writes only the batch's rows), NaN included. FlashInfer's packed
+    # prefill reads a sequence's whole chunk tile, so a short extend padded into a
+    # small bucket would carry them into its output and state: zero them.
+    past = (meta.token_index >= meta.num_logical_tokens).view(1, -1, 1, 1)
+    q, k, v, a = (x.masked_fill(past, 0) for x in (q, k, v, a))
+    b = b.masked_fill(past.view(1, -1, 1), 0)
+
     h_track = None
     if meta.track:
         h_track = torch.empty(

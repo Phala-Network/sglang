@@ -307,6 +307,60 @@ class TestKDAPrefillGraph(CustomTestCase):
             seed=200,
         )
 
+    def test_short_extends_in_small_buckets(self):
+        """A cached prefix plus a 2-31 token extend pads into a bucket of at most
+        `max_seqs` tokens; the rows past the batch must not reach the sequence."""
+        for num_tokens in (4, 8, 32):
+            with self.subTest(num_tokens=num_tokens):
+                meta, graph, out = self._capture(num_tokens=num_tokens, max_seqs=128)
+                cases = ([2], [3], [num_tokens - 1], [2, 1], [3, 2], [5, 9, 2])
+                for lens in (lens for lens in cases if sum(lens) < num_tokens or lens == [num_tokens - 1]):
+                    self._check_replay(
+                        meta,
+                        graph,
+                        out,
+                        lens=lens,
+                        prefixes=[64] * len(lens),
+                        track=None,
+                        seed=500 + num_tokens + sum(lens),
+                    )
+
+    def test_non_finite_rows_past_the_batch(self):
+        """The conv writes only the batch's rows; the rest of its output is
+        whatever the graph's memory pool last held there, NaN included. That must
+        not reach a sequence: a cached prefix plus a short extend padded into a
+        small bucket decoded NaN logits ("!!!!") and cached a NaN state."""
+        from sglang.srt.layers.attention.linear import kda_prefill_graph
+
+        real_conv = kda_prefill_graph.causal_conv1d_fn
+        stale = {}
+
+        def conv(x, *args, **kwargs):
+            out = real_conv(x, *args, **kwargs)  # [dim, T]
+            out[:, stale["from"] :] = float("nan")
+            return out
+
+        for num_tokens, lens in ((4, [3]), (8, [2]), (8, [3, 2]), (32, [5, 9])):
+            with self.subTest(num_tokens=num_tokens, lens=lens):
+                stale["from"] = sum(lens)
+                with patch.object(kda_prefill_graph, "causal_conv1d_fn", conv):
+                    meta, graph, out = self._capture(num_tokens=num_tokens, max_seqs=128)
+                    batch = _batch(lens, [64] * len(lens))
+                    for row in range(len(lens)):
+                        self.conv_pool[row + 1].normal_()
+                        self.ssm_pool[row + 1].normal_(std=0.05)
+                    self.mixed.normal_()
+                    self.a.normal_()
+                    self.b.normal_()
+                    self._fill(meta, batch)
+                    graph.replay()
+                    torch.cuda.synchronize()
+                total = sum(lens)
+                self.assertTrue(bool(torch.isfinite(out[:, :total]).all()),
+                                "NaN past the batch reached a sequence's output")
+                self.assertTrue(bool(torch.isfinite(self.ssm_pool[1 : len(lens) + 1]).all()),
+                                "NaN past the batch reached a sequence's state")
+
     def test_capacity(self):
         meta = KDAPrefillGraphMetadata.allocate(
             num_tokens=BUCKET,

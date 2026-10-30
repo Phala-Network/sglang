@@ -3844,6 +3844,11 @@ class Scheduler(
     def stash_chunked_request(self, req: Req):
         if self.disaggregation_mode == DisaggregationMode.PREFILL:
             self.checkpoint_disagg_prefill(req)
+        elif (
+            every := envs.SGLANG_CHUNKED_PREFILL_CHECKPOINT_TOKENS.get()
+        ) > 0 and req.extend_end // every == req.kv.cache_inserted_len // every:
+            # The request keeps this chunk's KV and state until a later checkpoint.
+            req.prefix_len = req.extend_end
         else:
             checkpoint_kv_cache(req, self.tree_cache)
 

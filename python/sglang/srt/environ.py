@@ -1704,6 +1704,10 @@ class Envs:
     # Kill-switch for the fused per-slot conv clear/copy kernel (MambaPool);
     # falls back to the per-conv-type Python loop.
     SGLANG_DISABLE_FUSED_MAMBA_SLOT_OPS = EnvBool(False)
+    # Kill-switch for zeroing the unwritten rest of each KV page a forward
+    # writes (mem_cache/kv_page_tail.py), which keeps a previous owner's NaN out
+    # of the masked tail that paged decode kernels still multiply.
+    SGLANG_DISABLE_KV_PAGE_TAIL_ZERO = EnvBool(False)
     # Opt-in: on the unified radix tree, leave the matched-prefix mamba evictable
     # during decode (it is already COW'd to the request's own slot) and shrink the
     # mamba pool ratio accordingly. Frees one resident slot per running request,

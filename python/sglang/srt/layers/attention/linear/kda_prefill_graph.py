@@ -47,6 +47,9 @@ from sglang.kernels.ops.mamba.kda_prefill_track import (
 from sglang.srt.layers.attention.linear.kda_flashinfer_prefill_graph import (
     FlashInferKDAPrefillGraph,
 )
+from sglang.srt.layers.attention.linear.kernels.kda_flashinfer_prefill import (
+    finite_kda_inputs,
+)
 from sglang.srt.layers.attention.mamba.prefill_track_metadata import (
     build_prefill_track_plan,
 )
@@ -366,8 +369,15 @@ def kda_extend_in_graph(
     # prefill reads a sequence's whole chunk tile, so a short extend padded into a
     # small bucket would carry them into its output and state: zero them.
     past = (meta.token_index >= meta.num_logical_tokens).view(1, -1, 1, 1)
-    q, k, v, a = (x.masked_fill(past, 0) for x in (q, k, v, a))
-    b = b.masked_fill(past.view(1, -1, 1), 0)
+    if meta.flashinfer is not None:
+        # The same tile also covers the next sequence's first rows; see
+        # finite_kda_inputs.
+        q, k, v, a, b = finite_kda_inputs(q, k, v, a, b)
+        q, k, v, a = (x.masked_fill_(past, 0) for x in (q, k, v, a))
+        b = b.masked_fill_(past.view(1, -1, 1), 0)
+    else:
+        q, k, v, a = (x.masked_fill(past, 0) for x in (q, k, v, a))
+        b = b.masked_fill(past.view(1, -1, 1), 0)
 
     h_track = None
     if meta.track:

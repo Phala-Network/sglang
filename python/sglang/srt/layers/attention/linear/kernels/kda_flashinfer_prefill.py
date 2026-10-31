@@ -16,6 +16,21 @@ if TYPE_CHECKING:
     from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 
 
+def finite_kda_inputs(*xs: torch.Tensor) -> tuple[torch.Tensor, ...]:
+    """Contiguous copies with every non-finite value zeroed.
+
+    FlashInfer's packed KDA prefill computes a sequence's last chunk tile over
+    whole tiles, so it also reads the rows that follow the sequence: the next
+    sequence's first rows. It multiplies them by zero, and ``0 * NaN`` is NaN,
+    so a NaN-poisoned request turned the request packed before it into NaN
+    output and NaN state. Its own rows are garbage either way.
+    """
+    return tuple(
+        torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).contiguous()
+        for x in xs
+    )
+
+
 def build_flashinfer_kda_checkpoint_plan(
     forward_batch: ForwardBatch,
     metadata: ForwardMetadata,
@@ -138,12 +153,15 @@ class FlashInferKDAPrefillKernel(LinearAttnKernelBase):
             if needs_checkpoint
             else None
         )
+        q, k, v, g, beta = finite_kda_inputs(
+            q, k, v, g[:, : q.shape[1]], beta[:, : q.shape[1]]
+        )
         result = self._recurrent_kda(
-            q=q.contiguous(),
-            k=k.contiguous(),
-            v=v.contiguous(),
-            g=g[:, : q.shape[1]].contiguous(),
-            beta=beta[:, : q.shape[1]].contiguous(),
+            q=q,
+            k=k,
+            v=v,
+            g=g,
+            beta=beta,
             A_log=A_log.reshape(-1).float().contiguous(),
             # FlashInfer's grouped-CTA recurrent kernel (extends with a cached prefix)
             # indexes dt_bias as a flat [H*K] tensor and asserts a unit leading stride.

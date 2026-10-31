@@ -1822,6 +1822,7 @@ class ModelRunner:
         forward_batch.apply_deprecated_skip_attn_backend_init(skip_attn_backend_init)
 
         self.forward_pass_id += 1
+        self._maybe_zero_kv_page_tails(forward_batch)
 
         # Try msprob debugger
         if self.msprobe_debugger is not None:
@@ -1911,6 +1912,23 @@ class ModelRunner:
             self.maybe_join_ep_ranks()
 
         return output
+
+    def _maybe_zero_kv_page_tails(self, forward_batch: ForwardBatch) -> None:
+        """Zero what a previous owner left after this forward's writes in each
+        KV page, before attention reads the page (mem_cache/kv_page_tail.py)."""
+        enabled = getattr(self, "_kv_page_tail_zero", None)
+        if enabled is None:
+            enabled = self._kv_page_tail_zero = (
+                (self.page_size or 1) > 1
+                and str(self.device).startswith("cuda")
+                and not envs.SGLANG_DISABLE_KV_PAGE_TAIL_ZERO.get()
+            )
+        if enabled:
+            from sglang.srt.mem_cache.kv_page_tail import zero_kv_page_tails
+
+            zero_kv_page_tails(
+                self.token_to_kv_pool, forward_batch.out_cache_loc, self.page_size
+            )
 
     def _maybe_execute_deferred_mamba_cow_and_clear(
         self, forward_batch: ForwardBatch

@@ -3425,6 +3425,10 @@ class Scheduler(
 
             matched_len = req.prefix_len + req.host_hit_length
             req.storage_prefetch_last_match_len = matched_len
+            if req.host_hit_refused:
+                # The span goes on through host nodes the host tier refused, which
+                # an L3 copy cannot replace (insert_host keeps them): recompute.
+                return None
 
             if (
                 tree_cache.is_backuped(last_host_node)
@@ -3499,6 +3503,10 @@ class Scheduler(
             return False
         current_match_len = req.prefix_len + req.host_hit_length
         if current_match_len >= previous_match_len:
+            return False
+        if req.host_hit_refused:
+            # Shrunk by a refused host load, not by eviction: L3 cannot serve it.
+            req.storage_prefetch_last_match_len = current_match_len
             return False
         if (
             req.storage_prefetch_retry_attempts

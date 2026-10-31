@@ -1227,6 +1227,8 @@ class Req(ReqDllmMixin):
         self.host_hit_length = 0
         self.swa_host_hit_length = 0
         self.mamba_host_hit_length = 0
+        # The last match was cut back before host nodes the host tier refused.
+        self.host_hit_refused = False
         # The branching point seqlen to track mamba state. If set, given by prefix
         # match, it will be the tracked seqlen in the ping pong buffer for the
         # right prefill pass.

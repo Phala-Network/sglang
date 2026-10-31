@@ -452,6 +452,10 @@ class UnifiedRadixCache(BasePrefixCache):
         self.session.slots.clear()
         self.ongoing_write_through: dict[int, _OngoingWriteThrough] = {}
         self.ongoing_load_back: dict[int, _OngoingLoadBack] = {}
+        # Host nodes whose load-back the host tier refused for good; matches
+        # end above them (see _skip_refused_host_hit). Cache mode only: buffer
+        # mode loads through its pipeline and does not mark a refusal.
+        self.refused_host_nodes: set[NodeId] = set()
         self.enable_storage = False
         self.prefetch_loaded_tokens_by_reqid: dict[CacheRequestHandle, int] = {}
         self.prefetch_loaded_storage_start_by_reqid: dict[CacheRequestHandle, int] = {}
@@ -649,7 +653,52 @@ class UnifiedRadixCache(BasePrefixCache):
         # Apply the walk's actions (e.g. a pending write-through relocation on
         # a split) before the finalizers, which can evict or raise.
         self._apply_cache_actions(result.cache_actions)
+        if self.refused_host_nodes:
+            result = self._skip_refused_host_hit(result)
         return self._finalize_match_result(params, result)
+
+    def _skip_refused_host_hit(self, result: MatchResult) -> MatchResult:
+        """End a match at its device prefix if its host hit passes a node whose
+        load-back the host tier refused for good. The finalizers then take the
+        Mamba state of that device node, so the rest is recomputed from a state
+        that belongs to the prefix kept.
+
+        A refused node the device holds again is unmarked: it was recomputed,
+        and a tier that re-seals host copies from the device (ccbridge's
+        refresh) may load it again. If not, its next restore is refused once
+        more and it is marked again."""
+        device_node = result.last_device_node
+        (path,) = self.tree_core.collect_path_info([result.best_match_node])
+        node_ids = [info.node_id for info in path]
+        host_start = node_ids.index(device_node) + 1 if device_node in node_ids else 0
+        self.refused_host_nodes.difference_update(node_ids[:host_start])
+        if self.refused_host_nodes.isdisjoint(node_ids[host_start:]):
+            return result
+        branching_seqlen = result.mamba_branching_seqlen
+        mamba = self.components.get(ComponentType.MAMBA)
+        if mamba is not None:
+            # As the tree core computes it, with the device prefix as the boundary:
+            # checkpoint the state at the end of the FULL hit being recomputed.
+            grid = mamba.mamba_checkpoint_grid
+            aligned = result.full_kv_hit_length // grid * grid
+            branching_seqlen = aligned if aligned > result.device_prefix_len else None
+        return result._replace(
+            best_match_node=device_node,
+            last_host_node=device_node,
+            host_hit_length=0,
+            swa_host_hit_length=0,
+            mamba_host_hit_length=0,
+            mamba_branching_seqlen=branching_seqlen,
+            host_hit_refused=True,
+        )
+
+    def _prune_refused_host_nodes(self) -> None:
+        """Forget the marks of nodes host eviction has removed from the tree."""
+        for node_id in list(self.refused_host_nodes):
+            try:
+                self.tree_core.collect_path_info([node_id])
+            except KeyError:
+                self.refused_host_nodes.discard(node_id)
 
     def _finalize_match_result(
         self, params: MatchPrefixParams, result: MatchResult
@@ -1466,6 +1515,8 @@ class UnifiedRadixCache(BasePrefixCache):
             return 0
         result = self.tree_core.drive_host_eviction(component_type, num_tokens)
         self._apply_eviction_result(result)
+        if self.refused_host_nodes:
+            self._prune_refused_host_nodes()
         return result.tracker.get(component_type, 0)
 
     # ---- Decode retraction ----
@@ -1960,6 +2011,20 @@ class UnifiedRadixCache(BasePrefixCache):
             node_id=node_id,
             extra_pools=aux_xfers or None,
         )
+        if device_indices is None and self.cache_controller.load_refused:
+            # A retry would be refused again: later matches end above these
+            # nodes, and an admission waiting on this load re-matches.
+            refused = {node_id}
+            for xfer in (kv_xfer, *aux_xfers):
+                refused.update(xfer.nodes_to_load or ())
+            self._prune_refused_host_nodes()
+            self.refused_host_nodes |= refused
+            logger.warning(
+                "HiCache load-back of node %d refused by the host tier; "
+                "%d host nodes are no longer matched",
+                node_id,
+                len(refused),
+            )
 
         self.dec_lock_ref(node_id, ancestor_lock_params)
         if device_indices is None:
@@ -3807,7 +3872,8 @@ class UnifiedRadixCache(BasePrefixCache):
             if params.mamba_slots_to_reserve:
                 # The batch reservation can intentionally prevent a cache
                 # restore. Retry admission instead of accepting a prefix whose
-                # promised auxiliary state has not reached the device.
+                # promised auxiliary state has not reached the device. After a
+                # refused load the retry's match ends at the device prefix.
                 return None
 
         return 0, last_best_match_device_node_id

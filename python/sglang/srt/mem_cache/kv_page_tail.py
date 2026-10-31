@@ -9,11 +9,14 @@ next. Zeroing the rows after the last one each forward writes keeps every
 position past a sequence's end finite.
 """
 
+import logging
 from typing import List, Optional, Tuple
 
 import torch
 import triton
 import triton.language as tl
+
+logger = logging.getLogger(__name__)
 
 
 @triton.jit
@@ -43,26 +46,24 @@ def _zero_kv_page_tails_kernel(
         tl.store(base + idx, tl.zeros([BLOCK], dtype=tl.uint8), mask=idx < stop)
 
 
-def _buffer_lists(pool) -> List[list]:
-    pool = getattr(pool, "full_kv_pool", pool)
-    kv = getattr(pool, "kv_buffer", None)
-    if kv:
-        return [kv]
-    lists = (getattr(pool, "k_buffer", None), getattr(pool, "v_buffer", None))
-    return [x for x in lists if x]
-
-
 def kv_page_buffers(pool) -> List[torch.Tensor]:
-    """The per-layer KV buffers of a MLA or MHA pool, indexed by location."""
-    bufs = [b for lst in _buffer_lists(pool) for b in lst]
-    # A row is zeroed as stride(0) bytes, which is only that row when dense.
-    return [b for b in bufs if b.is_cuda and b.is_contiguous() and b.numel() > 0]
+    """The buffers a pool opted in with (`KVCache.page_tail_buffer_lists`), if
+    every one has one row per token location; [] otherwise, which skips the
+    pool. A row is cleared as stride(0) bytes, so a layout whose leading dim is
+    pages must never get here."""
+    rows = pool.size + pool.page_size
+    bufs = [b for lst in pool.page_tail_buffer_lists() for b in lst]
+    ok = all(
+        b.is_cuda and b.is_contiguous() and b.dim() >= 2 and b.shape[0] == rows
+        for b in bufs
+    )
+    return bufs if ok else []
 
 
 def _table(pool) -> Optional[Tuple[int, torch.Tensor, torch.Tensor]]:
     """(buffer count, device base addresses, device row bytes), cached on the
     pool and rebuilt when it replaces its buffer lists."""
-    lists = _buffer_lists(pool)
+    lists = pool.page_tail_buffer_lists()
     cached = getattr(pool, "_kv_page_tail_table", None)
     if (
         cached is not None
@@ -86,14 +87,20 @@ def _table(pool) -> Optional[Tuple[int, torch.Tensor, torch.Tensor]]:
             ),
         )
     pool._kv_page_tail_table = (lists, table)
+    logger.info(
+        "KV page-tail zeroing: %s, %d buffers",
+        type(pool).__name__,
+        table[0] if table else 0,
+    )
     return table
 
 
-def zero_kv_page_tails(pool, out_cache_loc: torch.Tensor, page_size: int) -> None:
+def zero_kv_page_tails(pool, out_cache_loc: Optional[torch.Tensor]) -> None:
     """Before a forward: in every layer, zero the rows of each page the forward
     writes that come after the last location it writes there. The page's owner
     writes its positions in order, so those rows hold none of its data yet. One
-    launch, no host sync."""
+    launch, no host sync. Pools that did not opt in are left alone."""
+    page_size = pool.page_size
     if page_size <= 1 or out_cache_loc is None or out_cache_loc.numel() == 0:
         return
     if torch.cuda.is_current_stream_capturing():

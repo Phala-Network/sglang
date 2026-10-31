@@ -1090,10 +1090,12 @@ class TRTLLMMLABackend(FlashInferMLAAttnBackend):
         in model-native dtype, or already FP8 from a model-side prefill hook;
         subclasses do any kernel-specific quantization.
         Returns the output tensor or (output, lse) if return_lse."""
-        k, v = finite_kv(k), finite_kv(v)
         q_scale = k_scale = v_scale = 1.0
         if self.data_type == torch.float8_e4m3fn and q.dtype != torch.float8_e4m3fn:
             q, k, v, k_scale, v_scale = _quantize_fp8_qkv(q, k, v, layer)
+        # After the fp8 cast, which does not saturate: |x| > 448 and inf become
+        # NaN there.
+        k, v = finite_kv(k), finite_kv(v)
         return flashinfer.prefill.trtllm_ragged_attention_deepseek(
             query=q,
             key=k,

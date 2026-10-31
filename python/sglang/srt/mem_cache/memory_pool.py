@@ -2150,6 +2150,19 @@ class KVCache(abc.ABC):
                 "ids translated separately."
             )
 
+    def page_tail_buffer_lists(self) -> List[List[torch.Tensor]]:
+        """Per-layer buffer lists whose dim 0 is one token location, for
+        `zero_page_tails`. A pool opts in only for a layout it knows: the default
+        is none, so subclasses and other layouts are skipped."""
+        return []
+
+    def zero_page_tails(self, out_cache_loc: torch.Tensor) -> None:
+        """Zero what a previous owner left after this forward's writes in each
+        page it writes (mem_cache/kv_page_tail.py)."""
+        from sglang.srt.mem_cache.kv_page_tail import zero_kv_page_tails
+
+        zero_kv_page_tails(self, out_cache_loc)
+
     @abc.abstractmethod
     def get_key_buffer(self, layer_id: int) -> torch.Tensor:
         raise NotImplementedError()
@@ -2782,6 +2795,19 @@ class MHATokenToKVPool(KVCache):
         if self._post_capture_owner is not None:
             self._post_capture_owner.close()
             self._post_capture_owner = None
+
+    def page_tail_buffer_lists(self) -> List[List[torch.Tensor]]:
+        # Plain NHD only: HND and vectorized_5d rows are whole pages, and the
+        # subclasses (FP4, MXFP8, page-major, ...) carry other buffers.
+        if (
+            type(self) is not MHATokenToKVPool
+            or self.kv_cache_layout != "nhd"
+            or getattr(self, "use_hnd", False)
+            or getattr(self, "k_scale_buffer", None) is not None
+            or self.requires_physical_write_loc
+        ):
+            return []
+        return [self.k_buffer, self.v_buffer]
 
     def get_kv_size_bytes(self):
         assert hasattr(self, "k_buffer")
@@ -4448,6 +4474,9 @@ class HybridLinearKVPool(KVCache):
     def get_kv_size_bytes(self):
         return self.full_kv_pool.get_kv_size_bytes()
 
+    def zero_page_tails(self, out_cache_loc: torch.Tensor) -> None:
+        self.full_kv_pool.zero_page_tails(out_cache_loc)
+
     def get_kv_buffer_shape(self) -> Tuple[torch.Size, torch.Size]:
         # Hybrid layer ids are global model-layer ids, while the backing pool
         # is dense over only full-attention layers.  Shape discovery does not
@@ -4905,6 +4934,18 @@ class MLATokenToKVPool(KVCache):
 
     def _clear_buffers(self):
         del self.kv_buffer
+
+    def page_tail_buffer_lists(self) -> List[List[torch.Tensor]]:
+        # [size + page_size, 1, kv_cache_dim] per layer; not the FP4 / DSA
+        # variants, which keep scales or packed rows.
+        if (
+            type(self) is not MLATokenToKVPool
+            or self.kv_scale_buffer is not None
+            or self.dsa_kv_cache_store_fp8
+            or self.requires_physical_write_loc
+        ):
+            return []
+        return [self.kv_buffer]
 
     def get_kv_size_bytes(self):
         assert hasattr(self, "kv_buffer")

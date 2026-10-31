@@ -1924,11 +1924,9 @@ class ModelRunner:
                 and not envs.SGLANG_DISABLE_KV_PAGE_TAIL_ZERO.get()
             )
         if enabled:
-            from sglang.srt.mem_cache.kv_page_tail import zero_kv_page_tails
-
-            zero_kv_page_tails(
-                self.token_to_kv_pool, forward_batch.out_cache_loc, self.page_size
-            )
+            zero = getattr(self.token_to_kv_pool, "zero_page_tails", None)
+            if zero is not None:
+                zero(forward_batch.out_cache_loc)
 
     def _maybe_execute_deferred_mamba_cow_and_clear(
         self, forward_batch: ForwardBatch

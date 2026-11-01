@@ -728,8 +728,11 @@ class _KimiK3JSONContentParser:
         while position < len(data):
             if self.phase == "thinking":
                 markers = (THINK_OPEN, THINK_CLOSE, RESPONSE_OPEN)
-                found = [(index, marker) for marker in markers
-                         if (index := data.find(marker, position)) >= 0]
+                found = [
+                    (index, marker)
+                    for marker in markers
+                    if (index := data.find(marker, position)) >= 0
+                ]
                 if found:
                     index, marker = min(found)
                     reasoning.append(data[position:index])
@@ -744,14 +747,22 @@ class _KimiK3JSONContentParser:
                 break
 
             if self.phase in ("start", "tail"):
-                markers = ((RESPONSE_OPEN,) if self.phase == "start" else
-                           (RESPONSE_CLOSE, MESSAGE_CLOSE))
-                marker = next((m for m in markers if data.startswith(m, position)), None)
+                markers = (
+                    (RESPONSE_OPEN,)
+                    if self.phase == "start"
+                    else (RESPONSE_CLOSE, MESSAGE_CLOSE)
+                )
+                marker = next(
+                    (m for m in markers if data.startswith(m, position)), None
+                )
                 if marker is not None:
                     position += len(marker)
                     continue
                 remaining = len(data) - position
-                if any(remaining < len(m) and m.startswith(data[position:]) for m in markers):
+                if any(
+                    remaining < len(m) and m.startswith(data[position:])
+                    for m in markers
+                ):
                     break
                 char = data[position]
                 if self.phase == "tail" or char.isspace():
@@ -887,7 +898,8 @@ class KimiK3Detector(BaseReasoningFormatDetector):
         self._discard_delayed_think_close = False
         self._json_content_parser = (
             _KimiK3JSONContentParser(self._in_reasoning, stream_reasoning)
-            if structured_json else None
+            if structured_json
+            else None
         )
 
     def _clean_content(self, text: str) -> str:

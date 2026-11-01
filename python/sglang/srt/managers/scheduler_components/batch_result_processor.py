@@ -1528,9 +1528,13 @@ class SchedulerBatchResultProcessor:
         if req._is_reasoning_over:
             return
         think_end_ids = self.model_config.think_end_ids
-        reasoning_end_sequences = getattr(self.model_config, "reasoning_end_id_sequences", None)
+        reasoning_end_sequences = getattr(
+            self.model_config, "reasoning_end_id_sequences", None
+        )
         if reasoning_end_sequences is not None:
-            req.update_reasoning_tokens(next_token_id, think_end_ids, reasoning_end_sequences)
+            req.update_reasoning_tokens(
+                next_token_id, think_end_ids, reasoning_end_sequences
+            )
             return
         if req._think_end_matcher is None:
             request_think_end_ids = get_request_reasoning_end_token_ids(

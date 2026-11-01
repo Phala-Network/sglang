@@ -13,13 +13,13 @@ import anyio
 import orjson
 from fastapi import HTTPException, Request
 from fastapi.responses import ORJSONResponse, StreamingResponse
-from PIL.Image import DecompressionBombError
 from jsonschema import Draft202012Validator, SchemaError
+from PIL.Image import DecompressionBombError
 
 from sglang.srt.constrained.json_schema_validation import (
-    UnsupportedJSONSchemaFeature, validate_xgrammar_json_schema,
+    UnsupportedJSONSchemaFeature,
+    validate_xgrammar_json_schema,
 )
-
 from sglang.srt.entrypoints.openai.encoding_dsv32 import DS32EncodingError
 from sglang.srt.entrypoints.openai.protocol import ErrorResponse, OpenAIServingRequest
 from sglang.srt.entrypoints.request_disconnect import await_response_or_disconnect
@@ -33,7 +33,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_REJECTION_STAGES = frozenset(("validation", "conversion", "json_constraint", "stream", "nonstream", "response"))
+_REJECTION_STAGES = frozenset(
+    ("validation", "conversion", "json_constraint", "stream", "nonstream", "response")
+)
 _REJECTION_SOURCES = {
     "entrypoints/openai/serving_base.py": "serving_base",
     "entrypoints/openai/serving_chat.py": "serving_chat",
@@ -45,18 +47,26 @@ _REJECTION_SOURCES = {
     "managers/tokenizer_manager.py": "tokenizer_manager",
     "sampling/sampling_params.py": "sampling_params",
 }
-_SRT_SOURCE_ROOT = __file__.replace("\\", "/").rsplit("/entrypoints/openai/", 1)[0] + "/"
+_SRT_SOURCE_ROOT = (
+    __file__.replace("\\", "/").rsplit("/entrypoints/openai/", 1)[0] + "/"
+)
 
 
 def _log_safe_request_rejection(stage, status_code, exc=None):
     """Log fixed categories/code locations only, never request or exception text."""
     stage = stage if stage in _REJECTION_STAGES else "unknown"
-    status = int(status_code) if isinstance(status_code, int) and not isinstance(status_code, bool) and 400 <= status_code <= 599 else 0
+    status = (
+        int(status_code)
+        if isinstance(status_code, int)
+        and not isinstance(status_code, bool)
+        and 400 <= status_code <= 599
+        else 0
+    )
     source, line = "unknown", 0
     caller = sys._getframe(2)
     filename = caller.f_code.co_filename.replace("\\", "/")
     if filename.startswith(_SRT_SOURCE_ROOT):
-        label = _REJECTION_SOURCES.get(filename[len(_SRT_SOURCE_ROOT):])
+        label = _REJECTION_SOURCES.get(filename[len(_SRT_SOURCE_ROOT) :])
         if label is not None:
             source, line = label, caller.f_lineno
     del caller
@@ -67,12 +77,17 @@ def _log_safe_request_rejection(stage, status_code, exc=None):
             break
         filename = tb.tb_frame.f_code.co_filename.replace("\\", "/")
         if filename.startswith(_SRT_SOURCE_ROOT):
-            label = _REJECTION_SOURCES.get(filename[len(_SRT_SOURCE_ROOT):])
+            label = _REJECTION_SOURCES.get(filename[len(_SRT_SOURCE_ROOT) :])
             if label is not None:
                 source, line = label, tb.tb_lineno
         tb = tb.tb_next
-    logger.info("Request rejected: stage=%s status=%d source=%s line=%d", stage, status, source, line)
-
+    logger.info(
+        "Request rejected: stage=%s status=%d source=%s line=%d",
+        stage,
+        status,
+        source,
+        line,
+    )
 
 
 class GenerationStreamingResponse(StreamingResponse):
@@ -214,7 +229,9 @@ class OpenAIServingBase(ABC):
                 )
         except HTTPException as e:
             return self.create_error_response(
-                message=e.detail, err_type=getattr(e, "error_type", str(e.status_code)), status_code=e.status_code
+                message=e.detail,
+                err_type=getattr(e, "error_type", str(e.status_code)),
+                status_code=e.status_code,
             )
         except (ValueError, DecompressionBombError) as e:
             return self.create_error_response(
@@ -233,7 +250,9 @@ class OpenAIServingBase(ABC):
             logger.error("Request failed (%s)", type(e).__name__)
             return self.create_error_response(
                 message="Internal server error.",
-                err_type="TimeoutError" if isinstance(e, TimeoutError) else "InternalServerError",
+                err_type="TimeoutError"
+                if isinstance(e, TimeoutError)
+                else "InternalServerError",
                 status_code=504 if isinstance(e, TimeoutError) else 500,
             )
 
@@ -244,7 +263,9 @@ class OpenAIServingBase(ABC):
             and getattr(self, "reasoning_parser", None) != "kimi_k3"
         ):
             return
-        params = sampling_params if isinstance(sampling_params, list) else [sampling_params]
+        params = (
+            sampling_params if isinstance(sampling_params, list) else [sampling_params]
+        )
         for item in params:
             if not isinstance(item, dict) or item.get("json_schema") is None:
                 continue
@@ -255,7 +276,8 @@ class OpenAIServingBase(ABC):
                 validate_xgrammar_json_schema(schema)
             except UnsupportedJSONSchemaFeature as e:
                 raise HTTPException(
-                    status_code=400, detail=f"Unsupported JSON schema constraint ({e.reason_code})."
+                    status_code=400,
+                    detail=f"Unsupported JSON schema constraint ({e.reason_code}).",
                 ) from None
             except (SchemaError, json.JSONDecodeError, RecursionError):
                 raise HTTPException(

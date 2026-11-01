@@ -3,6 +3,7 @@
 This gate is used only by new root logic. It does not change the V1 value path.
 Unsupported forms are never treated as an empty language.
 """
+
 import json
 import math
 
@@ -36,6 +37,7 @@ def _count(schema, key, default):
 
 def _disjoint_types(branches, root, k3):
     from sglang.srt.constrained.json_schema_intersections import _possible_types
+
     seen = set()
     for branch in branches:
         kinds = _possible_types(k3._dereference_schema(branch, root))
@@ -48,6 +50,7 @@ def _disjoint_types(branches, root, k3):
 
 def prove_value(schema, root):
     from sglang.srt.function_call import kimik3_structural_tag as k3
+
     validate_xgrammar_json_schema(k3._with_root_definitions(schema, root))
     budget = [MAX_VALUE_NODES]
 
@@ -78,9 +81,23 @@ def prove_value(schema, root):
             if not proven:
                 return False, EMPTY
             return {logical: [branch for branch, _ in proven]}, proven[0][1]
-        allowed = {"type", "const", "enum", "minLength", "maxLength", "minimum", "maximum",
-                   "exclusiveMinimum", "exclusiveMaximum", "items", "minItems", "maxItems",
-                   "properties", "required", "additionalProperties"}
+        allowed = {
+            "type",
+            "const",
+            "enum",
+            "minLength",
+            "maxLength",
+            "minimum",
+            "maximum",
+            "exclusiveMinimum",
+            "exclusiveMaximum",
+            "items",
+            "minItems",
+            "maxItems",
+            "properties",
+            "required",
+            "additionalProperties",
+        }
         if active.difference(allowed):
             _error("unsupported active value assertion")
         # Native const/enum dispatch ignores siblings. Evaluate the finite domain
@@ -119,13 +136,21 @@ def prove_value(schema, root):
                 return False, EMPTY
             if lo > 4096:
                 _error("value_resource_limit: string witness exceeds 4096 characters")
-            result = {key: node[key] for key in ("type", "minLength", "maxLength") if key in node}
+            result = {
+                key: node[key]
+                for key in ("type", "minLength", "maxLength")
+                if key in node
+            }
             return result, "a" * lo
         if kind in ("integer", "number"):
             lower, upper = -math.inf, math.inf
             lower_open = upper_open = False
-            for key, is_lower, exclusive in [("minimum", True, False), ("exclusiveMinimum", True, True),
-                                               ("maximum", False, False), ("exclusiveMaximum", False, True)]:
+            for key, is_lower, exclusive in [
+                ("minimum", True, False),
+                ("exclusiveMinimum", True, True),
+                ("maximum", False, False),
+                ("exclusiveMaximum", False, True),
+            ]:
                 if key not in node:
                     continue
                 bound = node[key]
@@ -159,14 +184,26 @@ def prove_value(schema, root):
                     candidates.extend([upper - 1, math.nextafter(upper, -math.inf)])
             if kind == "number" and lower != -math.inf and upper != math.inf:
                 candidates.append(lower / 2 + upper / 2)
-            witness = next((value for value in candidates
-                if _finite_number(value)
-                and (value > lower if lower_open else value >= lower)
-                and (value < upper if upper_open else value <= upper)
-                and (kind == "number" or type(value) is int)), EMPTY)
+            witness = next(
+                (
+                    value
+                    for value in candidates
+                    if _finite_number(value)
+                    and (value > lower if lower_open else value >= lower)
+                    and (value < upper if upper_open else value <= upper)
+                    and (kind == "number" or type(value) is int)
+                ),
+                EMPTY,
+            )
             if witness is EMPTY:
                 _error("numeric witness exceeds supported representable range")
-            keys = {"type", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"}
+            keys = {
+                "type",
+                "minimum",
+                "maximum",
+                "exclusiveMinimum",
+                "exclusiveMaximum",
+            }
             return {key: value for key, value in node.items() if key in keys}, witness
         if kind in ("boolean", "null"):
             return {"type": kind}, False if kind == "boolean" else None
@@ -180,31 +217,50 @@ def prove_value(schema, root):
             item, value = visit(node.get("items", True), depth + 1)
             if value is EMPTY and lo:
                 return False, EMPTY
-            result = {key: node[key] for key in ("type", "minItems", "maxItems") if key in node}
+            result = {
+                key: node[key]
+                for key in ("type", "minItems", "maxItems")
+                if key in node
+            }
             result["items"] = item
             return result, [value] * lo
         properties = node.get("properties", {})
         required = node.get("required", [])
         if not isinstance(properties, dict) or len(properties) > 64:
             _error("value_resource_limit: nested object at most 64 properties")
-        if not isinstance(required, list) or not all(isinstance(key, str) for key in required):
+        if not isinstance(required, list) or not all(
+            isinstance(key, str) for key in required
+        ):
             _error("required must be a string array")
         additional, extra = visit(node.get("additionalProperties", True), depth + 1)
         fields, witness = {}, {}
         if len(set(properties).union(required)) > 64:
-            _error("value_resource_limit: nested object at most 64 effective properties")
+            _error(
+                "value_resource_limit: nested object at most 64 effective properties"
+            )
         for key in dict.fromkeys(list(properties) + required):
-            value_schema, value = visit(properties[key], depth + 1) if key in properties else (additional, extra)
+            value_schema, value = (
+                visit(properties[key], depth + 1)
+                if key in properties
+                else (additional, extra)
+            )
             fields[key] = value_schema
             if key in required:
                 if value is EMPTY:
                     return False, EMPTY
                 witness[key] = value
-        return {"type": "object", "properties": fields, "required": required,
-                "additionalProperties": additional}, witness
+        return {
+            "type": "object",
+            "properties": fields,
+            "required": required,
+            "additionalProperties": additional,
+        }, witness
 
     proven, witness = visit(schema)
-    if witness is not EMPTY and len(json.dumps(witness, ensure_ascii=True)) > MAX_WITNESS_BYTES:
+    if (
+        witness is not EMPTY
+        and len(json.dumps(witness, ensure_ascii=True)) > MAX_WITNESS_BYTES
+    ):
         _error("value_resource_limit: witness exceeds 65536 bytes")
     return proven, witness
 
@@ -221,8 +277,9 @@ def verify_native_witnesses(arguments, witnesses, proven_values, verified=None):
         verified = set()
     pending = {}
     for key in arguments:
-        identity = json.dumps(proven_values[key], sort_keys=True, ensure_ascii=True,
-                              separators=(",", ":"))
+        identity = json.dumps(
+            proven_values[key], sort_keys=True, ensure_ascii=True, separators=(",", ":")
+        )
         if identity not in verified and identity not in pending:
             pending[identity] = key
     arguments = {key: arguments[key] for key in pending.values()}
@@ -231,14 +288,29 @@ def verify_native_witnesses(arguments, witnesses, proven_values, verified=None):
         return
     import xgrammar as xgr
     from xgrammar.structural_tag import OrFormat, StructuralTag
+
     from sglang.srt.function_call import kimik3_structural_tag as k3
+
     info = xgr.TokenizerInfo(["[EOS]"], stop_token_ids=0)
     compiler = xgr.GrammarCompiler(info, max_threads=1, cache_enabled=False)
-    compiled = compiler.compile_structural_tag(StructuralTag(format=OrFormat(elements=list(arguments.values()))))
+    compiled = compiler.compile_structural_tag(
+        StructuralTag(format=OrFormat(elements=list(arguments.values())))
+    )
     for key, value in witnesses.items():
-        kind = "json-string" if isinstance(value, str) else k3._JSON_TO_XTML_TYPE[k3._json_type(value)]
-        wire = ('<|open|>argument key="' + k3._escape_attr(key) + '" type="' + kind + '"<|sep|>'
-                + json.dumps(value, ensure_ascii=True, separators=(",", ":")) + k3.ARGUMENT_CLOSE)
+        kind = (
+            "json-string"
+            if isinstance(value, str)
+            else k3._JSON_TO_XTML_TYPE[k3._json_type(value)]
+        )
+        wire = (
+            '<|open|>argument key="'
+            + k3._escape_attr(key)
+            + '" type="'
+            + kind
+            + '"<|sep|>'
+            + json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+            + k3.ARGUMENT_CLOSE
+        )
         matcher = xgr.GrammarMatcher(compiled)
         if not matcher.accept_string(wire) or not matcher.is_completed():
             _error("native value grammar did not accept its proven witness")

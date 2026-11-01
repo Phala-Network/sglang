@@ -877,7 +877,6 @@ class MultimodalInputs:
         return image_tokens, audio_tokens, video_tokens
 
     def merge(self, other: MultimodalInputs):
-
         # args needed to be merged
         optional_args = [
             "mm_items",
@@ -2255,7 +2254,10 @@ class Req(ReqDllmMixin):
         self.to_finish = FINISH_ABORT(error_msg, status_code, err_type)
 
     def update_reasoning_tokens(
-        self, token_id, think_end_ids, reasoning_end_sequences=None,
+        self,
+        token_id,
+        think_end_ids,
+        reasoning_end_sequences=None,
     ):
         if self._is_reasoning_over:
             return
@@ -2271,10 +2273,14 @@ class Req(ReqDllmMixin):
                 self._reasoning_end_matchers = [
                     TokenSequenceMatcher(sequence) for sequence in sequences
                 ]
-                self._reasoning_end_match_lengths = [0] * len(self._reasoning_end_matchers)
+                self._reasoning_end_match_lengths = [0] * len(
+                    self._reasoning_end_matchers
+                )
             for position, token in enumerate(token_id):
                 for index, matcher in enumerate(self._reasoning_end_matchers):
-                    matched = matcher.advance(self._reasoning_end_match_lengths[index], token)
+                    matched = matcher.advance(
+                        self._reasoning_end_match_lengths[index], token
+                    )
                     self._reasoning_end_match_lengths[index] = matched
                     if matched == len(matcher):
                         self.reasoning_tokens += position + 1

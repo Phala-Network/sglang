@@ -133,7 +133,6 @@ from sglang.srt.lora.lora_overlap_loader import LoRAOverlapLoader
 from sglang.srt.managers.disagg_service import maybe_create_ascend_config_store
 from sglang.srt.managers.hisparse_coordinator import HiSparseCoordinator
 from sglang.srt.managers.io_struct import (
-    matches_abort_rid,
     AbortReq,
     ActiveRanksOutput,
     AddExternalCorpusReqInput,
@@ -204,6 +203,7 @@ from sglang.srt.managers.io_struct import (
     UpdateWeightsFromTensorReqInput,
     UpdateWeightVersionReqInput,
     UpdateWeightVersionReqOutput,
+    matches_abort_rid,
     sock_send,
 )
 from sglang.srt.managers.load_snapshot import create_load_snapshot_writer
@@ -375,6 +375,7 @@ from sglang.srt.utils import (
     kill_itself_when_parent_died,
     rank_consensus_checker,
     require_mlp_sync,
+    runtime_switches,
     set_gpu_proc_affinity,
     set_random_seed,
     suppress_other_loggers,
@@ -388,7 +389,6 @@ from sglang.srt.utils.hf_transformers_utils import (
     resolve_image_processor_backend,
 )
 from sglang.srt.utils.numa_utils import get_numa_node_if_available, numa_bind_to_node
-from sglang.srt.utils import runtime_switches
 from sglang.srt.utils.runtime_switches import RuntimeSwitchSync, RuntimeSwitchUpdate
 from sglang.srt.utils.torch_memory_saver_adapter import TorchMemorySaverAdapter
 from sglang.srt.utils.weight_versions import (
@@ -3312,9 +3312,7 @@ class Scheduler(
                 self.model_config.context_len,
             )
         except ValueError as error:
-            req.set_finish_with_abort(
-                str(error), status_code=HTTPStatus.BAD_REQUEST
-            )
+            req.set_finish_with_abort(str(error), status_code=HTTPStatus.BAD_REQUEST)
             self.retire_unadmitted_request(req)
             return
 
@@ -3567,10 +3565,9 @@ class Scheduler(
 
     def _add_request_to_queue(self, req: Req, is_retracted: bool = False):
         # Validation can fail before a request-static profile is assigned.
-        if (
-            getattr(self.model_config, "request_static_yarn_config", None) is not None
-            and is_unadmitted_reject(req)
-        ):
+        if getattr(
+            self.model_config, "request_static_yarn_config", None
+        ) is not None and is_unadmitted_reject(req):
             self.retire_unadmitted_request(req)
             return
         if not self._set_or_validate_priority(req):
@@ -4356,9 +4353,7 @@ class Scheduler(
             if reserve_tokens > 0:
                 head = self.waiting_queue[0] if self.waiting_queue else None
                 if head is None or (
-                    len(head.origin_input_ids)
-                    + len(head.output_ids)
-                    - head.prefix_len
+                    len(head.origin_input_ids) + len(head.output_ids) - head.prefix_len
                     > reserve_tokens
                 ):
                     reserve_tokens = 0
@@ -5952,7 +5947,9 @@ class Scheduler(
         elif self.disaggregation_mode == DisaggregationMode.DECODE:
             # Abort requests that have not yet finished preallocation
             for decode_req in self.disagg_decode_prealloc_queue.queue:
-                if recv_req.abort_all or matches_abort_rid(decode_req.req.rid, recv_req.rid):
+                if recv_req.abort_all or matches_abort_rid(
+                    decode_req.req.rid, recv_req.rid
+                ):
                     logger.debug(f"Abort prealloc queue request. {decode_req.req.rid=}")
                     decode_req.kv_receiver.abort()
                     if get_parallel().pp_size > 1:
@@ -5960,7 +5957,9 @@ class Scheduler(
 
             # Abort requests waiting for kvcache to release tree cache
             for decode_req in self.disagg_decode_transfer_queue.queue:
-                if recv_req.abort_all or matches_abort_rid(decode_req.req.rid, recv_req.rid):
+                if recv_req.abort_all or matches_abort_rid(
+                    decode_req.req.rid, recv_req.rid
+                ):
                     logger.debug(f"Abort transfer queue request. {decode_req.req.rid=}")
                     if decode_req.host_staged:
                         # Keep the host destination alive until prefill stops writing.
@@ -5975,7 +5974,9 @@ class Scheduler(
             if self.disagg_decode_prealloc_queue.retracted_queue:
                 remaining_retracted = []
                 for decode_req in self.disagg_decode_prealloc_queue.retracted_queue:
-                    if recv_req.abort_all or matches_abort_rid(decode_req.rid, recv_req.rid):
+                    if recv_req.abort_all or matches_abort_rid(
+                        decode_req.rid, recv_req.rid
+                    ):
                         discard_kv_cache_backup(
                             decode_req,
                             self.tree_cache,

@@ -93,11 +93,11 @@ from sglang.srt.entrypoints.openai.responses_tools.beam import (
     BeamToolAdapter,
     ResponseToolChoiceError,
 )
+from sglang.srt.entrypoints.openai.serving_base import GenerationStreamingResponse
 from sglang.srt.entrypoints.openai.serving_chat import (
     OpenAIServingChat,
     _incomplete_tool_call_indices,
 )
-from sglang.srt.entrypoints.openai.serving_base import GenerationStreamingResponse
 from sglang.srt.entrypoints.openai.tool_server import MCPToolServer, ToolServer
 from sglang.srt.entrypoints.openai.utils import to_openai_style_logprobs
 from sglang.srt.entrypoints.request_disconnect import await_response_or_disconnect
@@ -479,7 +479,9 @@ class OpenAIServingResponses(OpenAIServingChat):
                 require_reasoning = processed_messages.require_reasoning
 
         except _MediaInputValidationError as e:
-            return self.create_error_response(str(e), err_type=getattr(e, "error_type", "invalid_request_error"))
+            return self.create_error_response(
+                str(e), err_type=getattr(e, "error_type", "invalid_request_error")
+            )
         except (ValueError, TypeError, RuntimeError, jinja2.TemplateError) as e:
             logger.exception("Error in preprocessing prompt inputs")
             return self.create_error_response(f"{e} {e.__cause__}")
@@ -645,9 +647,15 @@ class OpenAIServingResponses(OpenAIServingChat):
                     )
                     generators.append(generator)
             except HTTPException as e:
-                return self.create_error_response(str(e.detail), err_type=getattr(e, "error_type", str(e.status_code)), status_code=e.status_code)
+                return self.create_error_response(
+                    str(e.detail),
+                    err_type=getattr(e, "error_type", str(e.status_code)),
+                    status_code=e.status_code,
+                )
             except ValueError as e:
-                return self.create_error_response(str(e), err_type=getattr(e, "error_type", "invalid_request_error"))
+                return self.create_error_response(
+                    str(e), err_type=getattr(e, "error_type", "invalid_request_error")
+                )
 
             assert len(generators) == 1
             (result_generator,) = generators
@@ -725,17 +733,24 @@ class OpenAIServingResponses(OpenAIServingChat):
             if request.stream:
                 if not self.use_harmony:
                     try:
-                        result_generator = await self._prefetch_response_generation(result_generator)
+                        result_generator = await self._prefetch_response_generation(
+                            result_generator
+                        )
                     except HTTPException as e:
                         return self.create_error_response(
-                            str(e.detail), err_type=getattr(e, "error_type", str(e.status_code)),
+                            str(e.detail),
+                            err_type=getattr(e, "error_type", str(e.status_code)),
                             status_code=e.status_code,
                         )
                     except ValueError as e:
-                        return self.create_error_response(str(e), err_type=getattr(e, "error_type", "invalid_request_error"))
+                        return self.create_error_response(
+                            str(e),
+                            err_type=getattr(e, "error_type", "invalid_request_error"),
+                        )
                     except Exception as e:
                         return self.create_error_response(
-                            "Response generation failed.", err_type="server_error",
+                            "Response generation failed.",
+                            err_type="server_error",
                             status_code=504 if isinstance(e, TimeoutError) else 500,
                         )
                 if self.use_harmony:
@@ -785,10 +800,15 @@ class OpenAIServingResponses(OpenAIServingChat):
                 )
                 return result
             except HTTPException as e:
-                return self.create_error_response(str(e.detail), err_type=getattr(e, "error_type", str(e.status_code)), status_code=e.status_code)
+                return self.create_error_response(
+                    str(e.detail),
+                    err_type=getattr(e, "error_type", str(e.status_code)),
+                    status_code=e.status_code,
+                )
             except Exception as e:
                 return self.create_error_response(
-                    "Response generation failed.", err_type="server_error",
+                    "Response generation failed.",
+                    err_type="server_error",
                     status_code=504 if isinstance(e, TimeoutError) else 500,
                 )
         return self.create_error_response("Unknown error")
@@ -797,8 +817,16 @@ class OpenAIServingResponses(OpenAIServingChat):
         """Inspect engine errors before response.created commits HTTP 200."""
         try:
             first = await anext(generation)
-            chunk = first if isinstance(first, dict) else getattr(first, "last_output", None)
-            finish = (chunk.get("meta_info") or {}).get("finish_reason") if isinstance(chunk, dict) else None
+            chunk = (
+                first
+                if isinstance(first, dict)
+                else getattr(first, "last_output", None)
+            )
+            finish = (
+                (chunk.get("meta_info") or {}).get("finish_reason")
+                if isinstance(chunk, dict)
+                else None
+            )
             self._raise_response_abort(finish)
         except BaseException:
             try:
@@ -814,7 +842,9 @@ class OpenAIServingResponses(OpenAIServingChat):
         if isinstance(finish, dict) and finish.get("type") == "abort":
             code = finish.get("status_code")
             if isinstance(code, int) and 400 <= code <= 599:
-                failure = HTTPException(code, finish.get("message", "Generation aborted."))
+                failure = HTTPException(
+                    code, finish.get("message", "Generation aborted.")
+                )
                 failure.error_type = finish.get("err_type") or str(code)
                 raise failure
 
@@ -957,7 +987,9 @@ class OpenAIServingResponses(OpenAIServingChat):
                 status_code=exc.status_code,
             )
         except ValueError as e:
-            return self.create_error_response(str(e), err_type=getattr(e, "error_type", "invalid_request_error"))
+            return self.create_error_response(
+                str(e), err_type=getattr(e, "error_type", "invalid_request_error")
+            )
 
         status = "completed"
         finish_reason = None
@@ -1288,8 +1320,9 @@ class OpenAIServingResponses(OpenAIServingChat):
                 # A template that prefills <think> forces the parser open even
                 # when the request itself did not ask for reasoning, same as chat.
                 force_reasoning=(
-                    require_reasoning if structured_json else
-                    (self.template_manager.force_reasoning or require_reasoning)
+                    require_reasoning
+                    if structured_json
+                    else (self.template_manager.force_reasoning or require_reasoning)
                 ),
                 structured_json=structured_json,
                 request=request,
@@ -2473,8 +2506,9 @@ class OpenAIServingResponses(OpenAIServingChat):
                 # A template that prefills <think> forces the parser open even
                 # when the request itself did not ask for reasoning, same as chat.
                 force_reasoning=(
-                    require_reasoning if structured_json else
-                    (self.template_manager.force_reasoning or require_reasoning)
+                    require_reasoning
+                    if structured_json
+                    else (self.template_manager.force_reasoning or require_reasoning)
                 ),
                 structured_json=structured_json,
                 request=request,
@@ -3152,8 +3186,11 @@ class OpenAIServingResponses(OpenAIServingChat):
                 # accepts a string code and can retain the upstream status.
                 yield _send_event(
                     openai_responses_types.ResponseErrorEvent(
-                        type="error", sequence_number=-1, code=str(e.status_code),
-                        message=str(e.detail), param=None,
+                        type="error",
+                        sequence_number=-1,
+                        code=str(e.status_code),
+                        message=str(e.detail),
+                        param=None,
                     )
                 )
             yield _send_event(

@@ -961,9 +961,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     await self._send_one_request(tokenized_obj)
                     responses = self._wait_one_response(obj, request)
                 else:
-                    responses = self._handle_batch_request(
-                        obj, request, request_states
-                    )
+                    responses = self._handle_batch_request(obj, request, request_states)
                 async with aclosing(responses):
                     async for response in responses:
                         yield response

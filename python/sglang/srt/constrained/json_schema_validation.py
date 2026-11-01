@@ -8,8 +8,8 @@ from urllib.parse import unquote, urldefrag, urljoin
 
 from sglang.srt.constrained.json_schema_dialect import (
     DEFAULT_JSON_SCHEMA_DIALECT,
-    JSONSchemaDialectError,
     NON_ASSERTION_DIALECT_KEYWORDS,
+    JSONSchemaDialectError,
     resolve_json_schema_dialect,
 )
 from sglang.srt.constrained.json_schema_intersections import normalize_ref_min_length
@@ -18,7 +18,9 @@ from sglang.srt.constrained.json_schema_intersections import normalize_ref_min_l
 class UnsupportedJSONSchemaFeature(ValueError):
     """A schema uses constraints that the selected backend cannot preserve."""
 
-    def __init__(self, message: str, reason_code: str = "unsupported_schema_constraint"):
+    def __init__(
+        self, message: str, reason_code: str = "unsupported_schema_constraint"
+    ):
         super().__init__(message)
         self._reason_code = reason_code
 
@@ -211,7 +213,9 @@ def resolve_local_json_pointer(
             and "$id" in value
         ):
             if not _scope_info:
-                _raise_unsupported("xgrammar", ref, "nested $id resource scope is unsupported")
+                _raise_unsupported(
+                    "xgrammar", ref, "nested $id resource scope is unsupported"
+                )
             resource, resource_uri = _resource_scope(value, resource, resource_uri)
         if re.search(r"~(?![01])", part):
             return None
@@ -221,7 +225,9 @@ def resolve_local_json_pointer(
             if location == "schema_map":
                 location = "schema"
             elif location == "schema":
-                if _dialect_info and (key not in dialect.keywords or key in NON_ASSERTION_DIALECT_KEYWORDS):
+                if _dialect_info and (
+                    key not in dialect.keywords or key in NON_ASSERTION_DIALECT_KEYWORDS
+                ):
                     location = "data"
                 elif key in _SUBSCHEMA_MAP_KEYWORDS or key == "dependencies":
                     location = "schema_map"
@@ -271,7 +277,9 @@ def normalize_json_schema_resources(schema: Any) -> Any:
         _raise_unsupported("xgrammar", "#", "invalid_schema")
     root_uri = "https://sglang.invalid/__schema__/root"
     dialects = {}
-    _, _, root_dialect, _ = _schema_scope(schema, schema, root_uri, None, None, dialects)
+    _, _, root_dialect, _ = _schema_scope(
+        schema, schema, root_uri, None, None, dialects
+    )
     if isinstance(schema, bool):
         return schema
     output = {}
@@ -333,7 +341,11 @@ def normalize_json_schema_resources(schema: Any) -> Any:
         ):
             _raise_unsupported("xgrammar", "#", "unsupported_reference_kind")
         if not legacy_ref and isinstance(node.get("items"), list):
-            _raise_unsupported("xgrammar", "#", "unsupported_tuple_items" if dialect.tuple_items else "invalid_schema")
+            _raise_unsupported(
+                "xgrammar",
+                "#",
+                "unsupported_tuple_items" if dialect.tuple_items else "invalid_schema",
+            )
         for key, value in node.items():
             if legacy_ref and key not in ("$ref", "$schema"):
                 continue
@@ -346,7 +358,9 @@ def normalize_json_schema_resources(schema: Any) -> Any:
                 # pinned converter does not support. Empty dependencies is true.
                 continue
             if key == "$ref":
-                needs_intersection |= not legacy_ref and ("minLength" in node or "maxLength" in node)
+                needs_intersection |= not legacy_ref and (
+                    "minLength" in node or "maxLength" in node
+                )
                 referenced_resources.add(resource_uri)
                 resolved = resolve_local_json_pointer(
                     value,
@@ -470,16 +484,26 @@ def _iter_subschemas(
     for keyword in _SINGLE_SUBSCHEMA_KEYWORDS:
         child = schema.get(keyword)
         if isinstance(child, (bool, dict)):
-            yield from _iter_subschemas(child, f"{pointer}/{keyword}", include_definitions=include_definitions)
+            yield from _iter_subschemas(
+                child, f"{pointer}/{keyword}", include_definitions=include_definitions
+            )
         elif keyword == "items" and isinstance(child, list):
             for index, item in enumerate(child):
-                yield from _iter_subschemas(item, f"{pointer}/{keyword}/{index}", include_definitions=include_definitions)
+                yield from _iter_subschemas(
+                    item,
+                    f"{pointer}/{keyword}/{index}",
+                    include_definitions=include_definitions,
+                )
 
     for keyword in _SUBSCHEMA_ARRAY_KEYWORDS:
         children = schema.get(keyword)
         if isinstance(children, list):
             for index, child in enumerate(children):
-                yield from _iter_subschemas(child, f"{pointer}/{keyword}/{index}", include_definitions=include_definitions)
+                yield from _iter_subschemas(
+                    child,
+                    f"{pointer}/{keyword}/{index}",
+                    include_definitions=include_definitions,
+                )
 
     for keyword in _SUBSCHEMA_MAP_KEYWORDS:
         if not include_definitions and keyword in ("$defs", "definitions"):
@@ -489,7 +513,9 @@ def _iter_subschemas(
             for name, child in children.items():
                 escaped_name = _escape_json_pointer(name)
                 yield from _iter_subschemas(
-                    child, f"{pointer}/{keyword}/{escaped_name}", include_definitions=include_definitions
+                    child,
+                    f"{pointer}/{keyword}/{escaped_name}",
+                    include_definitions=include_definitions,
                 )
 
     dependencies = schema.get("dependencies")
@@ -498,24 +524,37 @@ def _iter_subschemas(
             if isinstance(child, (bool, dict)):
                 escaped_name = _escape_json_pointer(name)
                 yield from _iter_subschemas(
-                    child, f"{pointer}/dependencies/{escaped_name}", include_definitions=include_definitions
+                    child,
+                    f"{pointer}/dependencies/{escaped_name}",
+                    include_definitions=include_definitions,
                 )
 
 
 def _raise_unsupported(backend: str, pointer: str, reason: str) -> None:
     safe_reasons = {
-        "invalid_schema", "invalid_subschema", "schema_graph_limit",
-        "nested_resource_reference", "unresolved_or_nonlocal_reference",
-        "unsupported_reference_kind", "nonconsuming_reference_cycle",
-        "invalid_resource_identifier", "unsupported_resource_identifier_fragment",
+        "invalid_schema",
+        "invalid_subschema",
+        "schema_graph_limit",
+        "nested_resource_reference",
+        "unresolved_or_nonlocal_reference",
+        "unsupported_reference_kind",
+        "nonconsuming_reference_cycle",
+        "invalid_resource_identifier",
+        "unsupported_resource_identifier_fragment",
         "ambiguous_resource_identifier",
-        "invalid_schema_dialect", "unsupported_schema_dialect",
-        "missing_vocabulary_declaration", "invalid_vocabulary_declaration",
-        "unknown_required_vocabulary", "unsupported_tuple_items",
+        "invalid_schema_dialect",
+        "unsupported_schema_dialect",
+        "missing_vocabulary_declaration",
+        "invalid_vocabulary_declaration",
+        "unknown_required_vocabulary",
+        "unsupported_tuple_items",
         "unsupported_reference_intersection",
     }
-    detail = ("nested_resource_reference: nested $id resource scope is unsupported"
-              if reason == "nested_resource_reference" else reason)
+    detail = (
+        "nested_resource_reference: nested $id resource scope is unsupported"
+        if reason == "nested_resource_reference"
+        else reason
+    )
     raise UnsupportedJSONSchemaFeature(
         f"JSON Schema at {pointer} is not supported by {backend}: {detail}",
         reason if reason in safe_reasons else "unsupported_schema_constraint",

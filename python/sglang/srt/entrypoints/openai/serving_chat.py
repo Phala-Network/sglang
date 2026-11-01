@@ -8,7 +8,6 @@ import uuid
 from collections import OrderedDict
 from collections.abc import AsyncGenerator
 from enum import Enum
-from http import HTTPStatus
 from time import monotonic as _stream_progress_clock
 from typing import (
     TYPE_CHECKING,
@@ -226,7 +225,6 @@ class _KimiK3ToolCallValidationError(Exception):
 
 def _reject_non_json_constant(_: str):
     raise ValueError("Non-finite constants are not JSON")
-
 
 
 class _AllowedToolsOutputError(ValueError):
@@ -1007,8 +1005,7 @@ class OpenAIServingChat(OpenAIServingBase):
         """Return bounded reasoning effort tiers for the Qwen3.5 template."""
         if (
             not self._uses_qwen35_chat_template()
-            or get_serving().enable_strict_thinking
-            is not True
+            or get_serving().enable_strict_thinking is not True
         ):
             return None
 
@@ -1063,10 +1060,7 @@ class OpenAIServingChat(OpenAIServingBase):
             else min(
                 max(
                     xhigh_min,
-                    int(
-                        _QWEN35_REASONING_EFFORT_TOKEN_RANGES["xhigh"][1]
-                        * scale
-                    ),
+                    int(_QWEN35_REASONING_EFFORT_TOKEN_RANGES["xhigh"][1] * scale),
                 ),
                 available_tokens,
             )
@@ -1079,10 +1073,7 @@ class OpenAIServingChat(OpenAIServingBase):
                     available_tokens,
                     max(
                         medium_min,
-                        int(
-                            _QWEN35_REASONING_EFFORT_TOKEN_RANGES["medium"][1]
-                            * scale
-                        ),
+                        int(_QWEN35_REASONING_EFFORT_TOKEN_RANGES["medium"][1] * scale),
                     ),
                 ),
             ),
@@ -1452,7 +1443,9 @@ class OpenAIServingChat(OpenAIServingBase):
                             prompt_tokens=prompt_tokens.get(index, 0),
                             reasoning_tokens=reasoning_tokens.get(index, 0),
                             completion_tokens=completion_tokens.get(index, 0),
-                            cached_tokens=self._continuous_usage_cached_details(content),
+                            cached_tokens=self._continuous_usage_cached_details(
+                                content
+                            ),
                         ).model_dump()
 
                     yield build_sse_content(
@@ -1799,7 +1792,6 @@ class OpenAIServingChat(OpenAIServingBase):
         request: ChatCompletionRequest,
         raw_request: Request = None,
     ) -> tuple[GenerateReqInput, ChatCompletionRequest]:
-
         # Header-based opt-in (same rationale as request_headers.py).
         if raw_request is not None and not request.return_input_ids_in_sglext:
             if raw_request.headers.get("x-sglext-return-input-ids") == "1":
@@ -3103,7 +3095,9 @@ class OpenAIServingChat(OpenAIServingBase):
         output_ids: dict[int, list[int]] = {}
 
         stream_started = False
-        tool_progress_enabled = self.chat_encoding_spec == "kimi_k3" and bool(request.tools)
+        tool_progress_enabled = self.chat_encoding_spec == "kimi_k3" and bool(
+            request.tools
+        )
         last_wire_progress = 0.0
         error_aborted = False
         stream_error = None
@@ -3200,9 +3194,11 @@ class OpenAIServingChat(OpenAIServingBase):
                     # /abort_request or session lifecycle cleanup) falls through
                     # to the normal chunk path, matching the non-stream behavior
                     # in tokenizer_manager._handle_abort_finish_reason.
-                    if finish_reason_type == "abort" and isinstance(
-                        finish_reason.get("status_code"), int
-                    ) and 400 <= finish_reason["status_code"] <= 599:
+                    if (
+                        finish_reason_type == "abort"
+                        and isinstance(finish_reason.get("status_code"), int)
+                        and 400 <= finish_reason["status_code"] <= 599
+                    ):
                         code = int(finish_reason["status_code"])
                         message = finish_reason.get("message", "Generation aborted.")
                         error_type = finish_reason.get("err_type") or str(code)
@@ -3214,7 +3210,9 @@ class OpenAIServingChat(OpenAIServingBase):
                             failure.error_type = error_type
                             raise failure
                         error = self.create_streaming_error_response(
-                            message, error_type, code,
+                            message,
+                            error_type,
+                            code,
                         )
                         yield f"data: {error}\n\n"
                         error_aborted = True
@@ -3488,7 +3486,9 @@ class OpenAIServingChat(OpenAIServingBase):
                 propagating_exception = True
                 raise
             stream_error = self.create_streaming_error_response(
-                str(e.detail), getattr(e, "error_type", str(e.status_code)), e.status_code
+                str(e.detail),
+                getattr(e, "error_type", str(e.status_code)),
+                e.status_code,
             )
         except _KimiK3ToolCallValidationError as e:
             if not stream_started:
@@ -3501,7 +3501,9 @@ class OpenAIServingChat(OpenAIServingBase):
             if not stream_started:
                 propagating_exception = True
                 raise
-            stream_error = self.create_streaming_error_response(str(e), err_type=getattr(e, "error_type", "BadRequestError"))
+            stream_error = self.create_streaming_error_response(
+                str(e), err_type=getattr(e, "error_type", "BadRequestError")
+            )
         except Exception as e:
             if not stream_started:
                 propagating_exception = True
@@ -3514,7 +3516,9 @@ class OpenAIServingChat(OpenAIServingBase):
             if not error_aborted:
                 stream_error = self.create_streaming_error_response(
                     "Chat stream generation failed.",
-                    err_type="TimeoutError" if isinstance(e, TimeoutError) else "InternalServerError",
+                    err_type="TimeoutError"
+                    if isinstance(e, TimeoutError)
+                    else "InternalServerError",
                     status_code=504 if isinstance(e, TimeoutError) else 500,
                 )
         except BaseException:
@@ -3555,7 +3559,9 @@ class OpenAIServingChat(OpenAIServingBase):
         try:
             ret = await self._first_generated_response(adapted_request, raw_request)
         except ValueError as e:
-            return self.create_error_response(str(e), err_type=getattr(e, "error_type", "BadRequestError"))
+            return self.create_error_response(
+                str(e), err_type=getattr(e, "error_type", "BadRequestError")
+            )
 
         if not isinstance(ret, list):
             ret = [ret]
@@ -4173,11 +4179,15 @@ class OpenAIServingChat(OpenAIServingBase):
     def _kimi_k3_structured_json(self, request: ChatCompletionRequest) -> bool:
         """Match the constrained JSON branch selected by the K3 renderer."""
         response_format = request.response_format
-        return self.reasoning_parser == "kimi_k3" and response_format is not None and (
-            response_format.type == "json_object"
-            or (
-                response_format.type == "json_schema"
-                and response_format.json_schema.strict is not False
+        return (
+            self.reasoning_parser == "kimi_k3"
+            and response_format is not None
+            and (
+                response_format.type == "json_object"
+                or (
+                    response_format.type == "json_schema"
+                    and response_format.json_schema.strict is not False
+                )
             )
         )
 

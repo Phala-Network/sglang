@@ -119,7 +119,7 @@ def test_format_pattern_is_not_silently_weakened():
         validate_xgrammar_json_schema({'type':'string','format':'email','pattern':'^x$'})
 
 @pytest.mark.parametrize('jump',[False,True])
-def test_nested_resource_scope_is_refused_before_k3_extraction(jump):
+def test_nested_resource_scope_is_preserved_before_k3_extraction(jump):
     from sglang.srt.entrypoints.openai.protocol import Tool, Function
     from sglang.srt.function_call.kimik3_structural_tag import _tool_arguments_format
     inner={'$id':'https://example.invalid/inner','type':'array',
@@ -127,10 +127,13 @@ def test_nested_resource_scope_is_refused_before_k3_extraction(jump):
     root={'type':'object','$defs':{'X':{'type':'integer'},'inner':inner},
           'properties':{'v':{'$ref':'#/$defs/inner/items'} if jump else inner}}
     tool=Tool(type='function',function=Function(name='synthetic',strict=True,parameters=root))
-    with pytest.raises(UnsupportedJSONSchemaFeature,match=r'nested \$id'):
-        _tool_arguments_format(tool)
-    with pytest.raises(UnsupportedJSONSchemaFeature,match=r'nested \$id'):
-        validate_xgrammar_json_schema(root)
+    from sglang.srt.constrained.json_schema_validation import normalize_json_schema_resources
+    _tool_arguments_format(tool)
+    validate_xgrammar_json_schema(root)
+    normalized = normalize_json_schema_resources(root)
+    assert accepts(normalized, {"v": "text" if jump else ["text"]})
+    assert not accepts(normalized, {"v": 3 if jump else [3]})
+
 
 def test_reference_scope_guard_ignores_instance_data():
     from sglang.srt.constrained.json_schema_validation import validate_local_json_reference_scope
@@ -222,9 +225,13 @@ def test_annotation_reference_target_own_id_is_refused():
     }
     with pytest.raises(UnsupportedJSONSchemaFeature, match=r"nested \$id"):
         _resolve_local_ref(root["$ref"], root)
-    with pytest.raises(UnsupportedJSONSchemaFeature, match=r"nested \$id"):
-        validate_local_json_reference_scope(root)
-    with pytest.raises(UnsupportedJSONSchemaFeature, match=r"nested \$id"):
-        validate_xgrammar_json_schema(root)
+    # A referenced leaf resource with no internal refs can be normalized safely.
+    from sglang.srt.constrained.json_schema_validation import normalize_json_schema_resources
+    validate_local_json_reference_scope(root)
+    validate_xgrammar_json_schema(root)
+    normalized = normalize_json_schema_resources(root)
+    assert accepts(normalized, 2)
+    assert not accepts(normalized, "2")
+    # Directly sending the original document to pinned native still fails closed.
     with pytest.raises(RuntimeError, match=r"Nested \$id schema resources"):
         accepts(root, 2)

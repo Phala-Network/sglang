@@ -1976,10 +1976,16 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             await release_task
         if not is_stream:
             if status_code == HTTPStatus.BAD_REQUEST:
-                raise ValueError(finish_reason["message"])
-            raise fastapi.HTTPException(
-                status_code=status_code, detail=finish_reason["message"]
-            )
+                error = ValueError(finish_reason["message"])
+            else:
+                error = fastapi.HTTPException(
+                    status_code=status_code, detail=finish_reason["message"]
+                )
+            # Typed scheduler aborts (e.g. K3 grammar 503/504) keep their
+            # OpenAI error type; untyped ones keep the existing default.
+            if finish_reason.get("err_type"):
+                error.error_type = finish_reason["err_type"]
+            raise error
         return out
 
     def _release_lora_once(self, state: ReqState) -> Optional[asyncio.Task]:

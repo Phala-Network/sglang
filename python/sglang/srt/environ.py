@@ -413,6 +413,18 @@ class Envs:
     # ===================================================================
     SGLANG_GRAMMAR_POLL_INTERVAL = EnvFloat(0.005)
     SGLANG_GRAMMAR_MAX_POLL_ITERATIONS = EnvInt(10000)
+    # PP1 only, per scheduler process / TP rank. Retention limits, not RSS caps.
+    # PP>1 preserves its existing cache/compiler and one-way admission path.
+    SGLANG_GRAMMAR_CACHE_MAX_BYTES = EnvInt(1 << 30)
+    SGLANG_GRAMMAR_CACHE_MAX_ENTRIES = EnvInt(4096)
+    SGLANG_GRAMMAR_INVALID_CACHE_MAX_BYTES = EnvInt(4 << 20)
+    SGLANG_GRAMMAR_INVALID_CACHE_MAX_ENTRIES = EnvInt(256)
+    SGLANG_GRAMMAR_INVALID_CACHE_TTL = EnvFloat(30.0)
+    SGLANG_GRAMMAR_COMPILER_WORKERS = EnvInt(2)
+    SGLANG_GRAMMAR_MAX_PENDING_COMPILES = EnvInt(32)
+    SGLANG_GRAMMAR_MAX_PENDING_BYTES = EnvInt(16 << 20)
+    SGLANG_XGRAMMAR_CACHE_MAX_BYTES = EnvInt(256 << 20)
+    SGLANG_XGRAMMAR_MAX_THREADS = EnvInt(2)
     SGLANG_DISABLE_OUTLINES_DISK_CACHE = EnvBool(False)
 
     # ===================================================================

@@ -134,7 +134,12 @@ def test_cache_thinking_modes_are_isolated(engine,first,second):
     backend=reasoner(engine);key=('json',json.dumps(SCHEMA))
     initial=backend._init_value_dispatch(key,first);backend.set_cache(key,initial)
     obj,hit=backend.get_cached_or_future_value(key,second)
-    assert hit
+    assert not hit  # Each native thinking mode has its own lazily compiled key.
+    future=obj;obj=future.result(timeout=10)
+    backend.set_cache(key,obj.copy(),second,future=future)
+    backend.release_future(future)
+    cached,hit=backend.get_cached_or_future_value(key,second)
+    assert hit and cached.grammar.ctx is obj.grammar.ctx
     if second:feed(obj,engine,'analysis'+RESPONSE_OPEN)
     else:assert rejects(obj.copy(),engine,'analysis')
     feed(obj,engine,'{"ok":true}'+RESPONSE_CLOSE+MESSAGE_CLOSE)
@@ -244,6 +249,15 @@ def test_cached_json_init_reuses_boundary_metadata_and_stop_overrides(engine,mon
     assert count>1
     stops=set(cached.grammar.override_stop_tokens)
     assert {tok.eos_token_id,tok.model_eos}.issubset(stops)
+    other_mode,hit=backend.get_cached_or_future_value(key,not first)
+    assert not hit
+    future=other_mode
+    other_mode=future.result(timeout=30)
+    assert not isinstance(other_mode,InvalidGrammarObject)
+    backend.set_cache(key,other_mode.copy(),not first,future=future)
+    backend.release_future(future)
+    # Boundary metadata belongs to the tokenizer and is shared across modes.
+    assert len(calls)==count
     for thinking in (first,not first,first):
         obj,hit=backend.get_cached_or_future_value(key,thinking)
         assert hit and len(calls)==count
@@ -258,7 +272,9 @@ def test_cached_json_init_reuses_boundary_metadata_and_stop_overrides(engine,mon
         obj.rollback(1)
         assert not obj.is_terminated()
         feed(obj,engine,[tok.model_eos]);assert obj.is_terminated()
-        obj.maybe_init_reasoning(not thinking)
+        with pytest.raises(ValueError,match='thinking mode'):
+            obj.maybe_init_reasoning(not thinking)
+        obj.maybe_init_reasoning(thinking)
         assert not obj.is_terminated() and not obj.grammar.accepted_tokens
         assert set(obj.grammar.override_stop_tokens)==stops
         assert len(calls)==count

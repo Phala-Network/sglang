@@ -22,10 +22,13 @@ from xgrammar.structural_tag import (
 )
 
 from sglang.srt.entrypoints.openai.protocol import Tool, ToolChoice
+from sglang.srt.constrained.json_schema_intersections import (
+    intersect_ref_min_length as _intersect_ref_min_length,
+)
 from sglang.srt.constrained.json_schema_validation import (
     _iter_subschemas,
     resolve_local_json_pointer as _resolve_local_ref,
-    validate_local_json_reference_scope,
+    normalize_json_schema_resources,
 )
 from sglang.srt.function_call.kimik3_format import (
     ARGUMENT_CLOSE,
@@ -101,6 +104,9 @@ _SCHEMA_METADATA_KEYWORDS = {
     "writeOnly",
 }
 _ROOT_SCHEMA_KEYWORDS = _SCHEMA_METADATA_KEYWORDS | {
+    "minProperties",
+    "maxProperties",
+    "dependentRequired",
     "additionalProperties",
     "properties",
     "required",
@@ -135,13 +141,20 @@ def _matches_json_type(value: Any, json_type: str) -> bool:
     )
 
 
+
 def _dereference_schema(
     schema: Union[bool, Dict[str, Any]], root_schema: Dict[str, Any]
 ) -> Union[bool, Dict[str, Any]]:
-    """Resolve pure local refs without dropping or merging assertion siblings."""
+    """Resolve refs and the proven minLength intersection without losing assertions."""
     seen_refs: Set[str] = set()
+    minimum = None
     while isinstance(schema, dict) and "$ref" in schema:
-        unsupported = set(schema).difference(_SCHEMA_METADATA_KEYWORDS, {"$ref"})
+        unsupported = set(schema).difference(_SCHEMA_METADATA_KEYWORDS, {"$ref", "minLength"})
+        if "minLength" in schema:
+            bound = schema["minLength"]
+            if type(bound) is not int or bound < 0:
+                raise ValueError("Kimi K3 string lengths must be nonnegative integers")
+            minimum = max(minimum or 0, bound)
         if unsupported:
             raise ValueError(
                 f"Kimi K3 schema has unsupported $ref siblings: {sorted(unsupported)!r}"
@@ -156,7 +169,7 @@ def _dereference_schema(
             raise ValueError(f"Kimi K3 schema $ref is unresolved or nonlocal: {ref!r}")
         seen_refs.add(ref)
         schema = target
-    return schema
+    return schema if minimum is None else _intersect_ref_min_length(schema, minimum)
 
 
 def _schema_types(
@@ -517,9 +530,124 @@ def _dynamic_argument_format(
     )
 
 
+
+class _EmptyRootLanguage(ValueError):
+    pass
+
+
+def _finite_constrained_arguments_format(
+    parameters: Dict[str, Any], root_schema: Dict[str, Any],
+    presence_mode: str = "none", presence_names=(), prove_values: bool = False,
+    verified_values=None,
+) -> Format:
+    # Native capability, not package-version text or a Python model field alone:
+    # older native parsers ignore unknown JSON fields and would widen the grammar.
+    from xgrammar.base import _core
+
+    version = "V2" if presence_mode != "none" else "V1"
+    capability = getattr(_core, "SupportsUnorderedConstraints" + version, None)
+    fields = getattr(SequenceFormat, "model_fields", {})
+    if presence_mode != "none" and not {"presence_mode", "presence_indices"}.issubset(fields):
+        raise ValueError("Kimi K3 root presence constraints require native unordered constraints v2")
+    if not callable(capability) or not capability() or not {
+        "min_elements", "max_elements", "dependencies"
+    }.issubset(fields):
+        raise ValueError("Kimi K3 finite object constraints require native unordered constraints " + version.lower())
+    if parameters.get("additionalProperties", True) is not False:
+        raise ValueError("Kimi K3 finite object constraints require additionalProperties=false")
+    properties = parameters.get("properties", {})
+    required = parameters.get("required", [])
+    if not isinstance(properties, dict):
+        raise ValueError("Kimi K3 tool parameters 'properties' must be an object")
+    if not isinstance(required, list) or not all(isinstance(key, str) for key in required):
+        raise ValueError("Kimi K3 tool parameters 'required' must be a string list")
+    dependencies = parameters.get("dependentRequired", {})
+    if not isinstance(dependencies, dict) or not all(
+        isinstance(key, str) and isinstance(value, list)
+        and all(isinstance(target, str) for target in value)
+        for key, value in dependencies.items()
+    ):
+        raise ValueError("Kimi K3 dependentRequired must map names to string lists")
+    minimum = parameters.get("minProperties", 0)
+    maximum = parameters.get("maxProperties", len(properties))
+    if any(type(bound) is not int or bound < 0 for bound in (minimum, maximum)):
+        raise ValueError("Kimi K3 property counts must be nonnegative integers")
+    if prove_values and (len(properties) > 64 or sum(len(value) for value in dependencies.values()) > 4096):
+        raise ValueError("presence_resource_limit: at most 64 properties and 4096 dependency edges")
+    witnesses = {}
+    proven_values = {}
+    if prove_values:
+        from sglang.srt.function_call.kimik3_root_constraints import EMPTY, prove_value, verify_native_witnesses
+    arguments = {}
+    for key, schema in properties.items():
+        if not isinstance(key, str) or not isinstance(schema, (dict, bool)):
+            raise ValueError("Kimi K3 tool property schemas must be JSON schemas")
+        if prove_values:
+            schema, witness = prove_value(schema, root_schema)
+            if witness is not EMPTY:
+                witnesses[key] = witness
+                proven_values[key] = schema
+        argument = _known_argument_format(key, schema, root_schema)
+        if argument is not None:
+            arguments[key] = argument
+    # A trigger requiring an absent/false property can never appear. Propagate
+    # that fact through chains before constructing the finite native entries.
+    changed = True
+    while changed:
+        changed = False
+        for key in list(arguments):
+            if any(target not in arguments for target in dependencies.get(key, [])):
+                del arguments[key]
+                changed = True
+    required_set = set(required)
+    pending = list(required_set)
+    while pending:
+        key = pending.pop()
+        if key not in arguments:
+            raise _EmptyRootLanguage("Kimi K3 required/dependent parameter accepts no values")
+        for target in dependencies.get(key, []):
+            if target not in required_set:
+                required_set.add(target)
+                pending.append(target)
+    if presence_mode == "not_all" and any(key not in arguments for key in presence_names):
+        presence_mode, presence_names = "none", ()
+    elif presence_mode == "exactly_one":
+        presence_names = [key for key in presence_names if key in arguments]
+        if not presence_names:
+            raise _EmptyRootLanguage("Kimi K3 presence constraint accepts no values")
+    maximum = min(maximum, len(arguments))
+    if presence_mode != "none" and maximum < len(arguments):
+        raise ValueError("Kimi K3 presence constraints with a constraining maxProperties are unsupported")
+    if minimum > maximum or len(required_set) > maximum:
+        raise _EmptyRootLanguage("Kimi K3 finite object constraints accept no values")
+    if maximum == 0:
+        return ConstStringFormat(value="")
+    if prove_values:
+        verify_native_witnesses(
+            arguments, {key: witnesses[key] for key in arguments},
+            proven_values, verified_values,
+        )
+    indices = {key: index for index, key in enumerate(arguments)}
+    edges = sorted({
+        (indices[key], indices[target])
+        for key in arguments for target in dependencies.get(key, []) if target != key
+    })
+    if edges and maximum < len(arguments):
+        raise ValueError("Kimi K3 dependencies with a constraining maxProperties are unsupported")
+    return SequenceFormat(
+        elements=list(arguments.values()), unordered=True,
+        required=[key in required_set for key in arguments],
+        min_elements=minimum, max_elements=maximum, dependencies=edges,
+        **({"presence_mode": presence_mode,
+            "presence_indices": [indices[key] for key in presence_names]} if presence_mode != "none" else {}),
+    )
+
+
 def _strict_arguments_format(
     parameters: Dict[str, Any], root_schema: Dict[str, Any]
 ) -> Format:
+    if {"minProperties", "maxProperties", "dependentRequired"}.intersection(parameters):
+        return _finite_constrained_arguments_format(parameters, root_schema)
     properties = parameters.get("properties", {})
     if not isinstance(properties, dict):
         raise ValueError("Kimi K3 tool parameters 'properties' must be an object")
@@ -581,6 +709,135 @@ def _strict_arguments_format(
     return SequenceFormat(elements=elements, unordered=unordered, required=required_flags if unordered else [])
 
 
+
+def _checked_root_arguments_format(parameters, root_schema):
+    if not isinstance(parameters, dict):
+        if parameters is False:
+            raise _EmptyRootLanguage("Kimi K3 root schema accepts no values")
+        raise ValueError("Kimi K3 tool parameters must be an object schema")
+    if "not" in parameters or "oneOf" in parameters:
+        return _root_logic_arguments_format(parameters, root_schema)
+    unsupported = set(parameters).difference(_ROOT_SCHEMA_KEYWORDS)
+    if unsupported:
+        raise ValueError("Kimi K3 tool parameters have unsupported root schema keywords: " + repr(sorted(unsupported)))
+    if "object" not in _schema_types(parameters, root_schema):
+        raise ValueError("Kimi K3 tool parameters must be an object schema")
+    return _strict_arguments_format(parameters, root_schema)
+
+
+def _presence_required(schema):
+    if not isinstance(schema, dict):
+        return None
+    active = set(schema).difference(_SCHEMA_METADATA_KEYWORDS)
+    if active.difference({"type", "required"}) or ("type" in schema and schema["type"] != "object"):
+        return None
+    names = schema.get("required", [])
+    if not isinstance(names, list) or not all(isinstance(key, str) for key in names):
+        raise ValueError("Kimi K3 presence required must be a string list")
+    if len(names) != len(set(names)):
+        raise ValueError("Kimi K3 presence required names must be unique")
+    if len(names) > 64:
+        raise ValueError("presence_resource_limit: at most 64 group keys")
+    return names
+
+
+def _root_logic_arguments_format(parameters, root_schema):
+    if "not" in parameters and "oneOf" in parameters:
+        raise ValueError("Kimi K3 multiple root logic groups are unsupported")
+    if "object" not in _schema_types(parameters, root_schema):
+        raise ValueError("Kimi K3 tool parameters must describe objects")
+    if "not" in parameters:
+        negated = parameters["not"]
+        base = {key: value for key, value in parameters.items() if key != "not"}
+        if negated is False:
+            return _checked_root_arguments_format(base, root_schema)
+        if negated is True:
+            raise _EmptyRootLanguage("Kimi K3 not:true accepts no object values")
+        if isinstance(negated, dict) and not set(negated).difference(_SCHEMA_METADATA_KEYWORDS, {"type"}):
+            types = negated.get("type", list(_JSON_TYPES))
+            types = [types] if isinstance(types, str) else types
+            if not isinstance(types, list) or not types or any(kind not in _JSON_TYPES for kind in types):
+                raise ValueError("Kimi K3 not type is invalid")
+            if "object" in types:
+                raise _EmptyRootLanguage("Kimi K3 not object type accepts no object values")
+            return _checked_root_arguments_format(base, root_schema)
+        names = _presence_required(negated)
+        if names is None:
+            raise ValueError("Kimi K3 root not shape is unsupported")
+        if not names:
+            raise _EmptyRootLanguage("Kimi K3 not required-empty accepts no values")
+        if set(base).difference(_ROOT_SCHEMA_KEYWORDS):
+            raise ValueError("Kimi K3 root presence has unsupported sibling assertions")
+        return _finite_constrained_arguments_format(base, root_schema, "not_all", names, True)
+    branches = parameters["oneOf"]
+    if not isinstance(branches, list) or not branches:
+        raise ValueError("Kimi K3 oneOf must have branches")
+    if len(branches) > 64:
+        raise ValueError("presence_resource_limit: at most 64 singleton branches")
+    names = [_presence_required(branch) for branch in branches]
+    if all(group is not None and len(group) == 1 for group in names):
+        group = [item[0] for item in names]
+        if len(group) != len(set(group)):
+            raise ValueError("Kimi K3 singleton oneOf keys must be unique")
+        base = {key: value for key, value in parameters.items() if key != "oneOf"}
+        if set(base).difference(_ROOT_SCHEMA_KEYWORDS):
+            raise ValueError("Kimi K3 root presence has unsupported sibling assertions")
+        return _finite_constrained_arguments_format(base, root_schema, "exactly_one", group, True)
+    return _disjoint_root_branches_format(parameters, root_schema)
+
+
+def _disjoint_root_branches_format(parameters, root_schema):
+    from sglang.srt.function_call.kimik3_root_constraints import EMPTY, prove_value
+    active = set(parameters).difference(_SCHEMA_METADATA_KEYWORDS, {"oneOf"})
+    if active and not (active == {"type"} and parameters["type"] == "object"):
+        raise ValueError("Kimi K3 oneOf parent assertions require an unsupported intersection")
+    branches = [_dereference_schema(branch, root_schema) for branch in parameters["oneOf"]]
+    if len(branches) > 8:
+        raise ValueError("root_branch_resource_limit: at most 8 closed object branches")
+    total = 0
+    formats, viable = [], []
+    verified_values = set()
+    for branch in branches:
+        if not isinstance(branch, dict) or branch.get("type") != "object" or branch.get("additionalProperties") is not False:
+            raise ValueError("Kimi K3 oneOf branches must be complete closed objects")
+        if set(branch).difference(_ROOT_SCHEMA_KEYWORDS):
+            raise ValueError("Kimi K3 oneOf branch has unsupported root assertions")
+        if not isinstance(branch.get("properties", {}), dict):
+            raise ValueError("Kimi K3 oneOf branch properties must be an object")
+        total += len(branch.get("properties", {}))
+        if total > 512:
+            raise ValueError("root_branch_resource_limit: at most 512 total branch properties")
+        try:
+            fmt = _finite_constrained_arguments_format(
+                branch, root_schema, prove_values=True, verified_values=verified_values
+            )
+        except _EmptyRootLanguage:
+            continue
+        viable.append(branch)
+        formats.append(fmt)
+    if not viable:
+        raise _EmptyRootLanguage("Kimi K3 oneOf branches accept no values")
+    if len(viable) == 1:
+        return formats[0]
+    common = set.intersection(*(set(branch.get("required", [])) & set(branch.get("properties", {})) for branch in viable))
+    for key in sorted(common):
+        seen, disjoint = set(), True
+        for branch in viable:
+            proven, witness = prove_value(branch["properties"][key], root_schema)
+            domain = proven.get("enum") if isinstance(proven, dict) else None
+            if witness is EMPTY or not isinstance(domain, list) or not domain or not all(isinstance(value, str) for value in domain):
+                disjoint = False
+                break
+            values = set(domain)
+            if seen.intersection(values):
+                disjoint = False
+                break
+            seen.update(values)
+        if disjoint:
+            return OrFormat(elements=formats)
+    raise ValueError("Kimi K3 oneOf requires a common required disjoint string discriminator")
+
+
 def _tool_arguments_format(tool: Tool) -> Format:
     parameters = tool.function.parameters
     if not tool.function.strict:
@@ -596,26 +853,37 @@ def _tool_arguments_format(tool: Tool) -> Format:
         raise ValueError(
             f"Kimi K3 strict tool {tool.function.name!r} must define parameters"
         )
-    root_schema = parameters
-    validate_local_json_reference_scope(root_schema)
-    parameters = _dereference_schema(parameters, root_schema)
+    root_schema = normalize_json_schema_resources(parameters)
+    # Binding is complete; extracted documents must not reintroduce the root
+    # ID as a nested resource when cloning recursive targets.
+    root_schema.pop("$id", None)
+    parameters = _dereference_schema(root_schema, root_schema)
+    # A single allOf branch with annotation-only siblings is an exact wrapper.
+    # Do not merge arbitrary intersections or overwrite sibling assertions.
+    wrappers = set()
+    while isinstance(parameters, dict) and "allOf" in parameters:
+        options = parameters["allOf"]
+        if id(options) in wrappers:
+            raise ValueError("Kimi K3 tool parameters have a cyclic allOf wrapper")
+        wrappers.add(id(options))
+        assertions = set(parameters).difference(_SCHEMA_METADATA_KEYWORDS, {"$id", "allOf"})
+        object_only = assertions == {"type"} and parameters["type"] == "object"
+        if not isinstance(options, list) or len(options) != 1 or (assertions and not object_only):
+            break
+        branch = _dereference_schema(options[0], root_schema)
+        if object_only:
+            if "object" not in _schema_types(branch, root_schema):
+                raise ValueError("Kimi K3 tool allOf cannot describe an object")
+            if isinstance(branch, dict):
+                branch = dict(branch, type="object")
+        parameters = branch
+    if isinstance(parameters, dict) and "$id" in parameters:
+        # Local refs have already been bound and rewritten against their resource.
+        parameters = {key: value for key, value in parameters.items() if key != "$id"}
     if parameters is True:
         parameters = {}
-    if isinstance(parameters, dict):
-        unsupported = set(parameters).difference(_ROOT_SCHEMA_KEYWORDS)
-        if unsupported:
-            # The XTML converter enforces only the object fields below. Passing
-            # any other root keyword through would silently lose its assertion.
-            raise ValueError(
-                "Kimi K3 tool parameters have unsupported root schema keywords: "
-                f"{sorted(unsupported)!r}"
-            )
-    schema_types = _schema_types(parameters, root_schema)
-    if "object" not in schema_types:
-        raise ValueError(
-            f"Kimi K3 tool {tool.function.name!r} parameters must be an object schema"
-        )
-    return _strict_arguments_format(parameters, root_schema)
+    return _checked_root_arguments_format(parameters, root_schema)
+
 
 
 def _tool_call_tag(tool: Tool, arguments_format: Optional[Format] = None) -> TagFormat:

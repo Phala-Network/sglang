@@ -15,17 +15,23 @@
 
 import json
 import logging
+import math
+import sys
+import threading
 import time
+from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import torch
 
+from sglang.srt.environ import envs
 from sglang.srt.parser.reasoning_parser import ReasoningParser
 from sglang.srt.runtime_context import (
     get_context,
     get_exec,
+    get_parallel,
     get_resources,
     get_serving,
 )
@@ -34,6 +40,16 @@ from sglang.srt.server_args import ServerArgs
 logger = logging.getLogger(__name__)
 
 GRAMMAR_BACKEND_REGISTRY = {}
+
+
+def grammar_cache_budget_enabled() -> bool:
+    """The bounded cache/admission change is supported for PP1 only."""
+    try:
+        return get_parallel().pp_size == 1
+    except ValueError:
+        # Direct CPU use can precede publish(); serving publishes PP placement
+        # before constructing any grammar backend.
+        return True
 
 
 @dataclass
@@ -107,6 +123,10 @@ class BaseGrammarObject:
 
     def copy(self) -> "BaseGrammarObject":
         return self
+
+    def cache_size_bytes(self) -> int:
+        """Approximate retained bytes; native backends include compiled contexts."""
+        return sys.getsizeof(self)
 
     @property
     def finished(self):
@@ -190,9 +210,20 @@ def _grammar_key_contains_nul(key_type: str, key_string: str) -> bool:
 class InvalidGrammarObject(BaseGrammarObject):
     """Represents a grammar that failed to compile, carrying the original error message."""
 
-    def __init__(self, error_message: str = "Unknown grammar error"):
+    def __init__(
+        self,
+        error_message: str = "Unknown grammar error",
+        *,
+        status_code: int = 400,
+        error_type: str = "invalid_request_error",
+    ):
         super().__init__()
         self.error_message = error_message
+        self.status_code = status_code
+        self.error_type = error_type
+
+    def cache_size_bytes(self) -> int:
+        return sys.getsizeof(self) + sys.getsizeof(self.error_message)
 
     def __repr__(self):
         return f"InvalidGrammarObject(error_message={self.error_message!r})"
@@ -202,8 +233,120 @@ class BaseGrammarBackend:
     _enable_strict_thinking: bool = False
 
     def __init__(self):
-        self.executor = ThreadPoolExecutor()
-        self.cache: Dict[Tuple[str, str], BaseGrammarObject] = {}
+        self.use_cache_budget = grammar_cache_budget_enabled()
+        if not self.use_cache_budget:
+            # Preserve the existing PP cache/compiler ownership and scheduling.
+            self.executor = ThreadPoolExecutor()
+            self.cache = {}
+            return
+        self.cache: Dict[tuple, BaseGrammarObject] = OrderedDict()
+        self._cache_weights = {}
+        self._invalid_expirations = OrderedDict()
+        self._cache_bytes = 0
+        self._invalid_cache_bytes = 0
+        self._cache_generation = 0
+        self._cache_lock = threading.RLock()
+        self._pending = {}
+        self._inflight = {}
+        self._pending_bytes = 0
+        self.cache_max_bytes = envs.SGLANG_GRAMMAR_CACHE_MAX_BYTES.get()
+        self.cache_max_entries = envs.SGLANG_GRAMMAR_CACHE_MAX_ENTRIES.get()
+        self.invalid_cache_max_bytes = envs.SGLANG_GRAMMAR_INVALID_CACHE_MAX_BYTES.get()
+        self.invalid_cache_max_entries = (
+            envs.SGLANG_GRAMMAR_INVALID_CACHE_MAX_ENTRIES.get()
+        )
+        self.invalid_cache_ttl = envs.SGLANG_GRAMMAR_INVALID_CACHE_TTL.get()
+        self.max_pending_compiles = envs.SGLANG_GRAMMAR_MAX_PENDING_COMPILES.get()
+        self.max_pending_bytes = envs.SGLANG_GRAMMAR_MAX_PENDING_BYTES.get()
+        workers = envs.SGLANG_GRAMMAR_COMPILER_WORKERS.get()
+        if workers < 1 or self.max_pending_compiles < 1 or self.max_pending_bytes < 1:
+            raise ValueError(
+                "Grammar compiler worker and pending limits must be positive"
+            )
+        if min(
+            self.cache_max_bytes,
+            self.cache_max_entries,
+            self.invalid_cache_max_bytes,
+            self.invalid_cache_max_entries,
+            self.invalid_cache_ttl,
+        ) < 0 or not math.isfinite(self.invalid_cache_ttl):
+            raise ValueError("Grammar cache limits must be finite and non-negative")
+        self.executor = ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="grammar"
+        )
+
+    @staticmethod
+    def _key_size_bytes(key: tuple) -> int:
+        return sys.getsizeof(key) + sum(sys.getsizeof(part) for part in key)
+
+    def cache_key(self, key: tuple, require_reasoning: bool) -> tuple:
+        return key
+
+    @property
+    def cache_size_bytes(self) -> Optional[int]:
+        # The preserved PP cache has no byte accounting.
+        return self._cache_bytes if self.use_cache_budget else None
+
+    def _remove_cache_entry(self, key):
+        value = self.cache.pop(key, None)
+        weight = self._cache_weights.pop(key, 0)
+        self._cache_bytes -= weight
+        if isinstance(value, InvalidGrammarObject):
+            self._invalid_cache_bytes -= weight
+            self._invalid_expirations.pop(key, None)
+
+    def release_future(self, future):
+        """Drop admission ownership; running work keeps its slot until completion."""
+        if not self.use_cache_budget:
+            return
+        with self._cache_lock:
+            entry = self._pending.get(future)
+            if entry is None:
+                return
+            source = getattr(future, "_grammar_source", future)
+            if source.done():
+                self._pending.pop(future)
+                self._pending_bytes -= entry[0]
+            else:
+                self._pending[future] = (entry[0], True)
+
+    def _run_compile(self, flight_key, key, require_reasoning):
+        with self._cache_lock:
+            _, waiters = self._inflight[flight_key]
+            if all(
+                waiter.cancelled() or self._pending.get(waiter, (0, True))[1]
+                for waiter in waiters
+            ):
+                return None
+        return self._init_value_dispatch(key, require_reasoning)
+
+    def _complete_compile(self, flight_key, source):
+        with self._cache_lock:
+            _, waiters = self._inflight.pop(flight_key)
+            for future in waiters:
+                if future.cancelled():
+                    self._release_abandoned_compile(future)
+                    continue
+                if not future.running() and not future.set_running_or_notify_cancel():
+                    self._release_abandoned_compile(future)
+                    continue
+                try:
+                    value = source.result()
+                    # Each request owns its matcher; only compiled ctx is shared.
+                    copied = value.copy() if value is not None else None
+                    if copied is not None and copied.grammar_stats is not None:
+                        copied.grammar_stats.is_cache_hit = False
+                    future.set_result(copied)
+                except Exception as exc:
+                    future.set_exception(exc)
+                self._release_abandoned_compile(future)
+
+    def _release_abandoned_compile(self, future):
+        with self._cache_lock:
+            entry = self._pending.get(future)
+            if entry is not None and entry[1]:
+                self._pending.pop(future)
+                self._pending_bytes -= entry[0]
 
     def initialize_vocab_mask_buffer(
         self,
@@ -216,7 +359,7 @@ class BaseGrammarBackend:
         return None
 
     def _not_supported(self, key_type: str, key_string: str) -> BaseGrammarObject:
-        logger.warning(f"Skip unsupported {key_type=}, {key_string=}")
+        logger.warning("Skip unsupported grammar type %s", key_type)
         return InvalidGrammarObject()
 
     @property
@@ -304,19 +447,146 @@ class BaseGrammarBackend:
     def get_cached_or_future_value(
         self, key: Tuple[str, str], require_reasoning: bool
     ) -> Tuple[BaseGrammarObject | Future[BaseGrammarObject], bool]:
-        value = self.cache.get(key)
-        if value:
+        if not self.use_cache_budget:
+            value = self.cache.get(key)
+            if value:
+                copied_value = value.copy()
+                copied_value.maybe_init_reasoning(require_reasoning)
+                return copied_value, True
+            return (
+                self.executor.submit(self._init_value_dispatch, key, require_reasoning),
+                False,
+            )
+        cache_key = self.cache_key(key, require_reasoning)
+        with self._cache_lock:
+            value = self.cache.get(cache_key)
+            if isinstance(value, InvalidGrammarObject) and (
+                time.monotonic() >= self._invalid_expirations.get(cache_key, 0)
+            ):
+                self._remove_cache_entry(cache_key)
+                value = None
+            if value is not None:
+                self.cache.move_to_end(cache_key)
+        if value is not None:
             copied_value = value.copy()
             copied_value.maybe_init_reasoning(require_reasoning)
             return copied_value, True
-        value = self.executor.submit(self._init_value_dispatch, key, require_reasoning)
-        return value, False
+        with self._cache_lock:
+            weight = self._key_size_bytes(cache_key)
+            if (
+                len(self._pending) >= self.max_pending_compiles
+                or self._pending_bytes + weight > self.max_pending_bytes
+            ):
+                future = Future()
+                future.set_result(
+                    InvalidGrammarObject(
+                        "Grammar compilation capacity exhausted; retry later",
+                        status_code=503,
+                        error_type="service_unavailable_error",
+                    )
+                )
+            else:
+                future = Future()
+                flight_key = (self._cache_generation, cache_key)
+                flight = self._inflight.get(flight_key)
+                is_new = flight is None
+                if is_new:
+                    source = self.executor.submit(
+                        self._run_compile, flight_key, key[:2], require_reasoning
+                    )
+                    flight = self._inflight[flight_key] = (source, [])
+                source, waiters = flight
+                waiters.append(future)
+                future._grammar_source = source
+                future._grammar_flight_key = flight_key
+                if source.running():
+                    future.set_running_or_notify_cancel()
+                self._pending[future] = (weight, False)
+                self._pending_bytes += weight
+                if is_new:
+                    source.add_done_callback(
+                        lambda completed, token=flight_key: self._complete_compile(
+                            token, completed
+                        )
+                    )
+            future._grammar_cache_generation = self._cache_generation
+        return future, False
 
-    def set_cache(self, key: Tuple[str, str], value: BaseGrammarObject):
-        self.cache[key] = value
+    def set_cache(
+        self,
+        key: tuple,
+        value: BaseGrammarObject,
+        require_reasoning: Optional[bool] = None,
+        *,
+        future: Optional[Future] = None,
+    ):
+        if not self.use_cache_budget:
+            self.cache[key] = value
+            return
+        if value is None:
+            return
+        if require_reasoning is None:
+            require_reasoning = getattr(value, "_kimik3_json_reasoning", False)
+        key = self.cache_key(key, require_reasoning)
+        retained = value.cache_size_bytes()
+        if not isinstance(retained, int) or retained < 0:
+            retained = sys.getsizeof(value)
+        weight = self._key_size_bytes(key) + retained
+        invalid = isinstance(value, InvalidGrammarObject)
+        with self._cache_lock:
+            if (
+                future is not None
+                and getattr(future, "_grammar_cache_generation", self._cache_generation)
+                != self._cache_generation
+            ):
+                return
+            self._remove_cache_entry(key)
+            if (
+                not self.cache_max_entries
+                or weight > self.cache_max_bytes
+                or (
+                    invalid
+                    and (
+                        value.status_code != 400
+                        or not self.invalid_cache_max_entries
+                        or not self.invalid_cache_ttl
+                        or weight > self.invalid_cache_max_bytes
+                    )
+                )
+            ):
+                return
+            self.cache[key] = value
+            self._cache_weights[key] = weight
+            self._cache_bytes += weight
+            if invalid:
+                self._invalid_cache_bytes += weight
+                self._invalid_expirations[key] = (
+                    time.monotonic() + self.invalid_cache_ttl
+                )
+                while (
+                    len(self._invalid_expirations) > self.invalid_cache_max_entries
+                    or self._invalid_cache_bytes > self.invalid_cache_max_bytes
+                ):
+                    self._remove_cache_entry(next(iter(self._invalid_expirations)))
+            while (
+                len(self.cache) > self.cache_max_entries
+                or self._cache_bytes > self.cache_max_bytes
+            ):
+                self._remove_cache_entry(next(iter(self.cache)))
 
     def reset(self):
-        self.cache.clear()
+        if not self.use_cache_budget:
+            self.cache.clear()
+            return
+        with self._cache_lock:
+            self._cache_generation += 1
+            self.cache.clear()
+            self._cache_weights.clear()
+            self._invalid_expirations.clear()
+            self._cache_bytes = self._invalid_cache_bytes = 0
+            for future in list(self._pending):
+                self.release_future(future)
+                future.cancel()
 
 
 def register_vocab_mask_buffer(
@@ -376,6 +646,10 @@ def create_grammar_backend(
     think_end_ids: Optional[List[int]] = None,
 ) -> Optional[BaseGrammarBackend]:
     name = get_exec().kernel.grammar_backend
+    if not grammar_cache_budget_enabled():
+        logger.info(
+            "Grammar cache/admission budgets apply to PP1; PP uses its existing cache path"
+        )
 
     # Custom grammar backend has the highest priority
     if name in GRAMMAR_BACKEND_REGISTRY:

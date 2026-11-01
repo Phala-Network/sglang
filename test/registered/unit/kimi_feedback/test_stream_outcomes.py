@@ -79,6 +79,11 @@ def test_failure_is_explicit_without_success_marker(case):
         "missing_choice": {"finish": "stop"}}[case]
     generation = Generation(**kwargs)
     wire, failure = run_case(generation, n=2 if case == "missing_choice" else 1)
+    if case == "empty":
+        from fastapi import HTTPException
+        assert isinstance(failure, HTTPException) and failure.status_code == 500
+        assert wire == "" and generation.closed == 1
+        return
     assert failure is None
     assert SECRET not in wire
     assert wire.count("data: [DONE]") == 1

@@ -32,7 +32,7 @@ class ThinkingMode(str, Enum):
 
 import jinja2
 import orjson
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 try:
     from mistral_common.exceptions import MistralCommonException
@@ -1550,8 +1550,9 @@ class OpenAIServingChat(OpenAIServingBase):
         # Match to_sampling_params: an explicit JSON constraint takes precedence
         # over auto tool grammar. Its string data must not be parsed as tools.
         # A non-strict json_schema stays unconstrained under the K3 renderer.
-        # Main's template JSON-answer grammar (GRAMMAR_AT_ANSWER) admits native
-        # calls instead of the answer, so tool extraction still reads it.
+        # Response templates keep main's rule instead: their JSON-answer grammar
+        # may admit native calls, and _response_parser_json_response_format
+        # above records when it does not.
         constrained_json = response_format is not None and (
             response_format.type == "json_object"
             or (
@@ -1562,11 +1563,19 @@ class OpenAIServingChat(OpenAIServingBase):
                 )
             )
         )
-        if (
-            constrained_json
-            and request._response_parser_grammar_start != GRAMMAR_AT_ANSWER
-        ):
-            return False
+        if constrained_json:
+            tool_detector = FunctionCallParser.ToolCallParserEnum.get(
+                self.tool_call_parser
+            )
+            response_template = isinstance(
+                getattr(self, "_reasoning_detector", None),
+                ResponseTemplateReasoningDetector,
+            ) or (
+                tool_detector is not None
+                and issubclass(tool_detector, ResponseTemplateToolDetector)
+            )
+            if not response_template:
+                return False
         if not self._effective_tools(request):
             # With no tools declared, tool_choice only holds its default and limits nothing.
             detector = FunctionCallParser.ToolCallParserEnum[self.tool_call_parser]
@@ -3185,13 +3194,15 @@ class OpenAIServingChat(OpenAIServingBase):
                     # to the normal chunk path, matching the non-stream behavior
                     # in tokenizer_manager._handle_abort_finish_reason.
                     if finish_reason_type == "abort" and isinstance(
-                        finish_reason.get("status_code"), HTTPStatus
-                    ):
-                        code = finish_reason["status_code"]
+                        finish_reason.get("status_code"), int
+                    ) and 400 <= finish_reason["status_code"] <= 599:
+                        code = int(finish_reason["status_code"])
+                        message = finish_reason.get("message", "Generation aborted.")
+                        error_type = finish_reason.get("err_type") or str(code)
+                        # Before output, _streaming_response_before_headers turns
+                        # this first SSE error into the HTTP status and type.
                         error = self.create_streaming_error_response(
-                            finish_reason.get("message", "Generation aborted."),
-                            code.name,
-                            code.value,
+                            message, error_type, code,
                         )
                         yield f"data: {error}\n\n"
                         error_aborted = True
@@ -3442,6 +3453,13 @@ class OpenAIServingChat(OpenAIServingBase):
             stream_error = self.create_streaming_error_response(
                 str(e), err_type="InternalServerError", status_code=500
             )
+        except HTTPException as e:
+            if not stream_started:
+                propagating_exception = True
+                raise
+            stream_error = self.create_streaming_error_response(
+                str(e.detail), getattr(e, "error_type", str(e.status_code)), e.status_code
+            )
         except _KimiK3ToolCallValidationError as e:
             if not stream_started:
                 propagating_exception = True
@@ -3453,15 +3471,21 @@ class OpenAIServingChat(OpenAIServingBase):
             if not stream_started:
                 propagating_exception = True
                 raise
-            stream_error = self.create_streaming_error_response(str(e))
-        except Exception:
+            stream_error = self.create_streaming_error_response(str(e), err_type=getattr(e, "error_type", "BadRequestError"))
+        except Exception as e:
+            if not stream_started:
+                propagating_exception = True
+                raise HTTPException(
+                    status_code=504 if isinstance(e, TimeoutError) else 500,
+                    detail="Chat stream generation failed.",
+                ) from None
             # Exception messages can contain generated text or request data.
             # A failed stream must be explicit, never a synthesized successful stop.
             if not error_aborted:
                 stream_error = self.create_streaming_error_response(
                     "Chat stream generation failed.",
-                    err_type="InternalServerError",
-                    status_code=500,
+                    err_type="TimeoutError" if isinstance(e, TimeoutError) else "InternalServerError",
+                    status_code=504 if isinstance(e, TimeoutError) else 500,
                 )
         except BaseException:
             # Preserve cancellation and GeneratorExit; neither permits more yields.
@@ -3501,7 +3525,7 @@ class OpenAIServingChat(OpenAIServingBase):
         try:
             ret = await self._first_generated_response(adapted_request, raw_request)
         except ValueError as e:
-            return self.create_error_response(str(e))
+            return self.create_error_response(str(e), err_type=getattr(e, "error_type", "BadRequestError"))
 
         if not isinstance(ret, list):
             ret = [ret]

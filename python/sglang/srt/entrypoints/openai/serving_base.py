@@ -13,6 +13,11 @@ import orjson
 from fastapi import HTTPException, Request
 from fastapi.responses import ORJSONResponse, StreamingResponse
 from PIL.Image import DecompressionBombError
+from jsonschema import Draft202012Validator, SchemaError
+
+from sglang.srt.constrained.json_schema_validation import (
+    UnsupportedJSONSchemaFeature, validate_xgrammar_json_schema,
+)
 
 from sglang.srt.entrypoints.openai.encoding_dsv32 import DS32EncodingError
 from sglang.srt.entrypoints.openai.protocol import ErrorResponse, OpenAIServingRequest
@@ -34,6 +39,7 @@ class GenerationStreamingResponse(StreamingResponse):
     def __init__(self, content, *, generation=None, **kwargs):
         super().__init__(content, **kwargs)
         self.generation = generation
+        self._closed = False
 
     async def __call__(self, scope, receive, send):
         try:
@@ -48,16 +54,24 @@ class GenerationStreamingResponse(StreamingResponse):
             # Release generation before Starlette runs delayed background tasks.
             await self._close_generators()
 
+    async def aclose(self):
+        """Release the events and the generation once, e.g. when an owner
+        drops the response before ASGI ever runs it."""
+        if self._closed:
+            return
+        self._closed = True
+        async with AsyncExitStack() as stack:
+            # Close events before generation, even if one close fails or
+            # streaming never starts (for example response.start fails).
+            if self.generation is not None:
+                stack.push_async_callback(self.generation.aclose)
+            stack.push_async_callback(self.body_iterator.aclose)
+
     async def _close_generators(self):
         # Starlette may cancel the stream's AnyIO scope on disconnect.
         # Shield awaited cleanup from that scope, then propagate cancellation.
         with anyio.CancelScope(shield=True):
-            async with AsyncExitStack() as stack:
-                # Close events before generation, even if one close fails or
-                # streaming never starts (for example response.start fails).
-                if self.generation is not None:
-                    stack.push_async_callback(self.generation.aclose)
-                stack.push_async_callback(self.body_iterator.aclose)
+            await self.aclose()
 
 
 # Base class for specific endpoint handlers
@@ -139,6 +153,10 @@ class OpenAIServingBase(ABC):
                 None, self._convert_to_internal_request, request, raw_request
             )
 
+            self._validate_active_json_constraint(
+                getattr(adapted_request, "sampling_params", None)
+            )
+
             if isinstance(adapted_request, (GenerateReqInput, EmbeddingReqInput)):
                 # Only set timing fields if adapted_request supports them
                 adapted_request.received_time = received_time
@@ -154,12 +172,12 @@ class OpenAIServingBase(ABC):
                 )
         except HTTPException as e:
             return self.create_error_response(
-                message=e.detail, err_type=str(e.status_code), status_code=e.status_code
+                message=e.detail, err_type=getattr(e, "error_type", str(e.status_code)), status_code=e.status_code
             )
         except (ValueError, DecompressionBombError) as e:
             return self.create_error_response(
                 message=str(e),
-                err_type="BadRequest",
+                err_type=getattr(e, "error_type", "BadRequest"),
                 status_code=400,
             )
         except DS32EncodingError as e:
@@ -170,12 +188,37 @@ class OpenAIServingBase(ABC):
                 status_code=400,
             )
         except Exception as e:
-            logger.exception(f"Error in request: {e}")
+            logger.error("Request failed (%s)", type(e).__name__)
             return self.create_error_response(
-                message=f"Internal server error: {str(e)}",
-                err_type="InternalServerError",
-                status_code=500,
+                message="Internal server error.",
+                err_type="TimeoutError" if isinstance(e, TimeoutError) else "InternalServerError",
+                status_code=504 if isinstance(e, TimeoutError) else 500,
             )
+
+    def _validate_active_json_constraint(self, sampling_params) -> None:
+        """Check only the selected K3 constraint, before scheduler submission."""
+        if (
+            getattr(self, "chat_encoding_spec", None) != "kimi_k3"
+            and getattr(self, "reasoning_parser", None) != "kimi_k3"
+        ):
+            return
+        params = sampling_params if isinstance(sampling_params, list) else [sampling_params]
+        for item in params:
+            if not isinstance(item, dict) or item.get("json_schema") is None:
+                continue
+            try:
+                raw = item["json_schema"]
+                schema = json.loads(raw) if isinstance(raw, str) else raw
+                Draft202012Validator.check_schema(schema)
+                validate_xgrammar_json_schema(schema)
+            except UnsupportedJSONSchemaFeature as e:
+                raise HTTPException(
+                    status_code=400, detail=f"Unsupported JSON schema constraint ({e.reason_code})."
+                ) from None
+            except (SchemaError, json.JSONDecodeError, RecursionError):
+                raise HTTPException(
+                    status_code=400, detail="Invalid JSON schema constraint."
+                ) from None
 
     @abstractmethod
     def _request_id_prefix(self) -> str:
@@ -294,9 +337,19 @@ class OpenAIServingBase(ABC):
                 raw_request,
                 background=getattr(adapted_request, "background", False),
             )
+        except HTTPException as exc:
+            # Typed scheduler aborts (e.g. K3 grammar 503/504) before headers.
+            await generator.aclose()
+            return self.create_error_response(
+                str(exc.detail),
+                err_type=getattr(exc, "error_type", str(exc.status_code)),
+                status_code=exc.status_code,
+            )
         except ValueError as exc:
             await generator.aclose()
-            return self.create_error_response(str(exc))
+            return self.create_error_response(
+                str(exc), err_type=getattr(exc, "error_type", "BadRequestError")
+            )
         except BaseException:
             await generator.aclose()
             raise

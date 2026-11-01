@@ -1140,6 +1140,8 @@ class Req(ReqDllmMixin):
 
         # State indicating whether the reasoning phase has finished (only meaningful when require_reasoning is True)
         self._is_reasoning_over = False
+        self._reasoning_end_matchers = None
+        self._reasoning_end_match_lengths = None
         self.reasoning_tokens = 0
         self._think_end_matcher: Optional[TokenSequenceMatcher] = None
         self._think_end_match_len = 0
@@ -2252,12 +2254,34 @@ class Req(ReqDllmMixin):
         self.logprob_start_len = -1
         self.to_finish = FINISH_ABORT(error_msg, status_code, err_type)
 
-    def update_reasoning_tokens(self, token_id, think_end_ids):
+    def update_reasoning_tokens(
+        self, token_id, think_end_ids, reasoning_end_sequences=None,
+    ):
         if self._is_reasoning_over:
             return
 
         if not isinstance(token_id, list):
             token_id = [token_id]
+
+        # K3 can leave thinking directly for response/tools without THINK_CLOSE.
+        # Match complete native boundaries, not the bare channel-name tokens.
+        if reasoning_end_sequences is not None:
+            if self._reasoning_end_matchers is None:
+                sequences = list(reasoning_end_sequences)
+                self._reasoning_end_matchers = [
+                    TokenSequenceMatcher(sequence) for sequence in sequences
+                ]
+                self._reasoning_end_match_lengths = [0] * len(self._reasoning_end_matchers)
+            for position, token in enumerate(token_id):
+                for index, matcher in enumerate(self._reasoning_end_matchers):
+                    matched = matcher.advance(self._reasoning_end_match_lengths[index], token)
+                    self._reasoning_end_match_lengths[index] = matched
+                    if matched == len(matcher):
+                        self.reasoning_tokens += position + 1
+                        self._is_reasoning_over = True
+                        return
+            self.reasoning_tokens += len(token_id)
+            return
 
         if self._think_end_matcher is None:
             self._think_end_matcher = TokenSequenceMatcher(think_end_ids)

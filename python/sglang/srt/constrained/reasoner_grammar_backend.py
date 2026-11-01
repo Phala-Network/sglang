@@ -15,6 +15,7 @@
 
 import json
 import logging
+import sys
 from collections import OrderedDict
 from concurrent.futures import Future
 from typing import Callable, List, Optional, Sequence, Tuple, Union
@@ -94,12 +95,11 @@ class ReasonerGrammarObject(BaseGrammarObject):
         self._kimik3_boundary_next_tokens = ()
         self._kimik3_boundary_matches = (0, 0)
         self._kimik3_thinking_history = []
+        self._kimik3_json_reasoning = None
         self._kimik3_json_grammars = None
 
     def maybe_init_reasoning(self, reasoning: bool):
         if self._kimik3_json_grammars is not None:
-            # Cache entries are shared across requests with thinking on/off.
-            # Keep both immutable compiled templates, but never share matchers.
             template = self._kimik3_json_grammars[bool(reasoning)]
             if (
                 self.grammar.ctx is not template.ctx
@@ -109,9 +109,18 @@ class ReasonerGrammarObject(BaseGrammarObject):
             ):
                 self.grammar = template.copy()
             self.current_token = None
-            # copy() already carries immutable boundary metadata and the
-            # templates' stop overrides. Re-tokenizing every marker suffix or
-            # rebuilding another matcher here made cache hits millisecond-scale.
+        if self._kimik3_json_reasoning is not None:
+            if self._kimik3_json_reasoning != bool(reasoning):
+                raise ValueError(
+                    "Kimi K3 JSON grammar thinking mode does not match its cache key"
+                )
+            if (
+                self.current_token is not None
+                or self.grammar.accepted_tokens
+                or self.grammar.finished
+            ):
+                self.grammar = self.grammar.copy()
+            self.current_token = None
         self._matched_think_end_tokens = 0
         self._thinking_match_history.clear()
         self._kimik3_boundary_matches = (0,) * len(self._kimik3_boundary_matchers)
@@ -155,12 +164,12 @@ class ReasonerGrammarObject(BaseGrammarObject):
         self._kimik3_token_bytes = token_bytes
         markers = (
             (THINK_CLOSE, RESPONSE_OPEN)
-            if self._kimik3_json_grammars is not None
+            if self._kimik3_json_reasoning is not None
+            or self._kimik3_json_grammars is not None
             else (THINK_CLOSE, TOOLS_OPEN, RESPONSE_OPEN)
         )
         self._kimik3_boundary_matchers = tuple(
-            TokenSequenceMatcher(marker.encode())
-            for marker in markers
+            TokenSequenceMatcher(marker.encode()) for marker in markers
         )
         self._kimik3_boundary_matches = (0,) * len(self._kimik3_boundary_matchers)
         # Only encode the short ASCII markers' suffixes, never the vocabulary.
@@ -530,6 +539,7 @@ class ReasonerGrammarObject(BaseGrammarObject):
         new_obj._opening = list(self._opening)
         new_obj._opening_text = self._opening_text
         new_obj._generated = self._generated
+        new_obj._kimik3_json_reasoning = self._kimik3_json_reasoning
         new_obj._kimik3_json_grammars = self._kimik3_json_grammars
         if self._kimik3_token_bytes is not None:
             new_obj._kimik3_token_bytes = self._kimik3_token_bytes
@@ -543,6 +553,11 @@ class ReasonerGrammarObject(BaseGrammarObject):
                 new_obj.grammar.accept_token(token)
             new_obj.grammar.finished = self.grammar.finished
         return new_obj
+
+    def cache_size_bytes(self) -> int:
+        return sys.getsizeof(self) + (
+            self.grammar.cache_size_bytes() if self.grammar is not None else 0
+        )
 
     @property
     def finished(self):
@@ -641,6 +656,15 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
             self.grammar_backend.set_token_filter if self.enable_token_filter else None
         )
 
+    def cache_key(self, key: tuple, require_reasoning: bool) -> tuple:
+        if (
+            self.use_cache_budget
+            and key[0] == "json"
+            and self._kimik3_json_tokenizer is not None
+        ):
+            return (*key[:2], bool(require_reasoning))
+        return key[:2]
+
     def _get_think_excluded_token_ids(
         self,
         reasoning_parser: ReasoningParser,
@@ -722,18 +746,33 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
             self._budget_variant_keys.move_to_end(key)
         return super().get_cached_or_future_value(key, require_reasoning)
 
-    def set_cache(self, key: Tuple[str, str], value: BaseGrammarObject):
-        super().set_cache(key, value)
+    def set_cache(
+        self,
+        key: Tuple[str, str],
+        value: BaseGrammarObject,
+        require_reasoning: Optional[bool] = None,
+        *,
+        future: Optional[Future] = None,
+    ):
+        super().set_cache(key, value, require_reasoning, future=future)
         if _THINK_BUDGET_VARIANT not in key[0]:
             return
         self._budget_variant_keys[key] = None
         self._budget_variant_keys.move_to_end(key)
         while len(self._budget_variant_keys) > _BUDGET_VARIANT_CACHE_SIZE:
             evicted, _ = self._budget_variant_keys.popitem(last=False)
-            self.cache.pop(evicted, None)
+            if self.use_cache_budget:
+                # Budget variants are never K3 JSON keys, so the cache key
+                # does not depend on require_reasoning; keep byte accounting.
+                with self._cache_lock:
+                    self._remove_cache_entry(self.cache_key(evicted, False))
+            else:
+                self.cache.pop(evicted, None)
 
     def reset(self):
         super().reset()
+        if self.use_cache_budget:
+            self.grammar_backend.reset()
         self._budget_variant_keys.clear()
 
     def _init_value_dispatch(
@@ -785,6 +824,7 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
     def _init_kimik3_json(self, key, reasoning):
         from .json_schema_validation import (
             UnsupportedJSONSchemaFeature,
+            normalize_json_schema_resources,
             validate_xgrammar_json_schema,
         )
         from .kimik3_json_schema import json_response_format
@@ -792,7 +832,9 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
 
         backend = self.grammar_backend
         if not isinstance(backend, XGrammarGrammarBackend):
-            return InvalidGrammarObject("Kimi K3 native JSON constraints require XGrammar")
+            return InvalidGrammarObject(
+                "Kimi K3 native JSON constraints require XGrammar"
+            )
         if not backend.any_whitespace:
             return InvalidGrammarObject(
                 "Kimi K3 native JSON requires any_whitespace=True; "
@@ -800,23 +842,37 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
             )
         try:
             schema = {} if key[1] == "$$ANY$$" else json.loads(key[1])
+            schema = normalize_json_schema_resources(schema)
             validate_xgrammar_json_schema(schema)
             templates = []
-            for thinking in (False, True):
+            modes = (bool(reasoning),) if self.use_cache_budget else (False, True)
+            for thinking in modes:
                 native_key = (
                     "structural_tag",
-                    json.dumps(json_response_format(
-                        schema, thinking, backend.max_whitespace_cnt
-                    )),
+                    json.dumps(
+                        json_response_format(
+                            schema, thinking, backend.max_whitespace_cnt
+                        )
+                    ),
                 )
                 grammar = backend._init_value_dispatch(native_key, False)
                 if grammar is None or isinstance(grammar, InvalidGrammarObject):
-                    return grammar or InvalidGrammarObject("Kimi K3 JSON compilation failed")
+                    return grammar or InvalidGrammarObject(
+                        "Kimi K3 JSON compilation failed",
+                        status_code=500,
+                        error_type="internal_server_error",
+                    )
                 templates.append(grammar)
-        except (ValueError, RuntimeError, UnsupportedJSONSchemaFeature) as exc:
+        except (ValueError, UnsupportedJSONSchemaFeature) as exc:
             # Do not put schema values or generated content into an error message.
             return InvalidGrammarObject(
                 f"Unable to compile Kimi K3 native JSON constraint ({type(exc).__name__})"
+            )
+        except RuntimeError as exc:
+            return InvalidGrammarObject(
+                f"Unable to compile Kimi K3 native JSON constraint ({type(exc).__name__})",
+                status_code=500,
+                error_type="internal_server_error",
             )
 
         tokenizer = self._kimik3_json_tokenizer
@@ -827,8 +883,16 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
         try:
             for template in templates:
                 template.set_stop_token_ids_before_decoding(sorted(stops))
-            obj = self._make_grammar_object(templates[bool(reasoning)].copy(), reasoning)
-            obj._kimik3_json_grammars = tuple(templates)
+            grammar = (
+                templates[0]
+                if self.use_cache_budget
+                else templates[bool(reasoning)].copy()
+            )
+            obj = self._make_grammar_object(grammar, reasoning)
+            if self.use_cache_budget:
+                obj._kimik3_json_reasoning = bool(reasoning)
+            else:
+                obj._kimik3_json_grammars = tuple(templates)
             metadata = self._kimik3_json_boundary_metadata
             if metadata is None:
                 obj._install_kimik3_boundary_metadata(tokenizer)
@@ -848,6 +912,8 @@ class ReasonerGrammarBackend(BaseGrammarBackend):
             obj.maybe_init_reasoning(reasoning)
         except (ValueError, RuntimeError) as exc:
             return InvalidGrammarObject(
-                f"Unable to initialize Kimi K3 native JSON constraint ({type(exc).__name__})"
+                f"Unable to initialize Kimi K3 native JSON constraint ({type(exc).__name__})",
+                status_code=500,
+                error_type="internal_server_error",
             )
         return obj

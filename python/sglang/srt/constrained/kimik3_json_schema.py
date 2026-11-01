@@ -5,6 +5,8 @@ matcher until one canonical think-close token sequence cannot constrain those
 transitions. This format keeps the matcher active from the first token.
 """
 
+from .json_schema_validation import normalize_json_schema_resources
+
 from sglang.srt.function_call.kimik3_format import (
     MESSAGE_CLOSE,
     RESPONSE_CLOSE,
@@ -17,6 +19,7 @@ from sglang.srt.function_call.kimik3_format import (
 
 
 def json_response_format(schema, thinking, max_whitespace_cnt=None):
+    schema = normalize_json_schema_resources(schema)
     def const(text):
         return {"type": "const_string", "value": text}
 

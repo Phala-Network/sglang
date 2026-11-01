@@ -985,6 +985,21 @@ class Scheduler(
                     reasoning_parser.detector.think_end_token,
                 )
 
+            if get_serving().reasoning_parser == "kimi_k3":
+                from sglang.srt.function_call.kimik3_format import (
+                    RESPONSE_OPEN,
+                    THINK_CLOSE,
+                    TOOLS_OPEN,
+                )
+
+                sequences = [
+                    self.tokenizer.encode(marker, add_special_tokens=False)
+                    for marker in (THINK_CLOSE, RESPONSE_OPEN, TOOLS_OPEN)
+                ]
+                if any(not sequence for sequence in sequences):
+                    raise ValueError("K3 reasoning boundaries could not be encoded")
+                self.model_config.reasoning_end_id_sequences = sequences
+
             selectable_tokens = getattr(
                 reasoning_parser.detector,
                 "request_selectable_think_end_tokens",

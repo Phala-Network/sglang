@@ -1,15 +1,10 @@
 """CPU-only unit tests for a host load-back that the host tier refused for good."""
 
-from sglang.test.ci.ci_register import register_cpu_ci
-
-register_cpu_ci(est_time=5, suite="base-a-test-cpu")
-
 import unittest
 from types import SimpleNamespace
 from unittest import mock
 
 import torch
-
 from sglang.srt.mem_cache.base_prefix_cache import MatchPrefixParams, MatchResult
 from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer
 from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
@@ -21,6 +16,9 @@ from sglang.srt.mem_cache.unified_cache.unified_tree_core_interface import (
     TreePathNodeInfo,
 )
 from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=5, suite="base-a-test-cpu")
 
 # root - 1 (device, Mamba state) - 2 (host) - 3 (host, Mamba state on host only)
 #                                        \- 4 (host)
@@ -244,6 +242,7 @@ class TestNoStorageLookupThroughRefusedNodes(unittest.TestCase):
         with mock.patch("sglang.srt.managers.scheduler.get_memory"):
             self.assertIsNone(self.scheduler._prefetch_kvcache(self.req))
         self.scheduler.tree_cache.prefetch_from_storage.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

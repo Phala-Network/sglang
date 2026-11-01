@@ -27,6 +27,9 @@ from sglang.srt.function_call.kimik3_format import (
     TOOLS_CLOSE,
     TOOLS_OPEN,
 )
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 
 @pytest.fixture(autouse=True, params=[0, 2])
@@ -35,8 +38,14 @@ def strict_level(request, monkeypatch):
 
 
 def _request(
-    native, *, stream, thinking, response_format=None, choice="auto",
-    reasoning_parser="kimi_k3", encoding_spec="kimi_k3",
+    native,
+    *,
+    stream,
+    thinking,
+    response_format=None,
+    choice="auto",
+    reasoning_parser="kimi_k3",
+    encoding_spec="kimi_k3",
 ):
     state = {"generated": 0, "closed": False}
     serving = object.__new__(module.OpenAIServingChat)
@@ -47,7 +56,9 @@ def _request(
     serving.reasoning_parser = reasoning_parser
     serving.chat_encoding_spec = encoding_spec
     # A template default must not override the request's thinking=False.
-    serving.template_manager = SimpleNamespace(force_reasoning=True, reasoning_config=None)
+    serving.template_manager = SimpleNamespace(
+        force_reasoning=True, reasoning_config=None
+    )
     serving._get_reasoning_from_request = lambda request: thinking
     serving._validate_request = lambda request: None
 
@@ -106,14 +117,21 @@ def _request(
     body = {
         "model": "synthetic",
         "messages": [{"role": "user", "content": "synthetic"}],
-        "tools": [{"type": "function", "function": {
-            "name": "fixture",
-            "strict": True,
-            "parameters": {
-                "type": "object", "properties": {"x": {"const": 7}},
-                "required": ["x"], "additionalProperties": False,
-            },
-        }}],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "fixture",
+                    "strict": True,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"x": {"const": 7}},
+                        "required": ["x"],
+                        "additionalProperties": False,
+                    },
+                },
+            }
+        ],
         "tool_choice": choice,
         "stream": stream,
     }
@@ -147,7 +165,9 @@ def _request(
 
 def _events(response):
     assert response.status_code == 200
-    data = [line[6:] for line in response.text.splitlines() if line.startswith("data: ")]
+    data = [
+        line[6:] for line in response.text.splitlines() if line.startswith("data: ")
+    ]
     assert data.count("[DONE]") == 1 and data[-1] == "[DONE]"
     events = [json.loads(item) for item in data[:-1]]
     assert not any("error" in event for event in events)
@@ -165,17 +185,34 @@ def _format(kind, strict=None):
 
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("thinking", [False, True])
-@pytest.mark.parametrize("kind,strict", [
-    ("json_object", None), ("json_schema", True), ("json_schema", None),
-])
+@pytest.mark.parametrize(
+    "kind,strict",
+    [
+        ("json_object", None),
+        ("json_schema", True),
+        ("json_schema", None),
+    ],
+)
 def test_auto_tools_do_not_reparse_constrained_json(stream, thinking, kind, strict):
-    value = {"text": " ".join((
-        RESPONSE_OPEN, RESPONSE_CLOSE, MESSAGE_CLOSE, TOOLS_OPEN, TOOLS_CLOSE,
-        THINK_CLOSE, 'escaped " and slash \\ and Unicode é',
-    ))}
+    value = {
+        "text": " ".join(
+            (
+                RESPONSE_OPEN,
+                RESPONSE_CLOSE,
+                MESSAGE_CLOSE,
+                TOOLS_OPEN,
+                TOOLS_CLOSE,
+                THINK_CLOSE,
+                'escaped " and slash \\ and Unicode é',
+            )
+        )
+    }
     native = (
-        ("reasoning" + THINK_CLOSE if thinking else "") + RESPONSE_OPEN
-        + json.dumps(value, ensure_ascii=False) + RESPONSE_CLOSE + MESSAGE_CLOSE
+        ("reasoning" + THINK_CLOSE if thinking else "")
+        + RESPONSE_OPEN
+        + json.dumps(value, ensure_ascii=False)
+        + RESPONSE_CLOSE
+        + MESSAGE_CLOSE
     )
     response, state = _request(
         native, stream=stream, thinking=thinking, response_format=_format(kind, strict)
@@ -184,11 +221,19 @@ def test_auto_tools_do_not_reparse_constrained_json(stream, thinking, kind, stri
     assert state["sampling_params"].get("json_schema") is not None
     assert state["sampling_params"].get("structural_tag") is None
     if stream:
-        choices = [choice for event in _events(response) for choice in event.get("choices", [])]
-        text = "".join(choice.get("delta", {}).get("content") or "" for choice in choices)
-        reasoning = "".join(choice.get("delta", {}).get("reasoning_content") or "" for choice in choices)
+        choices = [
+            choice for event in _events(response) for choice in event.get("choices", [])
+        ]
+        text = "".join(
+            choice.get("delta", {}).get("content") or "" for choice in choices
+        )
+        reasoning = "".join(
+            choice.get("delta", {}).get("reasoning_content") or "" for choice in choices
+        )
         assert not any(choice.get("delta", {}).get("tool_calls") for choice in choices)
-        assert [choice["finish_reason"] for choice in choices if choice.get("finish_reason")] == ["stop"]
+        assert [
+            choice["finish_reason"] for choice in choices if choice.get("finish_reason")
+        ] == ["stop"]
     else:
         choice = response.json()["choices"][0]
         text = choice["message"]["content"]
@@ -205,10 +250,14 @@ def test_auto_tools_do_not_reparse_constrained_json(stream, thinking, kind, stri
 @pytest.mark.parametrize("response_format", [None, _format("json_schema", False)])
 def test_plain_and_strict_false_keep_tool_parser(stream, thinking, response_format):
     native = (
-        ("reasoning" + THINK_CLOSE if thinking else "") + TOOLS_OPEN
+        ("reasoning" + THINK_CLOSE if thinking else "")
+        + TOOLS_OPEN
         + '<|open|>call tool="fixture" index="1"<|sep|>'
-        + '<|open|>argument key="x" type="number"<|sep|>7' + ARGUMENT_CLOSE
-        + CALL_CLOSE + TOOLS_CLOSE + MESSAGE_CLOSE
+        + '<|open|>argument key="x" type="number"<|sep|>7'
+        + ARGUMENT_CLOSE
+        + CALL_CLOSE
+        + TOOLS_CLOSE
+        + MESSAGE_CLOSE
     )
     response, state = _request(
         native, stream=stream, thinking=thinking, response_format=response_format
@@ -217,11 +266,23 @@ def test_plain_and_strict_false_keep_tool_parser(stream, thinking, response_form
     assert state["sampling_params"].get("json_schema") is None
     assert state["sampling_params"].get("structural_tag") is not None
     if stream:
-        choices = [choice for event in _events(response) for choice in event.get("choices", [])]
-        calls = [call for choice in choices for call in choice.get("delta", {}).get("tool_calls") or []]
+        choices = [
+            choice for event in _events(response) for choice in event.get("choices", [])
+        ]
+        calls = [
+            call
+            for choice in choices
+            for call in choice.get("delta", {}).get("tool_calls") or []
+        ]
         arguments = "".join(call["function"].get("arguments") or "" for call in calls)
-        assert [call["function"].get("name") for call in calls if call["function"].get("name")] == ["fixture"]
-        assert [choice["finish_reason"] for choice in choices if choice.get("finish_reason")] == ["tool_calls"]
+        assert [
+            call["function"].get("name")
+            for call in calls
+            if call["function"].get("name")
+        ] == ["fixture"]
+        assert [
+            choice["finish_reason"] for choice in choices if choice.get("finish_reason")
+        ] == ["tool_calls"]
     else:
         choice = response.json()["choices"][0]
         calls = choice["message"]["tool_calls"]
@@ -233,33 +294,52 @@ def test_plain_and_strict_false_keep_tool_parser(stream, thinking, response_form
 
 
 @pytest.mark.parametrize("stream", [False, True])
-@pytest.mark.parametrize("choice", ["required", {"type": "function", "function": {"name": "fixture"}}])
+@pytest.mark.parametrize(
+    "choice", ["required", {"type": "function", "function": {"name": "fixture"}}]
+)
 def test_required_json_conflict_is_rejected_before_generation(stream, choice):
     response, state = _request(
-        "unused", stream=stream, thinking=False,
-        response_format=_format("json_object"), choice=choice,
+        "unused",
+        stream=stream,
+        thinking=False,
+        response_format=_format("json_object"),
+        choice=choice,
     )
     assert response.status_code == 400
     assert state["generated"] == 0
 
 
 @pytest.mark.parametrize("stream", [False, True])
-@pytest.mark.parametrize("kind,strict", [
-    ("json_object", None), ("json_schema", True), ("json_schema", None),
-])
+@pytest.mark.parametrize(
+    "kind,strict",
+    [
+        ("json_object", None),
+        ("json_schema", True),
+        ("json_schema", None),
+    ],
+)
 def test_constrained_json_without_reasoning_parser(stream, kind, strict):
     value = {"text": TOOLS_OPEN + RESPONSE_CLOSE}
     response, state = _request(
-        json.dumps(value), stream=stream, thinking=False, reasoning_parser=None,
+        json.dumps(value),
+        stream=stream,
+        thinking=False,
+        reasoning_parser=None,
         response_format=_format(kind, strict),
     )
     assert response.status_code == 200
     assert state["sampling_params"].get("json_schema") is not None
     if stream:
-        choices = [choice for event in _events(response) for choice in event.get("choices", [])]
-        text = "".join(choice.get("delta", {}).get("content") or "" for choice in choices)
+        choices = [
+            choice for event in _events(response) for choice in event.get("choices", [])
+        ]
+        text = "".join(
+            choice.get("delta", {}).get("content") or "" for choice in choices
+        )
         assert not any(choice.get("delta", {}).get("tool_calls") for choice in choices)
-        assert [choice["finish_reason"] for choice in choices if choice.get("finish_reason")] == ["stop"]
+        assert [
+            choice["finish_reason"] for choice in choices if choice.get("finish_reason")
+        ] == ["stop"]
     else:
         choice = response.json()["choices"][0]
         text = choice["message"]["content"]
@@ -273,15 +353,23 @@ def test_constrained_json_without_reasoning_parser(stream, kind, strict):
 def test_strict_false_remains_constrained_without_k3_renderer(stream):
     value = {"text": TOOLS_OPEN + RESPONSE_CLOSE}
     response, state = _request(
-        json.dumps(value), stream=stream, thinking=False, reasoning_parser=None,
-        encoding_spec=None, response_format=_format("json_schema", False),
+        json.dumps(value),
+        stream=stream,
+        thinking=False,
+        reasoning_parser=None,
+        encoding_spec=None,
+        response_format=_format("json_schema", False),
     )
     assert response.status_code == 200
     assert state["sampling_params"].get("json_schema") is not None
     assert state["sampling_params"].get("structural_tag") is None
     if stream:
-        choices = [choice for event in _events(response) for choice in event.get("choices", [])]
-        text = "".join(choice.get("delta", {}).get("content") or "" for choice in choices)
+        choices = [
+            choice for event in _events(response) for choice in event.get("choices", [])
+        ]
+        text = "".join(
+            choice.get("delta", {}).get("content") or "" for choice in choices
+        )
         assert not any(choice.get("delta", {}).get("tool_calls") for choice in choices)
     else:
         choice = response.json()["choices"][0]
@@ -289,3 +377,11 @@ def test_strict_false_remains_constrained_without_k3_renderer(stream):
         assert not choice["message"].get("tool_calls")
     assert json.loads(text) == value
     assert state["closed"]
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

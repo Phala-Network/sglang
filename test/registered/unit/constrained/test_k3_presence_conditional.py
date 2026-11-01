@@ -3,6 +3,7 @@
 No production schemas or inference are used. An independent JSON Schema oracle
 checks every presence subset/order; unsupported conditions must still refuse.
 """
+
 import copy
 import itertools
 import json
@@ -15,6 +16,9 @@ from xgrammar.structural_tag import StructuralTag, TagFormat
 
 from sglang.srt.entrypoints.openai.protocol import Tool
 from sglang.srt.function_call import kimik3_structural_tag as k3
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 
 def conditional(trigger="a", targets=("b",)):
@@ -23,7 +27,8 @@ def conditional(trigger="a", targets=("b",)):
 
 def closed(**changes):
     return dict(
-        type="object", additionalProperties=False,
+        type="object",
+        additionalProperties=False,
         properties={key: {"type": "integer", "minimum": 1} for key in "cabd"},
         **changes,
     )
@@ -31,28 +36,45 @@ def closed(**changes):
 
 def build(schema):
     before = copy.deepcopy(schema)
-    result = k3._tool_arguments_format(Tool(type="function", function={
-        "name": "synthetic", "strict": True, "parameters": schema,
-    }))
+    result = k3._tool_arguments_format(
+        Tool(
+            type="function",
+            function={
+                "name": "synthetic",
+                "strict": True,
+                "parameters": schema,
+            },
+        )
+    )
     assert schema == before
     return result
 
 
 def compile_schema(schema):
     return xgr.GrammarCompiler(
-        xgr.TokenizerInfo(["x", "EOS"], stop_token_ids=1), max_threads=1,
-    ).compile_structural_tag(StructuralTag(
-        format=TagFormat(begin="[", end="]", content=build(schema)),
-    ))
+        xgr.TokenizerInfo(["x", "EOS"], stop_token_ids=1),
+        max_threads=1,
+    ).compile_structural_tag(
+        StructuralTag(
+            format=TagFormat(begin="[", end="]", content=build(schema)),
+        )
+    )
 
 
 def accepts(compiled, data):
     pieces = ["["]
     for key, value in data.items():
         kind = (
-            "json-string" if isinstance(value, str) else
-            "null" if value is None else "boolean" if isinstance(value, bool) else
-            "object" if isinstance(value, dict) else "array" if isinstance(value, list)
+            "json-string"
+            if isinstance(value, str)
+            else "null"
+            if value is None
+            else "boolean"
+            if isinstance(value, bool)
+            else "object"
+            if isinstance(value, dict)
+            else "array"
+            if isinstance(value, list)
             else "number"
         )
         pieces.append(
@@ -64,21 +86,26 @@ def accepts(compiled, data):
     return matcher.accept_string("".join(pieces) + "]") and matcher.is_completed()
 
 
-@pytest.mark.parametrize("changes,condition", [
-    ({}, conditional()),
-    ({}, conditional("c", ("a", "b"))),
-    ({"dependentRequired": {"c": ["d"], "a": ["b"]}}, conditional("c", ("a", "b"))),
-    ({"dependentRequired": {"a": ["a", "c", "c"], "c": ["d"]}}, conditional()),
-    ({"dependentRequired": {"b": ["c"]}, "required": ["a"]}, conditional()),
-    ({}, conditional("a", ("a",))),
-    ({}, conditional("a", ())),
-    ({}, conditional("missing", ("a",))),
-    ({}, conditional("a", ("missing",))),
-    ({"minProperties": 1}, conditional()),
-    ({"not": {"required": ["a", "b"]}}, conditional()),
-    ({"oneOf": [{"required": ["a"]}, {"required": ["c"]}]}, conditional()),
-])
-def test_native_conditionals_preserve_all_presence_subsets_and_orders(changes, condition):
+@pytest.mark.parametrize(
+    "changes,condition",
+    [
+        ({}, conditional()),
+        ({}, conditional("c", ("a", "b"))),
+        ({"dependentRequired": {"c": ["d"], "a": ["b"]}}, conditional("c", ("a", "b"))),
+        ({"dependentRequired": {"a": ["a", "c", "c"], "c": ["d"]}}, conditional()),
+        ({"dependentRequired": {"b": ["c"]}, "required": ["a"]}, conditional()),
+        ({}, conditional("a", ("a",))),
+        ({}, conditional("a", ())),
+        ({}, conditional("missing", ("a",))),
+        ({}, conditional("a", ("missing",))),
+        ({"minProperties": 1}, conditional()),
+        ({"not": {"required": ["a", "b"]}}, conditional()),
+        ({"oneOf": [{"required": ["a"]}, {"required": ["c"]}]}, conditional()),
+    ],
+)
+def test_native_conditionals_preserve_all_presence_subsets_and_orders(
+    changes, condition
+):
     schema = closed(**changes, **condition)
     compiled = compile_schema(schema)
     oracle = Draft202012Validator(schema)
@@ -91,11 +118,14 @@ def test_native_conditionals_preserve_all_presence_subsets_and_orders(changes, c
     assert not accepts(compiled, {"a": 1, "b": 1, "extra": 1})
 
 
-@pytest.mark.parametrize("dialect,validator", [
-    ("http://json-schema.org/draft-06/schema#", Draft6Validator),
-    ("http://json-schema.org/draft-07/schema#", Draft7Validator),
-    ("https://json-schema.org/draft/2020-12/schema", Draft202012Validator),
-])
+@pytest.mark.parametrize(
+    "dialect,validator",
+    [
+        ("http://json-schema.org/draft-06/schema#", Draft6Validator),
+        ("http://json-schema.org/draft-07/schema#", Draft7Validator),
+        ("https://json-schema.org/draft/2020-12/schema", Draft202012Validator),
+    ],
+)
 def test_condition_type_annotations_and_selected_dialect(dialect, validator):
     schema = closed(**conditional())
     schema["$schema"] = dialect
@@ -133,19 +163,29 @@ def test_draft4_remains_unsupported_at_root_and_referenced_resource():
 def test_resource_dialects_and_ref_rehoming_preserve_conditional_values():
     target = closed(**conditional())
     target["properties"]["b"] = {
-        "type": "object", "properties": {"inner": {"$ref": "#/$defs/Integer"}},
-        "required": ["inner"], "additionalProperties": False,
+        "type": "object",
+        "properties": {"inner": {"$ref": "#/$defs/Integer"}},
+        "required": ["inner"],
+        "additionalProperties": False,
     }
     # A modern resource lifts a root ref and a descendant value ref. Lowering
     # changes only root presence; extraction must preserve the value's scope.
-    schema = {"$ref": "#/$defs/Params", "$defs": {
-        "Params": target, "Integer": {"type": "integer", "minimum": 1},
-    }}
+    schema = {
+        "$ref": "#/$defs/Params",
+        "$defs": {
+            "Params": target,
+            "Integer": {"type": "integer", "minimum": 1},
+        },
+    }
     compiled = compile_schema(schema)
     oracle = Draft202012Validator(schema)
     for value in [
-        {}, {"a": 1}, {"b": {"inner": 1}}, {"a": 1, "b": {"inner": 1}},
-        {"a": 1, "b": {"inner": 0}}, {"a": 1, "b": {}},
+        {},
+        {"a": 1},
+        {"b": {"inner": 1}},
+        {"a": 1, "b": {"inner": 1}},
+        {"a": 1, "b": {"inner": 0}},
+        {"a": 1, "b": {}},
         {"a": 1, "b": {"inner": 1, "extra": 1}},
     ]:
         assert accepts(compiled, value) == oracle.is_valid(value), value
@@ -163,7 +203,9 @@ def test_resource_dialects_and_ref_rehoming_preserve_conditional_values():
 def test_conditional_dependency_and_ref_length_wrapper_combine_without_weakening():
     schema = closed(**conditional())
     schema["properties"]["b"] = {
-        "$ref": "#/$defs/Text", "minLength": 2, "maxLength": 3,
+        "$ref": "#/$defs/Text",
+        "minLength": 2,
+        "maxLength": 3,
     }
     schema["$defs"] = {
         "Text": {"allOf": [{"type": "string", "maxLength": 4}]},
@@ -219,6 +261,7 @@ def test_conditional_const_siblings_remain_assertions_in_actual_native_grammar()
 
 def test_ordinary_no_conditional_path_does_not_add_value_proof(monkeypatch):
     from sglang.srt.function_call import kimik3_root_constraints as proof
+
     original = proof.prove_value
     calls = []
 
@@ -242,9 +285,13 @@ def branch(label, trigger="a", targets=("b",)):
 
 
 def test_disjoint_oneof_branch_conditions_preserve_xor_and_siblings():
-    schema = {"type": "object", "oneOf": [
-        branch("left"), branch("right", "b", ("c",)),
-    ]}
+    schema = {
+        "type": "object",
+        "oneOf": [
+            branch("left"),
+            branch("right", "b", ("c",)),
+        ],
+    }
     compiled = compile_schema(schema)
     oracle = Draft202012Validator(schema)
     for label in ["left", "right", "unknown"]:
@@ -269,22 +316,25 @@ def test_empty_conditional_branch_does_not_widen_oneof():
     assert not accepts(compiled, {"kind": "right", "a": 1})
 
 
-@pytest.mark.parametrize("condition", [
-    {"if": {"required": ["a", "b"]}, "then": {"required": ["c"]}},
-    {"if": {"required": []}, "then": {"required": ["b"]}},
-    {"if": {"properties": {"a": {"const": 1}}}, "then": {"required": ["b"]}},
-    {"if": {"required": ["a"]}, "then": {"properties": {"b": {"const": 1}}}},
-    {"if": {"required": ["a"]}, "then": True},
-    {"if": True, "then": {"required": ["b"]}},
-    {"if": {"required": ["a"]}, "then": {"required": ["b"]}, "else": {}},
-    {"if": {"required": ["a"]}},
-    {"then": {"required": ["b"]}},
-    {"else": {"required": ["b"]}},
-    {"if": {"type": "string", "required": ["a"]}, "then": {"required": ["b"]}},
-    {"if": {"required": ["a", "a"]}, "then": {"required": ["b"]}},
-    {"if": {"required": "a"}, "then": {"required": ["b"]}},
-    {"if": {"required": ["a"]}, "then": {"required": ["b", "b"]}},
-])
+@pytest.mark.parametrize(
+    "condition",
+    [
+        {"if": {"required": ["a", "b"]}, "then": {"required": ["c"]}},
+        {"if": {"required": []}, "then": {"required": ["b"]}},
+        {"if": {"properties": {"a": {"const": 1}}}, "then": {"required": ["b"]}},
+        {"if": {"required": ["a"]}, "then": {"properties": {"b": {"const": 1}}}},
+        {"if": {"required": ["a"]}, "then": True},
+        {"if": True, "then": {"required": ["b"]}},
+        {"if": {"required": ["a"]}, "then": {"required": ["b"]}, "else": {}},
+        {"if": {"required": ["a"]}},
+        {"then": {"required": ["b"]}},
+        {"else": {"required": ["b"]}},
+        {"if": {"type": "string", "required": ["a"]}, "then": {"required": ["b"]}},
+        {"if": {"required": ["a", "a"]}, "then": {"required": ["b"]}},
+        {"if": {"required": "a"}, "then": {"required": ["b"]}},
+        {"if": {"required": ["a"]}, "then": {"required": ["b", "b"]}},
+    ],
+)
 def test_unproven_conditions_remain_explicit_refusals(condition):
     with pytest.raises(ValueError, match="conditional|presence"):
         build(closed(**condition))
@@ -296,14 +346,17 @@ def test_unproven_conditions_remain_explicit_refusals(condition):
         build({"oneOf": [left, branch("right")]})
 
 
-@pytest.mark.parametrize("changes", [
-    {"additionalProperties": True},
-    {"maxProperties": 2},
-    {"dependentRequired": []},
-    {"dependentRequired": {"a": "c"}},
-    {"dependentRequired": {"a": [1]}},
-    {"patternProperties": {"^a": {"type": "integer"}}},
-])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"additionalProperties": True},
+        {"maxProperties": 2},
+        {"dependentRequired": []},
+        {"dependentRequired": {"a": "c"}},
+        {"dependentRequired": {"a": [1]}},
+        {"patternProperties": {"^a": {"type": "integer"}}},
+    ],
+)
 def test_unsupported_siblings_are_not_lost(changes):
     schema = closed(**conditional())
     schema.update(changes)
@@ -320,14 +373,17 @@ def test_parent_oneof_intersection_and_native_capability_stay_guarded(monkeypatc
 
 
 def test_conditional_resource_limits_and_existing_edge_merge():
-    schema = closed(dependentRequired={"a": ["a", "c", "c"], "c": ["d"]}, **conditional())
+    schema = closed(
+        dependentRequired={"a": ["a", "c", "c"], "c": ["d"]}, **conditional()
+    )
     before = copy.deepcopy(schema)
     lowered = k3._lower_presence_conditional(schema)
     assert lowered["dependentRequired"] == {"a": ["a", "c", "b"], "c": ["d"]}
     assert schema == before
     names = [f"p{i}" for i in range(64)]
     schema = dict(
-        type="object", additionalProperties=False,
+        type="object",
+        additionalProperties=False,
         properties={key: {"type": "integer"} for key in names},
         dependentRequired={key: list(names) for key in names},
         **conditional("p0", ("p1",)),
@@ -351,3 +407,11 @@ def test_conditional_resource_limits_and_existing_edge_merge():
     schema = closed(**conditional(targets=tuple(f"p{i}" for i in range(65))))
     with pytest.raises(ValueError, match="resource_limit"):
         build(schema)
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

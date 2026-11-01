@@ -15,6 +15,9 @@ import torch.multiprocessing as mp
 from test_grammar_cache_budget import Backend, SizedGrammar, manager, request
 
 import sglang.srt.managers.schedule_batch as schedule_batch
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 
 class PPGroup:
@@ -214,3 +217,11 @@ def test_real_gloo_cache_and_error_asymmetry(tmp_path, tp, pp):
     )
     result = json.loads(metrics.read_text())
     assert all(r["pending"] == 0 for r in result["ranks"])
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

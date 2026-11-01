@@ -1,12 +1,13 @@
 """Generated strict-auto K3 grammar owns termination, including literal markers."""
 
 import json
+import sys
 from array import array
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-import test_serving_chat as serving_tests
 import torch
 from jsonschema import Draft202012Validator
 from test_kimik3_json_string import _text
@@ -19,8 +20,11 @@ from test_kimik3_reasoner_boundary import (
     _mask,
     _only_allowed,
     _rejects,
-    engine as _engine_fixture,
 )
+from test_kimik3_reasoner_boundary import engine as _engine_fixture
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "entrypoints" / "openai"))
+import test_serving_chat as serving_tests
 
 from sglang.srt.constrained.grammar_manager import GrammarManager
 from sglang.srt.constrained.reasoner_grammar_backend import (
@@ -305,3 +309,11 @@ def test_strict_auto_response_budget_keeps_completable_boundary_and_policy(engin
         _feed(clone, engine, tokens[count:])
         assert obj._is_generation() and clone._is_generation()
         assert torch.equal(_mask(obj, engine), _mask(clone, engine))
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

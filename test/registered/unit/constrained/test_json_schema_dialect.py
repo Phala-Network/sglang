@@ -4,16 +4,24 @@ import copy
 import importlib.util
 import json
 import os
-from pathlib import Path
 import sys
 import unittest
+from pathlib import Path
 from unittest.mock import patch
+
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 try:
     from sglang.srt.constrained import json_schema_dialect as dialects
     from sglang.srt.constrained.json_schema_validation import (
         UnsupportedJSONSchemaFeature,
+    )
+    from sglang.srt.constrained.json_schema_validation import (
         normalize_json_schema_resources as normalize,
+    )
+    from sglang.srt.constrained.json_schema_validation import (
         validate_xgrammar_json_schema as validate,
     )
 except ModuleNotFoundError:
@@ -54,7 +62,7 @@ def object_schema(**extra):
         properties={"v": {"type": "string", "minLength": 2}},
         required=["v"],
         additionalProperties=False,
-        **extra
+        **extra,
     )
 
 
@@ -79,10 +87,15 @@ class DialectNormalization(unittest.TestCase):
             self.assert_reason({"$schema": declaration}, "invalid_schema_dialect")
 
     def test_unavailable_dialect_and_no_retrieval(self):
-        with patch(
-            "urllib.request.urlopen", side_effect=AssertionError("network retrieval")
-        ), patch(
-            "socket.create_connection", side_effect=AssertionError("network retrieval")
+        with (
+            patch(
+                "urllib.request.urlopen",
+                side_effect=AssertionError("network retrieval"),
+            ),
+            patch(
+                "socket.create_connection",
+                side_effect=AssertionError("network retrieval"),
+            ),
         ):
             for uri in (
                 "https://example.invalid/private-meta",
@@ -372,6 +385,7 @@ class NativeDialectIntegration(unittest.TestCase):
     def test_actual_k3_helper_and_native_annotation_controls(self):
         import xgrammar as xgr
         from xgrammar.testing import _is_grammar_accept_string
+
         from sglang.srt.entrypoints.openai.protocol import Tool
         from sglang.srt.function_call.kimik3_structural_tag import (
             _tool_arguments_format,
@@ -483,7 +497,9 @@ class NativeDialectIntegration(unittest.TestCase):
 class ServingDialectIntegration(unittest.TestCase):
     def test_actual_serving_preflight_dialect_status_and_annotation_control(self):
         from types import SimpleNamespace
+
         from fastapi import HTTPException
+
         from sglang.srt.entrypoints.openai.serving_base import OpenAIServingBase
 
         serving = SimpleNamespace(chat_encoding_spec="kimi_k3")

@@ -567,8 +567,13 @@ def test_strict_argument_schema_preserves_root_over_local_definitions(definition
     # The extracted argument must still target the original root's integer,
     # never its own local string definition with the same name.
     grammar = _grammar([tool], tool_choice="required")
-    assert _accepts(grammar, _tools_section(_call("lookup", 1, _argument("nested", "array", "[1]"))))
-    assert not _accepts(grammar, _tools_section(_call("lookup", 1, _argument("nested", "array", '["bad"]'))))
+    assert _accepts(
+        grammar, _tools_section(_call("lookup", 1, _argument("nested", "array", "[1]")))
+    )
+    assert not _accepts(
+        grammar,
+        _tools_section(_call("lookup", 1, _argument("nested", "array", '["bad"]'))),
+    )
 
 
 @pytest.mark.parametrize(

@@ -1,17 +1,27 @@
 """CPU usage regressions: real Req and scheduler helper, no model execution."""
+
 import os
 from array import array
 from types import SimpleNamespace
 
 import pytest
 
+from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import maybe_stub_sgl_kernel
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 maybe_stub_sgl_kernel()
 
-from sglang.srt.function_call.kimik3_format import MESSAGE_CLOSE, RESPONSE_CLOSE, RESPONSE_OPEN, THINK_CLOSE, THINK_OPEN, TOOLS_OPEN
+from sglang.srt.function_call.kimik3_format import (
+    RESPONSE_OPEN,
+    THINK_CLOSE,
+    TOOLS_OPEN,
+)
 from sglang.srt.managers.schedule_batch import Req
-from sglang.srt.managers.scheduler_components.batch_result_processor import SchedulerBatchResultProcessor
+from sglang.srt.managers.scheduler_components.batch_result_processor import (
+    SchedulerBatchResultProcessor,
+)
 from sglang.srt.parser.reasoning_parser import KimiK3Detector
 from sglang.srt.sampling.sampling_params import (
     SamplingParams,
@@ -33,17 +43,26 @@ def make_req(tokenizer=None, cap=10000, stop=None, require=True):
     tokenizer = tokenizer or FakeTokenizer()
     params = SamplingParams(max_new_tokens=cap, stop=stop)
     params.normalize(tokenizer)
-    req = Req(rid="usage-cpu", origin_input_text="", origin_input_ids=array("q", [0]),
-              sampling_params=params, eos_token_ids=set(), vocab_size=1000000,
-              require_reasoning=require)
+    req = Req(
+        rid="usage-cpu",
+        origin_input_text="",
+        origin_input_ids=array("q", [0]),
+        sampling_params=params,
+        eos_token_ids=set(),
+        vocab_size=1000000,
+        require_reasoning=require,
+    )
     req.tokenizer = tokenizer
     return req
 
 
 def processor(sequences=None):
     obj = SchedulerBatchResultProcessor.__new__(SchedulerBatchResultProcessor)
-    object.__setattr__(obj, "model_config", SimpleNamespace(
-        think_end_ids=[90, 91], reasoning_end_id_sequences=sequences))
+    object.__setattr__(
+        obj,
+        "model_config",
+        SimpleNamespace(think_end_ids=[90, 91], reasoning_end_id_sequences=sequences),
+    )
     return obj
 
 
@@ -76,7 +95,7 @@ def test_k3_boundaries_across_batches(boundary, chunk_size):
     req, obj = make_req(), processor([[90, 91], [70, 71], [80, 81]])
     tokens = [65] + boundary + [66, 67]
     for start in range(0, len(tokens), chunk_size):
-        step(req, obj, tokens[start:start + chunk_size])
+        step(req, obj, tokens[start : start + chunk_size])
     assert req.reasoning_tokens == 3
     assert req._is_reasoning_over
 
@@ -109,7 +128,10 @@ def k3_tokenizer():
     if not path:
         pytest.skip("real K3 tokenizer directory not supplied")
     from transformers import AutoTokenizer
-    tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True, local_files_only=True)
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        path, trust_remote_code=True, local_files_only=True
+    )
     tokenizer.additional_stop_token_ids = None
     return tokenizer
 
@@ -123,12 +145,15 @@ def test_real_k3_tokenizer_boundaries(k3_tokenizer, marker, chunk_size):
     # Encode the whole native sequence, not independently concatenated words.
     native = prefix + marker + suffix
     tokens = encode(native)
-    boundary_end = next(i for i in range(1, len(tokens) + 1)
-                        if marker in k3_tokenizer.decode(tokens[:i], skip_special_tokens=False))
+    boundary_end = next(
+        i
+        for i in range(1, len(tokens) + 1)
+        if marker in k3_tokenizer.decode(tokens[:i], skip_special_tokens=False)
+    )
     req, obj = make_req(k3_tokenizer), processor(sequences)
     obj.model_config.think_end_ids = sequences[0]
     for start in range(0, len(tokens), chunk_size):
-        step(req, obj, tokens[start:start + chunk_size])
+        step(req, obj, tokens[start : start + chunk_size])
     assert req.reasoning_tokens == boundary_end
     assert req._is_reasoning_over
     parsed = KimiK3Detector(force_reasoning=True).detect_and_parse(native)
@@ -150,3 +175,9 @@ def test_literal_marker_matches_parser_boundary(k3_tokenizer):
     assert req.reasoning_tokens < len(req.output_ids)
 
 
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

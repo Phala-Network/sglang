@@ -842,3 +842,11 @@ def test_manager_native_boundary_fails_closed_on_unsupported_backend(engine):
         )
     finally:
         reset_context()
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

@@ -15,6 +15,9 @@ from sglang.srt.function_call.kimik3_format import (
     TOOLS_CLOSE,
     TOOLS_OPEN,
 )
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 ENCLOSING_MARKERS = (CALL_CLOSE, TOOLS_CLOSE, MESSAGE_CLOSE)
 
@@ -91,9 +94,9 @@ def test_marker_string_stream_nonstream_parity_at_every_split(marker, choice):
     assert json.loads(calls[0].parameters) == {"payload": value}
     expected = (normal, [c.model_dump() for c in calls])
     for split in range(len(text) + 1):
-        assert (
-            _stream(text, (text[:split], text[split:]), choice=choice) == expected
-        ), split
+        assert _stream(text, (text[:split], text[split:]), choice=choice) == expected, (
+            split
+        )
     assert _stream(text, text, choice=choice) == expected
 
 
@@ -325,3 +328,11 @@ def test_whitespace_between_complete_arguments_remains_valid():
     assert len(calls) == 1
     assert json.loads(calls[0].parameters) == {"a": "first", "b": 7}
     assert _stream(text, text) == ("", [call.model_dump() for call in calls])
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

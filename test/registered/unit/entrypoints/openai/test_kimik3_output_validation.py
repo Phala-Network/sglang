@@ -105,7 +105,9 @@ def _request(
     serving.tool_call_parser = parser
     serving.reasoning_parser = reasoning
     serving.chat_encoding_spec = "kimi_k3" if parser == "kimi_k3" else None
-    serving.template_manager = SimpleNamespace(force_reasoning=False, reasoning_config=None)
+    serving.template_manager = SimpleNamespace(
+        force_reasoning=False, reasoning_config=None
+    )
     serving._get_reasoning_from_request = lambda request: False
     serving._validate_request = lambda request: None
     serving._convert_to_internal_request = lambda request, raw: (
@@ -827,3 +829,11 @@ def test_other_parser_retains_existing_parameter_behavior(stream):
         assert _calls(events)
     else:
         assert response.json()["choices"][0]["message"]["tool_calls"]
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

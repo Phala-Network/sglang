@@ -3,7 +3,6 @@
 import datetime
 import json
 import os
-import time
 from collections import OrderedDict
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +22,9 @@ from sglang.srt.constrained.xgrammar_backend import XGrammarGrammarBackend
 from sglang.srt.distributed.parallel_state import GroupCoordinator
 from sglang.srt.parser.reasoning_parser import KimiK3Detector
 from sglang.srt.runtime_context import get_parallel
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 
 @pytest.mark.parametrize("pp_size", [1, 2])
@@ -226,3 +228,11 @@ def test_real_gloo_pp_preserves_cold_hot_cancel_timeout(tmp_path):
     )
     reports = json.loads(metrics.read_text())
     assert all(r["outcomes"] == reports[0]["outcomes"] for r in reports)
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

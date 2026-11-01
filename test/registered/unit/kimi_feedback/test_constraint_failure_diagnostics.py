@@ -7,6 +7,9 @@ from types import SimpleNamespace as NS
 from sglang.srt.function_call.kimik3_constraint_diagnostics import (
     constraint_failure_summary,
 )
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 
 def tool(name="private_tool", strict=False, schema=None):
@@ -136,3 +139,11 @@ def test_diagnostic_failure_never_changes_rejection(monkeypatch, caplog):
         if str(r.msg).startswith("Kimi constraint failure")
     ]
     assert messages == ["Kimi constraint failure metadata unavailable"]
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

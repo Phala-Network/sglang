@@ -12,8 +12,8 @@ from test_kimik3_reasoner_boundary import (
     _feed,
     _mask,
     _rejects,
-    engine as _engine_fixture,
 )
+from test_kimik3_reasoner_boundary import engine as _engine_fixture
 
 from sglang.srt.constrained.reasoner_grammar_backend import ReasonerGrammarBackend
 from sglang.srt.entrypoints.openai import encoding_k3
@@ -385,3 +385,11 @@ def test_marker_history_fails_closed_for_unqualified_encoder():
     ]
     with pytest.raises(ValueError, match="segmented tokenizer"):
         encoding_k3.apply_chat_template(tokenizer, marker, tokenize=False)
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

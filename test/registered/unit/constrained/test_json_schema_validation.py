@@ -87,7 +87,9 @@ class TestXGrammarJSONSchemaValidation(unittest.TestCase):
                     validate_xgrammar_json_schema(schema)
 
     def test_accepts_pattern_length_and_nonunique_arrays(self):
-        validate_xgrammar_json_schema({"type": "string", "pattern": "^[a-z]+$", "minLength": 2})
+        validate_xgrammar_json_schema(
+            {"type": "string", "pattern": "^[a-z]+$", "minLength": 2}
+        )
         validate_xgrammar_json_schema({"type": "array", "uniqueItems": False})
 
     def test_checks_nested_schema_without_walking_instance_data(self):

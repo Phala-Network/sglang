@@ -1,11 +1,11 @@
 """Cold compile results must not wait for unrelated native cache cleanup."""
 
 import threading
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
-from collections import OrderedDict
 
 from sglang.srt.constrained.base_grammar_backend import (
     BaseGrammarBackend,
@@ -15,6 +15,9 @@ from sglang.srt.constrained.base_grammar_backend import (
 from sglang.srt.constrained.grammar_manager import GrammarManager
 from sglang.srt.constrained.reasoner_grammar_backend import ReasonerGrammarBackend
 from sglang.srt.constrained.xgrammar_backend import XGrammarGrammarBackend
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 
 class StopCompile(BaseException):
@@ -153,13 +156,21 @@ def test_new_cold_work_waits_for_cleanup_instead_of_growing_failed_cache(backend
         slow = pool.submit(backend._compile, compiler.compile, "slow", gate)
         assert compiler.event("slow").wait(2)
         failed = pool.submit(
-            backend._compile, compiler.compile, "bad-first", None, RuntimeError("fixture")
+            backend._compile,
+            compiler.compile,
+            "bad-first",
+            None,
+            RuntimeError("fixture"),
         )
         try:
             with pytest.raises(RuntimeError, match="fixture"):
                 failed.result(0.5)
             later = pool.submit(
-                backend._compile, compiler.compile, "bad-next", None, RuntimeError("fixture")
+                backend._compile,
+                compiler.compile,
+                "bad-next",
+                None,
+                RuntimeError("fixture"),
             )
             assert not compiler.event("bad-next").wait(0.1)
             assert compiler.failed == {"bad-first"}
@@ -200,7 +211,9 @@ def test_compile_exceptions_always_release_cleanup_state(backend, error_type):
 
 
 @pytest.mark.parametrize("error_type", [RuntimeError, StopCompile])
-def test_clear_exception_wakes_next_compile_and_does_not_close_gate(backend, error_type):
+def test_clear_exception_wakes_next_compile_and_does_not_close_gate(
+    backend, error_type
+):
     compiler = backend.grammar_compiler
     gate = threading.Event()
     with ThreadPoolExecutor(max_workers=3) as pool:
@@ -235,7 +248,9 @@ def test_cleanup_error_preserves_original_compile_failure(
     compiler = backend.grammar_compiler
     compiler.clear_error = clear_error("cleanup fixture")
     with pytest.raises(compile_error, match="compile fixture"):
-        backend._compile(compiler.compile, "bad", None, compile_error("compile fixture"))
+        backend._compile(
+            compiler.compile, "bad", None, compile_error("compile fixture")
+        )
     assert not backend._active_native_compiles and not backend._native_clear_pending
     assert backend._compile(compiler.compile, "next") == "next"
     assert not compiler.completed and not compiler.failed
@@ -305,8 +320,10 @@ def test_gate_wait_rechecks_live_singleflight_waiters(
         outer.executor.shutdown(wait=True)
         assert compiler.event("later").is_set() == keep_one_waiter
         snapshot = outer.budget_snapshot()
-        assert snapshot["compiles_started"] == snapshot["compiles_finished"] == (
-            3 if keep_one_waiter else 2
+        assert (
+            snapshot["compiles_started"]
+            == snapshot["compiles_finished"]
+            == (3 if keep_one_waiter else 2)
         )
         assert snapshot["pending_requests"] == snapshot["inflight_compiles"] == 0
         assert compiler.clear_calls == (2 if keep_one_waiter else 1)
@@ -377,7 +394,9 @@ def test_already_abandoned_queue_item_skips_closed_gate_immediately(async_backen
     assert not backend._active_native_compiles and not backend._native_clear_pending
 
 
-def test_reset_during_active_compile_and_admission_wait_does_not_deadlock(async_backend):
+def test_reset_during_active_compile_and_admission_wait_does_not_deadlock(
+    async_backend,
+):
     backend = async_backend
     compiler = backend.grammar_compiler
     gate = backend.gates["slow"] = threading.Event()
@@ -392,7 +411,9 @@ def test_reset_during_active_compile_and_admission_wait_does_not_deadlock(async_
         reset = pool.submit(backend.reset)
         try:
             assert compiler.clear_entered.wait(2)
-            new, _ = backend.get_cached_or_future_value(("regex", "new-generation"), False)
+            new, _ = backend.get_cached_or_future_value(
+                ("regex", "new-generation"), False
+            )
         finally:
             gate.set()
         reset.result(2)
@@ -420,7 +441,9 @@ def test_cleanup_runtime_error_becomes_manager_500_and_next_request_recovers(
     backend._from_context = lambda ctx, key, stats: Value(key)
     key = (
         kind,
-        "{}" if kind == "json" else '{"format":{"type":"json_schema","json_schema":{}}}',
+        "{}"
+        if kind == "json"
+        else '{"format":{"type":"json_schema","json_schema":{}}}',
     )
     compiler.clear_error = RuntimeError("cleanup fixture")
     failed, _ = backend.get_cached_or_future_value(key, False)
@@ -490,14 +513,22 @@ def test_late_join_gets_new_flight_and_old_callback_preserves_its_owner(
         assert worker_gates[index].wait(5)
 
     def dispatch(key):
-        error = RuntimeError("new compile fixture") if key == "shared" and new_compile_fails else None
-        return Value(backend._compile(compiler.compile, key, backend.gates.get(key), error))
+        error = (
+            RuntimeError("new compile fixture")
+            if key == "shared" and new_compile_fails
+            else None
+        )
+        return Value(
+            backend._compile(compiler.compile, key, backend.gates.get(key), error)
+        )
 
     backend._run_compile = run
     backend.dispatch_regex = dispatch
     try:
         if skip_stage == "before_gate":
-            blockers = [backend.executor.submit(hold_worker, index) for index in range(2)]
+            blockers = [
+                backend.executor.submit(hold_worker, index) for index in range(2)
+            ]
             assert all(event.wait(2) for event in worker_entered)
         else:
             slow, _ = backend.get_cached_or_future_value(("regex", "slow"), False)
@@ -540,8 +571,10 @@ def test_late_join_gets_new_flight_and_old_callback_preserves_its_owner(
         backend.executor.shutdown(wait=True)
         snapshot = backend.budget_snapshot()
         assert snapshot["pending_requests"] == snapshot["inflight_compiles"] == 0
-        assert snapshot["compiles_started"] == snapshot["compiles_finished"] == (
-            1 if skip_stage == "before_gate" else 3
+        assert (
+            snapshot["compiles_started"]
+            == snapshot["compiles_finished"]
+            == (1 if skip_stage == "before_gate" else 3)
         )
         assert not hasattr(new._grammar_source, "_grammar_waiters")
     finally:
@@ -550,3 +583,11 @@ def test_late_join_gets_new_flight_and_old_callback_preserves_its_owner(
         slow_gate.set()
         for gate in worker_gates:
             gate.set()
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

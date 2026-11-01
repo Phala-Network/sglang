@@ -1075,9 +1075,10 @@ class ServingChatTestCase(CustomTestCase):
             ReasonerGrammarObject,
         )
         from sglang.srt.constrained.xgrammar_backend import XGrammarGrammarBackend
+        from sglang.srt.managers.io_struct import TokenizedGenerateReqInput
         from sglang.srt.managers.schedule_batch import Req
         from sglang.srt.managers.tokenizer_manager import TokenizerManager
-        from sglang.srt.parser.reasoning_parser import KimiK3Detector, ReasoningParser
+        from sglang.srt.parser.reasoning_parser import ReasoningParser
         from sglang.srt.sampling.sampling_params import SamplingParams
 
         self._configure_glm53_reasoning()
@@ -1170,6 +1171,7 @@ class ServingChatTestCase(CustomTestCase):
                 token_manager = SimpleNamespace(
                     preferred_sampling_params={},
                     sampling_params_class=SamplingParams,
+                    tokenized_generate_req_type=TokenizedGenerateReqInput,
                     tokenizer=tokenizer,
                     model_config=SimpleNamespace(vocab_size=len(vocab)),
                     rid_to_state={adapted.rid: SimpleNamespace(time_stats=Mock())},
@@ -1881,9 +1883,7 @@ class ServingChatTestCase(CustomTestCase):
             self.chat._qwen35_reasoning_effort_token_range(None, 16384),
             (384, 8192),
         )
-        self.assertIsNone(
-            self.chat._qwen35_reasoning_effort_token_range("none", 1024)
-        )
+        self.assertIsNone(self.chat._qwen35_reasoning_effort_token_range("none", 1024))
 
         self.tm.model_config.hf_config.model_type = "llama"
         self.assertIsNone(self.chat._qwen35_reasoning_effort_token_range("low", 1024))
@@ -5395,6 +5395,7 @@ class ServingChatTestCase(CustomTestCase):
                     async for chunk in self.chat._process_tool_call_stream(
                         index=0,
                         delta="<function=>",
+                        created=1,
                         parser_dict={},
                         content={"meta_info": {"id": "chatcmpl-test"}},
                         request=req,

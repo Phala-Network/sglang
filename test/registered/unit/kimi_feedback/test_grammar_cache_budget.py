@@ -4,11 +4,11 @@ import gc
 import threading
 import time
 import weakref
+from collections import OrderedDict
 from concurrent.futures import Future
 from types import SimpleNamespace
 
 import pytest
-from collections import OrderedDict
 
 import sglang.srt.managers.schedule_batch as schedule_batch
 from sglang.srt.constrained.base_grammar_backend import (
@@ -19,6 +19,9 @@ from sglang.srt.constrained.base_grammar_backend import (
 from sglang.srt.constrained.grammar_manager import GrammarManager
 from sglang.srt.constrained.reasoner_grammar_backend import ReasonerGrammarBackend
 from sglang.srt.managers.schedule_batch import Req
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 
 class SizedGrammar(BaseGrammarObject):
@@ -539,3 +542,11 @@ def test_real_native_active_matcher_survives_eviction_and_oversized_bypass():
     wrapper.reset()
     wrapper.executor.shutdown(wait=True)
     native.executor.shutdown(wait=True)
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

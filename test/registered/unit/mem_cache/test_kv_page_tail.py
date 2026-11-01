@@ -91,7 +91,10 @@ class TestKvPageTail(unittest.TestCase):
                 + list(range(8 * PAGE + 6, 9 * PAGE)),
             ),
             # verify rows: one ends on a page boundary, one crosses into a new page
-            ([(9, 60, 4), (10, 62, 2), (11, 0, 2)], list(range(11 * PAGE + 2, 12 * PAGE))),
+            (
+                [(9, 60, 4), (10, 62, 2), (11, 0, 2)],
+                list(range(11 * PAGE + 2, 12 * PAGE)),
+            ),
             # one-token decodes, and padded rows (-1)
             ([(12, 7, 1), (13, 63, 1)], list(range(12 * PAGE + 8, 13 * PAGE))),
         ]

@@ -314,7 +314,11 @@ class TestKDAPrefillGraph(CustomTestCase):
             with self.subTest(num_tokens=num_tokens):
                 meta, graph, out = self._capture(num_tokens=num_tokens, max_seqs=128)
                 cases = ([2], [3], [num_tokens - 1], [2, 1], [3, 2], [5, 9, 2])
-                for lens in (lens for lens in cases if sum(lens) < num_tokens or lens == [num_tokens - 1]):
+                for lens in (
+                    lens
+                    for lens in cases
+                    if sum(lens) < num_tokens or lens == [num_tokens - 1]
+                ):
                     self._check_replay(
                         meta,
                         graph,
@@ -344,7 +348,9 @@ class TestKDAPrefillGraph(CustomTestCase):
             with self.subTest(num_tokens=num_tokens, lens=lens):
                 stale["from"] = sum(lens)
                 with patch.object(kda_prefill_graph, "causal_conv1d_fn", conv):
-                    meta, graph, out = self._capture(num_tokens=num_tokens, max_seqs=128)
+                    meta, graph, out = self._capture(
+                        num_tokens=num_tokens, max_seqs=128
+                    )
                     batch = _batch(lens, [64] * len(lens))
                     for row in range(len(lens)):
                         self.conv_pool[row + 1].normal_()
@@ -356,10 +362,14 @@ class TestKDAPrefillGraph(CustomTestCase):
                     graph.replay()
                     torch.cuda.synchronize()
                 total = sum(lens)
-                self.assertTrue(bool(torch.isfinite(out[:, :total]).all()),
-                                "NaN past the batch reached a sequence's output")
-                self.assertTrue(bool(torch.isfinite(self.ssm_pool[1 : len(lens) + 1]).all()),
-                                "NaN past the batch reached a sequence's state")
+                self.assertTrue(
+                    bool(torch.isfinite(out[:, :total]).all()),
+                    "NaN past the batch reached a sequence's output",
+                )
+                self.assertTrue(
+                    bool(torch.isfinite(self.ssm_pool[1 : len(lens) + 1]).all()),
+                    "NaN past the batch reached a sequence's state",
+                )
 
     def test_non_finite_sequence_stays_in_its_rows(self):
         """A NaN-poisoned request must not poison the requests packed with it.

@@ -26,8 +26,7 @@ def finite_kda_inputs(*xs: torch.Tensor) -> tuple[torch.Tensor, ...]:
     output and NaN state. Its own rows are garbage either way.
     """
     return tuple(
-        torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).contiguous()
-        for x in xs
+        torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).contiguous() for x in xs
     )
 
 

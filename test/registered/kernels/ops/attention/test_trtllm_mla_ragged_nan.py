@@ -69,7 +69,13 @@ class TestTRTLLMMLARaggedNaN(CustomTestCase):
         return out
 
     def test_nan_request_stays_in_its_rows(self):
-        cases = (([1, 246], 1), ([5, 9], 1), ([37, 100, 5], 1), ([64, 64], 1), ([100, 37], 0))
+        cases = (
+            ([1, 246], 1),
+            ([5, 9], 1),
+            ([37, 100, 5], 1),
+            ([64, 64], 1),
+            ([100, 37], 0),
+        )
         for data_type in (torch.bfloat16, torch.float8_e4m3fn):
             for lens, nan_row in cases:
                 with self.subTest(data_type=data_type, lens=lens, nan_row=nan_row):

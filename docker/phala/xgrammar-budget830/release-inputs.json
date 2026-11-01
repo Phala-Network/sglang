@@ -70,7 +70,7 @@
     "asgi_cases_passed": 6,
     "fixture_commit": "ea320a4235a006adaa267fdb7820421bfd76850d",
     "final_test_commit": "4d8725fab7692dd3166b99e26d36a17a5b4f0dbc",
-    "final_test_review": "pending per source-preparation instruction",
+    "final_test_review": "approved by Schrodinger",
     "scope": "Isolated CPU component qualification; not final image, serving activation or O15 baseline replacement"
   }
 }

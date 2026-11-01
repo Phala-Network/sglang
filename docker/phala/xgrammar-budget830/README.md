@@ -59,8 +59,8 @@ repackage it. No future image digest exists yet.
 Mainline runtime/Python Kimi composition, fixture commits and dependency pins
 must be reviewed independently. In particular, the native artifact does not
 supply the unmerged engine changes. The fixture revisions are evidence references,
-not cherry-pick instructions. Native6113 and fixtureea320 were approved; final
-test-only4d8725 review was still pending when these pins were prepared.
+not cherry-pick instructions. Native6113, fixtureea320 and final test-only4d8725 are approved. These approvals
+do not approve the final-image composition.
 
 ## Qualification boundary
 

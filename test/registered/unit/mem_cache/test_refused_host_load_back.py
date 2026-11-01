@@ -214,10 +214,6 @@ class TestRefusedHostLoadBack(unittest.TestCase):
         self.assertFalse(controller.load_refused)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestNoStorageLookupThroughRefusedNodes(unittest.TestCase):
     """An L3 copy cannot replace a refused node's host value (insert_host keeps it),
     so a match cut back for a refusal does not send the scheduler to L3."""
@@ -248,3 +244,6 @@ class TestNoStorageLookupThroughRefusedNodes(unittest.TestCase):
         with mock.patch("sglang.srt.managers.scheduler.get_memory"):
             self.assertIsNone(self.scheduler._prefetch_kvcache(self.req))
         self.scheduler.tree_cache.prefetch_from_storage.assert_not_called()
+
+if __name__ == "__main__":
+    unittest.main()

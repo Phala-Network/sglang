@@ -354,6 +354,12 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
 
     @staticmethod
     def _compiler_error(exc):
+        detail = str(exc).rstrip()
+        if detail.endswith(
+            "Check failed: (!contexts.empty()) is false: "
+            "presence_unsatisfiable: no legal completion context"
+        ):
+            return InvalidGrammarObject("Structural tag constraints accept no values")
         return InvalidGrammarObject(
             f"Grammar compiler failed ({type(exc).__name__})",
             status_code=500,

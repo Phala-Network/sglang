@@ -4,6 +4,9 @@ from xgrammar.testing import _is_grammar_accept_string
 from sglang.srt.entrypoints.openai.protocol import Function, Tool
 from sglang.srt.function_call.function_call_parser import FunctionCallParser
 from sglang.srt.function_call.qwen3_coder_detector import Qwen3CoderDetector
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 
 def _tool():
@@ -104,3 +107,11 @@ def test_non_strict_required_uses_native_qwen_call_in_pinned_xgrammar():
     assert not _is_grammar_accept_string(
         grammar, '[{"name":"search_catalog","parameters":{"query":"Paris"}}]'
     )
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

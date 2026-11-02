@@ -8,8 +8,8 @@ from transformers import AutoTokenizer
 
 from sglang.srt.environ import envs
 from sglang.srt.utils.patch_tokenizer import (
-    _PadPaddingSideShim,
     _EncodePieceFastPathPatcher,
+    _PadPaddingSideShim,
     _SpecialTokensCachePatcher,
     decode_without_hf_kwargs,
     patch_tokenizer,
@@ -323,7 +323,7 @@ class TestEncodePieceFastPathPatcher(CustomTestCase):
             "\ud800",
             "\udfff",
             "paired \ud83d\ude00 and lone \ud83d",
-            "\x00\t\r\n\\\"",
+            '\x00\t\r\n\\"',
             *[f"{tok}prefix{tok}" for tok in specials[:8]],
         ):
             segments.extend((text, allow) for allow in (False, True))
@@ -372,7 +372,9 @@ class TestEncodePieceFastPathPatcher(CustomTestCase):
                             "function": {
                                 "name": "Bash",
                                 "arguments": json.dumps(
-                                    {"command": f'printf "中文 café 👩‍💻"; ls /tmp/{i}'},
+                                    {
+                                        "command": f'printf "中文 café 👩‍💻"; ls /tmp/{i}'
+                                    },
                                     ensure_ascii=False,
                                 ),
                             },
@@ -505,8 +507,7 @@ class TestEncodePieceFastPathBoundaries(unittest.TestCase):
             ("中文 👩\u200d💻 \ud800", False, False),
         ]
         cases += [
-            ("a" * size, False, size > 25_000)
-            for size in (24_999, 25_000, 25_001)
+            ("a" * size, False, size > 25_000) for size in (24_999, 25_000, 25_001)
         ]
         _EncodePieceFastPathPatcher.patch(tokenizer)
         try:

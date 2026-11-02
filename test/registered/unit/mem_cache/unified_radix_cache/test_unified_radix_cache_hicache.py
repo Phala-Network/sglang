@@ -884,9 +884,7 @@ class UnifiedRadixCacheHiCacheSuite(UnifiedRadixCacheHiCacheFixtures):
                     self.assertIsNotNone(older_swa_host)
 
                 # Device eviction leaves host-only nodes.
-                cache.evict(
-                    EvictParams(num_tokens=len(seq), swa_num_tokens=len(seq))
-                )
+                cache.evict(EvictParams(num_tokens=len(seq), swa_num_tokens=len(seq)))
                 for node in (older, leaf):
                     self.assertTrue(cache.tree_core.is_full_device_evicted(node))
 
@@ -908,7 +906,9 @@ class UnifiedRadixCacheHiCacheSuite(UnifiedRadixCacheHiCacheFixtures):
                 self._release_ongoing_load_back_locks(cache)
                 self.assertIsNotNone(node_device_value(cache, leaf, ComponentType.SWA))
                 if sparse:
-                    self.assertIsNone(node_device_value(cache, older, ComponentType.SWA))
+                    self.assertIsNone(
+                        node_device_value(cache, older, ComponentType.SWA)
+                    )
                 cache.sanity_check()
 
     def test_hicache_swa_sparse_backup_insert_end_on_older_node(self):

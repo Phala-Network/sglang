@@ -7,8 +7,8 @@ import importlib
 import importlib.metadata
 import io
 import json
-from pathlib import Path
 import shutil
+from pathlib import Path
 
 import sglang
 
@@ -61,7 +61,10 @@ with record.open("w", encoding="utf8", newline="") as stream:
 
 importlib.invalidate_caches()
 module = importlib.import_module("sglang.srt.configs.request_static_yarn")
-if Path(module.__file__).resolve() != (installed / "srt/configs/request_static_yarn.py").resolve():
+if (
+    Path(module.__file__).resolve()
+    != (installed / "srt/configs/request_static_yarn.py").resolve()
+):
     raise RuntimeError("YaRN module resolves outside the installed package")
 receipt = {
     "engine_commit": manifest["engine_commit"],

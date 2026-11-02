@@ -12,6 +12,9 @@ from sglang.test.test_utils import maybe_stub_sgl_kernel
 maybe_stub_sgl_kernel()
 
 from sglang.srt.entrypoints.openai.serving_chat import OpenAIServingChat  # noqa: E402
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 
 class TestStreamingResponseDisconnectCleanup(unittest.TestCase):

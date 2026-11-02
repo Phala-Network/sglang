@@ -84,8 +84,12 @@ class TestAbortRidMatching(CustomTestCase):
 
     def test_empty_and_nonindex_suffixes_are_not_targets(self):
         for request_rid, abort_rid in [
-            ("", ""), ("_0", ""), ("job_", "job"),
-            ("job_1x", "job"), ("job_1_2", "job"), ("job_١", "job"),
+            ("", ""),
+            ("_0", ""),
+            ("job_", "job"),
+            ("job_1x", "job"),
+            ("job_1_2", "job"),
+            ("job_١", "job"),
         ]:
             with self.subTest(request_rid=request_rid, abort_rid=abort_rid):
                 self.assertFalse(matches_abort_rid(request_rid, abort_rid))

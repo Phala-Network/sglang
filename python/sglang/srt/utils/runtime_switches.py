@@ -117,8 +117,7 @@ def prefill_decode_interval(configured: int) -> int:
         return interval
     _warn_once(
         f"prefill_decode_interval={value!r}",
-        "Ignoring SGLANG_PREFILL_DECODE_INTERVAL_OVERRIDE=%r: expected an "
-        "integer >= 0",
+        "Ignoring SGLANG_PREFILL_DECODE_INTERVAL_OVERRIDE=%r: expected an integer >= 0",
         value,
     )
     return configured
@@ -148,9 +147,7 @@ class RuntimeSwitchSync:
         # Every name: a rank may apply an update before its plugin registered the name.
         values = dict(update.values)
         agreed = _agreed or {}
-        changed = {
-            name: raw for name, raw in values.items() if agreed.get(name) != raw
-        }
+        changed = {name: raw for name, raw in values.items() if agreed.get(name) != raw}
         _agreed = {**agreed, **values}
         if changed:
             logger.warning("Runtime switches changed: %s", _format(changed))

@@ -98,7 +98,8 @@ class FanOutCommunicator(Generic[T]):
 
     def handle_recv(self, recv_obj: T):
         if self._correlate and (
-            self._nonce is None or getattr(recv_obj, "control_nonce", None) != self._nonce
+            self._nonce is None
+            or getattr(recv_obj, "control_nonce", None) != self._nonce
         ):
             return
         if (

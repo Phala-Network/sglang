@@ -1,4 +1,5 @@
 """Bake verified GGUF deltas into the installed, immutable YaRN release."""
+
 import base64
 import csv
 import hashlib
@@ -6,8 +7,8 @@ import importlib
 import importlib.metadata
 import io
 import json
-from pathlib import Path
 import shutil
+from pathlib import Path
 
 import sglang
 
@@ -79,7 +80,10 @@ for name, expected in manifest["candidate_yarn_sha256"].items():
     if digest(target, normalize=True) != expected:
         raise RuntimeError(f"Candidate YaRN source mismatch after GGUF install: {name}")
 policy = importlib.import_module("sglang.srt.configs.request_static_yarn")
-if Path(policy.__file__).resolve() != (installed / "srt/configs/request_static_yarn.py").resolve():
+if (
+    Path(policy.__file__).resolve()
+    != (installed / "srt/configs/request_static_yarn.py").resolve()
+):
     raise RuntimeError("YaRN policy is not imported from the installed package")
 receipt = {
     "engine_commit": manifest["engine_commit"],

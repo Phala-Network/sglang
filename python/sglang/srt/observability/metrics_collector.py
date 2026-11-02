@@ -2165,15 +2165,25 @@ class TokenizerMetricsCollector(_StatLoggerDIMixin):
             **labels, is_streaming="true" if stream else "false"
         ).observe(value)
 
-    _SIZE_BUCKETS = ((4096, "<4K"), (8192, "4-8K"), (16384, "8-16K"), (32768, "16-32K"),
-                     (65536, "32-64K"), (131072, "64-128K"))
+    _SIZE_BUCKETS = (
+        (4096, "<4K"),
+        (8192, "4-8K"),
+        (16384, "8-16K"),
+        (32768, "16-32K"),
+        (65536, "32-64K"),
+        (131072, "64-128K"),
+    )
 
     @classmethod
     def _size_bucket(cls, n: int) -> str:
         return next((name for bound, name in cls._SIZE_BUCKETS if n < bound), ">=128K")
 
     def observe_time_to_first_token_by_size(
-        self, labels: Dict[str, str], value: float, prompt_tokens: int, cached_tokens: int
+        self,
+        labels: Dict[str, str],
+        value: float,
+        prompt_tokens: int,
+        cached_tokens: int,
     ):
         self.histogram_time_to_first_token_by_size.labels(
             **labels,

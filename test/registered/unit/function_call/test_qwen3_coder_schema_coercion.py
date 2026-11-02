@@ -4,6 +4,9 @@ import pytest
 
 from sglang.srt.entrypoints.openai.protocol import Function, Tool
 from sglang.srt.function_call.qwen3_coder_detector import Qwen3CoderDetector
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 
 def _tool(name, properties, **parameter_overrides):
@@ -205,3 +208,11 @@ def test_top_level_oneof_parameter_lookup_preserves_local_defs():
     )
 
     assert json.loads(result.calls[0].parameters) == {"payload": 7}
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

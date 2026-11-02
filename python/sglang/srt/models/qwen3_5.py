@@ -2420,9 +2420,8 @@ class Qwen3_5ForConditionalGeneration(Qwen3VLForConditionalGeneration):
             self.config, "rope_scaling", {}
         )
         self.is_mrope_enabled = (
-            (not self.language_model_only or "request_static_factors" in rope_config)
-            and "mrope_section" in rope_config
-        )
+            not self.language_model_only or "request_static_factors" in rope_config
+        ) and "mrope_section" in rope_config
 
         self.deepstack_visual_indexes = (
             self.visual.deepstack_visual_indexes if self.visual is not None else []
@@ -2634,9 +2633,8 @@ class Qwen3_5MoeForConditionalGeneration(Qwen3VLForConditionalGeneration):
             self.config, "rope_scaling", {}
         )
         self.is_mrope_enabled = (
-            (not self.language_model_only or "request_static_factors" in rope_config)
-            and "mrope_section" in rope_config
-        )
+            not self.language_model_only or "request_static_factors" in rope_config
+        ) and "mrope_section" in rope_config
 
         self.deepstack_visual_indexes = (
             self.visual.deepstack_visual_indexes if self.visual is not None else []

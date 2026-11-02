@@ -1551,7 +1551,10 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
         self._apply_request_static_yarn_offsets(model_runner, batch, uniform=True)
 
     def _apply_request_static_yarn_offsets(self, model_runner, batch, *, uniform=False):
-        if getattr(model_runner.model_config, "request_static_yarn_config", None) is None:
+        if (
+            getattr(model_runner.model_config, "request_static_yarn_config", None)
+            is None
+        ):
             return
         num_tokens = self.mrope_positions.shape[-1]
         if not num_tokens:

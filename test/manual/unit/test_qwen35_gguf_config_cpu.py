@@ -11,7 +11,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-
 ROOT = Path(__file__).resolve().parents[3]
 SRT = ROOT / "python/sglang/srt"
 
@@ -278,8 +277,10 @@ class TestQwenGGUFConfig(unittest.TestCase):
         selected = []
         tokenizer = SimpleNamespace(chat_template="synthetic")
         processor = SimpleNamespace(tokenizer=tokenizer)
+
         def no_op(*args, **kwargs):
             return None
+
         load = source_function(
             "utils/hf_transformers/processor.py",
             "get_processor",
@@ -325,7 +326,8 @@ class TestQwenGGUFConfig(unittest.TestCase):
         text = Config(rope_parameters={"rope_type": "default"}, hidden_size=5120)
         config = Config(text_config=text)
         load = source_function(
-            "utils/hf_transformers/config.py", "get_config",
+            "utils/hf_transformers/config.py",
+            "get_config",
             {
                 "resolve_local_gguf_directory": lambda path: path,
                 "check_gguf_file": lambda path: True,
@@ -336,13 +338,21 @@ class TestQwenGGUFConfig(unittest.TestCase):
                 "PretrainedConfig": Config,
             },
         )
-        rope = {"rope_type": "yarn", "factor": 4.0,
-                "original_max_position_embeddings": 262144,
-                "rope_theta": 10000000, "partial_rotary_factor": 0.25,
-                "mrope_section": [11, 11, 10], "mrope_interleaved": True,
-                "request_static_factors": [1, 2, 4]}
-        result = load("model.gguf", False,
-                      model_override_args={"text_config": {"rope_parameters": rope}})
+        rope = {
+            "rope_type": "yarn",
+            "factor": 4.0,
+            "original_max_position_embeddings": 262144,
+            "rope_theta": 10000000,
+            "partial_rotary_factor": 0.25,
+            "mrope_section": [11, 11, 10],
+            "mrope_interleaved": True,
+            "request_static_factors": [1, 2, 4],
+        }
+        result = load(
+            "model.gguf",
+            False,
+            model_override_args={"text_config": {"rope_parameters": rope}},
+        )
         self.assertIs(result.text_config, text)
         self.assertEqual(result.text_config.hidden_size, 5120)
         self.assertEqual(result.text_config.rope_parameters, rope)
@@ -365,7 +375,9 @@ class TestQwenGGUFConfig(unittest.TestCase):
                 sampling_params=SimpleNamespace(
                     max_new_tokens=budget - 1, custom_params=None
                 ),
-                extra_key=None, rope_profile=None, multimodal_inputs=None,
+                extra_key=None,
+                rope_profile=None,
+                multimodal_inputs=None,
             )
             policy_module.admit_request_static_yarn(req, policy, 1048576)
             selected = req.rope_profile

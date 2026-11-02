@@ -9,8 +9,6 @@ from array import array
 from unittest.mock import patch
 
 import torch
-from sglang.test.kits.unified_radix_cache.config import CacheConfig
-from sglang.test.kits.unified_radix_cache.fixtures import build_fixture
 
 from sglang.srt.environ import envs
 from sglang.srt.managers.schedule_batch import Req
@@ -19,6 +17,8 @@ from sglang.srt.mem_cache.radix_cache import RadixKey
 from sglang.srt.mem_cache.unified_cache.components.base import ComponentType
 from sglang.srt.sampling.sampling_params import SamplingParams
 from sglang.test.ci.ci_register import register_cpu_ci
+from sglang.test.kits.unified_radix_cache.config import CacheConfig
+from sglang.test.kits.unified_radix_cache.fixtures import build_fixture
 from sglang.test.mem_cache_utils import finish_req
 
 register_cpu_ci(est_time=10, suite="base-a-test-cpu")
@@ -36,7 +36,10 @@ class TestMambaCheckpointPressure(unittest.TestCase):
             num_layers=2,
             full_attention_layer_ids=(0,),
         )
-        with patch("sglang.test.kits.unified_radix_cache.fixtures.get_device", return_value="cpu"):
+        with patch(
+            "sglang.test.kits.unified_radix_cache.fixtures.get_device",
+            return_value="cpu",
+        ):
             return build_fixture(cfg)
 
     def request(self, cache, pool, index):

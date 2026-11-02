@@ -881,6 +881,7 @@ class TestResubmitAfterCompletion(CustomTestCase):
 class TestRequestStateSummary(CustomTestCase):
     def test_server_info_exposes_local_counts_or_explicit_unavailable(self):
         from types import SimpleNamespace
+
         from sglang.srt.entrypoints import http_server
 
         tm = _make_tokenizer_manager(self)

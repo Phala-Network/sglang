@@ -1,4 +1,7 @@
 from sglang.srt.entrypoints.openai.usage_processor import UsageProcessor
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 
 def test_reasoning_tokens_use_openai_completion_details_shape():
@@ -11,9 +14,7 @@ def test_reasoning_tokens_use_openai_completion_details_shape():
     assert usage.reasoning_tokens == 17
     assert usage.completion_tokens_details is not None
     assert usage.completion_tokens_details.reasoning_tokens == 17
-    assert usage.model_dump()["completion_tokens_details"] == {
-        "reasoning_tokens": 17
-    }
+    assert usage.model_dump()["completion_tokens_details"] == {"reasoning_tokens": 17}
 
 
 def test_zero_reasoning_tokens_keep_completion_details_absent():
@@ -69,3 +70,11 @@ def test_streaming_usage_aggregates_reasoning_tokens_in_both_shapes():
     assert usage.reasoning_tokens == 18
     assert usage.completion_tokens_details is not None
     assert usage.completion_tokens_details.reasoning_tokens == 18
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

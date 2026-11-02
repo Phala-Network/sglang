@@ -1615,9 +1615,7 @@ class HybridReqToTokenPool(ReqToTokenPool):
                 self.enable_mamba_extra_buffer
                 and req.kv.mamba_ping_pong_track_buffer is None
             )
-            ping_pong_slots = (
-                self.mamba_initial_tracking_slots if need_ping_pong else 0
-            )
+            ping_pong_slots = self.mamba_initial_tracking_slots if need_ping_pong else 0
             slot_plan.append((req, need_main, ping_pong_slots))
             total_mamba_slots += int(need_main) + ping_pong_slots
 

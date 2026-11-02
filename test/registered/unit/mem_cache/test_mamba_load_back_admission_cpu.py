@@ -8,11 +8,23 @@ Run this file directly, through unittest/pytest, or with --baseline-root pointin
 to an unpatched checkout to reproduce the original failure as a control.
 """
 
-import ast, contextlib, dataclasses, json, logging
-import argparse, tempfile, unittest
+import argparse
+import ast
+import contextlib
+import dataclasses
+import json
+import logging
+import sys
+import tempfile
+import unittest
 from pathlib import Path
 from types import SimpleNamespace as NS
+
 import torch
+
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 SOURCE_ROOT = Path(__file__).resolve().parents[4] / "python/sglang/srt"
 BASELINE_ROOT = None
@@ -31,6 +43,10 @@ g = globals()
 logger = logging.getLogger(__name__)
 contextmanager = contextlib.contextmanager
 cast = lambda typ, value: value
+# Device-copy boundary only: allocation and admission methods remain real source.
+async_h2d = lambda values, *, dtype, device: torch.tensor(
+    values, dtype=dtype, device=device
+)
 
 
 class CT:
@@ -49,6 +65,7 @@ class PN:
 
 
 PoolName = PN
+PageInterleavePoolAllocator = type("PageInterleavePoolAllocator", (), {})
 
 
 class Phase:
@@ -141,6 +158,16 @@ def extract(path, cls=None, methods=None):
 
 
 def load(variant):
+    global \
+        HybridReqToTokenPool, \
+        MambaSlotAllocator, \
+        UnifiedRadixCache, \
+        MambaComponent, \
+        HybridCacheController, \
+        PrefillAdder, \
+        Scheduler, \
+        alloc_req_slots
+
     def p(f):
         root = VARIANT_ROOTS.get(
             variant, BASELINE_ROOT if variant == "baseline" else SOURCE_ROOT
@@ -165,12 +192,23 @@ def load(variant):
             "get_mamba_ping_pong_other_idx",
         ],
     )
-    extract(p("mem_cache/allocation.py"), "alloc_req_slots")
+    allocation = p("mem_cache/allocation.py")
+    if any(
+        getattr(node, "name", None) == "ensure_mamba_capacity"
+        for node in ast.parse(allocation.read_text()).body
+    ):
+        extract(allocation, "ensure_mamba_capacity")
+    extract(allocation, "alloc_req_slots")
     extract(p("mem_cache/base_prefix_cache.py"), "InitLoadBackParams")
     extract(
         p("mem_cache/unified_cache/components/mamba.py"),
         "MambaComponent",
-        ["prepare_load_back", "finalize_load_back", "build_hicache_transfers"],
+        [
+            "prepare_load_back",
+            "_alloc_request_state_slot",
+            "finalize_load_back",
+            "build_hicache_transfers",
+        ],
     )
     extract(
         p("mem_cache/hybrid_cache/hybrid_cache_controller.py"),
@@ -188,6 +226,16 @@ def load(variant):
     extract(
         p("managers/schedule_policy.py"), "PrefillAdder", ["add_one_req", "_lock_node"]
     )
+
+    # Bind the actual extracted objects explicitly for static name checking.
+    HybridReqToTokenPool = g["HybridReqToTokenPool"]
+    MambaSlotAllocator = g["MambaSlotAllocator"]
+    UnifiedRadixCache = g["UnifiedRadixCache"]
+    MambaComponent = g["MambaComponent"]
+    HybridCacheController = g["HybridCacheController"]
+    PrefillAdder = g["PrefillAdder"]
+    Scheduler = g["Scheduler"]
+    alloc_req_slots = g["alloc_req_slots"]
 
 
 class KV:
@@ -215,6 +263,7 @@ def make_req(name):
         output_ids=[],
         full_untruncated_fill_ids=list(range(128)),
         prefix_indices=torch.empty(0, dtype=torch.int64),
+        prefix_len=0,
         last_node=0,
         best_match_node=1,
         host_hit_length=64,
@@ -230,6 +279,7 @@ def fixture(free, previous=False, extra=True):
     pool.enable_mamba_extra_buffer = extra
     pool.enable_mamba_extra_buffer_lazy = False
     pool.mamba_ping_pong_track_buffer_size = 2
+    pool.mamba_initial_tracking_slots = 2 if extra else 0
     pool.mamba_ckpt_pool = None
     pool.mamba_allocator = MambaSlotAllocator(97, "cpu")
     pool.mamba_allocator.alloc(97 - free)
@@ -240,7 +290,8 @@ def fixture(free, previous=False, extra=True):
     pool.req_index_to_mamba_ping_pong_track_buffer_mapping = torch.zeros(
         (9, 2), dtype=torch.int64
     )
-    pool.mamba_pool = NS(replayssm_write_pos=None)
+    pool.device = "cpu"
+    pool.mamba_pool = NS(replayssm_write_pos=None, replayssm_spec_write_pos=None)
     chunk = make_req("chunk")
     chunk.kv.mamba_pool_idx = torch.tensor(1)
     chunk.kv.mamba_ping_pong_track_buffer = torch.tensor([2, 3])
@@ -255,6 +306,7 @@ def fixture(free, previous=False, extra=True):
     cache = UnifiedRadixCache.__new__(UnifiedRadixCache)
     cache.req_to_token_pool = pool
     cache.buffer_pipeline = None
+    cache.load_back_is_cache_owned = lambda: True
     cache.linker = None
     cache.load_back_threshold = 1
     cache.ongoing_load_back = {}
@@ -265,18 +317,20 @@ def fixture(free, previous=False, extra=True):
 
     def inc(node):
         cache.locks += 1
-        return NS(delta=0, to_dec_params=lambda: None)
+        return NS(delta=0, to_dec_params=lambda: NS())
 
     def dec(node, *args):
         cache.locks -= 1
 
     def inch(node):
         cache.host_locks += 1
-        return NS(to_dec_params=lambda: None)
+        return NS(to_dec_params=lambda: NS())
 
     def dech(node, *args):
         cache.host_locks -= 1
 
+    cache.lock = inc
+    cache.unlock = dec
     cache.inc_lock_ref = inc
     cache.dec_lock_ref = dec
     cache.inc_host_lock_ref = inch
@@ -292,8 +346,9 @@ def fixture(free, previous=False, extra=True):
     cd = NS(value=None, host_value=torch.tensor([9]))
     node = NS(id=1, component_data={CT.MAMBA: cd})
     tree = NS(
-        component_has_host_value_only=lambda node, ct: cd.value is None
-        and cd.host_value is not None,
+        component_has_host_value_only=lambda node, ct: (
+            cd.value is None and cd.host_value is not None
+        ),
         is_full_device_evicted=lambda node: True,
         empty_match_result=NS(device_indices=torch.empty(0, dtype=torch.int64)),
     )
@@ -341,7 +396,15 @@ def fixture(free, previous=False, extra=True):
     adder.per_req_token_overhead = 1
     adder.prefill_delayer_single_pass = None
     adder.dllm_config = None
-    adder._mamba_gap_budget_for_req = lambda r: 0
+    adder._mamba_gap_budget_for_req = lambda r, **kw: 0
+    adder._request_slot_reserve_for_req = lambda r: 0
+    adder.rem_mamba_slots = None
+    adder.kv_shard_scratch_spec = None
+    adder.page_size = 1
+    adder.rem_chunk_tokens = None
+    adder.memory_budget = NS(
+        load_back_needs_full_tokens=False, prepare_load_back=lambda **kw: True
+    )
     adder._select_prefill_admission = lambda req, **kw: NS(
         prefix_len=kw["host_hit_length"],
         extend_len=128 - kw["host_hit_length"],
@@ -572,7 +635,7 @@ if __name__ == "__main__":
         type=Path,
         help="optional unpatched sglang/srt directory for red/green replay",
     )
-    args = parser.parse_args()
+    args, test_args = parser.parse_known_args()
     SOURCE_ROOT = args.source_root.resolve()
     BASELINE_ROOT = args.baseline_root.resolve() if args.baseline_root else None
-    run_suite()
+    unittest.main(argv=[sys.argv[0], *test_args])

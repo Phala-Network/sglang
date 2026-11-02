@@ -125,7 +125,9 @@ class TestHybridReqToTokenPoolMambaAdmission(CustomTestCase):
         fresh.session = None
         fresh.to_finish = None
         scheduler = _scheduler(pool, cache)
-        self.assertFalse(Scheduler._ensure_mamba_admission_capacity(scheduler, fresh, []))
+        self.assertFalse(
+            Scheduler._ensure_mamba_admission_capacity(scheduler, fresh, [])
+        )
         free_rows = list(pool.free_slots)
         free_ids = pool.mamba_allocator.free_slots.clone()
         self.assertIsNone(pool.alloc([fresh]))
@@ -135,7 +137,9 @@ class TestHybridReqToTokenPoolMambaAdmission(CustomTestCase):
         self.assertIsNone(fresh.kv.mamba_pool_idx)
         self.assertIsNone(fresh.kv.mamba_ping_pong_track_buffer)
         cache._finish_write_through_ack(pins.pop())
-        self.assertTrue(Scheduler._ensure_mamba_admission_capacity(scheduler, fresh, []))
+        self.assertTrue(
+            Scheduler._ensure_mamba_admission_capacity(scheduler, fresh, [])
+        )
         self.assertIsNotNone(pool.alloc([fresh]))
         for req in active + [fresh]:
             pool.free_mamba_cache(req)
@@ -159,12 +163,18 @@ class TestHybridReqToTokenPoolMambaAdmission(CustomTestCase):
         scheduler = _scheduler(pool, tree_cache)
         for rid in ("device-cow", "host-loadback"):
             req = _req(rid)
-            self.assertTrue(Scheduler._ensure_mamba_admission_capacity(scheduler, req, selected))
+            self.assertTrue(
+                Scheduler._ensure_mamba_admission_capacity(scheduler, req, selected)
+            )
             # Both real paths consume exactly one working slot before pool.alloc.
             req.kv.mamba_pool_idx = pool.mamba_allocator.alloc(1)[0]
             selected.append(req)
         self.assertEqual(pool.mamba_allocator.available_size(), 4)
-        self.assertFalse(Scheduler._ensure_mamba_admission_capacity(scheduler, _req("third"), selected))
+        self.assertFalse(
+            Scheduler._ensure_mamba_admission_capacity(
+                scheduler, _req("third"), selected
+            )
+        )
         self.assertIsNotNone(pool.alloc(selected))
         self.assertEqual(pool.mamba_allocator.available_size(), 0)
         # Resume a chunk: its row and all three states are already owned.
@@ -174,7 +184,9 @@ class TestHybridReqToTokenPoolMambaAdmission(CustomTestCase):
         for req in selected:
             pool.free_mamba_cache(req)
             pool.free(req)
-        self.assertEqual(sorted(pool.mamba_allocator.free_slots.tolist()), list(range(1, 7)))
+        self.assertEqual(
+            sorted(pool.mamba_allocator.free_slots.tolist()), list(range(1, 7))
+        )
 
     def test_exact_fit_installs_main_and_ping_pong_slots(self):
         pool = _pool(mamba_size=3)

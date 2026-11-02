@@ -33,12 +33,14 @@ class TestWatchdogFailHard(CustomTestCase):
     @staticmethod
     def _run_once(raw, *, pyspy_side_effect=None):
         # First timestamp seeds watchdog_last_time; the second crosses timeout.
-        with patch.object(
-            watchdog_module.time, "perf_counter", side_effect=[0.0, 2.0]
-        ), patch.object(watchdog_module.time, "sleep"), patch.object(
-            watchdog_module,
-            "pyspy_dump_schedulers",
-            side_effect=pyspy_side_effect,
+        with (
+            patch.object(watchdog_module.time, "perf_counter", side_effect=[0.0, 2.0]),
+            patch.object(watchdog_module.time, "sleep"),
+            patch.object(
+                watchdog_module,
+                "pyspy_dump_schedulers",
+                side_effect=pyspy_side_effect,
+            ),
         ):
             raw._watchdog_once()
 
@@ -87,3 +89,9 @@ class TestWatchdogFailHard(CustomTestCase):
         raw.parent_process.wait.assert_not_called()
         raw.parent_process.kill.assert_not_called()
         dump_info.assert_called_once_with()
+
+
+if __name__ == "__main__":
+    import unittest
+
+    unittest.main()

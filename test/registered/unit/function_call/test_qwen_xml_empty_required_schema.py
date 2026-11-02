@@ -11,6 +11,9 @@ from xgrammar.testing import _is_grammar_accept_string
 from sglang.srt.entrypoints.openai.protocol import Tool, ToolChoice
 from sglang.srt.function_call.qwen3_coder_detector import Qwen3CoderDetector
 from sglang.srt.function_call.utils import normalize_json_schema_types
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 
 def tool(schema):
@@ -231,3 +234,11 @@ def test_typed_additional_ref_preserved_in_parser():
         call(parameter("count", "7")), [tool(schema)]
     )
     assert json.loads(parsed.calls[0].parameters) == {"count": 7}
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

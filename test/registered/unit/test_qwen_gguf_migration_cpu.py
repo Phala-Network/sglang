@@ -7,17 +7,17 @@ acceptance. Historical donors: 81881bd7c1, 39eedc17eb and 788a898375.
 """
 
 import ast
-from contextlib import nullcontext
 import glob
 import importlib.util
 import logging
 import os
-from pathlib import Path
 import re
 import sys
 import tempfile
-from types import SimpleNamespace
 import unittest
+from contextlib import nullcontext
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import gguf
@@ -25,6 +25,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 ROOT = Path(__file__).resolve().parents[3]
 SRT = ROOT / "python/sglang/srt"
@@ -485,6 +488,7 @@ class TestQwenGGUFLoadChain(unittest.TestCase):
             "Text", (torch.nn.Module,), {"load_weights": namespace["load_weights"]}
         )
         model = Text()
+        model.pooler = None
         model.config = config()
         model.quant_config = SimpleNamespace(get_name=lambda: "gguf")
         model.pp_group = SimpleNamespace(is_last_rank=True)
@@ -583,6 +587,8 @@ class TestQwenGGUFLoadChain(unittest.TestCase):
             {"load_weights": namespace["load_weights"]},
         )
         model = Model()
+        model.pooler = None
+        namespace["JointSchemaPooler"] = type("JointSchemaPooler", (), {})
         model.config = cfg.text_config
         model.pp_group = SimpleNamespace(is_last_rank=True)
 
@@ -662,6 +668,7 @@ class TestQwenGGUFLoadChain(unittest.TestCase):
         )
         param = torch.nn.Parameter(torch.zeros(1))
         model = SimpleNamespace(
+            pooler=None,
             config=SimpleNamespace(tie_word_embeddings=False),
             quant_config=SimpleNamespace(get_name=lambda: "fp8"),
             pp_group=SimpleNamespace(is_last_rank=True),
@@ -747,6 +754,9 @@ class TestQwenGGUFLoadChain(unittest.TestCase):
 
     def test_packed_gguf_type_binding_and_scalar_slot(self):
         namespace = base_namespace()
+        execute(
+            source_nodes("distributed/utils.py", {"get_group_rank_size"}), namespace
+        )
         namespace.update(
             BlockQuantScaleParameter=type("Block", (), {}),
             PerTensorScaleParameter=type("Scale", (), {}),
@@ -793,6 +803,7 @@ class TestQwenGGUFLoadChain(unittest.TestCase):
         packed.output_dim = 0
         packed.shard_id, packed.shard_id_map, packed.data_container = [], {}, []
         module.tp_size, module.tp_rank = 1, 0
+        module.tp_group = SimpleNamespace(rank_in_group=0, world_size=1)
         packed.weight_loader = lambda p, value, shard: namespace["weight_loader"](
             module, p, value, shard
         )

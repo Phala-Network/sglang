@@ -740,7 +740,10 @@ class DSparkWorkerV2(BaseSpecWorker):
                 # Finite until the draft first writes it: greedy rows still
                 # run the (discarded) sampled accept over it.
                 else alloc_step_logits(
-                    self.draft_model, max_bs=max_bs, gamma=self.gamma, device=self.device
+                    self.draft_model,
+                    max_bs=max_bs,
+                    gamma=self.gamma,
+                    device=self.device,
                 ).zero_()
             ),
         )

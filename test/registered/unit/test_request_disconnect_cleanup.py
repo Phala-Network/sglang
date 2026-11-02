@@ -14,6 +14,9 @@ from sglang.srt.entrypoints.request_disconnect import (
     await_response_or_disconnect,
     response_disconnect_watched,
 )
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 
 class Request:
@@ -228,7 +231,12 @@ class TestResponsesOwnership(unittest.IsolatedAsyncioTestCase):
         # so its finally block is observable even at this earliest send failure.
         await source.__anext__()
         events = serving.responses_stream_generator_non_harmony(
-            request, None, source, "model", None, None,
+            request,
+            None,
+            source,
+            "model",
+            None,
+            None,
             require_reasoning=False,
         )
 
@@ -274,8 +282,14 @@ class TestResponsesOwnership(unittest.IsolatedAsyncioTestCase):
                 closed.set()
 
         response = await serving.responses_full_generator(
-            SimpleNamespace(background=False), None, generation(), None,
-            "model", None, None, require_reasoning=False,
+            SimpleNamespace(background=False),
+            None,
+            generation(),
+            None,
+            "model",
+            None,
+            None,
+            require_reasoning=False,
         )
         self.assertEqual(response.status_code, 503)
         self.assertEqual(json.loads(response.body)["error"]["code"], 503)
@@ -294,10 +308,18 @@ class TestResponsesOwnership(unittest.IsolatedAsyncioTestCase):
             finally:
                 closed.set()
 
-        task = asyncio.create_task(serving.responses_full_generator(
-            SimpleNamespace(background=False), None, generation(), None,
-            "model", None, None, require_reasoning=False,
-        ))
+        task = asyncio.create_task(
+            serving.responses_full_generator(
+                SimpleNamespace(background=False),
+                None,
+                generation(),
+                None,
+                "model",
+                None,
+                None,
+                require_reasoning=False,
+            )
+        )
         await started.wait()
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):

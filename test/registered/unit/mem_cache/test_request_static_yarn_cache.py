@@ -5,8 +5,6 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-from sglang.test.kits.unified_radix_cache.config import CacheConfig
-from sglang.test.kits.unified_radix_cache.fixtures import build_fixture
 
 from sglang.srt.configs.request_static_yarn import (
     RequestStaticYarnConfig,
@@ -19,6 +17,11 @@ from sglang.srt.mem_cache.unified_cache.components.base import ComponentType
 from sglang.srt.model_executor.forward_batch_info import ForwardMode
 from sglang.srt.model_executor.model_runner import ModelRunner
 from sglang.srt.sampling.sampling_params import SamplingParams
+from sglang.test.ci.ci_register import register_cuda_ci
+from sglang.test.kits.unified_radix_cache.config import CacheConfig
+from sglang.test.kits.unified_radix_cache.fixtures import build_fixture
+
+register_cuda_ci(est_time=30, stage="base-a", runner_config="1-gpu-small")
 
 
 def state_tensors(pool, logical_indices):
@@ -206,3 +209,11 @@ def test_real_full_mamba_namespaces_deferred_cow_and_suffix_reuse():
             key_buffer[reused.device_indices[64:]] == req.rope_profile.factor + 16
         )
     cache.sanity_check()
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

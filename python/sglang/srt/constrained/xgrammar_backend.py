@@ -16,6 +16,9 @@
 import dataclasses
 import json
 import logging
+import sys
+import threading
+from contextlib import contextmanager
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
@@ -39,9 +42,11 @@ from sglang.srt.constrained.base_grammar_backend import (
 )
 from sglang.srt.constrained.json_schema_validation import (
     UnsupportedJSONSchemaFeature,
+    normalize_json_schema_resources,
     validate_xgrammar_json_schema,
 )
 from sglang.srt.constrained.utils import is_legacy_structural_tag
+from sglang.srt.environ import envs
 from sglang.srt.utils import is_hip
 from sglang.srt.utils.common import is_pin_memory_available
 
@@ -96,7 +101,6 @@ class XGrammarGrammar(BaseGrammarObject):
 
     def accept_token(self, token: int):
         if not self.is_terminated():
-            self.current_token = token
             accepted = self.matcher.accept_token(token)
             if not accepted:
                 # log for debugging
@@ -106,11 +110,36 @@ class XGrammarGrammar(BaseGrammarObject):
                     f"Key string: {self.key_string}"
                 )
             else:
+                self.current_token = token
                 self.accepted_tokens.append(token)
 
     def rollback(self, k: int):
+        if type(k) is not int or not 0 <= k <= len(self.accepted_tokens):
+            raise ValueError("Rollback requires an accepted-token count")
+        if not k:
+            return
         self.matcher.rollback(k)
-        self.accepted_tokens = self.accepted_tokens[:-k]
+        del self.accepted_tokens[-k:]
+
+    def set_stop_token_ids_before_decoding(self, stop_token_ids: List[int]) -> None:
+        """Add request-local scheduler EOS tokens without changing compilation."""
+        if self.current_token is not None or self.accepted_tokens:
+            raise ValueError("Stop tokens must be configured before decoding")
+        previous = self.override_stop_tokens
+        if isinstance(previous, int):
+            previous = [previous]
+        token_ids = sorted(set(stop_token_ids) | set(previous or []))
+        if not token_ids or any(
+            type(token_id) is not int or not 0 <= token_id < self.vocab_size
+            for token_id in token_ids
+        ):
+            raise ValueError("Request stop tokens must be vocabulary-bounded IDs")
+        self.matcher = GrammarMatcher(
+            self.ctx,
+            max_rollback_tokens=MAX_ROLLBACK_TOKENS,
+            override_stop_tokens=token_ids,
+        )
+        self.override_stop_tokens = token_ids
 
     def is_terminated(self):
         return self.matcher.is_terminated()
@@ -163,6 +192,15 @@ class XGrammarGrammar(BaseGrammarObject):
             self.override_stop_tokens,
             self.key_string,
             grammar_stats,
+        )
+
+    def cache_size_bytes(self) -> int:
+        # Account on insertion, never on copy() or the per-token path. Shared
+        # native storage may be counted more than once; the estimate is conservative.
+        return (
+            sys.getsizeof(self)
+            + sys.getsizeof(self.key_string)
+            + self.ctx.memory_size_bytes
         )
 
     def try_jump_forward(self, tokenizer) -> Optional[Tuple[List[int], str]]:
@@ -243,12 +281,90 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
                 )
 
         self._tokenizer_info = tokenizer_info
-        self.grammar_compiler = GrammarCompiler(tokenizer_info=tokenizer_info)
+        if self.use_cache_budget:
+            self._compile_condition = threading.Condition()
+            self._compile_local = threading.local()
+            self._active_native_compiles = 0
+            self._native_clear_pending = False
+            native_limit = envs.SGLANG_XGRAMMAR_CACHE_MAX_BYTES.get()
+            native_threads = envs.SGLANG_XGRAMMAR_MAX_THREADS.get()
+            if native_limit < 0 or native_threads < 1:
+                raise ValueError(
+                    "XGrammar cache limit must be finite; compiler threads must be positive"
+                )
+            self.grammar_compiler = GrammarCompiler(
+                tokenizer_info=tokenizer_info,
+                cache_limit_bytes=native_limit,
+                max_threads=native_threads,
+            )
+        else:
+            self.grammar_compiler = GrammarCompiler(tokenizer_info=tokenizer_info)
         self._framing_compiler = self._new_framing_compiler(tokenizer_info)
         self.vocab_size = vocab_size
         self.override_stop_tokens = override_stop_tokens
         self.any_whitespace = any_whitespace
         self.max_whitespace_cnt = max_whitespace_cnt
+
+    @contextmanager
+    def _compile_context(self):
+        if not self.use_cache_budget or getattr(self._compile_local, "active", False):
+            yield
+            return
+        with self._compile_condition:
+            while self._native_clear_pending:
+                self._compile_condition.wait()
+            self._active_native_compiles += 1
+        self._compile_local.active = True
+        self._compile_local.native_called = False
+        self._compile_local.native_failed = False
+        try:
+            yield
+        finally:
+            failed = sys.exc_info()[0] is not None or self._compile_local.native_failed
+            self._compile_local.active = False
+            with self._compile_condition:
+                self._active_native_compiles -= 1
+                # Return completed peers promptly, but drain this batch before
+                # admitting more native work. Failed native futures carry zero
+                # cache charge, so an endless overlap must not defer cleanup.
+                self._native_clear_pending |= self._compile_local.native_called
+                if self._active_native_compiles == 0 and self._native_clear_pending:
+                    try:
+                        self.grammar_compiler.clear_cache()
+                    except BaseException as exc:
+                        if not failed:
+                            raise
+                        logger.error(
+                            "XGrammar cache cleanup failed (%s)", type(exc).__name__
+                        )
+                    finally:
+                        self._native_clear_pending = False
+                        self._compile_condition.notify_all()
+
+    def _compile(self, compile_fn, *args, **kwargs):
+        with self._compile_context():
+            if self.use_cache_budget:
+                self._compile_local.native_called = True
+            try:
+                return compile_fn(*args, **kwargs)
+            except BaseException:
+                if self.use_cache_budget:
+                    self._compile_local.native_failed = True
+                raise
+
+    @staticmethod
+    def _compiler_error(exc):
+        detail = str(exc).rstrip()
+        if detail.endswith(
+            "Check failed: (!contexts.empty()) is false: "
+            "presence_unsatisfiable: no legal completion context"
+        ):
+            return InvalidGrammarObject("Structural tag constraints accept no values")
+        return InvalidGrammarObject(
+            f"Grammar compiler failed ({type(exc).__name__})",
+            status_code=500,
+            error_type="internal_server_error",
+        )
 
     @property
     def is_support_token_filter(self):
@@ -385,31 +501,33 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
         try:
             if key_string == "$$ANY$$":
                 # Note: This builtin JSON grammar includes *all* valid JSON (including, for example, arrays at the root)
-                ctx = self.grammar_compiler.compile_builtin_json_grammar()
+                ctx = self._compile(self.grammar_compiler.compile_builtin_json_grammar)
             else:
-                # Inspect the decoded schema for semantic loss, then give the
-                # original string to XGrammar to preserve its parser behavior.
                 schema = json.loads(key_string)
+                schema = normalize_json_schema_resources(schema)
                 validate_xgrammar_json_schema(schema)
-                ctx = self.grammar_compiler.compile_json_schema(
-                    schema=key_string,
+                ctx = self._compile(
+                    self.grammar_compiler.compile_json_schema,
+                    schema=json.dumps(schema),
                     any_whitespace=self.any_whitespace,
                     max_whitespace_cnt=self.max_whitespace_cnt,
                 )
 
         except (
-            RuntimeError,
             UnsupportedJSONSchemaFeature,
             json.decoder.JSONDecodeError,
             UnicodeDecodeError,
         ) as e:
-            logger.error(f"Hit invalid json_schema: {key_string=}, {e=}")
-            return InvalidGrammarObject(str(e))
+            logger.error("Rejected JSON schema (%s)", type(e).__name__)
+            return InvalidGrammarObject(f"Invalid JSON schema ({type(e).__name__})")
+        except RuntimeError as e:
+            logger.error("JSON grammar compiler failed (%s)", type(e).__name__)
+            return self._compiler_error(e)
         return self._from_context(ctx, key_string, GrammarStats(dispatch_type="json"))
 
     def dispatch_ebnf(self, key_string: str) -> BaseGrammarObject:
         try:
-            ctx = self.grammar_compiler.compile_grammar(key_string)
+            ctx = self._compile(self.grammar_compiler.compile_grammar, key_string)
         except RuntimeError as e:
             logger.error(f"Hit invalid ebnf: {key_string=}, {e=}")
             return InvalidGrammarObject(str(e))
@@ -417,7 +535,7 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
 
     def dispatch_regex(self, key_string: str) -> BaseGrammarObject:
         try:
-            ctx = self.grammar_compiler.compile_regex(key_string)
+            ctx = self._compile(self.grammar_compiler.compile_regex, key_string)
         except RuntimeError as e:
             logger.error(f"Hit invalid regex: {key_string=}, {e=}")
             return InvalidGrammarObject(str(e))
@@ -441,17 +559,23 @@ class XGrammarGrammarBackend(BaseGrammarBackend):
                     tags, structural_tag["triggers"]
                 )
                 new_tag.format.at_least_one = structural_tag.get("at_least_one", False)
-                ctx = self.grammar_compiler.compile_structural_tag(new_tag)
+                ctx = self._compile(
+                    self.grammar_compiler.compile_structural_tag, new_tag
+                )
             else:
                 format_dict = structural_tag.get("format")
                 if isinstance(format_dict, dict):
                     self._sanitize_structural_format(format_dict)
                     structural_tag["format"] = format_dict
                     key_string = json.dumps(structural_tag)
-                ctx = self.grammar_compiler.compile_structural_tag(key_string)
-        except (RuntimeError, json.decoder.JSONDecodeError) as e:
-            logger.error(f"Hit invalid structural_tag: {key_string=}, {e=}")
-            return InvalidGrammarObject(str(e))
+                ctx = self._compile(
+                    self.grammar_compiler.compile_structural_tag, key_string
+                )
+        except json.decoder.JSONDecodeError:
+            return InvalidGrammarObject("Invalid structural tag JSON")
+        except RuntimeError as e:
+            logger.error("Structural grammar compiler failed (%s)", type(e).__name__)
+            return self._compiler_error(e)
         return self._from_context(
             ctx, key_string, GrammarStats(dispatch_type="structural_tag")
         )

@@ -1,0 +1,76 @@
+{
+  "schema": "phala.xgrammar.budget830.inputs.v1",
+  "status": "source-and-artifact-pin-candidate; final-image-composition-not-approved",
+  "version": "0.2.6rc2+phala.feedback.20261017.p6.budget830",
+  "release_repository": "https://github.com/Phala-Network/sglang",
+  "release_commit": "9d263bb062181b040edf85877607b2fc4e6cd9f3",
+  "upstream_repository": "https://github.com/mlc-ai/xgrammar",
+  "upstream_commit": "8d9679cc4b2b7eb314f7840fbf3989e2a989f880",
+  "patches": [
+    {
+      "repository_path": "docker/phala/kimi-protocol3/xgrammar/native-source.patch",
+      "sha256": "63a131c24a34f7ec359e8ee101f6e208d9892e33eb1e6bae53d226475af8bc15",
+      "tree": "ea22ec9b2000b52bdde2d1084db6c8105218babe"
+    },
+    {
+      "repository_path": "docker/phala/kimi-protocol3-ref5/xgrammar/p5-to-p6.patch",
+      "sha256": "958d3f1178fc37c961d98f8200932201f31d417053acbfdbecd079dfeed5d7de",
+      "tree": "908cc3af608ca4072717aece838d64273482b51e"
+    },
+    {
+      "local_path": "p6-to-budget830.patch",
+      "sha256": "e73c8933f84097c8adda859794c48dd3adbc18abc4bb1065caf0dfbb75d1ecc8",
+      "tree": "2df76d7b210a0747bb1978b29d258eaa63df13a7",
+      "unified_context": 0
+    }
+  ],
+  "native_candidate_commit": "6113e5fc8694c807b5e83790ec91f4fa68cf0624",
+  "upstream_backport": "801cc1e811361c7380c41ffa944bab304e13f980",
+  "serialization_version": "v21-phala-unordered-constraints-v3",
+  "submodule": {
+    "path": "3rdparty/dlpack",
+    "repository": "https://github.com/dmlc/dlpack.git",
+    "commit": "bbd2f4d32427e548797929af08cfe2a9cbb3cf12"
+  },
+  "wheel": {
+    "filename": "xgrammar-0.2.6rc2+phala.feedback.20261017.p6.budget830-cp312-cp312-linux_x86_64.whl",
+    "sha256": "aa7e6429d8e69aa8209498d4af06e5a8b46d78507a628e3aa09ae22cd4bceb62",
+    "native_member": "xgrammar/libxgrammar_bindings.so",
+    "native_sha256": "a512157b75e89d13feb6ed053c8eb0795aef11e988f9bda1dc8159ee237a59fa",
+    "tag": "cp312-cp312-linux_x86_64"
+  },
+  "build": {
+    "source_date_epoch": "1793567996",
+    "python": "3.12.3",
+    "compiler": "c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+    "cmake": "3.28.3",
+    "ninja": "1.11.1",
+    "packages": {
+      "scikit-build-core": "0.11.6",
+      "apache-tvm-ffi": "0.1.15.post0",
+      "packaging": "25.0",
+      "pathspec": "0.12.1",
+      "torch": "2.9.1+cpu"
+    },
+    "jobs": 4,
+    "cxxflags": "-ffile-prefix-map={source}=/src/xgrammar -flto=4",
+    "settings": {
+      "cmake.define.XGRAMMAR_BUILD_CXX_TESTS": "OFF",
+      "cmake.define.XGRAMMAR_ENABLE_CPPTRACE": "OFF",
+      "cmake.define.XGRAMMAR_CUDA_ARCHITECTURES": ""
+    },
+    "byte_identical_rebuild_verified": false
+  },
+  "qualification": {
+    "native_review": "6113e5fc approved",
+    "actual_image": "sha256:f40b046781cd2105bf65b9cf37065d761902a9f9f5fb6221d3bab95df61efdc2",
+    "api_cases_passed": 32,
+    "functional_cases_passed": 189,
+    "corrected_contract_cases_passed": 3,
+    "asgi_cases_passed": 6,
+    "fixture_commit": "ea320a4235a006adaa267fdb7820421bfd76850d",
+    "final_test_commit": "4d8725fab7692dd3166b99e26d36a17a5b4f0dbc",
+    "final_test_review": "approved by Schrodinger",
+    "scope": "Isolated CPU component qualification; not final image, serving activation or O15 baseline replacement"
+  }
+}

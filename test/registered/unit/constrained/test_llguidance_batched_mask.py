@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, patch
 import torch
 from llguidance import LLTokenizer, grammar_from
 
+from sglang.srt.constrained import llguidance_backend
 from sglang.srt.constrained.base_grammar_backend import GrammarRow
 from sglang.srt.constrained.llguidance_backend import GuidanceBackend, GuidanceGrammar
-from sglang.srt.constrained import llguidance_backend
 from sglang.srt.runtime_context import get_resources
 from sglang.test.ci.ci_register import register_cpu_ci
 
@@ -43,8 +43,15 @@ class TestLLGuidanceBatchedMask(unittest.TestCase):
         for supported in (False, True):
             with self.subTest(supported=supported):
                 raw = MagicMock()
-                with patch.object(llguidance_backend, "allocate_token_bitmask", return_value=raw), patch.object(
-                    llguidance_backend, "is_pin_memory_available", return_value=supported
+                with (
+                    patch.object(
+                        llguidance_backend, "allocate_token_bitmask", return_value=raw
+                    ),
+                    patch.object(
+                        llguidance_backend,
+                        "is_pin_memory_available",
+                        return_value=supported,
+                    ),
                 ):
                     actual = llguidance_backend._allocate_token_bitmask(2, 256, "cpu")
                 if supported:

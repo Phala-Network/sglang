@@ -6,10 +6,13 @@ GPU cached-vs-cold continuation coverage is in the upstream e2e companion.
 """
 
 import ast
+import unittest
 from pathlib import Path
 from types import SimpleNamespace as NS
-import unittest
 
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 SOURCE = (
     Path(__file__).resolve().parents[4]
@@ -79,17 +82,24 @@ class TestMambaSpecTrackBoundaryCPU(unittest.TestCase):
                             for position in range(cur - committed + 1, cur + 1)
                             if position % interval == 0
                         ]
-                        expected = (True, checkpoints[-1]) if checkpoints else (False, 0)
+                        expected = (
+                            (True, checkpoints[-1]) if checkpoints else (False, 0)
+                        )
                         self.assertEqual(
-                            self.boundary(cur, 4, [list(range(committed))], interval=interval),
+                            self.boundary(
+                                cur, 4, [list(range(committed))], interval=interval
+                            ),
                             expected,
                         )
 
     def test_absent_draft_result_does_not_track(self):
         result = NS(num_correct_drafts_per_req_cpu=None)
         actual = load_method(128)(
-            NS(tree_cache=NS(page_size=1)), NS(seqlen=129),
-            NS(spec_algorithm=NS(is_none=lambda: False)), result, 0,
+            NS(tree_cache=NS(page_size=1)),
+            NS(seqlen=129),
+            NS(spec_algorithm=NS(is_none=lambda: False)),
+            result,
+            0,
         )
         self.assertEqual(actual, (False, 0))
 
@@ -97,7 +107,9 @@ class TestMambaSpecTrackBoundaryCPU(unittest.TestCase):
         method = load_method(128)
         owner = NS(tree_cache=NS(page_size=1))
         req = NS(kv=NS(kv_committed_len=128), decode_batch_idx=2)
-        batch = NS(spec_algorithm=NS(is_none=lambda: True), mamba_decode_batch_idx_cpu=[2])
+        batch = NS(
+            spec_algorithm=NS(is_none=lambda: True), mamba_decode_batch_idx_cpu=[2]
+        )
         self.assertEqual(method(owner, req, batch, NS(), 0), (True, 128))
         req.decode_batch_idx = 3
         self.assertEqual(method(owner, req, batch, NS(), 0), (False, 0))

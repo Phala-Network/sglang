@@ -117,6 +117,7 @@ def _make_req(
     req.require_reasoning = False
     req.grammar = None
     req.grammar_key = None
+    req._grammar_future = None
     req.grammar_wait_ct = 0
     req.finished.return_value = False
     return req
@@ -292,7 +293,7 @@ class TestProcessReqWithGrammar(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(req.grammar_key, ("structural_tag", ""))
 
-    def test_cache_hit_returns_false(self):
+    def test_cache_hit_waits_for_rank_synchronization(self):
         """Cache hit should NOT add to grammar queue."""
         mgr = self._make_mgr()
         grammar_obj = MagicMock(spec=BaseGrammarObject)
@@ -304,9 +305,12 @@ class TestProcessReqWithGrammar(unittest.TestCase):
         req = _make_req(json_schema='{"type": "object"}')
         result = mgr.process_req_with_grammar(req)
 
-        self.assertFalse(result)
-        self.assertEqual(len(mgr.grammar_queue), 0)
+        self.assertTrue(result)
+        self.assertEqual(len(mgr.grammar_queue), 1)
+        self.assertIsInstance(req.grammar, Future)
+        self.assertEqual(mgr.get_ready_grammar_requests(), [req])
         self.assertIs(req.grammar, grammar_obj)
+        mgr.grammar_backend.set_cache.assert_not_called()
 
     def test_cache_hit_invalid_grammar_aborts(self):
         """Cache hit with InvalidGrammarObject should abort the request."""
@@ -317,7 +321,9 @@ class TestProcessReqWithGrammar(unittest.TestCase):
         req = _make_req(json_schema="bad")
         result = mgr.process_req_with_grammar(req)
 
-        self.assertFalse(result)
+        self.assertTrue(result)
+        req.set_finish_with_abort.assert_not_called()
+        self.assertEqual(mgr.get_ready_grammar_requests(), [req])
         req.set_finish_with_abort.assert_called_once()
         self.assertIn("bad schema", req.set_finish_with_abort.call_args[0][0])
 
@@ -391,6 +397,7 @@ class TestProcessReqWithGrammar(unittest.TestCase):
         )
         mgr.process_req_with_grammar(req)
 
+        self.assertEqual(mgr.get_ready_grammar_requests(), [req])
         self.assertEqual(req.grammar.min_think_tokens, 5)
         self.assertEqual(req.grammar.max_think_tokens, 7)
 
@@ -417,6 +424,7 @@ class TestProcessReqWithGrammar(unittest.TestCase):
         req.require_reasoning = True
         mgr.process_req_with_grammar(req)
 
+        self.assertEqual(mgr.get_ready_grammar_requests(), [req])
         self.assertEqual(req.grammar.think_end_ids, (8, 9))
 
         for token_id in (2, 3):
@@ -446,6 +454,8 @@ class TestProcessReqWithGrammar(unittest.TestCase):
                 )
                 req.require_reasoning = True
                 mgr.process_req_with_grammar(req)
+                # Cache hits also pass through the rank-ordered grammar queue.
+                self.assertEqual(mgr.get_ready_grammar_requests(), [req])
 
                 self.assertIs(req.grammar.reasoning_in_grammar, expected)
 
@@ -656,9 +666,12 @@ class TestGetReadyGrammarRequests(unittest.TestCase):
         self.assertIn("timed out", req.set_finish_with_abort.call_args[0][0])
         # Cache should store InvalidGrammarObject for timeout
         mgr.grammar_backend.set_cache.assert_called_once()
-        cached_key, cached_val = mgr.grammar_backend.set_cache.call_args[0]
+        cached_key, cached_val, reasoning = mgr.grammar_backend.set_cache.call_args[0]
         self.assertEqual(cached_key, ("json", "slow"))
         self.assertIsInstance(cached_val, InvalidGrammarObject)
+        self.assertEqual(cached_val.status_code, 504)
+        self.assertFalse(reasoning)
+        self.assertIs(mgr.grammar_backend.set_cache.call_args.kwargs["future"], future)
 
     def test_pending_future_stays_in_queue(self):
         """Futures that aren't done stay in the queue."""
@@ -752,10 +765,12 @@ class TestGetReadyGrammarRequests(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(req.grammar.min_think_tokens, 2)
         self.assertEqual(req.grammar.max_think_tokens, 4)
-        cached_key, cached_value = mgr.grammar_backend.set_cache.call_args[0]
+        cached_key, cached_value, reasoning = mgr.grammar_backend.set_cache.call_args[0]
         self.assertEqual(cached_key, ("json", "schema"))
         self.assertEqual(cached_value.min_think_tokens, -1)
         self.assertEqual(cached_value.max_think_tokens, 99)
+        self.assertFalse(reasoning)
+        self.assertIs(mgr.grammar_backend.set_cache.call_args.kwargs["future"], future)
 
     @patch("sglang.srt.constrained.grammar_manager.torch.distributed.all_gather_object")
     def test_multi_rank_sync_intersects_ready_unions_failed(self, mock_all_gather):
@@ -784,8 +799,8 @@ class TestGetReadyGrammarRequests(unittest.TestCase):
 
         # Simulate all_gather: rank 0 has {0} ready, rank 1 has {0,1} ready
         def fake_all_gather(output_list, _obj, group=None):  # noqa: ARG001
-            output_list[0] = ({0}, set())  # rank 0: only idx 0 ready
-            output_list[1] = ({0, 1}, set())  # rank 1: both ready
+            output_list[0] = ({0}, set(), {})  # rank 0: only idx 0 ready
+            output_list[1] = ({0, 1}, set(), {})  # rank 1: both ready
 
         mock_all_gather.side_effect = fake_all_gather
 
@@ -814,8 +829,8 @@ class TestGetReadyGrammarRequests(unittest.TestCase):
 
         # Simulate: rank 0 has no ready and idx 0 failed, rank 1 has no ready/failed
         def fake_all_gather(output_list, _obj, group=None):  # noqa: ARG001
-            output_list[0] = (set(), {0})  # rank 0: idx 0 timed out
-            output_list[1] = (set(), set())  # rank 1: nothing
+            output_list[0] = (set(), {0}, {})  # rank 0: idx 0 timed out
+            output_list[1] = (set(), set(), {})  # rank 1: nothing
 
         mock_all_gather.side_effect = fake_all_gather
 
@@ -979,8 +994,11 @@ class TestStrictReasoningPaths(unittest.TestCase):
         req = _make_req(regex="yes", custom_params=params)
         req.require_reasoning = True
         req.origin_input_ids = []
-        compiled = mgr.process_req_with_grammar(req)
-        if compiled:
+        queued = mgr.process_req_with_grammar(req)
+        # Cache hits also pass through the rank-ordered grammar queue, as a
+        # completed future marked as served from the cache.
+        compiled = queued and not getattr(req.grammar, "_grammar_from_cache", False)
+        if queued:
             mgr.get_ready_grammar_requests()
         return compiled, req.grammar
 

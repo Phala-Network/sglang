@@ -322,6 +322,9 @@ class MatchResult(NamedTuple):
     # Reusable prefix length in FULL's device-value scan, before node-boundary
     # or auxiliary constraints. None means no shorter prefix was reported.
     full_device_match_len: Optional[int] = None
+    # The match was cut back to its device prefix because its host hit passed
+    # nodes the host tier refused to load: no storage copy can serve that span.
+    host_hit_refused: bool = False
 
 
 def zero_match_result(

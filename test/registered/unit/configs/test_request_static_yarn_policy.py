@@ -2,11 +2,15 @@
 
 import ast
 import importlib.util
-from pathlib import Path
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 SOURCE = (
     Path(__file__).resolve().parents[4]
@@ -207,3 +211,11 @@ def test_feature_off_is_unchanged_and_override_not_silently_ignored():
     assert req.rope_profile is None
     with pytest.raises(ValueError, match="requires"):
         policy.admit_request_static_yarn(request(10, 1, explicit=2), None, 1000000)
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

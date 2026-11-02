@@ -5,6 +5,9 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from sglang.srt.function_call.utils import coerce_argument_to_schema
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 
 def _install_urlopen_guard(monkeypatch):
@@ -104,3 +107,11 @@ def test_local_references_coerce_without_retrieval(monkeypatch, schema):
 
     assert coerce_argument_to_schema("7", schema) == (7, True)
     assert urlopen_calls == []
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

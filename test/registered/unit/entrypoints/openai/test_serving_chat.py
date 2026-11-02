@@ -31,6 +31,9 @@ from transformers.utils.chat_template_utils import _compile_jinja_template
 from xgrammar import Grammar
 from xgrammar.testing import _is_grammar_accept_string
 
+from sglang.srt.constrained.reasoner_grammar_backend import (
+    KIMIK3_REQUIRED_NATIVE_BOUNDARY,
+)
 from sglang.srt.entrypoints.openai.chat_encoding import resolve_chat_encoding_spec
 from sglang.srt.entrypoints.openai.parallel_prompt_encode import encode_prompt_segments
 from sglang.srt.entrypoints.openai.protocol import (
@@ -45,15 +48,19 @@ from sglang.srt.entrypoints.openai.serving_chat import (
     OpenAIServingChat,
     normalize_tool_content,
 )
-from sglang.srt.environ import envs
+from sglang.srt.environ import ToolStrictLevel, envs
 from sglang.srt.function_call.function_call_parser import FunctionCallParser
-from sglang.srt.function_call.kimik3_format import TOOLS_CLOSE, TOOLS_OPEN
+from sglang.srt.function_call.kimik3_format import (
+    MESSAGE_CLOSE,
+    TOOLS_CLOSE,
+    TOOLS_OPEN,
+)
 from sglang.srt.managers.io_struct import GenerateReqInput
 from sglang.srt.parser.jinja_template_utils import (
     jinja_template_may_reorder_tool_results,
 )
 from sglang.srt.parser.python_chat_template import GLM53, install_python_chat_template
-from sglang.srt.parser.reasoning_parser import ReasoningParser
+from sglang.srt.parser.reasoning_parser import KimiK3Detector, ReasoningParser
 from sglang.srt.parser.response_template import (
     GRAMMAR_AFTER_REASONING,
     GRAMMAR_AT_ANSWER,
@@ -1068,6 +1075,7 @@ class ServingChatTestCase(CustomTestCase):
             ReasonerGrammarObject,
         )
         from sglang.srt.constrained.xgrammar_backend import XGrammarGrammarBackend
+        from sglang.srt.managers.io_struct import TokenizedGenerateReqInput
         from sglang.srt.managers.schedule_batch import Req
         from sglang.srt.managers.tokenizer_manager import TokenizerManager
         from sglang.srt.parser.reasoning_parser import ReasoningParser
@@ -1163,6 +1171,7 @@ class ServingChatTestCase(CustomTestCase):
                 token_manager = SimpleNamespace(
                     preferred_sampling_params={},
                     sampling_params_class=SamplingParams,
+                    tokenized_generate_req_type=TokenizedGenerateReqInput,
                     tokenizer=tokenizer,
                     model_config=SimpleNamespace(vocab_size=len(vocab)),
                     rid_to_state={adapted.rid: SimpleNamespace(time_stats=Mock())},
@@ -1874,9 +1883,7 @@ class ServingChatTestCase(CustomTestCase):
             self.chat._qwen35_reasoning_effort_token_range(None, 16384),
             (384, 8192),
         )
-        self.assertIsNone(
-            self.chat._qwen35_reasoning_effort_token_range("none", 1024)
-        )
+        self.assertIsNone(self.chat._qwen35_reasoning_effort_token_range("none", 1024))
 
         self.tm.model_config.hf_config.model_type = "llama"
         self.assertIsNone(self.chat._qwen35_reasoning_effort_token_range("low", 1024))
@@ -2981,6 +2988,227 @@ class ServingChatTestCase(CustomTestCase):
         self.assertEqual(adapted.text, "rendered prompt")
         self.assertIsNone(adapted.input_ids)
 
+    def test_kimi_k3_required_native_boundary_only_from_generated_constraint(self):
+        tool = {
+            "type": "function",
+            "function": {
+                "name": "fixture",
+                "strict": True,
+                "parameters": {
+                    "type": "object",
+                    "properties": {"x": {"type": "integer"}},
+                    "required": ["x"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+        named = {"type": "function", "function": {"name": "fixture"}}
+        for choice in ("required", named, "auto", "none"):
+            for reasoning in (False, True):
+                with self.subTest(choice=choice, reasoning=reasoning):
+                    self.chat.chat_encoding_spec = "kimi_k3"
+                    self.chat.tool_call_parser = self.chat.reasoning_parser = "kimi_k3"
+                    self.chat._reasoning_detector = KimiK3Detector()
+                    req = ChatCompletionRequest(
+                        model="x",
+                        messages=[{"role": "user", "content": "synthetic"}],
+                        input_ids=[1, 2, 3],
+                        tools=[tool],
+                        tool_choice=choice,
+                        custom_params={
+                            KIMIK3_REQUIRED_NATIVE_BOUNDARY: False,
+                            "thinking_budget": 5,
+                        },
+                    )
+                    with patch.object(
+                        self.chat, "_get_reasoning_from_request", return_value=reasoning
+                    ):
+                        adapted, _ = self.chat._convert_to_internal_request(req)
+                    params = adapted.sampling_params
+                    self.assertEqual(adapted.require_reasoning, reasoning)
+                    self.assertEqual(params["custom_params"]["thinking_budget"], 5)
+                    expected = choice in ("required", "auto") or isinstance(
+                        choice, dict
+                    )
+                    self.assertEqual(
+                        params["custom_params"].get(KIMIK3_REQUIRED_NATIVE_BOUNDARY),
+                        True if expected else None,
+                    )
+                    self.assertFalse(req.custom_params[KIMIK3_REQUIRED_NATIVE_BOUNDARY])
+                    if expected:
+                        self.assertIsNotNone(params["structural_tag"])
+
+    def test_kimi_k3_native_boundary_clears_spoofed_flag_and_preserves_other_grammars(
+        self,
+    ):
+        native = {KIMIK3_REQUIRED_NATIVE_BOUNDARY: True}
+        user_tag = {
+            "type": "structural_tag",
+            "structures": [
+                {"begin": "<x>", "schema": {"type": "integer"}, "end": "</x>"},
+            ],
+            "triggers": ["<x>"],
+        }
+        tool = {
+            "type": "function",
+            "function": {"name": "fixture", "parameters": {"type": "object"}},
+        }
+        for encoding, tool_parser, reasoning_parser, overrides in (
+            ("kimi_k3", "kimi_k3", "kimi_k3", {"response_format": user_tag}),
+            ("kimi_k3", "kimi_k3", "kimi_k3", {"ebnf": 'root ::= "OK"'}),
+            ("kimi_k3", "kimi_k3", "kimi_k3", {}),
+            (None, "kimi_k3", "kimi_k3", {"tools": [tool], "tool_choice": "required"}),
+            ("kimi_k3", "kimi_k3", None, {"tools": [tool], "tool_choice": "required"}),
+            (
+                "kimi_k3",
+                "hermes",
+                "kimi_k3",
+                {"tools": [tool], "tool_choice": "required"},
+            ),
+        ):
+            with self.subTest(
+                encoding=encoding,
+                tool_parser=tool_parser,
+                reasoning_parser=reasoning_parser,
+                overrides=overrides,
+            ):
+                self.chat.chat_encoding_spec = encoding
+                self.chat.tool_call_parser, self.chat.reasoning_parser = (
+                    tool_parser,
+                    reasoning_parser,
+                )
+                self.chat._reasoning_detector = (
+                    KimiK3Detector() if reasoning_parser else None
+                )
+                req = ChatCompletionRequest(
+                    model="x",
+                    messages=[{"role": "user", "content": "synthetic"}],
+                    input_ids=[1, 2, 3],
+                    custom_params=dict(native),
+                    **overrides,
+                )
+                with patch.object(
+                    self.chat, "_get_reasoning_from_request", return_value=True
+                ):
+                    adapted, _ = self.chat._convert_to_internal_request(req)
+                self.assertIsNone(adapted.sampling_params["custom_params"])
+                self.assertEqual(req.custom_params, native)
+                if "response_format" in overrides:
+                    self.assertIsNotNone(adapted.sampling_params["structural_tag"])
+                if "ebnf" in overrides:
+                    self.assertEqual(adapted.sampling_params["ebnf"], overrides["ebnf"])
+
+    def test_kimi_k3_native_boundary_removes_internal_stops_and_preserves_explicit_stops(
+        self,
+    ):
+        self.chat.chat_encoding_spec = "kimi_k3"
+        self.chat.tool_call_parser = self.chat.reasoning_parser = "kimi_k3"
+        self.chat._reasoning_detector = KimiK3Detector()
+        self.template_manager.chat_template_name = None
+        tool = {
+            "type": "function",
+            "function": {
+                "name": "fixture",
+                "strict": True,
+                "parameters": {
+                    "type": "object",
+                    "properties": {"x": {"type": "integer"}},
+                },
+            },
+        }
+        named = {"type": "function", "function": {"name": "fixture"}}
+        for choice in ("required", named, "auto"):
+            for explicit in (
+                None,
+                "USER_STOP",
+                TOOLS_CLOSE,
+                MESSAGE_CLOSE,
+                ["USER_STOP", TOOLS_CLOSE, MESSAGE_CLOSE],
+            ):
+                with self.subTest(choice=choice, explicit=explicit):
+                    req = ChatCompletionRequest(
+                        model="x",
+                        messages=[{"role": "user", "content": "synthetic"}],
+                        tools=[tool],
+                        tool_choice=choice,
+                        stop=explicit,
+                        stop_token_ids=[7],
+                    )
+                    user_stops = (
+                        [explicit] if isinstance(explicit, str) else explicit or []
+                    )
+                    rendered_stops = list(user_stops)
+                    if MESSAGE_CLOSE not in rendered_stops:
+                        rendered_stops.append(MESSAGE_CLOSE)
+                    result = MessageProcessingResult(
+                        "synthetic", [1, 2, 3], None, None, None, [], rendered_stops
+                    )
+                    with (
+                        patch.object(
+                            self.chat, "_apply_jinja_template", return_value=result
+                        ),
+                        patch.object(
+                            self.chat, "_get_reasoning_from_request", return_value=True
+                        ),
+                    ):
+                        adapted, _ = self.chat._convert_to_internal_request(req)
+                    params = adapted.sampling_params
+                    self.assertEqual(params["stop"], user_stops)
+                    self.assertEqual(params["stop_token_ids"], [7])
+                    self.assertEqual(req.stop, explicit)
+
+    def test_kimi_k3_strict_auto_native_boundary_preserves_loose_auto(self):
+        self.chat.chat_encoding_spec = "kimi_k3"
+        self.chat.tool_call_parser = self.chat.reasoning_parser = "kimi_k3"
+        self.chat._reasoning_detector = KimiK3Detector()
+        for strict in (False, True):
+            for level in (
+                ToolStrictLevel.OFF,
+                ToolStrictLevel.FUNCTION,
+                ToolStrictLevel.PARAMETER,
+            ):
+                for explicit in (None, TOOLS_CLOSE):
+                    with self.subTest(strict=strict, level=level, explicit=explicit):
+                        req = ChatCompletionRequest(
+                            model="x",
+                            messages=[{"role": "user", "content": "synthetic"}],
+                            input_ids=[1, 2, 3],
+                            tools=[
+                                {
+                                    "type": "function",
+                                    "function": {
+                                        "name": "fixture",
+                                        "strict": strict,
+                                        "parameters": {
+                                            "type": "object",
+                                            "properties": {"x": {"type": "integer"}},
+                                            "required": ["x"],
+                                        },
+                                    },
+                                }
+                            ],
+                            tool_choice="auto",
+                            stop=explicit,
+                            custom_params={KIMIK3_REQUIRED_NATIVE_BOUNDARY: True},
+                        )
+                        with envs.SGLANG_TOOL_STRICT_LEVEL.override(level.value):
+                            adapted, _ = self.chat._convert_to_internal_request(req)
+                        params = adapted.sampling_params
+                        expected = strict or level >= ToolStrictLevel.PARAMETER
+                        self.assertEqual(
+                            (params.get("custom_params") or {}).get(
+                                KIMIK3_REQUIRED_NATIVE_BOUNDARY
+                            ),
+                            True if expected else None,
+                        )
+                        self.assertEqual(
+                            params["stop"],
+                            [TOOLS_CLOSE] if explicit or not expected else [],
+                        )
+                        self.assertTrue(
+                            req.custom_params[KIMIK3_REQUIRED_NATIVE_BOUNDARY]
+                        )
+
     def test_chat_applies_pd_header_overrides(self):
         request = ChatCompletionRequest(
             model="x",
@@ -3901,7 +4129,7 @@ class ServingChatTestCase(CustomTestCase):
                 parser.get_structure_constraint.call_args.kwargs["thinking_mode"]
             )
 
-    def test_kimi_k3_constraint_failure_keeps_native_stop_format(self):
+    def test_kimi_k3_constraint_failure_rejects_required_before_generation(self):
         self.template_manager.chat_template_name = None
         self.template_manager.jinja_template_content_format = "string"
         self.chat.chat_encoding_spec = "kimi_k3"
@@ -3951,11 +4179,11 @@ class ServingChatTestCase(CustomTestCase):
                     else request.stop
                 )
 
-                result = self.chat._process_messages(request, is_multimodal=False)
-
-                self.assertEqual(result.stop, expected)
+                with self.assertRaisesRegex(
+                    ValueError, "refusing unconstrained generation"
+                ):
+                    self.chat._process_messages(request, is_multimodal=False)
                 self.assertEqual(request.stop, original_stop)
-                self.assertIsNone(result.tool_call_constraint)
 
     def test_kimi_k3_tool_call_stop_is_scoped_to_active_tools(self):
         self.template_manager.chat_template_name = None
@@ -5167,6 +5395,7 @@ class ServingChatTestCase(CustomTestCase):
                     async for chunk in self.chat._process_tool_call_stream(
                         index=0,
                         delta="<function=>",
+                        created=1,
                         parser_dict={},
                         content={"meta_info": {"id": "chatcmpl-test"}},
                         request=req,

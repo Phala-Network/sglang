@@ -133,7 +133,6 @@ from sglang.srt.lora.lora_overlap_loader import LoRAOverlapLoader
 from sglang.srt.managers.disagg_service import maybe_create_ascend_config_store
 from sglang.srt.managers.hisparse_coordinator import HiSparseCoordinator
 from sglang.srt.managers.io_struct import (
-    matches_abort_rid,
     AbortReq,
     ActiveRanksOutput,
     AddExternalCorpusReqInput,
@@ -204,6 +203,7 @@ from sglang.srt.managers.io_struct import (
     UpdateWeightsFromTensorReqInput,
     UpdateWeightVersionReqInput,
     UpdateWeightVersionReqOutput,
+    matches_abort_rid,
     sock_send,
 )
 from sglang.srt.managers.load_snapshot import create_load_snapshot_writer
@@ -375,6 +375,7 @@ from sglang.srt.utils import (
     kill_itself_when_parent_died,
     rank_consensus_checker,
     require_mlp_sync,
+    runtime_switches,
     set_gpu_proc_affinity,
     set_random_seed,
     suppress_other_loggers,
@@ -388,7 +389,6 @@ from sglang.srt.utils.hf_transformers_utils import (
     resolve_image_processor_backend,
 )
 from sglang.srt.utils.numa_utils import get_numa_node_if_available, numa_bind_to_node
-from sglang.srt.utils import runtime_switches
 from sglang.srt.utils.runtime_switches import RuntimeSwitchSync, RuntimeSwitchUpdate
 from sglang.srt.utils.torch_memory_saver_adapter import TorchMemorySaverAdapter
 from sglang.srt.utils.weight_versions import (
@@ -984,6 +984,21 @@ class Scheduler(
                     "grammar-gated reasoning is disabled.",
                     reasoning_parser.detector.think_end_token,
                 )
+
+            if get_serving().reasoning_parser == "kimi_k3":
+                from sglang.srt.function_call.kimik3_format import (
+                    RESPONSE_OPEN,
+                    THINK_CLOSE,
+                    TOOLS_OPEN,
+                )
+
+                sequences = [
+                    self.tokenizer.encode(marker, add_special_tokens=False)
+                    for marker in (THINK_CLOSE, RESPONSE_OPEN, TOOLS_OPEN)
+                ]
+                if any(not sequence for sequence in sequences):
+                    raise ValueError("K3 reasoning boundaries could not be encoded")
+                self.model_config.reasoning_end_id_sequences = sequences
 
             selectable_tokens = getattr(
                 reasoning_parser.detector,
@@ -3297,9 +3312,7 @@ class Scheduler(
                 self.model_config.context_len,
             )
         except ValueError as error:
-            req.set_finish_with_abort(
-                str(error), status_code=HTTPStatus.BAD_REQUEST
-            )
+            req.set_finish_with_abort(str(error), status_code=HTTPStatus.BAD_REQUEST)
             self.retire_unadmitted_request(req)
             return
 
@@ -3425,6 +3438,10 @@ class Scheduler(
 
             matched_len = req.prefix_len + req.host_hit_length
             req.storage_prefetch_last_match_len = matched_len
+            if req.host_hit_refused:
+                # The span goes on through host nodes the host tier refused, which
+                # an L3 copy cannot replace (insert_host keeps them): recompute.
+                return None
 
             if (
                 tree_cache.is_backuped(last_host_node)
@@ -3500,6 +3517,10 @@ class Scheduler(
         current_match_len = req.prefix_len + req.host_hit_length
         if current_match_len >= previous_match_len:
             return False
+        if req.host_hit_refused:
+            # Shrunk by a refused host load, not by eviction: L3 cannot serve it.
+            req.storage_prefetch_last_match_len = current_match_len
+            return False
         if (
             req.storage_prefetch_retry_attempts
             >= get_memory().hicache_storage_prefetch_retry_max_attempts
@@ -3544,10 +3565,9 @@ class Scheduler(
 
     def _add_request_to_queue(self, req: Req, is_retracted: bool = False):
         # Validation can fail before a request-static profile is assigned.
-        if (
-            getattr(self.model_config, "request_static_yarn_config", None) is not None
-            and is_unadmitted_reject(req)
-        ):
+        if getattr(
+            self.model_config, "request_static_yarn_config", None
+        ) is not None and is_unadmitted_reject(req):
             self.retire_unadmitted_request(req)
             return
         if not self._set_or_validate_priority(req):
@@ -3844,8 +3864,25 @@ class Scheduler(
     def stash_chunked_request(self, req: Req):
         if self.disaggregation_mode == DisaggregationMode.PREFILL:
             self.checkpoint_disagg_prefill(req)
+        elif self._defer_chunk_checkpoint(req):
+            # The request keeps this chunk's KV and state until a later checkpoint.
+            req.prefix_len = req.extend_end
         else:
             checkpoint_kv_cache(req, self.tree_cache)
+
+    @staticmethod
+    def _defer_chunk_checkpoint(req: Req) -> bool:
+        every = envs.SGLANG_CHUNKED_PREFILL_CHECKPOINT_TOKENS.get()
+        if every <= 0:
+            return False
+        # A chunk that tracked the mamba branching point checkpoints it: that
+        # state is where requests sharing this prefix diverge.
+        branching = req.mamba_branching_seqlen
+        if branching is not None and req.prefix_len < branching <= req.extend_end:
+            return False
+        # The tree owns [0, cache_protected_len): what the request matched or
+        # inserted last. Checkpoint when this chunk crosses a multiple of N past it.
+        return req.extend_end // every == req.kv.cache_protected_len // every
 
     def process_pending_chunked_abort(self) -> None:
         """Abort an in-flight chunked-prefill request once it is safe to do so.
@@ -4316,9 +4353,7 @@ class Scheduler(
             if reserve_tokens > 0:
                 head = self.waiting_queue[0] if self.waiting_queue else None
                 if head is None or (
-                    len(head.origin_input_ids)
-                    + len(head.output_ids)
-                    - head.prefix_len
+                    len(head.origin_input_ids) + len(head.output_ids) - head.prefix_len
                     > reserve_tokens
                 ):
                     reserve_tokens = 0
@@ -5912,7 +5947,9 @@ class Scheduler(
         elif self.disaggregation_mode == DisaggregationMode.DECODE:
             # Abort requests that have not yet finished preallocation
             for decode_req in self.disagg_decode_prealloc_queue.queue:
-                if recv_req.abort_all or matches_abort_rid(decode_req.req.rid, recv_req.rid):
+                if recv_req.abort_all or matches_abort_rid(
+                    decode_req.req.rid, recv_req.rid
+                ):
                     logger.debug(f"Abort prealloc queue request. {decode_req.req.rid=}")
                     decode_req.kv_receiver.abort()
                     if get_parallel().pp_size > 1:
@@ -5920,7 +5957,9 @@ class Scheduler(
 
             # Abort requests waiting for kvcache to release tree cache
             for decode_req in self.disagg_decode_transfer_queue.queue:
-                if recv_req.abort_all or matches_abort_rid(decode_req.req.rid, recv_req.rid):
+                if recv_req.abort_all or matches_abort_rid(
+                    decode_req.req.rid, recv_req.rid
+                ):
                     logger.debug(f"Abort transfer queue request. {decode_req.req.rid=}")
                     if decode_req.host_staged:
                         # Keep the host destination alive until prefill stops writing.
@@ -5935,7 +5974,9 @@ class Scheduler(
             if self.disagg_decode_prealloc_queue.retracted_queue:
                 remaining_retracted = []
                 for decode_req in self.disagg_decode_prealloc_queue.retracted_queue:
-                    if recv_req.abort_all or matches_abort_rid(decode_req.rid, recv_req.rid):
+                    if recv_req.abort_all or matches_abort_rid(
+                        decode_req.rid, recv_req.rid
+                    ):
                         discard_kv_cache_backup(
                             decode_req,
                             self.tree_cache,

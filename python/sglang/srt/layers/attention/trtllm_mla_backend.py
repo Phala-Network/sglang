@@ -128,6 +128,20 @@ def grow_multi_ctas_kv_counter_buffer_if_needed(
     return torch.zeros(required_bytes, dtype=torch.uint8, device=device)
 
 
+def finite_kv(x: torch.Tensor) -> torch.Tensor:
+    """``x`` with every non-finite value zeroed.
+
+    The ragged prefill kernel computes a sequence's last KV tile over the whole
+    tile, so it also reads the next sequence's first K/V rows and masks them by
+    zero, and ``0 * NaN`` is NaN: a NaN-poisoned request turned the request
+    packed before it into NaN. Its own rows are garbage either way.
+    """
+    if x.dtype == torch.float8_e4m3fn:
+        u = x.view(torch.uint8)
+        return torch.where((u & 0x7F) == 0x7F, 0, u).view(x.dtype)
+    return torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+
+
 def _quantize_fp8_qkv(q, k, v, layer):
     q = q.to(torch.float8_e4m3fn)
 
@@ -1079,6 +1093,9 @@ class TRTLLMMLABackend(FlashInferMLAAttnBackend):
         q_scale = k_scale = v_scale = 1.0
         if self.data_type == torch.float8_e4m3fn and q.dtype != torch.float8_e4m3fn:
             q, k, v, k_scale, v_scale = _quantize_fp8_qkv(q, k, v, layer)
+        # After the fp8 cast, which does not saturate: |x| > 448 and inf become
+        # NaN there.
+        k, v = finite_kv(k), finite_kv(v)
         return flashinfer.prefill.trtllm_ragged_attention_deepseek(
             query=q,
             key=k,

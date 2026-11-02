@@ -13,6 +13,8 @@ from sglang.srt.function_call.core_types import (
     _GetInfoFunc,
 )
 from sglang.srt.function_call.kimik3_format import (
+    ARGUMENT_CLOSE,
+    CALL_CLOSE,
     MESSAGE_CLOSE,
     RESPONSE_CLOSE,
     RESPONSE_OPEN,
@@ -29,17 +31,19 @@ from sglang.srt.function_call.kimik3_structural_tag import (
 
 logger = logging.getLogger(__name__)
 
-_CALL_RE = re.compile(
-    r"<\|open\|>call\s+(?P<attrs>(?:(?!<\|sep\|>).)*?)<\|sep\|>"
-    r"(?P<body>.*?)<\|close\|>call<\|sep\|>",
+_CALL_OPEN_RE = re.compile(
+    r"<\|open\|>call\s+(?P<attrs>(?:(?!<\|sep\|>).)*?)<\|sep\|>",
     re.DOTALL,
 )
-_ARG_RE = re.compile(
-    r"<\|open\|>argument\s+(?P<attrs>(?:(?!<\|sep\|>).)*?)<\|sep\|>"
-    r"(?P<val>.*?)<\|close\|>argument<\|sep\|>",
+_ARG_OPEN_RE = re.compile(
+    r"<\|open\|>argument\s+(?P<attrs>(?:(?!<\|sep\|>).)*?)<\|sep\|>",
     re.DOTALL,
+)
+_CALL_BOUNDARY_RE = re.compile(
+    "|".join(map(re.escape, ("<|open|>argument", CALL_CLOSE, TOOLS_CLOSE)))
 )
 _ATTR_RE = re.compile(r'(?P<k>\w+)="(?P<v>[^"]*)"')
+_JSON_DECODER = json.JSONDecoder()
 
 
 def _unescape_attr(value: str) -> str:
@@ -65,9 +69,9 @@ class KimiK3Detector(BaseFormatDetector):
     <|close|>tools<|sep|>
     ```
 
-    ``type="string"`` argument values are raw text; other types are
-    JSON-decoded. Attribute values reverse the template's ``&amp;``/``&quot;``
-    escaping.
+    ``type="string"`` argument values are raw text. ``type="json-string"``
+    explicitly carries a JSON string; the other native types carry JSON values.
+    Attribute values reverse the template's ``&amp;``/``&quot;`` escaping.
     """
 
     def __init__(self):
@@ -116,35 +120,81 @@ class KimiK3Detector(BaseFormatDetector):
             parallel_tool_calls=parallel_tool_calls,
         )
 
-    def _decode_call(self, attrs: str, body: str) -> dict | None:
-        call_attrs = _parse_attrs(attrs)
-        tool_name = call_attrs.get("tool", "")
-        if not tool_name:
+    def _parse_argument(self, text: str, start: int) -> tuple[str, object, int] | None:
+        arg = _ARG_OPEN_RE.match(text, start)
+        if arg is None:
             return None
-        arguments = {}
-        for arg in _ARG_RE.finditer(body):
-            arg_attrs = _parse_attrs(arg["attrs"])
-            key = arg_attrs.get("key", "")
-            arg_type = arg_attrs.get("type", "string")
-            raw_value = arg["val"]
-            if arg_type == "string":
-                arguments[key] = raw_value
-            else:
-                try:
-                    arguments[key] = json.loads(raw_value)
-                except json.JSONDecodeError:
-                    arguments[key] = raw_value
-        return {
-            "name": tool_name,
-            "arguments": json.dumps(arguments, ensure_ascii=False),
-        }
+        attrs = _parse_attrs(arg["attrs"])
+        value_start = arg.end()
+        wire_type = attrs.get("type", "string")
+        if wire_type not in {
+            "string",
+            "json-string",
+            "number",
+            "boolean",
+            "array",
+            "object",
+            "null",
+        }:
+            return None
+        if wire_type == "string":
+            # Raw XTML strings end at the first argument delimiter. Enclosing
+            # call/tools markers inside that span are ordinary string values.
+            end = text.find(ARGUMENT_CLOSE, value_start)
+            if end == -1:
+                return None
+            value = text[value_start:end]
+        else:
+            # Typed values are JSON. A delimiter inside a quoted nested value
+            # must not end the argument before the entire JSON value completes.
+            while value_start < len(text) and text[value_start] in " \t\r\n":
+                value_start += 1
+            try:
+                value, end = _JSON_DECODER.raw_decode(text, value_start)
+            except json.JSONDecodeError:
+                return None
+            if wire_type == "json-string" and not isinstance(value, str):
+                return None
+            while end < len(text) and text[end] in " \t\r\n":
+                end += 1
+            if not text.startswith(ARGUMENT_CLOSE, end):
+                return None
+        return attrs.get("key", ""), value, end + len(ARGUMENT_CLOSE)
 
     def _parse_calls(self, section: str) -> List[dict]:
-        return [
-            call
-            for m in _CALL_RE.finditer(section)
-            if (call := self._decode_call(m["attrs"], m["body"])) is not None
-        ]
+        calls = []
+        pos = 0
+        while call := _CALL_OPEN_RE.search(section, pos):
+            tools_end = section.find(TOOLS_CLOSE, pos)
+            if tools_end != -1 and tools_end < call.start():
+                break
+            pos = call.end()
+            arguments = {}
+            while boundary := _CALL_BOUNDARY_RE.search(section, pos):
+                if section[pos : boundary.start()].strip():
+                    return calls
+                marker = boundary.group()
+                if marker == TOOLS_CLOSE:
+                    return calls
+                if marker == CALL_CLOSE:
+                    tool_name = _parse_attrs(call["attrs"]).get("tool", "")
+                    if tool_name:
+                        calls.append(
+                            {
+                                "name": tool_name,
+                                "arguments": json.dumps(arguments, ensure_ascii=False),
+                            }
+                        )
+                    pos = boundary.end()
+                    break
+                argument = self._parse_argument(section, boundary.start())
+                if argument is None:
+                    return calls
+                key, value, pos = argument
+                arguments[key] = value
+            else:
+                break
+        return calls
 
     def detect_and_parse(self, text: str, tools: List[Tool]) -> StreamingParseResult:
         open_idx = text.find(self.bot_token)
@@ -156,12 +206,7 @@ class KimiK3Detector(BaseFormatDetector):
         before = strip_response_wrappers(text[:open_idx])
         try:
             section_start = open_idx + len(self.bot_token)
-            close_idx = text.find(self.eot_token, section_start)
-            section = (
-                text[section_start:]
-                if close_idx == -1
-                else text[section_start:close_idx]
-            )
+            section = text[section_start:]
             calls = [
                 ToolCallItem(
                     tool_index=i,

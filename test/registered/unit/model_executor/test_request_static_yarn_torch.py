@@ -9,10 +9,20 @@ import torch
 from sglang.srt.configs.request_static_yarn import RequestStaticYarnConfig
 from sglang.srt.layers.rotary_embedding import get_rope
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch
+from sglang.test.ci.ci_register import register_cpu_ci, register_cuda_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
+register_cuda_ci(est_time=30, stage="base-a", runner_config="1-gpu-small")
 
 
 @pytest.mark.parametrize("feature", [False, True])
 def test_actual_tokenizer_budget_path_cannot_clip_request_static_budget(feature):
+    if not torch.cuda.is_available():
+        # This tokenizer-only path never calls native kernels. Keep the real
+        # Torch rotary checks below; only satisfy the transitive native import.
+        from sglang.test.test_utils import maybe_stub_sgl_kernel
+
+        maybe_stub_sgl_kernel()
     from sglang.srt.managers.tokenizer_manager import TokenizerManager
 
     manager = object.__new__(TokenizerManager)
@@ -21,7 +31,9 @@ def test_actual_tokenizer_budget_path_cannot_clip_request_static_budget(feature)
     manager.validate_total_tokens = True
     manager.num_reserved_tokens = 0
     manager.model_config = SimpleNamespace(
-        request_static_yarn_config=object() if feature else None
+        request_static_yarn_config=object() if feature else None,
+        joint_head_config=None,
+        pointer_head=None,
     )
     req = SimpleNamespace(sampling_params={"max_new_tokens": 2})
     execution = SimpleNamespace(
@@ -295,3 +307,11 @@ def test_actual_qwen_fused_graph_replays_profile_reordering(table_dtype):
                 torch.testing.assert_close(
                     actual_tensor[sl], expected_tensor, rtol=0, atol=0
                 )
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

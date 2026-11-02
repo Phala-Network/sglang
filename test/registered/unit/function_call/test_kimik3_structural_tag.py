@@ -18,6 +18,7 @@ from sglang.srt.function_call.kimik3_detector import KimiK3Detector
 from sglang.srt.function_call.kimik3_format import (
     ARGUMENT_CLOSE,
     CALL_CLOSE,
+    MESSAGE_CLOSE,
     THINK_CLOSE,
     TOOLS_CLOSE,
     TOOLS_OPEN,
@@ -85,6 +86,10 @@ def _argument(key, argument_type, value):
     )
 
 
+def _json_string_argument(key, value):
+    return _argument(key, "json-string", json.dumps(value))
+
+
 def _call(name, index, *arguments):
     return (
         f'<|open|>call tool="{name}" index="{index}"<|sep|>'
@@ -135,9 +140,9 @@ def _valid_weather_call(index=1):
     return _call(
         "weather",
         index,
-        _argument("city", "string", "San Francisco"),
+        _json_string_argument("city", "San Francisco"),
         _argument("days", "number", "3"),
-        _argument("unit", "string", "celsius"),
+        _json_string_argument("unit", "celsius"),
         _argument("metadata", "object", '{"source":"forecast"}'),
         _argument("tags", "array", '["coastal","windy"]'),
     )
@@ -153,7 +158,7 @@ def test_strict_schema_accepts_native_xtml_values():
             _call(
                 "weather",
                 1,
-                _argument("city", "string", "Paris"),
+                _json_string_argument("city", "Paris"),
                 _argument("days", "number", "1"),
             )
         ),
@@ -163,9 +168,9 @@ def test_strict_schema_accepts_native_xtml_values():
 @pytest.mark.parametrize(
     "arguments",
     [
-        (_argument("city", "string", "paris"), _argument("days", "number", "3")),
+        (_json_string_argument("city", "paris"), _argument("days", "number", "3")),
         (
-            _argument("city", "string", "Paris"),
+            _json_string_argument("city", "Paris"),
             _argument("days", "number", "11"),
         ),
         (
@@ -173,17 +178,17 @@ def test_strict_schema_accepts_native_xtml_values():
             _argument("days", "number", "3"),
         ),
         (
-            _argument("city", "string", "Paris"),
+            _json_string_argument("city", "Paris"),
             _argument("days", "number", "3"),
-            _argument("unit", "string", "kelvin"),
+            _json_string_argument("unit", "kelvin"),
         ),
         (
-            _argument("city", "string", "Paris"),
+            _json_string_argument("city", "Paris"),
             _argument("days", "number", "3"),
             _argument("tags", "array", "[coastal]"),
         ),
         (
-            _argument("city", "string", "Paris"),
+            _json_string_argument("city", "Paris"),
             _argument("days", "number", "3"),
             _argument("unknown", "string", "value"),
         ),
@@ -193,6 +198,101 @@ def test_strict_schema_rejects_invalid_parameters(arguments):
     grammar = _grammar([_tool()], tool_choice="required")
 
     assert not _accepts(grammar, _tools_section(_call("weather", 1, *arguments)))
+
+
+def _free_text_tool(additional_properties=False):
+    return Tool(
+        type="function",
+        function=Function(
+            name="annotate",
+            strict=True,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string"},
+                    "score": {"type": "integer"},
+                },
+                "required": ["label"],
+                "additionalProperties": additional_properties,
+            },
+        ),
+    )
+
+
+def test_free_text_string_cannot_close_itself_early():
+    """An unconstrained string value compiled to a qwen_xml string schema,
+    which may contain the argument close marker, so the model could end the
+    value early and continue with arguments the schema forbids; the detector
+    splits at the first close marker, so those arguments were returned.
+    With additionalProperties False an undeclared key, or a declared key
+    with the wrong type, was accepted right after a free-text argument."""
+    tool = _free_text_tool()
+    structural_tag = get_kimik3_structural_tag(
+        [tool], tool_choice="required", thinking_mode=False, parallel_tool_calls=True
+    )
+    grammar = xgr.Grammar.from_structural_tag(structural_tag)
+    label = _argument("label", "string", "sample")
+
+    assert _accepts(grammar, _tools_section(_call("annotate", 1, label)))
+    assert _accepts(
+        grammar,
+        _tools_section(_call("annotate", 1, _argument("label", "string", "a<b|c>d"))),
+    )
+    smuggled = (
+        _tools_section(_call("annotate", 1, label, _argument("bogus", "string", "x"))),
+        _tools_section(
+            _call("annotate", 1, label, _argument("score", "string", "high"))
+        ),
+        _tools_section(
+            _call("annotate", 1, _argument("label", "string", f"a{ARGUMENT_CLOSE}b"))
+        ),
+    )
+    for value in smuggled:
+        assert not _accepts(grammar, value), value
+        assert not _token_accepts(structural_tag, value), value
+
+
+def test_constrained_strings_keep_their_schema():
+    tool = Tool(
+        type="function",
+        function=Function(
+            name="annotate",
+            strict=True,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "mode": {"type": "string", "enum": ["fast", "slow"]},
+                    "code": {"type": "string", "pattern": "[A-Z]{3}"},
+                },
+                "required": ["mode", "code"],
+                "additionalProperties": False,
+            },
+        ),
+    )
+    grammar = _grammar([tool], tool_choice="required")
+
+    assert _accepts(
+        grammar,
+        _tools_section(
+            _call(
+                "annotate",
+                1,
+                _json_string_argument("mode", "fast"),
+                _json_string_argument("code", "ABC"),
+            )
+        ),
+    )
+    assert not _accepts(
+        grammar,
+        _tools_section(
+            _call(
+                "annotate",
+                1,
+                _json_string_argument("mode", "medium"),
+                _json_string_argument("code", "ABC"),
+            )
+        ),
+    )
 
 
 def test_required_allows_response_prefix_but_requires_tools():
@@ -214,7 +314,7 @@ def test_auto_allows_plain_response_or_multiple_tool_calls():
         _call(
             "forecast",
             2,
-            _argument("city", "string", "London"),
+            _json_string_argument("city", "London"),
             _argument("days", "number", "2"),
         ),
     )
@@ -231,7 +331,7 @@ def test_named_tool_choice_forces_only_the_selected_tool():
     forecast_call = _call(
         "forecast",
         1,
-        _argument("city", "string", "London"),
+        _json_string_argument("city", "London"),
         _argument("days", "number", "2"),
     )
 
@@ -249,7 +349,7 @@ def test_function_call_parser_uses_native_tag_for_named_tool_choice():
     forecast_call = _call(
         "forecast",
         1,
-        _argument("city", "string", "London"),
+        _json_string_argument("city", "London"),
         _argument("days", "number", "2"),
     )
 
@@ -310,7 +410,7 @@ def test_strict_schema_supports_refs_and_mixed_unions():
             _call(
                 "convert",
                 1,
-                _argument("mode", "string", "fast"),
+                _json_string_argument("mode", "fast"),
                 _argument("value", "number", "2"),
             )
         ),
@@ -321,10 +421,291 @@ def test_strict_schema_supports_refs_and_mixed_unions():
             _call(
                 "convert",
                 1,
-                _argument("mode", "string", "unsafe"),
+                _json_string_argument("mode", "unsafe"),
                 _argument("value", "number", "1"),
             )
         ),
+    )
+
+
+@pytest.mark.parametrize("definitions_key", ["$defs", "definitions"])
+def test_strict_root_ref_uses_original_document_for_property_refs(definitions_key):
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "$ref": f"#/{definitions_key}/Root",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "Lookup",
+        "description": "A referenced parameter object",
+        "default": {"x": 1},
+        "examples": [{"x": 2}],
+        definitions_key: {
+            "Root": {"$ref": f"#/{definitions_key}/Parameters"},
+            "Parameters": {
+                "type": "object",
+                definitions_key: {"Value": {"type": "string"}},
+                "properties": {
+                    "x": {
+                        "$ref": f"#/{definitions_key}/Value",
+                        "description": "Keep the reference's original document",
+                    },
+                    "nested": {
+                        "type": "array",
+                        "items": {"$ref": f"#/{definitions_key}/Value"},
+                    },
+                },
+                "required": ["x"],
+                "additionalProperties": False,
+            },
+            "Value": {"type": "integer", "minimum": 1, "maximum": 3},
+        },
+    }
+    original = json.dumps(tool.function.parameters, sort_keys=True)
+    grammar = _grammar([tool], tool_choice="required")
+
+    assert _accepts(
+        grammar,
+        _tools_section(
+            _call(
+                "lookup",
+                1,
+                _argument("x", "number", "2"),
+                _argument("nested", "array", "[1,3]"),
+            )
+        ),
+    )
+    for arguments in (
+        (),
+        (_argument("x", "string", "2"),),
+        (_argument("x", "number", "4"),),
+        (_argument("x", "number", "2"), _argument("extra", "number", "1")),
+        (_argument("x", "number", "2"), _argument("nested", "array", '["1"]')),
+    ):
+        assert not _accepts(grammar, _tools_section(_call("lookup", 1, *arguments)))
+    assert json.dumps(tool.function.parameters, sort_keys=True) == original
+
+
+def test_strict_root_ref_decodes_json_pointer_escapes():
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "$ref": "#/$defs/Root~1name~0",
+        "$defs": {
+            "Root/name~": {
+                "type": "object",
+                "properties": {"x": {"type": "integer"}},
+                "required": ["x"],
+                "additionalProperties": False,
+            }
+        },
+    }
+    grammar = _grammar([tool], tool_choice="required")
+    assert _accepts(
+        grammar, _tools_section(_call("lookup", 1, _argument("x", "number", "1")))
+    )
+    assert not _accepts(grammar, _tools_section(_call("lookup", 1)))
+
+
+def test_strict_root_ref_additional_properties_use_original_definitions():
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "$ref": "#/$defs/Root",
+        "$defs": {
+            "Root": {
+                "type": "object",
+                "$defs": {"Extra": {"type": "string"}},
+                "properties": {"label": {"type": "string", "pattern": "[a-z]+"}},
+                "required": ["label"],
+                "additionalProperties": {"$ref": "#/$defs/Extra"},
+            },
+            "Extra": {"type": "integer", "minimum": 1, "maximum": 3},
+        },
+    }
+    grammar = _grammar([tool], tool_choice="required")
+    label = _json_string_argument("label", "sample")
+    assert _accepts(
+        grammar,
+        _tools_section(_call("lookup", 1, label, _argument("extra", "number", "2"))),
+    )
+    for extra in (
+        _argument("extra", "string", "2"),
+        _argument("extra", "number", "4"),
+        _argument("label", "number", "2"),
+    ):
+        assert not _accepts(grammar, _tools_section(_call("lookup", 1, label, extra)))
+
+
+def test_strict_root_ref_target_still_rejects_unsupported_root_assertions():
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "$ref": "#/$defs/Root",
+        "$defs": {"Root": {"type": "object", "minProperties": 1}},
+    }
+    with pytest.raises(ValueError, match="unsupported.*root.*keyword"):
+        _grammar([tool], tool_choice="required")
+
+
+@pytest.mark.parametrize("definitions_key", ["$defs", "definitions"])
+def test_strict_argument_schema_preserves_root_over_local_definitions(definitions_key):
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "$ref": f"#/{definitions_key}/Root",
+        definitions_key: {
+            "Root": {
+                "type": "object",
+                "properties": {
+                    "nested": {
+                        "type": "array",
+                        definitions_key: {"Value": {"type": "string"}},
+                        "items": {"$ref": f"#/{definitions_key}/Value"},
+                    }
+                },
+                "required": ["nested"],
+                "additionalProperties": False,
+            },
+            "Value": {"type": "integer"},
+        },
+    }
+    # The extracted argument must still target the original root's integer,
+    # never its own local string definition with the same name.
+    grammar = _grammar([tool], tool_choice="required")
+    assert _accepts(
+        grammar, _tools_section(_call("lookup", 1, _argument("nested", "array", "[1]")))
+    )
+    assert not _accepts(
+        grammar,
+        _tools_section(_call("lookup", 1, _argument("nested", "array", '["bad"]'))),
+    )
+
+
+@pytest.mark.parametrize(
+    "keyword, constraint",
+    [
+        ("oneOf", [{"properties": {"x": {"const": 1}}}]),
+        ("anyOf", [{"properties": {"x": {"const": 1}}}]),
+        ("allOf", [{"properties": {"x": {"const": 1}}}]),
+        ("not", {"required": ["x"]}),
+        ("if", {"required": ["x"]}),
+        ("then", {"required": ["y"]}),
+        ("else", {"required": ["y"]}),
+        ("minProperties", 2),
+        ("maxProperties", 0),
+        ("dependentRequired", {"x": ["y"]}),
+        ("dependentSchemas", {"x": {"required": ["y"]}}),
+        ("patternProperties", {"^x$": {"minimum": 2}}),
+        ("propertyNames", {"enum": ["y"]}),
+        ("unevaluatedProperties", False),
+        ("const", {"x": 1}),
+        ("enum", [{"x": 1}]),
+        ("x-unknown-constraint", True),
+    ],
+)
+def test_strict_root_schema_rejects_unsupported_keywords(keyword, constraint):
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "type": "object",
+        "properties": {"x": {"type": "integer"}},
+        "required": ["x"],
+        "additionalProperties": False,
+        keyword: constraint,
+    }
+    with pytest.raises(ValueError, match="unsupported.*root.*keyword"):
+        _grammar([tool], tool_choice="required")
+
+
+@pytest.mark.parametrize(
+    "keyword, constraint",
+    [
+        ("type", "object"),
+        ("properties", {"x": {"type": "integer"}}),
+        ("required", ["x"]),
+        ("additionalProperties", False),
+        ("oneOf", [{"required": ["x"]}]),
+    ],
+)
+def test_strict_root_ref_rejects_assertion_siblings(keyword, constraint):
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "$ref": "#/$defs/Root",
+        "$defs": {
+            "Root": {
+                "type": "object",
+                "properties": {"x": {"type": "integer"}},
+                "required": ["x"],
+                "additionalProperties": False,
+            }
+        },
+        keyword: constraint,
+    }
+    # additionalProperties=False beside this $ref makes the original schema
+    # unsatisfiable: outer properties is empty, so even {"x": 1} is invalid.
+    # Reject the unsupported conjunction instead of merging its dictionaries.
+    with pytest.raises(ValueError, match=r"unsupported.*\$ref.*sibling"):
+        _grammar([tool], tool_choice="required")
+
+
+@pytest.mark.parametrize(
+    "keyword, constraint",
+    [("minimum", 2), ("enum", [2]), ("type", "integer"), ("x-assertion", True)],
+)
+def test_strict_property_ref_rejects_assertion_siblings(keyword, constraint):
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "type": "object",
+        "$defs": {"Value": {"type": "integer", "minimum": 1, "maximum": 3}},
+        "properties": {"x": {"$ref": "#/$defs/Value", keyword: constraint}},
+        "required": ["x"],
+        "additionalProperties": False,
+    }
+    with pytest.raises(ValueError, match=r"unsupported.*\$ref.*sibling"):
+        _grammar([tool], tool_choice="required")
+
+
+@pytest.mark.parametrize("ref", ["#/$defs/Missing", "https://example.com/schema", 42])
+def test_strict_root_ref_rejects_unresolved_or_nonlocal_refs(ref):
+    tool = _tool(name="lookup")
+    tool.function.parameters = {"$ref": ref}
+    with pytest.raises(ValueError, match=r"\$ref"):
+        _grammar([tool], tool_choice="required")
+
+
+def test_strict_root_ref_rejects_reference_cycle():
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "$ref": "#/$defs/Root",
+        "$defs": {
+            "Root": {"$ref": "#/$defs/Alias"},
+            "Alias": {"$ref": "#/$defs/Root"},
+        },
+    }
+    with pytest.raises(ValueError, match=r"cyclic.*\$ref"):
+        _grammar([tool], tool_choice="required")
+
+
+@pytest.mark.parametrize("target", [True, False])
+def test_strict_root_ref_boolean_schema(target):
+    tool = _tool(name="lookup")
+    tool.function.parameters = {"$ref": "#/$defs/Root", "$defs": {"Root": target}}
+    if not target:
+        with pytest.raises(ValueError, match="object schema"):
+            _grammar([tool], tool_choice="required")
+        return
+    grammar = _grammar([tool], tool_choice="required")
+    assert _accepts(grammar, _tools_section(_call("lookup", 1)))
+    assert _accepts(
+        grammar, _tools_section(_call("lookup", 1, _argument("x", "number", "1")))
+    )
+
+
+def test_loose_required_tool_keeps_unsupported_root_schema_unconstrained():
+    tool = _tool(name="lookup", strict=False)
+    tool.function.parameters = {
+        "$ref": "#/$defs/Missing",
+        "minProperties": 2,
+        "dependentRequired": {"x": ["y"]},
+    }
+    grammar = _grammar([tool], tool_choice="required")
+    assert _accepts(
+        grammar,
+        _tools_section(_call("lookup", 1, _argument("custom", "string", "value"))),
     )
 
 
@@ -442,6 +823,92 @@ def test_strict_schema_preserves_additional_properties_default():
     )
 
 
+def _annotate_tool(additional_properties):
+    return Tool(
+        type="function",
+        function=Function(
+            name="annotate",
+            strict=True,
+            parameters={
+                "type": "object",
+                "properties": {
+                    # Patterned so the string value cannot swallow a following
+                    # argument tag; the test then only exercises key matching.
+                    "label": {"type": "string", "pattern": "[a-z]+"},
+                    "score": {"type": "integer"},
+                },
+                "required": ["label"],
+                "additionalProperties": additional_properties,
+            },
+        ),
+    )
+
+
+@pytest.mark.parametrize("additional_properties", [True, {"type": "string"}])
+def test_strict_additional_properties_do_not_relax_declared_keys(
+    additional_properties,
+):
+    """The additionalProperties branch matched any key, so a declared property
+    could reappear there under the looser schema: ``score`` declared as an
+    integer was accepted as a string and ``label`` could be repeated. JSON
+    Schema applies additionalProperties only to undeclared keys (#38587)."""
+    grammar = _grammar([_annotate_tool(additional_properties)], tool_choice="required")
+    label = _json_string_argument("label", "sample")
+
+    assert _accepts(
+        grammar,
+        _tools_section(_call("annotate", 1, label, _argument("note", "string", "x"))),
+    )
+    assert _accepts(
+        grammar,
+        _tools_section(_call("annotate", 1, label, _argument("score", "number", "3"))),
+    )
+    assert not _accepts(
+        grammar,
+        _tools_section(
+            _call("annotate", 1, label, _argument("score", "string", "high"))
+        ),
+    )
+    assert not _accepts(
+        grammar,
+        _tools_section(
+            _call("annotate", 1, label, _json_string_argument("label", "again"))
+        ),
+    )
+
+
+def test_dynamic_keys_exclude_only_the_exact_declared_names():
+    tool = Tool(
+        type="function",
+        function=Function(
+            name="lookup",
+            strict=True,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "data": {"type": "integer"},
+                    "database": {"type": "string"},
+                },
+                "required": [],
+                "additionalProperties": True,
+            },
+        ),
+    )
+    grammar = _grammar([tool], tool_choice="required")
+
+    for key in ("dat", "datab", "databases", "data_x", "d", "x"):
+        assert _accepts(
+            grammar, _tools_section(_call("lookup", 1, _argument(key, "string", "v")))
+        ), key
+    assert not _accepts(
+        grammar, _tools_section(_call("lookup", 1, _argument("data", "string", "v")))
+    )
+    assert not _accepts(
+        grammar,
+        _tools_section(_call("lookup", 1, _argument("database", "number", "1"))),
+    )
+
+
 def test_dynamic_argument_key_compiles_without_xgrammar_unicode_warning(capfd):
     tool = Tool(
         type="function",
@@ -495,6 +962,14 @@ def test_tool_strict_level_controls_native_tag_parameter_schema():
         )
     )
     empty_call = _tools_section(_call("weather", 264))
+    invalid_encoded_call = _tools_section(
+        _call(
+            "weather",
+            264,
+            _json_string_argument("city", "paris"),
+            _argument("days", "number", "99"),
+        )
+    )
 
     with envs.SGLANG_TOOL_STRICT_LEVEL.override(ToolStrictLevel.OFF.value):
         constraint = FunctionCallParser(
@@ -520,6 +995,9 @@ def test_tool_strict_level_controls_native_tag_parameter_schema():
         assert constraint is not None
         assert not _accepts(
             xgr.Grammar.from_structural_tag(constraint[1]), invalid_call
+        )
+        assert not _accepts(
+            xgr.Grammar.from_structural_tag(constraint[1]), invalid_encoded_call
         )
 
 
@@ -599,7 +1077,7 @@ def test_auto_hook_does_not_swallow_parser_visible_closes():
 
     parsed = KimiK3Detector().detect_and_parse(output, [_tool(strict=False)])
 
-    assert json.loads(parsed.calls[0].parameters) == {"city": "Paris", "days": ""}
+    assert parsed.calls == []  # An incomplete JSON number must not become a string.
     assert not _token_accepts(structural_tag, output)
 
 
@@ -617,16 +1095,22 @@ def test_parallel_tool_calls_false_rejects_second_call(tool_strict_level):
             [_tool(strict=False)], "kimi_k3"
         ).get_structure_constraint("auto", parallel_tool_calls=False)
     assert constraint is not None
+
+    def string_argument(key, value):
+        if tool_strict_level == ToolStrictLevel.PARAMETER:
+            return _json_string_argument(key, value)
+        return _argument(key, "string", value)
+
     first = _call(
         "weather",
         165,
-        _argument("city", "string", "Paris"),
+        string_argument("city", "Paris"),
         _argument("days", "number", "3"),
     )
     second = _call(
         "weather",
         166,
-        _argument("city", "string", "London"),
+        string_argument("city", "London"),
         _argument("days", "number", "2"),
     )
 
@@ -667,13 +1151,13 @@ def test_parameter_level_constrains_every_parallel_call():
     valid_second = _call(
         "weather",
         49,
-        _argument("city", "string", "London"),
+        _json_string_argument("city", "London"),
         _argument("days", "number", "2"),
     )
     invalid_second = _call(
         "weather",
         49,
-        _argument("city", "string", "london"),
+        _json_string_argument("city", "london"),
         _argument("days", "number", "99"),
     )
 
@@ -837,6 +1321,21 @@ def test_reasoning_prefix_is_owned_by_exactly_one_layer():
     assert _accepts(wrapped_by_xgrammar, output)
     assert not _accepts(post_reasoning_only, output)
     assert _accepts(post_reasoning_only, _tools_section(_valid_weather_call()))
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("marker", [TOOLS_CLOSE, MESSAGE_CLOSE])
+@pytest.mark.parametrize("named", [False, True])
+def test_required_prefix_cannot_emit_external_stop_before_call(strict, marker, named):
+    tool = _tool(strict=strict)
+    choice = (
+        ToolChoice(function=ToolChoiceFuncName(name="weather")) if named else "required"
+    )
+    tag = get_kimik3_structural_tag([tool], tool_choice=choice)
+    good = _tools_section(_valid_weather_call())
+    prefix = "<|open|>response<|sep|>Checking.<|close|>response<|sep|>"
+    assert _token_accepts(tag, prefix + good)
+    assert not _token_accepts(tag, prefix + marker + good)
 
 
 if __name__ == "__main__":

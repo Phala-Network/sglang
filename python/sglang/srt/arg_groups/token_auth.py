@@ -32,7 +32,9 @@ def handle_token_auth(server_args):
     # Even matching explicit keys introduce a second source and can leak via
     # process argv. Raw None remains None after a declaration or pickle roundtrip.
     if server_args.api_key is not None or server_args.admin_api_key is not None:
-        raise ValueError("Explicit API/admin keys cannot be combined with PIG_AUTH_FROM_TOKEN")
+        raise ValueError(
+            "Explicit API/admin keys cannot be combined with PIG_AUTH_FROM_TOKEN"
+        )
     declare_resolution(
         server_args, "handle_token_auth", api_key=token, admin_api_key=token
     )
@@ -65,8 +67,10 @@ def redact_auth_argv(argv):
         elif arg.startswith("--") and any(flag.startswith(arg) for flag in _AUTH_FLAGS):
             result.append(arg)
             hide_next = True
-        elif "=" in arg and arg.startswith("--") and any(
-            flag.startswith(arg.partition("=")[0]) for flag in _AUTH_FLAGS
+        elif (
+            "=" in arg
+            and arg.startswith("--")
+            and any(flag.startswith(arg.partition("=")[0]) for flag in _AUTH_FLAGS)
         ):
             result.append(arg.partition("=")[0] + "=[REDACTED]")
         else:

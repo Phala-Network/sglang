@@ -7,12 +7,12 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from sglang.srt.environ import envs
-from sglang.srt.mem_cache.prefill_budget import PrefillBudget
 from sglang.srt.mem_cache.base_prefix_cache import (
     CacheRequestHandle,
     DecLockRefResult,
     IncLockRefResult,
 )
+from sglang.srt.mem_cache.prefill_budget import PrefillBudget
 from sglang.srt.server_args import ServerArgs, set_global_server_args_for_scheduler
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase, maybe_stub_sgl_kernel

@@ -1,0 +1,568 @@
+diff --git a/cpp/earley_parser.h b/cpp/earley_parser.h
+index 6fcb66d..a926b5b 100644
+--- a/cpp/earley_parser.h
++++ b/cpp/earley_parser.h
+@@ -618 +618,4 @@ class EarleyParser {
+-    int32_t deadline = current_token_index_ + own;
++    int64_t uncapped_deadline = static_cast<int64_t>(current_token_index_) + own;
++    int32_t deadline = static_cast<int32_t>(
++        std::min<int64_t>(uncapped_deadline, std::numeric_limits<int32_t>::max())
++    );
+diff --git a/cpp/structural_tag.cc b/cpp/structural_tag.cc
+index 66aa008..112972a 100644
+--- a/cpp/structural_tag.cc
++++ b/cpp/structural_tag.cc
+@@ -141,0 +142,6 @@ picojson::value AnyTextFormat::ToJSON() const {
++  if (max_tokens >= 0) {
++    obj["max_tokens"] = picojson::value(static_cast<int64_t>(max_tokens));
++  }
++  if (max_chars >= 0) {
++    obj["max_chars"] = picojson::value(static_cast<int64_t>(max_chars));
++  }
+@@ -236,0 +243,3 @@ picojson::value AnyTokensFormat::ToJSON() const {
++  if (max_tokens >= 0) {
++    obj["max_tokens"] = picojson::value(static_cast<int64_t>(max_tokens));
++  }
+@@ -627,0 +637,21 @@ Result<JSONSchemaFormat, ISTError> StructuralTagParser::ParseJSONSchemaFormat(
++Result<int32_t, ISTError> ParseOptionalBudget(
++    const picojson::object& obj, const std::string& field_name, const std::string& format_name
++) {
++  auto it = obj.find(field_name);
++  if (it == obj.end() || it->second.is<picojson::null>()) {
++    return ResultOk<int32_t>(-1);
++  }
++  if (!it->second.is<double>()) {
++    return ResultErr<ISTError>(
++        field_name + " in " + format_name + " must be a non-negative 32-bit integer or null"
++    );
++  }
++  double value = it->second.get<double>();
++  if (value < 0 || value > std::numeric_limits<int32_t>::max() || value != std::floor(value)) {
++    return ResultErr<ISTError>(
++        field_name + " in " + format_name + " must be a non-negative 32-bit integer or null"
++    );
++  }
++  return ResultOk<int32_t>(static_cast<int32_t>(value));
++}
++
+@@ -629,0 +660,11 @@ Result<AnyTextFormat, ISTError> StructuralTagParser::ParseAnyTextFormat(const pi
++  auto max_tokens_result = ParseOptionalBudget(obj, "max_tokens", "any_text");
++  if (max_tokens_result.IsErr()) {
++    return ResultErr<ISTError>(std::move(max_tokens_result).UnwrapErr());
++  }
++  auto max_chars_result = ParseOptionalBudget(obj, "max_chars", "any_text");
++  if (max_chars_result.IsErr()) {
++    return ResultErr<ISTError>(std::move(max_chars_result).UnwrapErr());
++  }
++  int32_t max_tokens = std::move(max_tokens_result).Unwrap();
++  int32_t max_chars = std::move(max_chars_result).Unwrap();
++
+@@ -635 +676 @@ Result<AnyTextFormat, ISTError> StructuralTagParser::ParseAnyTextFormat(const pi
+-    return ResultOk<AnyTextFormat>(std::vector<std::string>{});
++    return ResultOk<AnyTextFormat>(std::vector<std::string>{}, max_tokens, max_chars);
+@@ -649 +690 @@ Result<AnyTextFormat, ISTError> StructuralTagParser::ParseAnyTextFormat(const pi
+-  return ResultOk<AnyTextFormat>(std::move(excluded_strs));
++  return ResultOk<AnyTextFormat>(std::move(excluded_strs), max_tokens, max_chars);
+@@ -1124 +1165,7 @@ Result<AnyTokensFormat, ISTError> StructuralTagParser::ParseAnyTokensFormat(
+-  return ResultOk<AnyTokensFormat>(std::move(exclude_tokens));
++  auto max_tokens_result = ParseOptionalBudget(obj, "max_tokens", "any_tokens");
++  if (max_tokens_result.IsErr()) {
++    return ResultErr<ISTError>(std::move(max_tokens_result).UnwrapErr());
++  }
++  return ResultOk<AnyTokensFormat>(
++      std::move(exclude_tokens), std::move(max_tokens_result).Unwrap()
++  );
+@@ -1912,0 +1960,3 @@ class StructuralTagGrammarConverter {
++  void SetRuleBodyAndBudgets(
++      int32_t rule_id, int body_expr_id, int32_t max_tokens, int32_t max_chars = -1
++  );
+@@ -1960,0 +2011,17 @@ Grammar StructuralTagGrammarConverter::AddRootRuleAndGetGrammar(int ref_rule_id)
++void StructuralTagGrammarConverter::SetRuleBodyAndBudgets(
++    int32_t rule_id, int body_expr_id, int32_t max_tokens, int32_t max_chars
++) {
++  // A zero-token region is empty by definition. Materialize that in the grammar because -1 is
++  // also the parser's pre-first-token deadline sentinel.
++  if (max_tokens == 0) {
++    body_expr_id = grammar_builder_.AddChoices({grammar_builder_.AddEmptyStr()});
++  }
++  grammar_builder_.UpdateRuleBody(rule_id, body_expr_id);
++  if (max_tokens >= 0) {
++    grammar_builder_.UpdateMaxTokens(rule_id, max_tokens);
++  }
++  if (max_chars >= 0) {
++    grammar_builder_.UpdateMaxChars(rule_id, max_chars);
++  }
++}
++
+@@ -2052,0 +2120 @@ Result<int, ISTError> StructuralTagGrammarConverter::VisitSub(const AnyTextForma
++  int body_expr_id;
+@@ -2054 +2122 @@ Result<int, ISTError> StructuralTagGrammarConverter::VisitSub(const AnyTextForma
+-    auto tag_dispatch_expr =
++    body_expr_id =
+@@ -2056 +2123,0 @@ Result<int, ISTError> StructuralTagGrammarConverter::VisitSub(const AnyTextForma
+-    return ResultOk(grammar_builder_.AddRuleWithHint("any_text", tag_dispatch_expr));
+@@ -2060,2 +2127 @@ Result<int, ISTError> StructuralTagGrammarConverter::VisitSub(const AnyTextForma
+-    auto choices_expr = grammar_builder_.AddChoices({sequence_expr});
+-    return ResultOk(grammar_builder_.AddRuleWithHint("any_text", choices_expr));
++    body_expr_id = grammar_builder_.AddChoices({sequence_expr});
+@@ -2062,0 +2129,3 @@ Result<int, ISTError> StructuralTagGrammarConverter::VisitSub(const AnyTextForma
++  int rule_id = grammar_builder_.AddEmptyRuleWithHint("any_text");
++  SetRuleBodyAndBudgets(rule_id, body_expr_id, format.max_tokens, format.max_chars);
++  return ResultOk(rule_id);
+@@ -2445 +2514 @@ Result<int, ISTError> StructuralTagGrammarConverter::VisitSub(const AnyTokensFor
+-  grammar_builder_.UpdateRuleBody(star_rule_id, star_body);
++  SetRuleBodyAndBudgets(star_rule_id, star_body, format.max_tokens);
+diff --git a/cpp/structural_tag.h b/cpp/structural_tag.h
+index 20c0362..4c7cf60 100644
+--- a/cpp/structural_tag.h
++++ b/cpp/structural_tag.h
+@@ -128 +128,6 @@ struct AnyTextFormat {
+-  AnyTextFormat(std::vector<std::string> excluded_strs) : excludes(std::move(excluded_strs)) {}
++  int32_t max_tokens = -1;
++  int32_t max_chars = -1;
++  AnyTextFormat(
++      std::vector<std::string> excluded_strs, int32_t max_tokens = -1, int32_t max_chars = -1
++  )
++      : excludes(std::move(excluded_strs)), max_tokens(max_tokens), max_chars(max_chars) {}
+@@ -172,2 +177,5 @@ struct AnyTokensFormat {
+-  AnyTokensFormat(std::vector<std::variant<int32_t, std::string>> exclude_tokens)
+-      : exclude_tokens(std::move(exclude_tokens)) {}
++  int32_t max_tokens = -1;
++  AnyTokensFormat(
++      std::vector<std::variant<int32_t, std::string>> exclude_tokens, int32_t max_tokens = -1
++  )
++      : exclude_tokens(std::move(exclude_tokens)), max_tokens(max_tokens) {}
+diff --git a/docs/structural_tag/advanced_usage.md b/docs/structural_tag/advanced_usage.md
+index 67de5fe..ebda9b5 100644
+--- a/docs/structural_tag/advanced_usage.md
++++ b/docs/structural_tag/advanced_usage.md
+@@ -5 +5,4 @@
+-Certain "unlimited" formats — `any_text`, `any_tokens`, `triggered_tags`, and `token_triggered_tags` — can consume an unbounded amount of output. To know when to stop, the structural tag compiler automatically detects the **end condition** of the enclosing `tag` and adds it to the format's internal exclude set.
++Without an explicit length budget, certain "unlimited" formats — `any_text`, `any_tokens`,
++`triggered_tags`, and `token_triggered_tags` — can consume an unbounded amount of output. To know
++when to stop, the structural tag compiler automatically detects the **end condition** of the
++enclosing `tag` and adds it to the format's internal exclude set.
+diff --git a/docs/structural_tag/structural_tag.md b/docs/structural_tag/structural_tag.md
+index 230ff94..b6f9652 100644
+--- a/docs/structural_tag/structural_tag.md
++++ b/docs/structural_tag/structural_tag.md
+@@ -111 +111 @@ I will call a tool now. <function=get_weather>{"city": "San Francisco"}</functio
+-Some formats can consume an unbounded amount of output:
++Without a length budget, some formats can consume an unbounded amount of output:
+@@ -266,0 +267,2 @@ Matches arbitrary text.
++| `max_tokens` | `int \| null` | `null` |
++| `max_chars` | `int \| null` | `null` |
+@@ -279,0 +282,27 @@ treated as a stop condition.
++`max_tokens` limits the region to at most that many complete LLM tokens. Once the budget is
++reached, generation must leave `any_text`; for content inside a `tag`, this forces the enclosing
++end string while still supporting end strings that span multiple tokens. The token budget is
++enforced during token-mask-driven generation. Calls to `GrammarMatcher.accept_string` do not
++consume it because they have no token boundaries.
++
++`max_chars` limits the region by Unicode codepoints rather than UTF-8 bytes. It also applies to
++`GrammarMatcher.accept_string`. Both limits are optional non-negative integers, and `0` allows
++only empty content. Values must be at most 2,147,483,647. When both are set, the first limit
++reached forces the region to end.
++
++For example, this bounds a reasoning section by both generated tokens and characters:
++
++```json
++{
++    "type": "tag",
++    "begin": "<think>",
++    "content": {
++        "type": "any_text",
++        "excludes": ["</think>"],
++        "max_tokens": 256,
++        "max_chars": 4096
++    },
++    "end": "</think>"
++}
++```
++
+@@ -642,0 +672 @@ Matches zero or more tokens, excluding those in `exclude_tokens`.
++| `max_tokens` | `int \| null` | `null` |
+@@ -650 +680,5 @@ Matches zero or more tokens, excluding those in `exclude_tokens`.
+-Semantically, `any_tokens` is equivalent to `star(exclude_token(...))`.
++Without `max_tokens`, `any_tokens` is equivalent to `star(exclude_token(...))`. A non-negative
++`max_tokens` value limits it to at most that many tokens while preserving `exclude_tokens`; `0`
++matches empty content only. The region may still end before reaching the limit, and an enclosing
++token-level `tag` end remains available when the limit is reached. The maximum accepted value is
++2,147,483,647.
+diff --git a/pyproject.toml b/pyproject.toml
+index 46731db..6cb8a37 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -3 +3 @@ name = "xgrammar"
+-version = "0.2.6rc2+phala.feedback.20261017.p6"
++version = "0.2.6rc2+phala.feedback.20261017.p6.budget830"
+diff --git a/python/xgrammar/structural_tag.py b/python/xgrammar/structural_tag.py
+index be0bc02..f0e7008 100644
+--- a/python/xgrammar/structural_tag.py
++++ b/python/xgrammar/structural_tag.py
+@@ -77,0 +78,9 @@ class AnyTextFormat(BaseModel):
++    max_tokens: Optional[int] = Field(default=None, ge=0, le=2_147_483_647)
++    """Maximum number of LLM tokens this region may consume. None means unbounded. This is
++    enforced during token-mask-driven generation; ``GrammarMatcher.accept_string`` does not
++    consume the token budget."""
++
++    max_chars: Optional[int] = Field(default=None, ge=0, le=2_147_483_647)
++    """Maximum number of Unicode codepoints this region may consume. None means unbounded. This
++    also applies to ``GrammarMatcher.accept_string``."""
++
+@@ -107,0 +117,4 @@ class AnyTokensFormat(BaseModel):
++    max_tokens: Optional[int] = Field(default=None, ge=0, le=2_147_483_647)
++    """Maximum number of tokens this region may consume. None means unbounded. This is enforced
++    during token-mask-driven generation."""
++
+diff --git a/tests/python/test_grammar_matcher_structural_tag.py b/tests/python/test_grammar_matcher_structural_tag.py
+index 83257dc..7abded4 100644
+--- a/tests/python/test_grammar_matcher_structural_tag.py
++++ b/tests/python/test_grammar_matcher_structural_tag.py
+@@ -676,0 +677,237 @@ def test_tag_dispatch_perf(ebnf, input_str):
++# ---------- AnyTextFormat / AnyTokensFormat length budgets ----------
++
++_LENGTH_BUDGET_VOCAB = ["<think>", "a", "b", "c", "de", "中", "a</", "</", "think>", "<eos>"]
++
++
++def _budget_token_id(token: str) -> int:
++    return _LENGTH_BUDGET_VOCAB.index(token)
++
++
++def _compile_any_text_budget(
++    *, max_tokens=None, max_chars=None, compiler=None, cache_enabled=False
++):
++    tokenizer_info = xgr.TokenizerInfo(
++        _LENGTH_BUDGET_VOCAB, stop_token_ids=[_budget_token_id("<eos>")]
++    )
++    compiler = compiler or xgr.GrammarCompiler(tokenizer_info, cache_enabled=cache_enabled)
++    content = {"type": "any_text", "excludes": ["</think>"]}
++    if max_tokens is not None:
++        content["max_tokens"] = max_tokens
++    if max_chars is not None:
++        content["max_chars"] = max_chars
++    structural_tag = {
++        "type": "structural_tag",
++        "format": {"type": "tag", "begin": "<think>", "content": content, "end": "</think>"},
++    }
++    return tokenizer_info, compiler.compile_structural_tag(structural_tag)
++
++
++def _budget_accepts(compiled, *tokens: str) -> bool:
++    matcher = xgr.GrammarMatcher(compiled)
++    for token in tokens:
++        bitmask = xgr.allocate_token_bitmask(1, len(_LENGTH_BUDGET_VOCAB))
++        matcher.fill_next_token_bitmask(bitmask)
++        rejected = _get_masked_tokens_from_bitmask(bitmask, len(_LENGTH_BUDGET_VOCAB))
++        if _budget_token_id(token) in rejected:
++            return False
++        if not matcher.accept_token(_budget_token_id(token)):
++            return False
++    return matcher.is_completed()
++
++
++def _budget_matcher_mask_allows(matcher, token: str) -> bool:
++    bitmask = xgr.allocate_token_bitmask(1, len(_LENGTH_BUDGET_VOCAB))
++    matcher.fill_next_token_bitmask(bitmask)
++    rejected = _get_masked_tokens_from_bitmask(bitmask, len(_LENGTH_BUDGET_VOCAB))
++    return _budget_token_id(token) not in rejected
++
++
++def _budget_mask_allows(compiled, prefix: List[str], token: str) -> bool:
++    matcher = xgr.GrammarMatcher(compiled)
++    for prefix_token in prefix:
++        assert matcher.accept_token(_budget_token_id(prefix_token))
++    bitmask = xgr.allocate_token_bitmask(1, len(_LENGTH_BUDGET_VOCAB))
++    matcher.fill_next_token_bitmask(bitmask)
++    rejected = _get_masked_tokens_from_bitmask(bitmask, len(_LENGTH_BUDGET_VOCAB))
++    return _budget_token_id(token) not in rejected
++
++
++def test_any_text_max_tokens_forces_multitoken_end():
++    _, compiled = _compile_any_text_budget(max_tokens=2)
++    assert _budget_accepts(compiled, "<think>", "a", "b", "</", "think>")
++    assert _budget_accepts(compiled, "<think>", "a", "</", "think>")
++    assert _budget_accepts(compiled, "<think>", "a", "a</", "think>")
++    assert not _budget_accepts(compiled, "<think>", "a", "b", "c", "</", "think>")
++    assert _budget_mask_allows(compiled, ["<think>", "a", "b"], "</")
++    assert not _budget_mask_allows(compiled, ["<think>", "a", "b"], "a")
++    assert not _budget_mask_allows(compiled, ["<think>", "a", "b"], "<eos>")
++
++
++def test_any_text_zero_token_budget_forces_immediate_end():
++    _, compiled = _compile_any_text_budget(max_tokens=0)
++    assert _budget_accepts(compiled, "<think>", "</", "think>")
++    assert _budget_mask_allows(compiled, ["<think>"], "</")
++    assert not _budget_mask_allows(compiled, ["<think>"], "a")
++
++    _, char_compiled = _compile_any_text_budget(max_chars=0)
++    assert _budget_accepts(char_compiled, "<think>", "</", "think>")
++    assert not _budget_mask_allows(char_compiled, ["<think>"], "a")
++
++
++def test_any_text_max_tokens_rollback_and_fork():
++    _, compiled = _compile_any_text_budget(max_tokens=2)
++    matcher = xgr.GrammarMatcher(compiled)
++    assert matcher.accept_token(_budget_token_id("<think>"))
++    assert matcher.accept_token(_budget_token_id("a"))
++    forked = matcher.fork()
++
++    assert matcher.accept_token(_budget_token_id("b"))
++    assert not _budget_matcher_mask_allows(matcher, "c")
++    matcher.rollback(1)
++    assert _budget_matcher_mask_allows(matcher, "c")
++    assert matcher.accept_token(_budget_token_id("c"))
++
++    assert forked.accept_token(_budget_token_id("c"))
++    assert not _budget_matcher_mask_allows(forked, "b")
++
++
++def test_any_text_max_chars_counts_codepoints():
++    _, compiled = _compile_any_text_budget(max_chars=3)
++    end = ["</", "think>"]
++    assert _budget_accepts(compiled, "<think>", "de", "a", *end)
++    assert not _budget_accepts(compiled, "<think>", "de", "de", *end)
++    assert _budget_accepts(compiled, "<think>", "中", "中", "中", *end)
++    assert not _budget_accepts(compiled, "<think>", "中", "中", "中", "中", *end)
++    assert _budget_mask_allows(compiled, ["<think>", "a", "b"], "a")
++    assert not _budget_mask_allows(compiled, ["<think>", "a", "b"], "de")
++
++    grammar = compiled.grammar
++    assert _is_grammar_accept_string(grammar, "<think>中中中</think>")
++    assert not _is_grammar_accept_string(grammar, "<think>中中中中</think>")
++
++
++def test_any_text_token_and_character_budgets_combine():
++    _, compiled = _compile_any_text_budget(max_tokens=2, max_chars=3)
++    end = ["</", "think>"]
++    assert _budget_accepts(compiled, "<think>", "de", "a", *end)
++    assert not _budget_accepts(compiled, "<think>", "a", "b", "c", *end)
++    assert not _budget_accepts(compiled, "<think>", "de", "de", *end)
++
++
++def test_any_text_budgets_are_independent_per_format():
++    tokenizer_info = xgr.TokenizerInfo(
++        _LENGTH_BUDGET_VOCAB, stop_token_ids=[_budget_token_id("<eos>")]
++    )
++
++    def think_tag(max_tokens: int):
++        return {
++            "type": "tag",
++            "begin": "<think>",
++            "content": {"type": "any_text", "max_tokens": max_tokens},
++            "end": "</think>",
++        }
++
++    structural_tag = {
++        "type": "structural_tag",
++        "format": {"type": "sequence", "elements": [think_tag(1), think_tag(2)]},
++    }
++    compiled = xgr.GrammarCompiler(tokenizer_info, cache_enabled=False).compile_structural_tag(
++        structural_tag
++    )
++    first = ["<think>", "a", "</", "think>"]
++    second = ["<think>", "a", "b", "</", "think>"]
++    assert _budget_accepts(compiled, *first, *second)
++    assert not _budget_accepts(compiled, *second, *first)
++
++
++def test_any_text_max_tokens_int32_does_not_overflow_after_prefix():
++    vocab = ["prefix", "<think>", "a", "</think>", "<eos>"]
++    tokenizer_info = xgr.TokenizerInfo(vocab, stop_token_ids=[4])
++    structural_tag = {
++        "type": "structural_tag",
++        "format": {
++            "type": "sequence",
++            "elements": [
++                {"type": "const_string", "value": "prefix"},
++                {
++                    "type": "tag",
++                    "begin": "<think>",
++                    "content": {"type": "any_text", "max_tokens": 2**31 - 1},
++                    "end": "</think>",
++                },
++            ],
++        },
++    }
++    compiled = xgr.GrammarCompiler(tokenizer_info, cache_enabled=False).compile_structural_tag(
++        structural_tag
++    )
++    matcher = xgr.GrammarMatcher(compiled)
++    assert matcher.accept_token(0)
++    assert matcher.accept_token(1)
++    assert "budget_deadline=2147483647" in matcher._debug_print_internal_state()
++
++
++def test_any_tokens_max_tokens_forces_token_end():
++    vocab = ["<begin>", "x", "y", "<end>", "<eos>"]
++    tokenizer_info = xgr.TokenizerInfo(vocab, stop_token_ids=[4])
++    structural_tag = {
++        "type": "structural_tag",
++        "format": {
++            "type": "tag",
++            "begin": {"type": "token", "token": 0},
++            "content": {"type": "any_tokens", "max_tokens": 2},
++            "end": {"type": "token", "token": 3},
++        },
++    }
++    compiled = xgr.GrammarCompiler(tokenizer_info, cache_enabled=False).compile_structural_tag(
++        structural_tag
++    )
++
++    matcher = xgr.GrammarMatcher(compiled)
++    assert matcher.accept_token(0)
++    assert matcher.accept_token(1)
++    assert matcher.accept_token(2)
++    bitmask = xgr.allocate_token_bitmask(1, len(vocab))
++    matcher.fill_next_token_bitmask(bitmask)
++    rejected = _get_masked_tokens_from_bitmask(bitmask, len(vocab))
++    assert 3 not in rejected
++    assert 1 in rejected and 2 in rejected and 4 in rejected
++    assert matcher.accept_token(3)
++    assert matcher.is_completed()
++
++    zero_budget_tag = {
++        "type": "structural_tag",
++        "format": {
++            "type": "tag",
++            "begin": {"type": "token", "token": 0},
++            "content": {"type": "any_tokens", "max_tokens": 0},
++            "end": {"type": "token", "token": 3},
++        },
++    }
++    zero_compiled = xgr.GrammarCompiler(tokenizer_info, cache_enabled=False).compile_structural_tag(
++        zero_budget_tag
++    )
++    zero_matcher = xgr.GrammarMatcher(zero_compiled)
++    assert zero_matcher.accept_token(0)
++    zero_matcher.fill_next_token_bitmask(bitmask)
++    zero_rejected = _get_masked_tokens_from_bitmask(bitmask, len(vocab))
++    assert 3 not in zero_rejected
++    assert 1 in zero_rejected and 2 in zero_rejected
++
++
++def test_any_text_budget_cache_and_serialization_roundtrip():
++    tokenizer_info = xgr.TokenizerInfo(
++        _LENGTH_BUDGET_VOCAB, stop_token_ids=[_budget_token_id("<eos>")]
++    )
++    compiler = xgr.GrammarCompiler(tokenizer_info, cache_enabled=True)
++    _, unbounded = _compile_any_text_budget(compiler=compiler)
++    _, bounded = _compile_any_text_budget(max_tokens=2, compiler=compiler)
++
++    assert _budget_accepts(unbounded, "<think>", "a", "b", "c", "</", "think>")
++    assert not _budget_accepts(bounded, "<think>", "a", "b", "c", "</", "think>")
++
++    recovered = xgr.CompiledGrammar.deserialize_json(bounded.serialize_json(), tokenizer_info)
++    assert _budget_accepts(recovered, "<think>", "a", "b", "</", "think>")
++    assert not _budget_accepts(recovered, "<think>", "a", "b", "c", "</", "think>")
++
++
+diff --git a/tests/python/test_structural_tag_converter.py b/tests/python/test_structural_tag_converter.py
+index 35246e0..2bb1ecf 100644
+--- a/tests/python/test_structural_tag_converter.py
++++ b/tests/python/test_structural_tag_converter.py
+@@ -839,0 +840,27 @@ def test_any_text_only_format(
++def test_any_text_length_budgets():
++    check_stag_with_grammar(
++        {
++            "type": "tag",
++            "begin": "<think>",
++            "content": {"type": "any_text", "max_tokens": 2, "max_chars": 4},
++            "end": "</think>",
++        },
++        r"""any_text[max_tokens=2, max_chars=4] ::= TagDispatch(
++  loop_after_dispatch=false,
++  excludes=("</think>")
++)
++tag ::= (("<think>" any_text "</think>"))
++root ::= ((tag))
++""",
++    )
++
++
++def test_any_text_zero_token_budget_is_empty():
++    check_stag_with_grammar(
++        {"type": "any_text", "max_tokens": 0},
++        r"""any_text[max_tokens=0] ::= ("")
++root ::= ((any_text))
++""",
++    )
++
++
+@@ -3639,0 +3667,20 @@ root ::= ((any_tokens))
++def test_any_tokens_format_max_tokens():
++    check_stag_with_grammar(
++        {"type": "any_tokens", "exclude_tokens": [5, 10], "max_tokens": 3},
++        r"""any_tokens_inner ::= ((ExcludeToken(5, 10)))
++any_tokens[max_tokens=3] ::= ("" | (any_tokens_inner any_tokens))
++root ::= ((any_tokens))
++""",
++    )
++
++
++def test_any_tokens_format_zero_token_budget_is_empty():
++    check_stag_with_grammar(
++        {"type": "any_tokens", "exclude_tokens": [5], "max_tokens": 0},
++        r"""any_tokens_inner ::= ((ExcludeToken(5)))
++any_tokens[max_tokens=0] ::= ("")
++root ::= ((any_tokens))
++""",
++    )
++
++
+@@ -3831,0 +3879,55 @@ def test_any_tokens_format_invalid_exclude_type():
++@pytest.mark.parametrize("format_type", ["any_text", "any_tokens"])
++@pytest.mark.parametrize("bad_value", [-1, 1.5, "invalid", 2**31])
++def test_length_budget_invalid(format_type: str, bad_value: Any):
++    field = "max_tokens"
++    stag = {"type": "structural_tag", "format": {"type": format_type, field: bad_value}}
++    with pytest.raises(Exception, match="non-negative 32-bit integer"):
++        xgr.Grammar.from_structural_tag(stag)
++
++
++@pytest.mark.parametrize("bad_value", [-1, 1.5, "invalid", 2**31])
++def test_any_text_max_chars_invalid(bad_value: Any):
++    stag = {"type": "structural_tag", "format": {"type": "any_text", "max_chars": bad_value}}
++    with pytest.raises(Exception, match="non-negative 32-bit integer"):
++        xgr.Grammar.from_structural_tag(stag)
++
++
++def test_length_budget_pydantic_roundtrip():
++    from xgrammar.structural_tag import AnyTextFormat, AnyTokensFormat
++
++    any_text = AnyTextFormat(excludes=["END"], max_tokens=3, max_chars=7)
++    any_text_roundtrip = AnyTextFormat.model_validate_json(any_text.model_dump_json())
++    assert any_text_roundtrip == any_text
++    assert AnyTextFormat().max_tokens is None
++    assert AnyTextFormat().max_chars is None
++    assert "any_text[max_tokens=3, max_chars=7]" in str(
++        xgr.Grammar.from_structural_tag(StructuralTag(format=any_text))
++    )
++
++    any_tokens = AnyTokensFormat(exclude_tokens=[5, "END"], max_tokens=3)
++    any_tokens_roundtrip = AnyTokensFormat.model_validate_json(any_tokens.model_dump_json())
++    assert any_tokens_roundtrip == any_tokens
++    assert AnyTokensFormat().max_tokens is None
++    assert "any_tokens[max_tokens=3]" in str(
++        xgr.Grammar.from_structural_tag(
++            StructuralTag(format=AnyTokensFormat(exclude_tokens=[5], max_tokens=3))
++        )
++    )
++    assert "any_tokens[max_tokens=" not in str(
++        xgr.Grammar.from_structural_tag(StructuralTag(format=AnyTokensFormat(exclude_tokens=[5])))
++    )
++
++    with pytest.raises(Exception):
++        AnyTextFormat(max_tokens=-1)
++    with pytest.raises(Exception):
++        AnyTextFormat(max_chars=-1)
++    with pytest.raises(Exception):
++        AnyTokensFormat(max_tokens=-1)
++    with pytest.raises(Exception):
++        AnyTextFormat(max_tokens=2**31)
++    with pytest.raises(Exception):
++        AnyTextFormat(max_chars=2**31)
++    with pytest.raises(Exception):
++        AnyTokensFormat(max_tokens=2**31)
++
++

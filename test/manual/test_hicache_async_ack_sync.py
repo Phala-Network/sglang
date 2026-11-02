@@ -522,9 +522,7 @@ class TestHiCacheAsyncAckSync(unittest.TestCase):
         cache.ongoing_backup = {}
         cache.unlocked = []
         cache.freed = []
-        cache.dec_host_lock_ref = lambda node_id, params: cache.unlocked.append(
-            node_id
-        )
+        cache.dec_host_lock_ref = lambda node_id, params: cache.unlocked.append(node_id)
         cc = cache.cache_controller
         cc.prefetch_hit_queue = _StrictQueue()
         cc.ack_prefetch_queue = _StrictQueue()

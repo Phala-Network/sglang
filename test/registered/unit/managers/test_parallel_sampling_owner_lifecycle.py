@@ -13,7 +13,6 @@ maybe_stub_sgl_kernel()
 from sglang.srt.managers.io_struct import GenerateReqInput  # noqa: E402
 from sglang.srt.managers.tokenizer_manager import TokenizerManager  # noqa: E402
 
-
 register_cpu_ci(est_time=3, suite="base-a-test-cpu")
 
 

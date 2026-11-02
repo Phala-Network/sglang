@@ -699,6 +699,138 @@ class K2V3Detector(BaseReasoningFormatDetector):
         )
 
 
+class _KimiK3JSONContentParser:
+    """Strip only outer XTML markers; JSON string bytes are always data.
+
+    The JSON grammar requires an explicit final-channel boundary when thinking
+    is enabled. Thus a JSON-looking reasoning prefix never needs speculative
+    buffering/replay. Only a partial XTML marker is retained between chunks.
+    This lexer locates the root boundary; it is not a JSON/schema validator.
+    """
+
+    _STRING_EVENT = re.compile(r'["\\]')
+
+    def __init__(self, thinking, stream_reasoning=True):
+        self.phase = "thinking" if thinking else "start"
+        self.buffer = ""
+        self.root = None
+        self.depth = 0
+        self.in_string = False
+        self.escaped = False
+        self.stream_reasoning = stream_reasoning
+        self.pending_reasoning = []
+
+    def feed(self, text):
+        data = self.buffer + text
+        self.buffer = ""
+        position = 0
+        content, reasoning = [], []
+        while position < len(data):
+            if self.phase == "thinking":
+                markers = (THINK_OPEN, THINK_CLOSE, RESPONSE_OPEN)
+                found = [
+                    (index, marker)
+                    for marker in markers
+                    if (index := data.find(marker, position)) >= 0
+                ]
+                if found:
+                    index, marker = min(found)
+                    reasoning.append(data[position:index])
+                    position = index + len(marker)
+                    if marker != THINK_OPEN:
+                        self.phase = "start"
+                    continue
+                hold = partial_suffix_len(data[position:], list(markers))
+                end = len(data) - hold
+                reasoning.append(data[position:end])
+                position = end
+                break
+
+            if self.phase in ("start", "tail"):
+                markers = (
+                    (RESPONSE_OPEN,)
+                    if self.phase == "start"
+                    else (RESPONSE_CLOSE, MESSAGE_CLOSE)
+                )
+                marker = next(
+                    (m for m in markers if data.startswith(m, position)), None
+                )
+                if marker is not None:
+                    position += len(marker)
+                    continue
+                remaining = len(data) - position
+                if any(
+                    remaining < len(m) and m.startswith(data[position:])
+                    for m in markers
+                ):
+                    break
+                char = data[position]
+                if self.phase == "tail" or char.isspace():
+                    # Preserve unexpected bytes rather than repairing invalid JSON.
+                    content.append(char)
+                    position += 1
+                    continue
+                self.phase = "value"
+
+            char = data[position]
+            if self.root == "primitive" and (char.isspace() or char == "<"):
+                self.phase = "tail"
+                continue
+            content.append(char)
+            position += 1
+            if self.root is None:
+                if char in "{[":
+                    self.root, self.depth = "container", 1
+                elif char == '"':
+                    self.root, self.in_string = "string", True
+                else:
+                    self.root = "primitive"
+            elif self.in_string:
+                if self.escaped:
+                    self.escaped = False
+                elif char == "\\":
+                    self.escaped = True
+                elif char == '"':
+                    self.in_string = False
+                    if self.root == "string":
+                        self.phase = "tail"
+                elif self.root != "primitive":
+                    # Skip ordinary string spans; quotes and escapes still use
+                    # the state machine, including across chunk boundaries.
+                    event = self._STRING_EVENT.search(data, position)
+                    end = event.start() if event is not None else len(data)
+                    content.append(data[position:end])
+                    position = end
+            elif char == '"':
+                self.in_string = True
+            elif char in "{[":
+                self.depth += 1
+            elif char in "}]":
+                self.depth -= 1
+                if self.depth == 0:
+                    self.phase = "tail"
+
+        self.buffer = data[position:]
+        reason = "".join(reasoning)
+        if not self.stream_reasoning:
+            if reason:
+                self.pending_reasoning.append(reason)
+            if self.phase == "thinking":
+                reason = ""
+            else:
+                reason = "".join(self.pending_reasoning)
+                self.pending_reasoning.clear()
+        return StreamingParseResult(normal_text="".join(content), reasoning_text=reason)
+
+    def finish(self):
+        text, self.buffer = self.buffer, ""
+        if self.phase == "thinking":
+            text = "".join(self.pending_reasoning) + text
+            self.pending_reasoning.clear()
+            return StreamingParseResult(reasoning_text=text)
+        return StreamingParseResult(normal_text=text)
+
+
 class KimiK3Detector(BaseReasoningFormatDetector):
     """Detector for the Kimi K3 XTML think channel.
 
@@ -730,6 +862,7 @@ class KimiK3Detector(BaseReasoningFormatDetector):
         continue_final_message: bool = False,
         previous_content: str = "",
         force_nonempty_content: bool = False,
+        structured_json: bool = False,
     ):
         # strict-thinking flattens these to single token ids, so the full marker
         # "<|open|>response<|sep|>" is inexpressible. The bare name works: it
@@ -763,6 +896,11 @@ class KimiK3Detector(BaseReasoningFormatDetector):
         self._stream_text = ""
         self._streamed_reasoning: list[str] = []
         self._discard_delayed_think_close = False
+        self._json_content_parser = (
+            _KimiK3JSONContentParser(self._in_reasoning, stream_reasoning)
+            if structured_json
+            else None
+        )
 
     def _clean_content(self, text: str) -> str:
         tools_idx = text.find(TOOLS_OPEN)
@@ -795,6 +933,14 @@ class KimiK3Detector(BaseReasoningFormatDetector):
         return self._clean_content(text.replace(self.think_end_token, ""))
 
     def detect_and_parse(self, text: str) -> StreamingParseResult:
+        if self._json_content_parser is not None:
+            parser = _KimiK3JSONContentParser(self._in_reasoning)
+            result = parser.feed(text)
+            tail = parser.finish()
+            return StreamingParseResult(
+                normal_text=result.normal_text + tail.normal_text,
+                reasoning_text=result.reasoning_text + tail.reasoning_text,
+            )
         in_reasoning = self._in_reasoning or self.think_start_token in text
         if not in_reasoning and self.think_end_token not in text:
             return StreamingParseResult(normal_text=self._clean_content(text))
@@ -841,6 +987,8 @@ class KimiK3Detector(BaseReasoningFormatDetector):
         )
 
     def parse_streaming_increment(self, new_text: str) -> StreamingParseResult:
+        if self._json_content_parser is not None:
+            return self._json_content_parser.feed(new_text)
         self._buffer += new_text
         if self._force_nonempty_content:
             self._stream_text += new_text
@@ -928,6 +1076,8 @@ class KimiK3Detector(BaseReasoningFormatDetector):
         return StreamingParseResult(normal_text=self._drain_content())
 
     def finish(self) -> StreamingParseResult:
+        if self._json_content_parser is not None:
+            return self._json_content_parser.finish()
         self._streamed_reasoning.clear()
         if not self._force_nonempty_content:
             return super().finish()
@@ -2402,6 +2552,7 @@ class ReasoningParser:
         tokenizer=None,
         tool_call_parser_active: bool = False,
         prefix: str | None = None,
+        structured_json: bool = False,
     ):
         if not model_type:
             raise ValueError("Model type must be specified")
@@ -2434,6 +2585,8 @@ class ReasoningParser:
 
         # Only pass force_reasoning if explicitly set, let detectors use their defaults
         kwargs = {"stream_reasoning": stream_reasoning}
+        if model_type.lower() == "kimi_k3":
+            kwargs["structured_json"] = structured_json
         if force_reasoning is not None:
             kwargs["force_reasoning"] = force_reasoning
 

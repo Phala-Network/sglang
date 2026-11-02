@@ -21,6 +21,9 @@ from sglang.srt.managers.schedule_batch import (
 from sglang.srt.managers.scheduler import Scheduler, _MultimodalInputProcessingError
 from sglang.srt.multimodal.transport.cuda_ipc import CudaIpcTensorTransportProxy
 from sglang.srt.sampling.sampling_params import SamplingParams
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
 
 
 def yarn_config():
@@ -314,3 +317,11 @@ def test_owned_or_retracted_abort_keeps_existing_queue_path(state):
     assert scheduler.waiting_queue == [req]
     scheduler.output_streamer.stream_output.assert_not_called()
     scheduler.tree_cache.finish.assert_not_called()
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main([__file__, *sys.argv[1:]]))

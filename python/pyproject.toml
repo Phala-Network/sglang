@@ -97,7 +97,7 @@ dependencies = [
   "uvicorn>=0.51",
   "uvloop",
   "watchfiles",
-  "xgrammar==0.2.7",
+  "xgrammar==0.2.6rc2+phala.feedback.20261017.p6.budget830",
   "xxhash",
   "zstandard",
 ]
@@ -117,7 +117,7 @@ diffusion = [
   "cache-dit==1.5.1",
   "cloudpickle==3.1.2",
   "diffusers==0.37.0",
-  "imageio==2.36.0",
+  "imageio==2.37.0",
   "imageio-ffmpeg==0.5.1",
   "moviepy>=2.0.0",
   "msgpack",

@@ -1,4 +1,5 @@
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple, Union
+import copy
+from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Tuple, Union
 
 from xgrammar import StructuralTag
 from xgrammar.structural_tag import (
@@ -19,11 +20,22 @@ from xgrammar.structural_tag import (
     TriggeredTagsFormat,
 )
 
+from sglang.srt.constrained.json_schema_intersections import (
+    intersect_ref_min_length as _intersect_ref_min_length,
+)
+from sglang.srt.constrained.json_schema_validation import (
+    _iter_subschemas,
+    normalize_json_schema_resources,
+)
+from sglang.srt.constrained.json_schema_validation import (
+    resolve_local_json_pointer as _resolve_local_ref,
+)
 from sglang.srt.entrypoints.openai.protocol import Tool, ToolChoice
 from sglang.srt.function_call.kimik3_format import (
     ARGUMENT_CLOSE,
     CALL_CLOSE,
     CALL_OPEN,
+    MESSAGE_CLOSE,
     THINK_CLOSE,
     THINK_OPEN,
     TOOLS_CLOSE,
@@ -79,6 +91,28 @@ _OBJECT_KEYWORDS = {
     "propertyNames",
     "required",
 }
+_SCHEMA_METADATA_KEYWORDS = {
+    "$comment",
+    "$defs",
+    "$schema",
+    "default",
+    "definitions",
+    "deprecated",
+    "description",
+    "examples",
+    "readOnly",
+    "title",
+    "writeOnly",
+}
+_ROOT_SCHEMA_KEYWORDS = _SCHEMA_METADATA_KEYWORDS | {
+    "minProperties",
+    "maxProperties",
+    "dependentRequired",
+    "additionalProperties",
+    "properties",
+    "required",
+    "type",
+}
 
 
 def _escape_attr(value: str) -> str:
@@ -108,20 +142,36 @@ def _matches_json_type(value: Any, json_type: str) -> bool:
     )
 
 
-def _resolve_local_ref(
-    ref: str, root_schema: Dict[str, Any]
-) -> Optional[Union[bool, Dict[str, Any]]]:
-    if not ref.startswith("#/"):
-        return None
-    value: Any = root_schema
-    for part in ref[2:].split("/"):
-        key = part.replace("~1", "/").replace("~0", "~")
-        if not isinstance(value, dict) or key not in value:
-            return None
-        value = value[key]
-    if isinstance(value, (bool, dict)):
-        return value
-    return None
+def _dereference_schema(
+    schema: Union[bool, Dict[str, Any]], root_schema: Dict[str, Any]
+) -> Union[bool, Dict[str, Any]]:
+    """Resolve refs and the proven minLength intersection without losing assertions."""
+    seen_refs: Set[str] = set()
+    minimum = None
+    while isinstance(schema, dict) and "$ref" in schema:
+        unsupported = set(schema).difference(
+            _SCHEMA_METADATA_KEYWORDS, {"$ref", "minLength"}
+        )
+        if "minLength" in schema:
+            bound = schema["minLength"]
+            if type(bound) is not int or bound < 0:
+                raise ValueError("Kimi K3 string lengths must be nonnegative integers")
+            minimum = max(minimum or 0, bound)
+        if unsupported:
+            raise ValueError(
+                f"Kimi K3 schema has unsupported $ref siblings: {sorted(unsupported)!r}"
+            )
+        ref = schema["$ref"]
+        if not isinstance(ref, str):
+            raise ValueError("Kimi K3 schema $ref must be a local JSON pointer")
+        if ref in seen_refs:
+            raise ValueError(f"Kimi K3 schema has a cyclic $ref: {ref!r}")
+        target = _resolve_local_ref(ref, root_schema)
+        if target is None:
+            raise ValueError(f"Kimi K3 schema $ref is unresolved or nonlocal: {ref!r}")
+        seen_refs.add(ref)
+        schema = target
+    return schema if minimum is None else _intersect_ref_min_length(schema, minimum)
 
 
 def _schema_types(
@@ -202,10 +252,51 @@ def _with_root_definitions(
 ) -> Union[bool, Dict[str, Any]]:
     if not isinstance(schema, dict):
         return schema
-    result = dict(schema)
-    for key in ("$defs", "definitions"):
-        if key in root_schema and key not in result:
-            result[key] = root_schema[key]
+    # XTML extracts an argument into a new schema document. Preserve the
+    # original pointer scope by copying only targets reachable from this value.
+    # Instance-valued const/enum/default data must never be rewritten.
+    if not any(
+        "$ref" in node
+        for node, _ in _iter_subschemas(schema, include_definitions=False)
+    ):
+        return schema
+    result = copy.deepcopy(schema)
+    definitions = result.setdefault("$defs", {})
+    targets: Dict[int, str] = {}
+    rebound_nodes: Set[int] = set()
+    pending = [result]
+    next_id = 0
+    while pending:
+        current = pending.pop()
+        # Snapshot: adding target definitions while visiting must not mutate
+        # the schema-map iterator, or revisit newly rewritten pointers.
+        nodes = list(_iter_subschemas(current, include_definitions=False))
+        for node, _ in nodes:
+            if "$ref" not in node:
+                continue
+            # Union type restriction may share a target's nested dictionaries.
+            # deepcopy preserves those aliases; a rewritten pointer belongs to
+            # this extracted document and must not be resolved in the old root.
+            if id(node) in rebound_nodes:
+                continue
+            rebound_nodes.add(id(node))
+            ref = node["$ref"]
+            target = (
+                _resolve_local_ref(ref, root_schema) if isinstance(ref, str) else None
+            )
+            if target is None:
+                raise ValueError("Kimi K3 schema $ref is unresolved or nonlocal")
+            identity = id(target)
+            if identity not in targets:
+                while f"__k3_ref_{next_id}" in definitions:
+                    next_id += 1
+                name = f"__k3_ref_{next_id}"
+                next_id += 1
+                targets[identity] = name
+                cloned = copy.deepcopy(target)
+                definitions[name] = cloned
+                pending.append(cloned)
+            node["$ref"] = "#/$defs/" + targets[identity]
     return result
 
 
@@ -214,16 +305,9 @@ def _restrict_schema_type(
     json_type: str,
     root_schema: Dict[str, Any],
 ) -> Union[bool, Dict[str, Any]]:
+    schema = _dereference_schema(schema, root_schema)
     if not isinstance(schema, dict):
         return {"type": json_type} if schema else False
-
-    ref = schema.get("$ref")
-    if isinstance(ref, str):
-        target = _resolve_local_ref(ref, root_schema)
-        if target is not None:
-            return _with_root_definitions(
-                _restrict_schema_type(target, json_type, root_schema), root_schema
-            )
 
     result = dict(schema)
     schema_type = result.get("type")
@@ -264,16 +348,29 @@ def _restrict_schema_type(
             return False
     if "const" in result and not _matches_json_type(result["const"], json_type):
         return False
-    return _with_root_definitions(result, root_schema)
+    return result
+
+
+_STRING_SHAPE_KEYWORDS = _STRING_KEYWORDS | {
+    "$ref",
+    "allOf",
+    "anyOf",
+    "const",
+    "enum",
+    "not",
+    "oneOf",
+}
+
+
+def _is_free_text(schema: Union[bool, Dict[str, Any]]) -> bool:
+    """A string schema that constrains nothing about the text itself."""
+    return schema is True or not _STRING_SHAPE_KEYWORDS.intersection(schema)
 
 
 def _value_format(
     schema: Union[bool, Dict[str, Any]],
     json_type: str,
-    loose_string: bool = False,
 ) -> Format:
-    if loose_string and json_type == "string":
-        return AnyTextFormat()
     # XGrammar 0.2.1 miscompiles a one-sided negative integer lower bound:
     # {"type": "integer", "minimum": -N} accepts the incomplete value "-"
     # and rejects every valid negative integer. Splitting the range at zero
@@ -300,10 +397,12 @@ def _value_format(
             nonnegative = dict(schema)
             nonnegative.pop("exclusiveMinimum", None)
             nonnegative["minimum"] = 0
+            definitions = schema.get("$defs")
             schema = {"anyOf": [negative, nonnegative]}
+            if definitions is not None:
+                schema["$defs"] = definitions
     return JSONSchemaFormat(
-        json_schema=schema,
-        style="qwen_xml" if json_type == "string" else "json",
+        json_schema=schema, style="json", property_order="unordered"
     )
 
 
@@ -311,16 +410,31 @@ def _argument_value_variants(
     schema: Union[bool, Dict[str, Any]],
     root_schema: Dict[str, Any],
     loose_strings: bool = False,
-) -> List[Tuple[str, Format]]:
-    return [
-        (
-            json_type,
-            _value_format(restricted, json_type, loose_string=loose_strings),
-        )
-        for json_type in _schema_types(schema, root_schema)
-        if (restricted := _restrict_schema_type(schema, json_type, root_schema))
-        is not False
-    ]
+) -> List[Tuple[str, str, Format]]:
+    schema = _dereference_schema(schema, root_schema)
+    variants = []
+    for json_type in _schema_types(schema, root_schema):
+        restricted = _restrict_schema_type(schema, json_type, root_schema)
+        if restricted is False:
+            continue
+        restricted = _with_root_definitions(restricted, root_schema)
+        if json_type == "string":
+            if loose_strings or _is_free_text(restricted):
+                # Raw strings remain delimiter-framed. JSON strings provide an
+                # unambiguous alternative for every value, including the end tag.
+                variants.append((json_type, "string", AnyTextFormat()))
+            variants.append(
+                (json_type, "json-string", _value_format(restricted, json_type))
+            )
+        else:
+            variants.append(
+                (
+                    json_type,
+                    _JSON_TO_XTML_TYPE[json_type],
+                    _value_format(restricted, json_type),
+                )
+            )
+    return variants
 
 
 def _known_argument_format(
@@ -331,14 +445,13 @@ def _known_argument_format(
     escaped_key = _escape_attr(key)
     variants = [
         TagFormat(
-            begin=(
-                f'<|open|>argument key="{escaped_key}" '
-                f'type="{_JSON_TO_XTML_TYPE[json_type]}"<|sep|>'
-            ),
+            begin=(f'<|open|>argument key="{escaped_key}" type="{wire_type}"<|sep|>'),
             content=value_format,
             end=ARGUMENT_CLOSE,
         )
-        for json_type, value_format in _argument_value_variants(schema, root_schema)
+        for _json_type, wire_type, value_format in _argument_value_variants(
+            schema, root_schema
+        )
     ]
     if not variants:
         return None
@@ -347,22 +460,79 @@ def _known_argument_format(
     return OrFormat(elements=variants)
 
 
+# Regex text of the characters an argument key may not contain, and the same
+# characters as a Python set.
+_KEY_FORBIDDEN_CHARS = r'"& \t\r\n\f\v=<>'
+_KEY_FORBIDDEN_SET = set('"& \t\r\n\f\v=<>')
+
+
+def _regex_literal(text: str) -> str:
+    """Escape ``text`` for xgrammar's regex dialect, inside or outside a class."""
+    return "".join(
+        char
+        if char.isascii() and (char.isalnum() or char == "_")
+        else f"\\{char}"
+        if char.isascii()
+        else f"\\u{ord(char):04x}"
+        if ord(char) <= 0xFFFF
+        else f"\\U{ord(char):08x}"
+        for char in text
+    )
+
+
+def _dynamic_key_pattern(excluded_keys: Iterable[str]) -> str:
+    """Regex for an argument key that is none of ``excluded_keys``.
+
+    A strict tool pins each declared property to its own schema, so the
+    additionalProperties branch must not accept a declared name under the
+    looser schema (JSON Schema applies additionalProperties only to keys that
+    ``properties`` does not name). xgrammar's regex dialect has no lookahead,
+    so the exclusion walks a trie of the names: a key is acceptable when it
+    leaves the trie with a character no excluded name continues with, or when
+    it stops at a proper prefix of an excluded name.
+    """
+    any_key_char = f"[^{_KEY_FORBIDDEN_CHARS}]"
+    names = {key for key in excluded_keys if key and not set(key) & _KEY_FORBIDDEN_SET}
+    if not names:
+        return any_key_char + "+"
+
+    trie: Dict[str, Any] = {}
+    for name in names:
+        node = trie
+        for char in name:
+            node = node.setdefault(char, {})
+        node[""] = {}
+
+    alternatives: List[str] = []
+
+    def walk(node: Dict[str, Any], prefix: str) -> None:
+        children = [char for char in node if char]
+        diverge = f"[^{_KEY_FORBIDDEN_CHARS}{''.join(map(_regex_literal, children))}]"
+        alternatives.append(f"{_regex_literal(prefix)}{diverge}{any_key_char}*")
+        if prefix and "" not in node:
+            alternatives.append(_regex_literal(prefix))
+        for char in children:
+            walk(node[char], prefix + char)
+
+    walk(trie, "")
+    return "(?:" + "|".join(alternatives) + ")"
+
+
 def _dynamic_argument_format(
     schema: Union[bool, Dict[str, Any]],
     root_schema: Dict[str, Any],
     loose_strings: bool = False,
+    excluded_keys: Iterable[str] = (),
 ) -> Format:
     variants = [
         SequenceFormat(
             elements=[
-                RegexFormat(pattern=r'[^"& \t\r\n\f\v=<>]+'),
-                ConstStringFormat(
-                    value=(f'" type="{_JSON_TO_XTML_TYPE[json_type]}"<|sep|>')
-                ),
+                RegexFormat(pattern=_dynamic_key_pattern(excluded_keys)),
+                ConstStringFormat(value=(f'" type="{wire_type}"<|sep|>')),
                 value_format,
             ]
         )
-        for json_type, value_format in _argument_value_variants(
+        for _json_type, wire_type, value_format in _argument_value_variants(
             schema, root_schema, loose_strings=loose_strings
         )
     ]
@@ -376,7 +546,172 @@ def _dynamic_argument_format(
     )
 
 
-def _strict_arguments_format(parameters: Dict[str, Any]) -> Format:
+class _EmptyRootLanguage(ValueError):
+    pass
+
+
+def _finite_constrained_arguments_format(
+    parameters: Dict[str, Any],
+    root_schema: Dict[str, Any],
+    presence_mode: str = "none",
+    presence_names=(),
+    prove_values: bool = False,
+    verified_values=None,
+) -> Format:
+    # Native capability, not package-version text or a Python model field alone:
+    # older native parsers ignore unknown JSON fields and would widen the grammar.
+    from xgrammar.base import _core
+
+    version = "V2" if presence_mode != "none" else "V1"
+    capability = getattr(_core, "SupportsUnorderedConstraints" + version, None)
+    fields = getattr(SequenceFormat, "model_fields", {})
+    if presence_mode != "none" and not {"presence_mode", "presence_indices"}.issubset(
+        fields
+    ):
+        raise ValueError(
+            "Kimi K3 root presence constraints require native unordered constraints v2"
+        )
+    if (
+        not callable(capability)
+        or not capability()
+        or not {"min_elements", "max_elements", "dependencies"}.issubset(fields)
+    ):
+        raise ValueError(
+            "Kimi K3 finite object constraints require native unordered constraints "
+            + version.lower()
+        )
+    if parameters.get("additionalProperties", True) is not False:
+        raise ValueError(
+            "Kimi K3 finite object constraints require additionalProperties=false"
+        )
+    properties = parameters.get("properties", {})
+    required = parameters.get("required", [])
+    if not isinstance(properties, dict):
+        raise ValueError("Kimi K3 tool parameters 'properties' must be an object")
+    if not isinstance(required, list) or not all(
+        isinstance(key, str) for key in required
+    ):
+        raise ValueError("Kimi K3 tool parameters 'required' must be a string list")
+    dependencies = parameters.get("dependentRequired", {})
+    if not isinstance(dependencies, dict) or not all(
+        isinstance(key, str)
+        and isinstance(value, list)
+        and all(isinstance(target, str) for target in value)
+        for key, value in dependencies.items()
+    ):
+        raise ValueError("Kimi K3 dependentRequired must map names to string lists")
+    minimum = parameters.get("minProperties", 0)
+    maximum = parameters.get("maxProperties", len(properties))
+    if any(type(bound) is not int or bound < 0 for bound in (minimum, maximum)):
+        raise ValueError("Kimi K3 property counts must be nonnegative integers")
+    if prove_values and (
+        len(properties) > 64
+        or sum(len(value) for value in dependencies.values()) > 4096
+    ):
+        raise ValueError(
+            "presence_resource_limit: at most 64 properties and 4096 dependency edges"
+        )
+    witnesses = {}
+    proven_values = {}
+    if prove_values:
+        from sglang.srt.function_call.kimik3_root_constraints import (
+            EMPTY,
+            prove_value,
+            verify_native_witnesses,
+        )
+    arguments = {}
+    for key, schema in properties.items():
+        if not isinstance(key, str) or not isinstance(schema, (dict, bool)):
+            raise ValueError("Kimi K3 tool property schemas must be JSON schemas")
+        if prove_values:
+            schema, witness = prove_value(schema, root_schema)
+            if witness is not EMPTY:
+                witnesses[key] = witness
+                proven_values[key] = schema
+        argument = _known_argument_format(key, schema, root_schema)
+        if argument is not None:
+            arguments[key] = argument
+    # A trigger requiring an absent/false property can never appear. Propagate
+    # that fact through chains before constructing the finite native entries.
+    changed = True
+    while changed:
+        changed = False
+        for key in list(arguments):
+            if any(target not in arguments for target in dependencies.get(key, [])):
+                del arguments[key]
+                changed = True
+    required_set = set(required)
+    pending = list(required_set)
+    while pending:
+        key = pending.pop()
+        if key not in arguments:
+            raise _EmptyRootLanguage(
+                "Kimi K3 required/dependent parameter accepts no values"
+            )
+        for target in dependencies.get(key, []):
+            if target not in required_set:
+                required_set.add(target)
+                pending.append(target)
+    if presence_mode == "not_all" and any(
+        key not in arguments for key in presence_names
+    ):
+        presence_mode, presence_names = "none", ()
+    elif presence_mode == "exactly_one":
+        presence_names = [key for key in presence_names if key in arguments]
+        if not presence_names:
+            raise _EmptyRootLanguage("Kimi K3 presence constraint accepts no values")
+    maximum = min(maximum, len(arguments))
+    if presence_mode != "none" and maximum < len(arguments):
+        raise ValueError(
+            "Kimi K3 presence constraints with a constraining maxProperties are unsupported"
+        )
+    if minimum > maximum or len(required_set) > maximum:
+        raise _EmptyRootLanguage("Kimi K3 finite object constraints accept no values")
+    if maximum == 0:
+        return ConstStringFormat(value="")
+    if prove_values:
+        verify_native_witnesses(
+            arguments,
+            {key: witnesses[key] for key in arguments},
+            proven_values,
+            verified_values,
+        )
+    indices = {key: index for index, key in enumerate(arguments)}
+    edges = sorted(
+        {
+            (indices[key], indices[target])
+            for key in arguments
+            for target in dependencies.get(key, [])
+            if target != key
+        }
+    )
+    if edges and maximum < len(arguments):
+        raise ValueError(
+            "Kimi K3 dependencies with a constraining maxProperties are unsupported"
+        )
+    return SequenceFormat(
+        elements=list(arguments.values()),
+        unordered=True,
+        required=[key in required_set for key in arguments],
+        min_elements=minimum,
+        max_elements=maximum,
+        dependencies=edges,
+        **(
+            {
+                "presence_mode": presence_mode,
+                "presence_indices": [indices[key] for key in presence_names],
+            }
+            if presence_mode != "none"
+            else {}
+        ),
+    )
+
+
+def _strict_arguments_format(
+    parameters: Dict[str, Any], root_schema: Dict[str, Any]
+) -> Format:
+    if {"minProperties", "maxProperties", "dependentRequired"}.intersection(parameters):
+        return _finite_constrained_arguments_format(parameters, root_schema)
     properties = parameters.get("properties", {})
     if not isinstance(properties, dict):
         raise ValueError("Kimi K3 tool parameters 'properties' must be an object")
@@ -394,10 +729,12 @@ def _strict_arguments_format(parameters: Dict[str, Any]) -> Format:
         )
 
     elements: List[Format] = []
+    unordered = parameters.get("additionalProperties", True) is False
+    required_flags: List[bool] = []
     for key, schema in properties.items():
         if not isinstance(key, str) or not isinstance(schema, (bool, dict)):
             raise ValueError("Kimi K3 tool property schemas must be JSON schemas")
-        argument = _known_argument_format(key, schema, parameters)
+        argument = _known_argument_format(key, schema, root_schema)
         if argument is None:
             if key in required_set:
                 raise ValueError(
@@ -405,15 +742,29 @@ def _strict_arguments_format(parameters: Dict[str, Any]) -> Format:
                 )
             continue
         elements.append(
-            argument if key in required_set else OptionalFormat(content=argument)
+            argument
+            if unordered or key in required_set
+            else OptionalFormat(content=argument)
         )
+        required_flags.append(key in required_set)
 
     additional = parameters.get("additionalProperties", True)
+    declared = set(properties)
     if additional is True:
-        elements.append(StarFormat(content=_dynamic_argument_format(True, parameters)))
+        elements.append(
+            StarFormat(
+                content=_dynamic_argument_format(
+                    True, root_schema, excluded_keys=declared
+                )
+            )
+        )
     elif isinstance(additional, dict):
         elements.append(
-            StarFormat(content=_dynamic_argument_format(additional, parameters))
+            StarFormat(
+                content=_dynamic_argument_format(
+                    additional, root_schema, excluded_keys=declared
+                )
+            )
         )
     elif additional is not False:
         raise ValueError(
@@ -421,7 +772,246 @@ def _strict_arguments_format(parameters: Dict[str, Any]) -> Format:
         )
     if not elements:
         return ConstStringFormat(value="")
-    return SequenceFormat(elements=elements)
+    return SequenceFormat(
+        elements=elements,
+        unordered=unordered,
+        required=required_flags if unordered else [],
+    )
+
+
+def _checked_root_arguments_format(parameters, root_schema, *, prove_values=False):
+    if not isinstance(parameters, dict):
+        if parameters is False:
+            raise _EmptyRootLanguage("Kimi K3 root schema accepts no values")
+        raise ValueError("Kimi K3 tool parameters must be an object schema")
+    lowered = _lower_presence_conditional(parameters)
+    prove_values = prove_values or lowered is not parameters
+    parameters = lowered
+    if "not" in parameters or "oneOf" in parameters:
+        return _root_logic_arguments_format(
+            parameters, root_schema, prove_values=prove_values
+        )
+    unsupported = set(parameters).difference(_ROOT_SCHEMA_KEYWORDS)
+    if unsupported:
+        raise ValueError(
+            "Kimi K3 tool parameters have unsupported root schema keywords: "
+            + repr(sorted(unsupported))
+        )
+    if "object" not in _schema_types(parameters, root_schema):
+        raise ValueError("Kimi K3 tool parameters must be an object schema")
+    if prove_values:
+        return _finite_constrained_arguments_format(
+            parameters, root_schema, prove_values=True
+        )
+    return _strict_arguments_format(parameters, root_schema)
+
+
+def _presence_required(schema):
+    if not isinstance(schema, dict):
+        return None
+    active = set(schema).difference(_SCHEMA_METADATA_KEYWORDS)
+    if active.difference({"type", "required"}) or (
+        "type" in schema and schema["type"] != "object"
+    ):
+        return None
+    names = schema.get("required", [])
+    if not isinstance(names, list) or not all(isinstance(key, str) for key in names):
+        raise ValueError("Kimi K3 presence required must be a string list")
+    if len(names) != len(set(names)):
+        raise ValueError("Kimi K3 presence required names must be unique")
+    if len(names) > 64:
+        raise ValueError("presence_resource_limit: at most 64 group keys")
+    return names
+
+
+def _lower_presence_conditional(parameters):
+    """Exact object implication: required(a) => required(b, ...) is a dependency.
+
+    Only the value-proven finite closed-object path consumes the result.
+    A multi-name trigger is a conjunction, so turning it into individual edges
+    would strengthen the schema. Value tests and else clauses need other logic.
+    """
+    if "if" not in parameters and "then" not in parameters and "else" not in parameters:
+        return parameters
+    if "if" not in parameters or "then" not in parameters or "else" in parameters:
+        raise ValueError(
+            "Kimi K3 conditional requires singleton required if/then without else"
+        )
+    trigger = _presence_required(parameters["if"])
+    targets = _presence_required(parameters["then"])
+    if trigger is None or len(trigger) != 1 or targets is None:
+        raise ValueError(
+            "Kimi K3 conditional requires singleton required if/then without else"
+        )
+    dependencies = parameters.get("dependentRequired", {})
+    if not isinstance(dependencies, dict) or not all(
+        isinstance(key, str)
+        and isinstance(value, list)
+        and all(isinstance(target, str) for target in value)
+        for key, value in dependencies.items()
+    ):
+        raise ValueError("Kimi K3 dependentRequired must map names to string lists")
+    properties = parameters.get("properties", {})
+    edge_count = sum(len(value) for value in dependencies.values())
+    if (
+        (isinstance(properties, dict) and len(properties) > 64)
+        or len(dependencies) > 4096
+        or edge_count > 4096
+    ):
+        raise ValueError(
+            "presence_resource_limit: conditional at most 64 properties and 4096 dependency edges"
+        )
+    dependencies = {key: list(value) for key, value in dependencies.items()}
+    dependencies[trigger[0]] = list(
+        dict.fromkeys(dependencies.get(trigger[0], []) + targets)
+    )
+    if sum(len(value) for value in dependencies.values()) > 4096:
+        raise ValueError(
+            "presence_resource_limit: conditional at most 4096 dependency edges"
+        )
+    return {
+        **{
+            key: value for key, value in parameters.items() if key not in ("if", "then")
+        },
+        "dependentRequired": dependencies,
+    }
+
+
+def _root_logic_arguments_format(parameters, root_schema, *, prove_values=False):
+    if "not" in parameters and "oneOf" in parameters:
+        raise ValueError("Kimi K3 multiple root logic groups are unsupported")
+    if "object" not in _schema_types(parameters, root_schema):
+        raise ValueError("Kimi K3 tool parameters must describe objects")
+    if "not" in parameters:
+        negated = parameters["not"]
+        base = {key: value for key, value in parameters.items() if key != "not"}
+        if negated is False:
+            return _checked_root_arguments_format(
+                base, root_schema, prove_values=prove_values
+            )
+        if negated is True:
+            raise _EmptyRootLanguage("Kimi K3 not:true accepts no object values")
+        if isinstance(negated, dict) and not set(negated).difference(
+            _SCHEMA_METADATA_KEYWORDS, {"type"}
+        ):
+            types = negated.get("type", list(_JSON_TYPES))
+            types = [types] if isinstance(types, str) else types
+            if (
+                not isinstance(types, list)
+                or not types
+                or any(kind not in _JSON_TYPES for kind in types)
+            ):
+                raise ValueError("Kimi K3 not type is invalid")
+            if "object" in types:
+                raise _EmptyRootLanguage(
+                    "Kimi K3 not object type accepts no object values"
+                )
+            return _checked_root_arguments_format(
+                base, root_schema, prove_values=prove_values
+            )
+        names = _presence_required(negated)
+        if names is None:
+            raise ValueError("Kimi K3 root not shape is unsupported")
+        if not names:
+            raise _EmptyRootLanguage("Kimi K3 not required-empty accepts no values")
+        if set(base).difference(_ROOT_SCHEMA_KEYWORDS):
+            raise ValueError("Kimi K3 root presence has unsupported sibling assertions")
+        return _finite_constrained_arguments_format(
+            base, root_schema, "not_all", names, True
+        )
+    branches = parameters["oneOf"]
+    if not isinstance(branches, list) or not branches:
+        raise ValueError("Kimi K3 oneOf must have branches")
+    if len(branches) > 64:
+        raise ValueError("presence_resource_limit: at most 64 singleton branches")
+    names = [_presence_required(branch) for branch in branches]
+    if all(group is not None and len(group) == 1 for group in names):
+        group = [item[0] for item in names]
+        if len(group) != len(set(group)):
+            raise ValueError("Kimi K3 singleton oneOf keys must be unique")
+        base = {key: value for key, value in parameters.items() if key != "oneOf"}
+        if set(base).difference(_ROOT_SCHEMA_KEYWORDS):
+            raise ValueError("Kimi K3 root presence has unsupported sibling assertions")
+        return _finite_constrained_arguments_format(
+            base, root_schema, "exactly_one", group, True
+        )
+    return _disjoint_root_branches_format(parameters, root_schema)
+
+
+def _disjoint_root_branches_format(parameters, root_schema):
+    from sglang.srt.function_call.kimik3_root_constraints import EMPTY, prove_value
+
+    active = set(parameters).difference(_SCHEMA_METADATA_KEYWORDS, {"oneOf"})
+    if active and not (active == {"type"} and parameters["type"] == "object"):
+        raise ValueError(
+            "Kimi K3 oneOf parent assertions require an unsupported intersection"
+        )
+    branches = [
+        _dereference_schema(branch, root_schema) for branch in parameters["oneOf"]
+    ]
+    if len(branches) > 8:
+        raise ValueError("root_branch_resource_limit: at most 8 closed object branches")
+    total = 0
+    formats, viable = [], []
+    verified_values = set()
+    for branch in branches:
+        if (
+            not isinstance(branch, dict)
+            or branch.get("type") != "object"
+            or branch.get("additionalProperties") is not False
+        ):
+            raise ValueError("Kimi K3 oneOf branches must be complete closed objects")
+        branch = _lower_presence_conditional(branch)
+        if set(branch).difference(_ROOT_SCHEMA_KEYWORDS):
+            raise ValueError("Kimi K3 oneOf branch has unsupported root assertions")
+        if not isinstance(branch.get("properties", {}), dict):
+            raise ValueError("Kimi K3 oneOf branch properties must be an object")
+        total += len(branch.get("properties", {}))
+        if total > 512:
+            raise ValueError(
+                "root_branch_resource_limit: at most 512 total branch properties"
+            )
+        try:
+            fmt = _finite_constrained_arguments_format(
+                branch, root_schema, prove_values=True, verified_values=verified_values
+            )
+        except _EmptyRootLanguage:
+            continue
+        viable.append(branch)
+        formats.append(fmt)
+    if not viable:
+        raise _EmptyRootLanguage("Kimi K3 oneOf branches accept no values")
+    if len(viable) == 1:
+        return formats[0]
+    common = set.intersection(
+        *(
+            set(branch.get("required", [])) & set(branch.get("properties", {}))
+            for branch in viable
+        )
+    )
+    for key in sorted(common):
+        seen, disjoint = set(), True
+        for branch in viable:
+            proven, witness = prove_value(branch["properties"][key], root_schema)
+            domain = proven.get("enum") if isinstance(proven, dict) else None
+            if (
+                witness is EMPTY
+                or not isinstance(domain, list)
+                or not domain
+                or not all(isinstance(value, str) for value in domain)
+            ):
+                disjoint = False
+                break
+            values = set(domain)
+            if seen.intersection(values):
+                disjoint = False
+                break
+            seen.update(values)
+        if disjoint:
+            return OrFormat(elements=formats)
+    raise ValueError(
+        "Kimi K3 oneOf requires a common required disjoint string discriminator"
+    )
 
 
 def _tool_arguments_format(tool: Tool) -> Format:
@@ -439,12 +1029,42 @@ def _tool_arguments_format(tool: Tool) -> Format:
         raise ValueError(
             f"Kimi K3 strict tool {tool.function.name!r} must define parameters"
         )
-    schema_types = _schema_types(parameters, parameters)
-    if "object" not in schema_types:
-        raise ValueError(
-            f"Kimi K3 tool {tool.function.name!r} parameters must be an object schema"
+    root_schema = normalize_json_schema_resources(parameters)
+    # Binding is complete; extracted documents must not reintroduce the root
+    # ID as a nested resource when cloning recursive targets.
+    root_schema.pop("$id", None)
+    parameters = _dereference_schema(root_schema, root_schema)
+    # A single allOf branch with annotation-only siblings is an exact wrapper.
+    # Do not merge arbitrary intersections or overwrite sibling assertions.
+    wrappers = set()
+    while isinstance(parameters, dict) and "allOf" in parameters:
+        options = parameters["allOf"]
+        if id(options) in wrappers:
+            raise ValueError("Kimi K3 tool parameters have a cyclic allOf wrapper")
+        wrappers.add(id(options))
+        assertions = set(parameters).difference(
+            _SCHEMA_METADATA_KEYWORDS, {"$id", "allOf"}
         )
-    return _strict_arguments_format(parameters)
+        object_only = assertions == {"type"} and parameters["type"] == "object"
+        if (
+            not isinstance(options, list)
+            or len(options) != 1
+            or (assertions and not object_only)
+        ):
+            break
+        branch = _dereference_schema(options[0], root_schema)
+        if object_only:
+            if "object" not in _schema_types(branch, root_schema):
+                raise ValueError("Kimi K3 tool allOf cannot describe an object")
+            if isinstance(branch, dict):
+                branch = dict(branch, type="object")
+        parameters = branch
+    if isinstance(parameters, dict) and "$id" in parameters:
+        # Local refs have already been bound and rewritten against their resource.
+        parameters = {key: value for key, value in parameters.items() if key != "$id"}
+    if parameters is True:
+        parameters = {}
+    return _checked_root_arguments_format(parameters, root_schema)
 
 
 def _tool_call_tag(tool: Tool, arguments_format: Optional[Format] = None) -> TagFormat:
@@ -613,7 +1233,14 @@ def get_kimik3_structural_tag(
         suffix: Format = SequenceFormat(
             elements=[
                 AnyTextFormat(
-                    excludes=[TOOLS_OPEN, THINK_OPEN, THINK_CLOSE, CALL_OPEN]
+                    excludes=[
+                        TOOLS_OPEN,
+                        TOOLS_CLOSE,
+                        MESSAGE_CLOSE,
+                        THINK_OPEN,
+                        THINK_CLOSE,
+                        CALL_OPEN,
+                    ]
                 ),
                 tools_tag,
             ]

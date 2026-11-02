@@ -1,13 +1,20 @@
 """Execute the actual health endpoint with CPU-only dependency fixtures."""
+
 import ast
 import asyncio
+import unittest
 from contextlib import aclosing
 from pathlib import Path
 from types import SimpleNamespace as NS
-import unittest
 from unittest.mock import Mock
 
-SOURCE = Path(__file__).resolve().parents[4] / "python/sglang/srt/entrypoints/http_server.py"
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=30, suite="base-a-test-cpu")
+
+SOURCE = (
+    Path(__file__).resolve().parents[4] / "python/sglang/srt/entrypoints/http_server.py"
+)
 
 
 class HealthTaskTests(unittest.IsolatedAsyncioTestCase):
@@ -19,8 +26,12 @@ class HealthTaskTests(unittest.IsolatedAsyncioTestCase):
         self.heartbeat = True
         self.rid = "HEALTH_CHECK_fixed"
         self.manager = NS(
-            gracefully_exit=False, server_status="Up", is_generation=True,
-            last_receive_tstamp=0, rid_to_state={}, abort_request=Mock(),
+            gracefully_exit=False,
+            server_status="Up",
+            is_generation=True,
+            last_receive_tstamp=0,
+            rid_to_state={},
+            abort_request=Mock(),
         )
 
         async def generate(obj, request):
@@ -60,30 +71,45 @@ class HealthTaskTests(unittest.IsolatedAsyncioTestCase):
         self.manager.generate_request = generate
         flag = lambda value: NS(get=lambda: value)
         self.ns = {
-            "asyncio": NS(create_task=asyncio.create_task, sleep=sleep,
-                          CancelledError=asyncio.CancelledError),
+            "asyncio": NS(
+                create_task=asyncio.create_task,
+                sleep=sleep,
+                CancelledError=asyncio.CancelledError,
+            ),
             "aclosing": aclosing,
             "_global_state": NS(tokenizer_manager=self.manager),
             "ServerStatus": NS(Starting="Starting", Up="Up", UnHealthy="UnHealthy"),
-            "Response": lambda **kw: NS(**kw), "Request": object,
+            "Response": lambda **kw: NS(**kw),
+            "Request": object,
             "GenerateReqInput": lambda **kw: NS(**kw),
             "EmbeddingReqInput": lambda **kw: NS(**kw),
             "get_disagg": lambda: NS(disaggregation_mode="null"),
             "DisaggregationMode": NS(NULL=NS(value="null")),
-            "envs": NS(SGLANG_DIAG_BYPASS_HEALTH_GENERATE=flag(False),
-                       SGLANG_ENABLE_HEALTH_ENDPOINT_GENERATION=flag(True)),
+            "envs": NS(
+                SGLANG_DIAG_BYPASS_HEALTH_GENERATE=flag(False),
+                SGLANG_ENABLE_HEALTH_ENDPOINT_GENERATION=flag(True),
+            ),
             "uuid": NS(uuid4=lambda: NS(hex="fixed")),
             "HEALTH_CHECK_RID_PREFIX": "HEALTH_CHECK",
             "HEALTH_CHECK_TIMEOUT": 2,
-            "time": NS(time=lambda: self.clock, localtime=lambda t: t,
-                       strftime=lambda *args: "fixture"),
+            "time": NS(
+                time=lambda: self.clock,
+                localtime=lambda t: t,
+                strftime=lambda *args: "fixture",
+            ),
             "logger": Mock(),
         }
         tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
-        node = next(n for n in tree.body
-                    if isinstance(n, ast.AsyncFunctionDef) and n.name == "health_generate")
+        node = next(
+            n
+            for n in tree.body
+            if isinstance(n, ast.AsyncFunctionDef) and n.name == "health_generate"
+        )
         node.decorator_list = []
-        exec(compile(ast.Module(body=[node], type_ignores=[]), str(SOURCE), "exec"), self.ns)
+        exec(
+            compile(ast.Module(body=[node], type_ignores=[]), str(SOURCE), "exec"),
+            self.ns,
+        )
 
     async def run_endpoint(self):
         return await self.ns["health_generate"](NS(url=NS(path="/health")))
@@ -128,8 +154,12 @@ class HealthTaskTests(unittest.IsolatedAsyncioTestCase):
         self.assert_clean()
 
     async def test_unrelated_exceptions_are_not_swallowed(self):
-        for mode, exception in (("error", RuntimeError), ("value_error", ValueError),
-                                ("wrong_rid", ValueError), ("disconnect2", ValueError)):
+        for mode, exception in (
+            ("error", RuntimeError),
+            ("value_error", ValueError),
+            ("wrong_rid", ValueError),
+            ("disconnect2", ValueError),
+        ):
             self.setUp()
             self.mode = mode
             with self.assertRaises(exception):

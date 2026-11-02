@@ -6,8 +6,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import msgspec
-import sglang
 import torch
+
+import sglang
 from sglang.test.ci.ci_register import register_cpu_ci
 
 register_cpu_ci(est_time=5, suite="base-a-test-cpu")
@@ -51,7 +52,9 @@ def load_epilogue_class():
     methods = [_epilogue_method(tree, m) for m in ("accept_buffers", "read_accept")]
     namespace = {"msgspec": msgspec, "torch": torch}
     exec(
-        compile(ast.Module(body=[result, *methods], type_ignores=[]), str(path), "exec"),
+        compile(
+            ast.Module(body=[result, *methods], type_ignores=[]), str(path), "exec"
+        ),
         namespace,
     )
     return type(

@@ -51,12 +51,12 @@ import torch
 import uvloop
 import zmq
 
-from sglang.srt.arg_groups.token_auth import redact_auth_config
 from sglang.srt.arg_groups.overrides import (
     attention_backends_of,
     resolved_view,
     resolving_view,
 )
+from sglang.srt.arg_groups.token_auth import redact_auth_config
 from sglang.srt.elastic_ep.expert_backup_manager import run_expert_backup_manager
 from sglang.srt.entrypoints.engine_info_bootstrap_server import (
     EngineInfoBootstrapServer,

@@ -307,6 +307,127 @@ class TestKDAPrefillGraph(CustomTestCase):
             seed=200,
         )
 
+    def test_short_extends_in_small_buckets(self):
+        """A cached prefix plus a 2-31 token extend pads into a bucket of at most
+        `max_seqs` tokens; the rows past the batch must not reach the sequence."""
+        for num_tokens in (4, 8, 32):
+            with self.subTest(num_tokens=num_tokens):
+                meta, graph, out = self._capture(num_tokens=num_tokens, max_seqs=128)
+                cases = ([2], [3], [num_tokens - 1], [2, 1], [3, 2], [5, 9, 2])
+                for lens in (
+                    lens
+                    for lens in cases
+                    if sum(lens) < num_tokens or lens == [num_tokens - 1]
+                ):
+                    self._check_replay(
+                        meta,
+                        graph,
+                        out,
+                        lens=lens,
+                        prefixes=[64] * len(lens),
+                        track=None,
+                        seed=500 + num_tokens + sum(lens),
+                    )
+
+    def test_non_finite_rows_past_the_batch(self):
+        """The conv writes only the batch's rows; the rest of its output is
+        whatever the graph's memory pool last held there, NaN included. That must
+        not reach a sequence: a cached prefix plus a short extend padded into a
+        small bucket decoded NaN logits ("!!!!") and cached a NaN state."""
+        from sglang.srt.layers.attention.linear import kda_prefill_graph
+
+        real_conv = kda_prefill_graph.causal_conv1d_fn
+        stale = {}
+
+        def conv(x, *args, **kwargs):
+            out = real_conv(x, *args, **kwargs)  # [dim, T]
+            out[:, stale["from"] :] = float("nan")
+            return out
+
+        for num_tokens, lens in ((4, [3]), (8, [2]), (8, [3, 2]), (32, [5, 9])):
+            with self.subTest(num_tokens=num_tokens, lens=lens):
+                stale["from"] = sum(lens)
+                with patch.object(kda_prefill_graph, "causal_conv1d_fn", conv):
+                    meta, graph, out = self._capture(
+                        num_tokens=num_tokens, max_seqs=128
+                    )
+                    batch = _batch(lens, [64] * len(lens))
+                    for row in range(len(lens)):
+                        self.conv_pool[row + 1].normal_()
+                        self.ssm_pool[row + 1].normal_(std=0.05)
+                    self.mixed.normal_()
+                    self.a.normal_()
+                    self.b.normal_()
+                    self._fill(meta, batch)
+                    graph.replay()
+                    torch.cuda.synchronize()
+                total = sum(lens)
+                self.assertTrue(
+                    bool(torch.isfinite(out[:, :total]).all()),
+                    "NaN past the batch reached a sequence's output",
+                )
+                self.assertTrue(
+                    bool(torch.isfinite(self.ssm_pool[1 : len(lens) + 1]).all()),
+                    "NaN past the batch reached a sequence's state",
+                )
+
+    def test_non_finite_sequence_stays_in_its_rows(self):
+        """A NaN-poisoned request must not poison the requests packed with it.
+        FlashInfer's chunk tile of a sequence also reads the next sequence's
+        first rows (multiplied by zero), so the request packed just before a NaN
+        one decoded "!!!!" and cached a NaN state."""
+        from sglang.srt.layers.attention.linear import kda_prefill_graph
+
+        real_conv = kda_prefill_graph.causal_conv1d_fn
+        rows = {}
+
+        def conv(x, *args, **kwargs):
+            out = real_conv(x, *args, **kwargs)  # [dim, T]
+            out[:, rows["start"] : rows["end"]] = float("nan")
+            return out
+
+        for graph in (True, False):
+            for lens in ([5, 9, 3], [37, 100, 5], [70, 3, 64]):
+                with self.subTest(graph=graph, lens=lens):
+                    rows["start"], rows["end"] = lens[0], lens[0] + lens[1]
+                    batch = _batch(lens, [64] * len(lens))
+                    for row in range(len(lens)):
+                        self.conv_pool[row + 1].normal_()
+                        self.ssm_pool[row + 1].normal_(std=0.05)
+                    self.mixed.normal_()
+                    self.a.normal_()
+                    self.b.normal_()
+                    total = sum(lens)
+                    with patch.object(kda_prefill_graph, "causal_conv1d_fn", conv):
+                        if graph:
+                            meta, cuda_graph, out = self._capture()
+                            self._fill(meta, batch)
+                            cuda_graph.replay()
+                        else:
+                            # The eager extend's conv is not patched: poison
+                            # the poisoned request's input rows instead.
+                            self.mixed[rows["start"] : rows["end"]] = float("nan")
+                            self.backend.init_forward_metadata(batch)
+                            out = self.backend.forward_extend(
+                                self.layer,
+                                batch,
+                                self.mixed[:total],
+                                self._gate(total),
+                                self.b[:, :total],
+                            )
+                    torch.cuda.synchronize()
+                    for row in (0, 2):
+                        start = sum(lens[:row])
+                        end = start + lens[row]
+                        self.assertTrue(
+                            bool(torch.isfinite(out[:, start:end]).all()),
+                            f"request {row} got the NaN request's output",
+                        )
+                        self.assertTrue(
+                            bool(torch.isfinite(self.ssm_pool[row + 1]).all()),
+                            f"request {row} got the NaN request's state",
+                        )
+
     def test_capacity(self):
         meta = KDAPrefillGraphMetadata.allocate(
             num_tokens=BUCKET,

@@ -756,9 +756,7 @@ class HiCacheController:
 
     @property
     def backup_skip(self) -> bool:
-        return not (
-            self._backup_on_every_rank or self.storage_config.is_storage_writer
-        )
+        return not (self._backup_on_every_rank or self.storage_config.is_storage_writer)
 
     def _generate_storage_config(
         self,

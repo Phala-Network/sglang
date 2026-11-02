@@ -360,7 +360,9 @@ def get_config(
                 # In particular YaRN must reach the VLM text_config, not replace it.
                 for key, value in model_override_args.items():
                     current = getattr(config, key, None)
-                    if isinstance(value, dict) and isinstance(current, PretrainedConfig):
+                    if isinstance(value, dict) and isinstance(
+                        current, PretrainedConfig
+                    ):
                         current.update(value)
                     else:
                         setattr(config, key, value)

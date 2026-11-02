@@ -237,7 +237,6 @@ class TestSchedulerIntegration(_SwitchTestCase):
         self.assertIsNone(window())
 
 
-
 class TestRegisteredRawSwitches(unittest.TestCase):
     def setUp(self):
         runtime_switches._reset_for_tests()
@@ -261,7 +260,9 @@ class TestRegisteredRawSwitches(unittest.TestCase):
 
     def test_update_for_a_name_registered_later_is_kept(self):
         sync = runtime_switches.RuntimeSwitchSync()
-        sync.apply(runtime_switches.RuntimeSwitchUpdate((("CCBRIDGE_TEST_SWITCH", "1"),)))
+        sync.apply(
+            runtime_switches.RuntimeSwitchUpdate((("CCBRIDGE_TEST_SWITCH", "1"),))
+        )
         runtime_switches.register("CCBRIDGE_TEST_SWITCH")
         self.assertEqual(runtime_switches.get_raw("CCBRIDGE_TEST_SWITCH"), "1")
 

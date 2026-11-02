@@ -125,6 +125,12 @@ def encode_simple_chat(
         )
         return tokenizer.encode(real_input)
 
+    if spec == "kimi_k3":
+        from sglang.srt.entrypoints.openai import encoding_k3
+
+        return encoding_k3.apply_chat_template(
+            tokenizer, messages, add_generation_prompt=True, tokenize=True
+        )
     if getattr(tokenizer, "chat_template", None) is None:
         raise ValueError(
             "This model has no HF chat template and no custom chat encoder; "

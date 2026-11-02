@@ -988,9 +988,7 @@ class ChatCompletionRequest(PDRoutingFields):
     _template_tools: Optional[List[Dict[str, Any]]] = PrivateAttr(default=None)
     tool_choice: Union[
         ToolChoice, AllowedToolsChoice, Literal["auto", "required", "none"]
-    ] = Field(
-        default="auto", examples=["none"]
-    )  # noqa
+    ] = Field(default="auto", examples=["none"])  # noqa
     parallel_tool_calls: bool = True
     return_hidden_states: Union[bool, Literal["last"]] = False
     return_routed_experts: bool = False
@@ -1211,9 +1209,7 @@ class ChatCompletionRequest(PDRoutingFields):
                 enabled = r.get("enable")
             if enabled is not None:
                 if isinstance(enabled, str):
-                    enabled = enabled.strip().lower() in {
-                        "1", "true", "yes", "y", "on"
-                    }
+                    enabled = enabled.strip().lower() in {"1", "true", "yes", "y", "on"}
                 thinking = bool(enabled)
 
         # Excluding output alone must not disable internal reasoning. Explicit

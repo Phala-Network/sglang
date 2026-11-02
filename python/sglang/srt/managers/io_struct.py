@@ -98,7 +98,7 @@ def matches_abort_rid(req_rid: str, abort_rid: str) -> bool:
     prefix = abort_rid + "_"
     if not req_rid.startswith(prefix):
         return False
-    suffix = req_rid[len(prefix):]
+    suffix = req_rid[len(prefix) :]
     return bool(suffix) and suffix.isascii() and suffix.isdecimal()
 
 

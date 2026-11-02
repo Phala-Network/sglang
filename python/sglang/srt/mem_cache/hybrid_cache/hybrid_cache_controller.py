@@ -205,6 +205,10 @@ class PrefetchSubmission:
 
 class HybridCacheController(BaseHiCacheController):
     is_kv_sharded: bool = False
+    # Whether the last ``load`` that returned None was refused for good: the host
+    # tier can no longer read those copies back, so a retry would be refused
+    # again. SGLang's own load never refuses; a host tier that wraps it may.
+    load_refused: bool = False
 
     def __init__(
         self,
@@ -1019,6 +1023,7 @@ class HybridCacheController(BaseHiCacheController):
         or into caller-owned ``device_indices`` (kept on failure); side pools
         bind their device slots against ``anchor_indices`` (default: the KV
         destination rows)."""
+        self.load_refused = False
         need_load_kv = host_indices.numel() > 0
         caller_owned = device_indices is not None
 

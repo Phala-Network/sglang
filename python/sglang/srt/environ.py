@@ -413,6 +413,18 @@ class Envs:
     # ===================================================================
     SGLANG_GRAMMAR_POLL_INTERVAL = EnvFloat(0.005)
     SGLANG_GRAMMAR_MAX_POLL_ITERATIONS = EnvInt(10000)
+    # PP1 only, per scheduler process / TP rank. Retention limits, not RSS caps.
+    # PP>1 preserves its existing cache/compiler and one-way admission path.
+    SGLANG_GRAMMAR_CACHE_MAX_BYTES = EnvInt(1 << 30)
+    SGLANG_GRAMMAR_CACHE_MAX_ENTRIES = EnvInt(4096)
+    SGLANG_GRAMMAR_INVALID_CACHE_MAX_BYTES = EnvInt(4 << 20)
+    SGLANG_GRAMMAR_INVALID_CACHE_MAX_ENTRIES = EnvInt(256)
+    SGLANG_GRAMMAR_INVALID_CACHE_TTL = EnvFloat(30.0)
+    SGLANG_GRAMMAR_COMPILER_WORKERS = EnvInt(2)
+    SGLANG_GRAMMAR_MAX_PENDING_COMPILES = EnvInt(32)
+    SGLANG_GRAMMAR_MAX_PENDING_BYTES = EnvInt(16 << 20)
+    SGLANG_XGRAMMAR_CACHE_MAX_BYTES = EnvInt(256 << 20)
+    SGLANG_XGRAMMAR_MAX_THREADS = EnvInt(2)
     SGLANG_DISABLE_OUTLINES_DISK_CACHE = EnvBool(False)
 
     # ===================================================================
@@ -885,6 +897,12 @@ class Envs:
     # chain (an insert's end), not for every SWA page the chain carries. A host
     # hit can only end where SWA covers the window, which is such an end.
     SGLANG_HICACHE_SWA_SPARSE_BACKUP = EnvBool(False)
+    # Checkpoint a chunked prefill into the radix tree only when it crosses a multiple
+    # of this many tokens (0: after every chunk); the prompt's end and a mamba branching
+    # point are always checkpointed.
+    # A hybrid model's state is checkpointed (and written through, and published) with
+    # each insert, so this sets how many states a long prompt leaves behind.
+    SGLANG_CHUNKED_PREFILL_CHECKPOINT_TOKENS = EnvInt(0)
     # Runtime override of --hicache-storage-prefetch-policy (empty: the server
     # arg, or the policy set by the attach API): best_effort, wait_complete or
     # timeout. Timeout uses the storage backend's prefetch_timeout_* config.
@@ -1698,6 +1716,10 @@ class Envs:
     # Kill-switch for the fused per-slot conv clear/copy kernel (MambaPool);
     # falls back to the per-conv-type Python loop.
     SGLANG_DISABLE_FUSED_MAMBA_SLOT_OPS = EnvBool(False)
+    # Kill-switch for zeroing the unwritten rest of each KV page a forward
+    # writes (mem_cache/kv_page_tail.py), which keeps a previous owner's NaN out
+    # of the masked tail that paged decode kernels still multiply.
+    SGLANG_DISABLE_KV_PAGE_TAIL_ZERO = EnvBool(False)
     # Opt-in: on the unified radix tree, leave the matched-prefix mamba evictable
     # during decode (it is already COW'd to the request's own slot) and shrink the
     # mamba pool ratio accordingly. Frees one resident slot per running request,

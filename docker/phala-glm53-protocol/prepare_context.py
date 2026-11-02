@@ -3,9 +3,9 @@
 import argparse
 import hashlib
 import json
-from pathlib import Path
 import re
 import subprocess
+from pathlib import Path
 
 BASE_COMMIT = "c2ce5382dad45fd85e39f5d4e1d93165225eb34d"
 BASE_IMAGE = "ghcr.io/phala-network/sglang@sha256:6a74c66ab1c44d32d07d8f227fc5074a43a330251ea3e2b37ebe731a6178e5ee"

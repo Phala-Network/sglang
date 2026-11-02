@@ -104,8 +104,8 @@ def test_chat_stream_parser_entrypoint_and_choice_isolation(thinking, kind, stri
     )
     owner._get_reasoning_from_request = lambda req: thinking
     owner._tool_call_parsing_active = lambda req: False
-    owner._should_force_reasoning = (
-        lambda req: owner.template_manager.force_reasoning or thinking
+    owner._should_force_reasoning = lambda req: (
+        owner.template_manager.force_reasoning or thinking
     )
     owner._kimi_k3_structured_json = MethodType(
         OpenAIServingChat._kimi_k3_structured_json, owner

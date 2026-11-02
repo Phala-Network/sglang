@@ -278,7 +278,7 @@ def test_new_value_oneof_type_proof_is_conservative():
     from sglang.srt.function_call.kimik3_root_constraints import prove_value
 
     schema = {"oneOf": [{"maxLength": 2}, {"type": "null"}]}
-    with pytest.raises(ValueError, match="disjointness"):
+    with pytest.raises(ValueError, match="oneOf branches are not proven disjoint"):
         prove_value(schema, schema)
 
 

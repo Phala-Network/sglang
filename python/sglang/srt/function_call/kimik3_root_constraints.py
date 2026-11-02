@@ -44,7 +44,7 @@ def _disjoint_types(branches, root, k3):
         if "number" in kinds:
             kinds.add("integer")
         if seen.intersection(kinds):
-            _error("oneOf branch disjointness is unproven")
+            _error("oneOf branches are not proven disjoint")
         seen.update(kinds)
 
 

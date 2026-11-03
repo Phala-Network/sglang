@@ -779,12 +779,10 @@ def test_manager_cache_keeps_native_state_eos_and_budget_per_request(engine):
             req.require_reasoning = reasoning
             req.grammar_wait_ct = 0
             req.finished.return_value = False
-            queued = mgr.process_req_with_grammar(req)
-            assert queued is (index == 0)
-            if queued:
-                req.grammar.result(timeout=30)
-                assert mgr.get_ready_grammar_requests() == [req]
-                assert not mgr.grammar_queue
+            assert mgr.process_req_with_grammar(req)
+            req.grammar.result(timeout=30)
+            assert mgr.get_ready_grammar_requests() == [req]
+            assert not mgr.grammar_queue
             req.set_finish_with_abort.assert_not_called()
             current = req.grammar
             assert current._kimik3_token_bytes is not None

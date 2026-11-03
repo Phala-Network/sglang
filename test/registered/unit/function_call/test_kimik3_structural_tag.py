@@ -539,7 +539,7 @@ def test_strict_root_ref_target_still_rejects_unsupported_root_assertions():
         "$ref": "#/$defs/Root",
         "$defs": {"Root": {"type": "object", "minProperties": 1}},
     }
-    with pytest.raises(ValueError, match="unsupported.*root.*keyword"):
+    with pytest.raises(ValueError, match="additionalProperties=false"):
         _grammar([tool], tool_choice="required")
 
 
@@ -576,29 +576,30 @@ def test_strict_argument_schema_preserves_root_over_local_definitions(definition
     )
 
 
+UNSUPPORTED_ROOT_KEYWORD = "unsupported.*root.*keyword"
+
+
 @pytest.mark.parametrize(
-    "keyword, constraint",
+    "keyword, constraint, message",
     [
-        ("oneOf", [{"properties": {"x": {"const": 1}}}]),
-        ("anyOf", [{"properties": {"x": {"const": 1}}}]),
-        ("allOf", [{"properties": {"x": {"const": 1}}}]),
-        ("not", {"required": ["x"]}),
-        ("if", {"required": ["x"]}),
-        ("then", {"required": ["y"]}),
-        ("else", {"required": ["y"]}),
-        ("minProperties", 2),
-        ("maxProperties", 0),
-        ("dependentRequired", {"x": ["y"]}),
-        ("dependentSchemas", {"x": {"required": ["y"]}}),
-        ("patternProperties", {"^x$": {"minimum": 2}}),
-        ("propertyNames", {"enum": ["y"]}),
-        ("unevaluatedProperties", False),
-        ("const", {"x": 1}),
-        ("enum", [{"x": 1}]),
-        ("x-unknown-constraint", True),
+        ("oneOf", [{"properties": {"x": {"const": 1}}}], "oneOf parent assertions"),
+        ("anyOf", [{"properties": {"x": {"const": 1}}}], UNSUPPORTED_ROOT_KEYWORD),
+        ("allOf", [{"properties": {"x": {"const": 1}}}], UNSUPPORTED_ROOT_KEYWORD),
+        ("if", {"required": ["x"]}, "conditional requires"),
+        ("then", {"required": ["y"]}, "conditional requires"),
+        ("else", {"required": ["y"]}, "conditional requires"),
+        ("minProperties", 2, "accept no values"),
+        ("maxProperties", 0, "accept no values"),
+        ("dependentRequired", {"x": ["y"]}, "accepts no values"),
+        ("dependentSchemas", {"x": {"required": ["y"]}}, UNSUPPORTED_ROOT_KEYWORD),
+        ("patternProperties", {"^x$": {"minimum": 2}}, UNSUPPORTED_ROOT_KEYWORD),
+        ("propertyNames", {"enum": ["y"]}, UNSUPPORTED_ROOT_KEYWORD),
+        ("unevaluatedProperties", False, UNSUPPORTED_ROOT_KEYWORD),
+        ("const", {"x": 1}, UNSUPPORTED_ROOT_KEYWORD),
+        ("enum", [{"x": 1}], UNSUPPORTED_ROOT_KEYWORD),
     ],
 )
-def test_strict_root_schema_rejects_unsupported_keywords(keyword, constraint):
+def test_strict_root_schema_rejects_unsupported_keywords(keyword, constraint, message):
     tool = _tool(name="lookup")
     tool.function.parameters = {
         "type": "object",
@@ -607,8 +608,37 @@ def test_strict_root_schema_rejects_unsupported_keywords(keyword, constraint):
         "additionalProperties": False,
         keyword: constraint,
     }
-    with pytest.raises(ValueError, match="unsupported.*root.*keyword"):
+    with pytest.raises(ValueError, match=message):
         _grammar([tool], tool_choice="required")
+
+
+def test_strict_root_schema_rejects_unsatisfiable_not():
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "type": "object",
+        "properties": {"x": {"type": "integer"}},
+        "required": ["x"],
+        "additionalProperties": False,
+        "not": {"required": ["x"]},
+    }
+    with pytest.raises(RuntimeError, match="presence_unsatisfiable"):
+        _grammar([tool], tool_choice="required")
+
+
+def test_strict_schema_ignores_extension_keywords():
+    tool = _tool(name="lookup")
+    tool.function.parameters = {
+        "type": "object",
+        "$defs": {"Value": {"type": "integer", "minimum": 1, "maximum": 3}},
+        "properties": {"x": {"$ref": "#/$defs/Value", "x-assertion": True}},
+        "required": ["x"],
+        "additionalProperties": False,
+        "x-unknown-constraint": True,
+    }
+    grammar = _grammar([tool], tool_choice="required")
+    assert _accepts(
+        grammar, _tools_section(_call("lookup", 1, _argument("x", "number", "1")))
+    )
 
 
 @pytest.mark.parametrize(
@@ -644,7 +674,7 @@ def test_strict_root_ref_rejects_assertion_siblings(keyword, constraint):
 
 @pytest.mark.parametrize(
     "keyword, constraint",
-    [("minimum", 2), ("enum", [2]), ("type", "integer"), ("x-assertion", True)],
+    [("minimum", 2), ("enum", [2]), ("type", "integer")],
 )
 def test_strict_property_ref_rejects_assertion_siblings(keyword, constraint):
     tool = _tool(name="lookup")
@@ -663,7 +693,7 @@ def test_strict_property_ref_rejects_assertion_siblings(keyword, constraint):
 def test_strict_root_ref_rejects_unresolved_or_nonlocal_refs(ref):
     tool = _tool(name="lookup")
     tool.function.parameters = {"$ref": ref}
-    with pytest.raises(ValueError, match=r"\$ref"):
+    with pytest.raises(ValueError, match="unresolved_or_nonlocal_reference"):
         _grammar([tool], tool_choice="required")
 
 
@@ -676,7 +706,7 @@ def test_strict_root_ref_rejects_reference_cycle():
             "Alias": {"$ref": "#/$defs/Root"},
         },
     }
-    with pytest.raises(ValueError, match=r"cyclic.*\$ref"):
+    with pytest.raises(ValueError, match="nonconsuming_reference_cycle"):
         _grammar([tool], tool_choice="required")
 
 
@@ -685,7 +715,7 @@ def test_strict_root_ref_boolean_schema(target):
     tool = _tool(name="lookup")
     tool.function.parameters = {"$ref": "#/$defs/Root", "$defs": {"Root": target}}
     if not target:
-        with pytest.raises(ValueError, match="object schema"):
+        with pytest.raises(ValueError, match="accepts no values"):
             _grammar([tool], tool_choice="required")
         return
     grammar = _grammar([tool], tool_choice="required")

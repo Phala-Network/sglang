@@ -1213,6 +1213,7 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
             io_results = self._get_batch_zero_copy_impl(
                 all_key_strs, all_ptrs, all_sizes
             )
+            io_results = self._normalize_read_results(io_results, all_sizes)
 
         results: dict = {}
         for name, key_multiplier, start, end in prepared:
@@ -1370,6 +1371,31 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
             else:
                 return self._get_mha_buffer_meta(keys, host_indices)
 
+    @staticmethod
+    def _normalize_read_results(results, buffer_sizes):
+        """Require the full object, including every buffer of a hybrid sidecar.
+
+        A positive short read must not make a partially restored page visible.
+        Preserve the requested result count on a short native response; an
+        oversized response has ambiguous alignment and fails the whole read.
+        """
+        if len(results) > len(buffer_sizes):
+            return [-1] * len(buffer_sizes)
+        checked = []
+        for index, sizes in enumerate(buffer_sizes):
+            expected = (
+                sum(int(size) for size in sizes)
+                if isinstance(sizes, Sequence)
+                else int(sizes)
+            )
+            complete = (
+                expected > 0
+                and index < len(results)
+                and results[index] == expected
+            )
+            checked.append(1 if complete else -1)
+        return checked
+
     def _batch_postprocess(
         self, results: List[int], is_set_operate=False, key_multiplier=None
     ):
@@ -1393,7 +1419,8 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
             for i in range(0, len(results), key_multiplier)
         ]
         return [
-            (
+            len(group) == key_multiplier
+            and (
                 all(res == 0 for res in group)
                 if is_set_operate
                 else all(res > 0 for res in group)
@@ -1428,7 +1455,10 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
                 len(keys) / (end_time - start_time) * self.gb_per_page
             )
 
-        return self._batch_postprocess(get_results, is_set_operate=False)
+        return self._batch_postprocess(
+            self._normalize_read_results(get_results, buffer_sizes),
+            is_set_operate=False,
+        )
 
     def batch_set_v1(
         self,
@@ -1573,7 +1603,7 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
         get_result = self._get_batch_zero_copy_impl(
             [key], [target_location], [target_sizes]
         )
-        return get_result[0] >= 0
+        return self._normalize_read_results(get_result, [target_sizes]) == [1]
 
     def batch_get(
         self,
@@ -1589,6 +1619,7 @@ class MooncakeStore(HiCacheStorage, MooncakeBaseStore):
         get_result = self._get_batch_zero_copy_impl(
             keys, target_locations, target_sizes
         )
+        get_result = self._normalize_read_results(get_result, target_sizes)
         end_time = time.perf_counter()
 
         if self.is_mla_backend:

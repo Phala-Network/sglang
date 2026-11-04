@@ -248,7 +248,7 @@ def _mix_fused(
         bank.stride(1),
         scores.stride(0),
         H=H,
-        BLOCK_H=min(triton.next_power_of_2(H), 8192),
+        BLOCK_H=_BLOCK_H,
         num_warps=8,
     )
 

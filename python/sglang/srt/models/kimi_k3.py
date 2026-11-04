@@ -622,6 +622,8 @@ class KimiK3MoE(nn.Module):
         moe_intermediate_size = config.moe_intermediate_size
         moe_renormalize = config.moe_renormalize
         self.tp_size = get_parallel().tp_size
+        # The TP-sharded front and fused routing are K3.1's; K3 keeps its numerics.
+        self._is_k31 = is_kimi_k31(config)
         self.routed_scaling_factor = config.routed_scaling_factor
         self.num_shared_experts = config.num_shared_experts
         self.layer_idx = layer_idx
@@ -977,7 +979,8 @@ class KimiK3MoE(nn.Module):
         fp32 all-gather of the blocks is exactly the replicated front's
         [router | latent] columns."""
         if not (
-            envs.SGLANG_K3_SHARDED_MOE.get()
+            self._is_k31
+            and envs.SGLANG_K3_SHARDED_MOE.get()
             and self._front_fp32
             and self.tp_size > 1
             and k3_ar_fusion.enabled()
@@ -1579,7 +1582,9 @@ class KimiK3MoE(nn.Module):
 
     def _forward_routed(self, hidden_states, router_logits, routed_input, latent):
         if self._route_quant_fuse_eligible:
-            route_quant_handoff.stage(routed_input, layer=self.experts)
+            route_quant_handoff.stage(
+                routed_input, layer=self.experts if self._is_k31 else None
+            )
         try:
             topk_output = self.topk(hidden_states, router_logits)
             with zero_copy_context.set_moe_output(latent):
@@ -1595,7 +1600,9 @@ class KimiK3MoE(nn.Module):
         expanded_idx_to_permuted_idx, expert_weights) for the finalize-fused
         all-reduce."""
         if self._route_quant_fuse_eligible:
-            route_quant_handoff.stage(routed_input, layer=self.experts)
+            route_quant_handoff.stage(
+                routed_input, layer=self.experts if self._is_k31 else None
+            )
         try:
             topk_output = self.topk(hidden_states, router_logits)
             return self.experts.forward_deferred_finalize(routed_input, topk_output)
@@ -1779,7 +1786,7 @@ class KimiK3MoE(nn.Module):
             if (
                 fused_norm
                 and self._gemm_ag_up_eligible
-                and k3_ar_fusion.gemm_ag_up_fits(num_tokens)
+                and k3_ar_fusion.gemm_ag_up_fits(num_tokens, sharded=self._is_k31)
             ):
                 return k3_ar_fusion.gemm_ag_up_proj(
                     latent,

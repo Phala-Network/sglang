@@ -323,10 +323,11 @@ def finalize_push_fits(num_tokens: int) -> bool:
 _SHARDED_UP_MAX_TOKENS = 256
 
 
-def gemm_ag_up_fits(num_tokens: int) -> bool:
+def gemm_ag_up_fits(num_tokens: int, sharded: bool = True) -> bool:
     """Whether :func:`gemm_ag_up_proj` covers this decode batch: within its
-    row window (the fused-GEMV range only under SGLANG_K3_SHARDED_MOE=0), and
-    the [world, M, 7168 / world] staging fits a push slot."""
+    row window (the fused-GEMV range only when not ``sharded`` or under
+    SGLANG_K3_SHARDED_MOE=0), and the [world, M, 7168 / world] staging fits a
+    push slot."""
     from sglang.kernels.ops.communication import gemm_ag as mod
 
     state = _get_state()
@@ -334,7 +335,7 @@ def gemm_ag_up_fits(num_tokens: int) -> bool:
     comm = state.comm
     max_tokens = (
         _SHARDED_UP_MAX_TOKENS
-        if envs.SGLANG_K3_SHARDED_MOE.get()
+        if sharded and envs.SGLANG_K3_SHARDED_MOE.get()
         else mod.GEMV_MAX_TOKENS
     )
     return (

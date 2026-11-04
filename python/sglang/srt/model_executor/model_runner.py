@@ -1315,6 +1315,12 @@ class ModelRunner:
         max_m = envs.SGLANG_WARMUP_BF16_GEMM_MAX_M.get()
         if max_m <= 0 or self.device != "cuda":
             return
+        # K3 and its DFlash draft keep their startup and KV budget as they were.
+        hf_config = self.model_config.hf_config
+        if getattr(hf_config, "model_type", None) == "kimi_k3" or (
+            "DFlashDraftModel" in (getattr(hf_config, "architectures", None) or ())
+        ):
+            return
         from sglang.srt.layers.linear import LinearBase
         from sglang.srt.layers.quantization.unquant import (
             UnquantizedLinearMethod,

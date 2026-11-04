@@ -107,9 +107,10 @@ class TestGlueCaptureFailure(CustomTestCase):
         backend = mock.Mock(attn_backend_list=None)
         with (
             mock.patch("torch.cuda.Stream"),
-            mock.patch("torch.cuda.CUDAGraph"),
-            mock.patch("torch.cuda.graph", side_effect=RuntimeError("host read")),
+            mock.patch("torch.cuda.stream"),
+            mock.patch("torch.cuda.CUDAGraph") as graph,
         ):
+            graph.return_value.capture_begin.side_effect = RuntimeError("host read")
             for _ in range(glue.NUM_WARMUP + 1):
                 glue.run(backend, fb_view=None, key=1)
 

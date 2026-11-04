@@ -45,14 +45,18 @@ class TestDynBlock(unittest.TestCase):
 class TestRequire(unittest.TestCase):
     def _require(self, *, cuda=True, sm100=True):
         with (
-            mock.patch.object(k31_natives.torch.cuda, "is_available", return_value=cuda),
+            mock.patch.object(
+                k31_natives.torch.cuda, "is_available", return_value=cuda
+            ),
             mock.patch.object(
                 k31_natives,
                 "get_platform",
                 return_value=types.SimpleNamespace(is_sm100=sm100),
             ),
             mock.patch.object(
-                k31_natives, "missing_k31_natives", return_value=["flashmla_ops lacks x"]
+                k31_natives,
+                "missing_k31_natives",
+                return_value=["flashmla_ops lacks x"],
             ),
         ):
             k31_natives.require_k31_natives()

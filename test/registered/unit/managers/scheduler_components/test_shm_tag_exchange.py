@@ -89,19 +89,20 @@ def _sync_hicache_ready_counts(rank: int, init_file: str) -> None:
             _sleep_on_idle(False),
             _shm_names(),
         ):
-            # A row holds 6 ready counts, one more per extra host pool, and the folded
-            # digest's 2 words: 8, 9 and 10 values here. The shm table holds 8.
+            # A row holds 7 ready counts (the fully written backup acks come after the
+            # release queue), one more per extra host pool, and the folded digest's 2
+            # words: 9, 10 and 11 values here. The shm table holds 8.
             for extra_pools in (0, 1, 2):
                 cache = _hicache_tp_rank(rank, extra_pools)
-                want = list(range(6 + extra_pools))
+                extras = tuple(range(6, 6 + extra_pools))
                 names = tuple(cache.cache_controller.extra_host_mem_release_queues)
                 got = cache._sync_hicache_ready_counts()
-                assert got == (want[0], want[1], tuple(want[2:]), names), (
+                assert got == (0, 1, (2, 3, 4, 5, 4, *extras), names), (
                     extra_pools,
                     got,
                 )
             exchange = cache._shm_count_exchange()
-            assert exchange.seq == 1, f"{exchange.seq} rows went through shm, not 1"
+            assert exchange.seq == 0, f"{exchange.seq} rows went through shm, not 0"
             exchange.close()
     finally:
         torch.distributed.destroy_process_group()

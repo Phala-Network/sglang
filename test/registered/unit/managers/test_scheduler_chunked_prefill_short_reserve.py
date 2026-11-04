@@ -111,6 +111,8 @@ def _make_scheduler(chunked_req, waiting_queue):
     s.new_token_ratio_tracker = SimpleNamespace(current=1.0)
     s.max_prefill_tokens = 2 * CHUNK
     s.is_mixed_chunk = False
+    s.disagg_prefill_bootstrap_queue = None
+    s.pp_min_chunked_prefill_size = None
     s.priority_scheduling_preemption_threshold = 0
     s.max_prefill_bs = 0
     s.governor = None

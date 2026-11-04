@@ -5,6 +5,7 @@ import pytest
 import xgrammar as xgr
 from xgrammar.testing import _is_grammar_accept_string
 
+from sglang.srt.constrained.json_schema_validation import UnsupportedJSONSchemaFeature
 from sglang.srt.entrypoints.openai.protocol import (
     ChatCompletionRequest,
     Function,
@@ -539,7 +540,10 @@ def test_strict_root_ref_target_still_rejects_unsupported_root_assertions():
         "$ref": "#/$defs/Root",
         "$defs": {"Root": {"type": "object", "minProperties": 1}},
     }
-    with pytest.raises(ValueError, match="additionalProperties=false"):
+    with pytest.raises(
+        ValueError,
+        match=r"^Kimi K3 finite object constraints require additionalProperties=false$",
+    ):
         _grammar([tool], tool_choice="required")
 
 
@@ -693,8 +697,9 @@ def test_strict_property_ref_rejects_assertion_siblings(keyword, constraint):
 def test_strict_root_ref_rejects_unresolved_or_nonlocal_refs(ref):
     tool = _tool(name="lookup")
     tool.function.parameters = {"$ref": ref}
-    with pytest.raises(ValueError, match="unresolved_or_nonlocal_reference"):
+    with pytest.raises(UnsupportedJSONSchemaFeature) as caught:
         _grammar([tool], tool_choice="required")
+    assert caught.value.reason_code == "unresolved_or_nonlocal_reference"
 
 
 def test_strict_root_ref_rejects_reference_cycle():
@@ -706,8 +711,9 @@ def test_strict_root_ref_rejects_reference_cycle():
             "Alias": {"$ref": "#/$defs/Root"},
         },
     }
-    with pytest.raises(ValueError, match="nonconsuming_reference_cycle"):
+    with pytest.raises(UnsupportedJSONSchemaFeature) as caught:
         _grammar([tool], tool_choice="required")
+    assert caught.value.reason_code == "nonconsuming_reference_cycle"
 
 
 @pytest.mark.parametrize("target", [True, False])
@@ -715,7 +721,9 @@ def test_strict_root_ref_boolean_schema(target):
     tool = _tool(name="lookup")
     tool.function.parameters = {"$ref": "#/$defs/Root", "$defs": {"Root": target}}
     if not target:
-        with pytest.raises(ValueError, match="accepts no values"):
+        with pytest.raises(
+            ValueError, match=r"^Kimi K3 root schema accepts no values$"
+        ):
             _grammar([tool], tool_choice="required")
         return
     grammar = _grammar([tool], tool_choice="required")

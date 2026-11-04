@@ -110,6 +110,7 @@ class TestDSABackendDPPadding(CustomTestCase):
         )
         backend = SimpleNamespace(
             dsa_prefill_impl=implementation,
+            _kv_rows_to_store=lambda k, k_rope: (k, k_rope),
             attn_dcp_size=1,
             use_mha=False,
             use_fused_topk=True,

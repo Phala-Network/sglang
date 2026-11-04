@@ -110,6 +110,7 @@ from sglang.srt.layers.attention.kv_shard_hooks import (
     prepare_kv_shard_forward,
 )
 from sglang.srt.layers.attention.trtllm_mla_backend import (
+    finite_kv,
     grow_multi_ctas_kv_counter_buffer_if_needed,
     make_persistent_multi_ctas_kv_counter_buffer,
 )
@@ -1298,6 +1299,21 @@ class DeepseekSparseAttnBackend(
 
     def update_verify_buffers_to_fill_after_draft(self, *args, **kwargs):
         return None
+
+    def _kv_rows_to_store(
+        self, k: torch.Tensor, k_rope: Optional[torch.Tensor]
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """K, k_rope with non-finite values zeroed when prefill token packing is on.
+
+        A packed group's tokens, also of different requests, read the union of their
+        top-k rows. FlashMLA weighs a row a token did not pick by zero, and 0 * NaN is
+        NaN, so one NaN-poisoned request's rows would reach the requests packed with
+        it. Rows outlive their forward (radix cache, tiers), so keep them finite
+        where they are stored, on both the prefill and the decode path.
+        """
+        if not self.flashmla_prefill_token_packing:
+            return k, k_rope
+        return finite_kv(k), None if k_rope is None else finite_kv(k_rope)
 
     def _graph_page_table_width(self, metadata: DSAMetadata) -> int:
         """Column count to scan req_to_token during graph replay. Reads the wide
@@ -2515,8 +2531,7 @@ class DeepseekSparseAttnBackend(
                 self.token_to_kv_pool.set_mla_kv_buffer(  # type: ignore
                     layer,
                     cache_loc,
-                    k,
-                    k_rope,
+                    *self._kv_rows_to_store(k, k_rope),
                 )
 
         # Use MHA kernel if in MHA_ONE_SHOT mode
@@ -2896,8 +2911,7 @@ class DeepseekSparseAttnBackend(
                 self.token_to_kv_pool.set_mla_kv_buffer(  # type: ignore
                     layer,
                     cache_loc,
-                    k,
-                    k_rope,
+                    *self._kv_rows_to_store(k, k_rope),
                 )
 
         # Do absorbed multi-latent attention

@@ -1,8 +1,12 @@
 import json
 import os
 import random
+import signal
 import unittest
+from collections import namedtuple
 from contextlib import contextmanager
+from itertools import product
+from unittest import mock
 
 from transformers import AutoTokenizer
 
@@ -10,6 +14,7 @@ from sglang.srt.environ import envs
 from sglang.srt.utils.patch_tokenizer import (
     _EncodePieceFastPathPatcher,
     _PadPaddingSideShim,
+    _ParallelEncodePatcher,
     _SpecialTokensCachePatcher,
     decode_without_hf_kwargs,
     patch_tokenizer,
@@ -435,6 +440,216 @@ class TestEncodePieceFastPathPatcher(CustomTestCase):
             self.assertTrue(getattr(cls, "_sglang_special_tokens_patched", False))
             self.assertFalse(getattr(cls, "_sglang_encode_piece_patched", False))
             self.assertEqual(patched.encode("hello <|im_end|> world"), expected)
+        finally:
+            unpatch_tokenizer(tokenizer)
+
+
+class TestParallelEncodePatcher(CustomTestCase):
+    """The pool must return the checkpoint's serial ids on every input."""
+
+    def test_ids_match_serial_at_every_eligible_cut(self):
+        tokenizer = _load_k3_tokenizer()
+        cls = type(tokenizer)
+        self.assertFalse(hasattr(cls, _ParallelEncodePatcher._PATCHED_FLAG))
+        specials = list(tokenizer.special_tokens)[:4]
+        filler = "alpha beta\ngamma, delta! " * 20_000
+        texts = [
+            *specials,
+            *[
+                f"x{a}{mid}{b}y z"
+                for a in " .'\r1"
+                for mid in ("\n", "\n\n", "\r\n", " \n", "\n ", "\n \n", "\n\t\n")
+                for b in (
+                    "a",
+                    "A",
+                    "1",
+                    ".",
+                    "'s",
+                    "<",
+                    "\xa0",
+                    "\x85",
+                    "中",
+                    *specials,
+                )
+            ],
+            *[s[:i] + "\n" + s[i:] for s in specials for i in range(1, len(s))],
+            "a\ud83d\nb\ude00c",
+            "👩\u200d💻\nx\u0301中\nA文",
+            *[
+                c * n + "\nend"
+                for c in " \n\xa0\x1ca"
+                for n in (12_499, 24_998, 25_000, 25_001, 60_000)
+            ],
+            "x " * 6_000 + "a" * 30_000 + " y" * 6_000,
+            filler,
+            filler[: 400_000 - 3] + specials[0] + filler[:100],
+            "a" * 1_000_000,
+        ]
+        serial = {
+            (text, allow): cls._encode_text_piece(tokenizer, text, allow)
+            for text in texts
+            for allow in (True, False)
+        }
+        with envs.SGLANG_PATCH_TOKENIZER.override(True):
+            patch_tokenizer(tokenizer)
+        try:
+            self.assertTrue(getattr(cls, _ParallelEncodePatcher._PATCHED_FLAG))
+            with (
+                envs.SGLANG_PARALLEL_PROMPT_ENCODE_MIN_CHARS.override(0),
+                mock.patch.object(_ParallelEncodePatcher, "_POOL_MIN_CHARS", 1),
+            ):
+                for task_chars in (1, 32_768):
+                    with mock.patch.object(
+                        _ParallelEncodePatcher, "_TASK_CHARS", task_chars
+                    ):
+                        for (text, allow), ids in serial.items():
+                            self.assertEqual(
+                                ids,
+                                tokenizer._encode_text_piece(text, allow),
+                                (len(text), allow, task_chars),
+                            )
+        finally:
+            unpatch_tokenizer(tokenizer)
+        self.assertFalse(hasattr(cls, "_parallel_original_methods"))
+
+    def test_run_check_never_passes_text_the_splitter_would_cut(self):
+        split = type(_load_k3_tokenizer())._split_whitespaces_or_nonwhitespaces
+        for limit in range(2, 7):
+            with mock.patch.object(_ParallelEncodePatcher, "_MAX_RUN_CHARS", limit):
+                for n in range(1, 13):
+                    for bits in product("a ", repeat=n):
+                        text = "".join(bits)
+                        if not _ParallelEncodePatcher._runs_may_exceed_limit(text):
+                            self.assertEqual(list(split(text, limit)), [text])
+
+    def test_chat_template_ids_unchanged(self):
+        tokenizer = _load_k3_tokenizer()
+        messages = [
+            {"role": "system", "content": "You are a coding agent."},
+            {"role": "user", "content": "<|im_end|> line\n" * 20_000},
+            {"role": "assistant", "content": "ok"},
+            {"role": "user", "content": "中文 😀\nnext"},
+        ]
+        kwargs = dict(tokenize=True, add_generation_prompt=True)
+        expected = tokenizer.apply_chat_template(messages, **kwargs)
+        segments = list(_chat_segments(tokenizer, messages))
+        _ParallelEncodePatcher.patch(tokenizer)
+        try:
+            with mock.patch.object(
+                _ParallelEncodePatcher,
+                "_encode_piece",
+                wraps=_ParallelEncodePatcher._encode_piece,
+            ) as encode_piece:
+                self.assertEqual(
+                    expected, tokenizer.apply_chat_template(messages, **kwargs)
+                )
+                encode_piece.assert_called()
+                encode_piece.reset_mock()
+                self.assertEqual(
+                    expected, tokenizer._encode_chat_segments(iter(segments))
+                )
+                encode_piece.assert_called()
+                encode_piece.reset_mock()
+                with envs.SGLANG_PARALLEL_PROMPT_ENCODE_MIN_CHARS.override(10**9):
+                    self.assertEqual(
+                        expected, tokenizer.apply_chat_template(messages, **kwargs)
+                    )
+                encode_piece.assert_not_called()
+        finally:
+            _ParallelEncodePatcher.unpatch(tokenizer)
+
+    def test_pool_takes_only_long_text(self):
+        tokenizer = _load_k3_tokenizer()
+        Piece = namedtuple("Piece", "text allow_special")
+        _ParallelEncodePatcher.patch(tokenizer)
+        try:
+            with mock.patch.object(
+                _ParallelEncodePatcher,
+                "_encode_piece",
+                wraps=_ParallelEncodePatcher._encode_piece,
+            ) as encode_piece:
+                for called, encode in (
+                    (False, lambda: tokenizer.encode("a b\n" * 8191)),
+                    (True, lambda: tokenizer.encode("a b\n" * 8192)),
+                    (
+                        False,
+                        lambda: tokenizer._encode_chat_segments(
+                            [Piece("hello ", False)] * 6_000
+                        ),
+                    ),
+                ):
+                    encode()
+                    self.assertEqual(encode_piece.called, called)
+                    encode_piece.reset_mock()
+                with envs.SGLANG_PARALLEL_PROMPT_ENCODE.override(False):
+                    tokenizer.encode("a b\n" * 8192)
+                encode_piece.assert_not_called()
+                self.assertEqual(tokenizer._encode_chat_segments([]), [])
+                self.assertEqual(tokenizer.encode(""), [])
+        finally:
+            _ParallelEncodePatcher.unpatch(tokenizer)
+
+    def test_forked_child_encodes(self):
+        tokenizer = _load_k3_tokenizer()
+        text = "line\n" * 20_000
+        expected = tokenizer.encode(text)
+        _ParallelEncodePatcher.patch(tokenizer)
+        try:
+            self.assertEqual(tokenizer.encode(text), expected)
+            pid = os.fork()
+            if pid == 0:
+                status = 1
+                try:
+                    signal.alarm(60)
+                    status = 0 if tokenizer.encode(text) == expected else 1
+                finally:
+                    os._exit(status)
+            self.assertEqual(os.waitpid(pid, 0)[1], 0)
+        finally:
+            _ParallelEncodePatcher.unpatch(tokenizer)
+
+    def test_another_checkpoint_or_the_gate_keeps_the_serial_path(self):
+        tokenizer = _load_k3_tokenizer()
+        self.assertTrue(_ParallelEncodePatcher.applies_to(tokenizer))
+        with mock.patch.object(_ParallelEncodePatcher, "_SOURCE_SHA256", "other"):
+            self.assertFalse(_ParallelEncodePatcher.applies_to(tokenizer))
+        with mock.patch.object(tokenizer, "special_tokens", {"a\nb": 1}):
+            self.assertFalse(_ParallelEncodePatcher.applies_to(tokenizer))
+        with envs.SGLANG_PARALLEL_PROMPT_ENCODE.override(False):
+            self.assertFalse(_ParallelEncodePatcher._worthwhile(10**9))
+
+
+def _chat_segments(tokenizer, messages):
+    template = type(tokenizer).apply_chat_template
+    build = template.__globals__["build_chat_segments"]
+    return build(messages, add_generation_prompt=True, thinking_effort="max")
+
+
+class TestProcessorTokenizerIsPatched(CustomTestCase):
+    def test_tokenizer_manager_patches_the_processor_tokenizer(self):
+        from sglang.srt.managers import tokenizer_manager
+
+        tokenizer = _load_k3_tokenizer()
+        manager = mock.Mock()
+        with (
+            mock.patch.object(tokenizer_manager, "get_disagg"),
+            mock.patch.object(tokenizer_manager, "get_serving") as get_serving,
+            mock.patch.object(tokenizer_manager, "import_processors"),
+            mock.patch.object(tokenizer_manager, "get_mm_processor"),
+            mock.patch.object(tokenizer_manager, "determine_tensor_transport_mode"),
+            mock.patch.object(
+                tokenizer_manager,
+                "get_processor_wrapper",
+                return_value=mock.Mock(spec=["tokenizer"], tokenizer=tokenizer),
+            ),
+        ):
+            manager.model_config.is_multimodal = True
+            get_serving.return_value.skip_tokenizer_init = False
+            tokenizer_manager.get_disagg.return_value.language_model_only = False
+            tokenizer_manager.TokenizerManager.init_tokenizer_and_processor(manager)
+        try:
+            self.assertIs(manager.tokenizer, tokenizer)
+            self.assertTrue(type(tokenizer)._sglang_encode_piece_patched)
         finally:
             unpatch_tokenizer(tokenizer)
 

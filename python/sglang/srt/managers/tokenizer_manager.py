@@ -200,6 +200,7 @@ from sglang.srt.utils.hf_transformers_utils import (
     resolve_image_processor_backend,
 )
 from sglang.srt.utils.network import get_zmq_socket
+from sglang.srt.utils.patch_tokenizer import patch_tokenizer
 from sglang.srt.utils.request_logger import RequestLogger
 from sglang.srt.utils.watchdog import Watchdog
 from sglang.srt.utils.weight_versions import add_weight_versions_to_meta_info
@@ -632,7 +633,9 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 self.tokenizer = self.processor = None
             else:
                 self.processor = _processor
-                self.tokenizer = get_tokenizer_from_processor(self.processor)
+                self.tokenizer = patch_tokenizer(
+                    get_tokenizer_from_processor(self.processor)
+                )
                 os.environ["TOKENIZERS_PARALLELISM"] = "false"
         else:
             self.mm_processor = self.processor = None

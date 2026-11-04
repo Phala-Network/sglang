@@ -1761,7 +1761,8 @@ class Envs:
     SGLANG_PATCH_TOKENIZER = EnvBool(True)
     # Group replies by tokenizer worker; disable for per-request delivery.
     SGLANG_BATCH_TOKENIZER_OUTPUTS = EnvBool(True)
-    # Encode long rendered chat prompts as chunks on the tokenizers thread pool.
+    # Encode long rendered chat prompts as chunks on the tokenizers thread pool, or for
+    # Kimi-K3's tiktoken tokenizer long text from chat and /generate on its own pool.
     SGLANG_PARALLEL_PROMPT_ENCODE = EnvBool(True)
     # Shorter prompts use the single-call encode; below this the gain is eaten
     # by rayon dispatch and the id merge.

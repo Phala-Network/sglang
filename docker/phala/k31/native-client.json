@@ -1,0 +1,10 @@
+{
+  "source_repository": "https://github.com/Phala-Network/Mooncake",
+  "source_revision": "467533b2e80a101dfabd4789ed5aa8ab251c24a6",
+  "source_tag": "phala-v0.3.13.post1-k31-client-1",
+  "artifact_url": "https://github.com/Phala-Network/Mooncake/releases/download/phala-v0.3.13.post1-k31-client-1/native-client.tar.gz",
+  "artifact_sha256": "d29e00d21997f98658eba12be29ea402b8387d4ad991482fdd8f0d1d9cb5d2a4",
+  "artifact_bytes": 14076632,
+  "cpu_smoke_sha256": "d06a02df7ff1f7e144af0516b059851b9b5e66afc363d1a87fe079fa36c5b395",
+  "base_image": "lmsysorg/sglang:dev-kimi-k31-pro@sha256:4a098ad7414702a2271296ac148854448d10710ec3554ac93b57ef194999305a"
+}

@@ -1,0 +1,2 @@
+# CPython 3.12 / Linux x86_64 wheel; install without dependency resolution.
+fastsafetensors @ https://files.pythonhosted.org/packages/3a/e4/b3b9feac988f3b401789ab6e4f810487e2a844a5fc8dd3021e7a21f930ff/fastsafetensors-0.5.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl --hash=sha256:cf8085203d83abbf2ea37edfb4b007cf1de521ab1cd29b46935f611d68c80d7d

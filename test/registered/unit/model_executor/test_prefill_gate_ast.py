@@ -65,6 +65,7 @@ class PrefillGateTests(unittest.TestCase):
             _qwen_bcg_hc_sidechannel=False,
             _qwen_bcg_mtp_draft=False,
             _fa4_prefill=False,
+            _dcp_extend_active=False,
         )
         return self.eligible(
             runner,

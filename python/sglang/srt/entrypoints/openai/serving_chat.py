@@ -736,7 +736,8 @@ class OpenAIServingChat(OpenAIServingBase):
         return "chatcmpl-"
 
     def _is_kimi_k31(self) -> bool:
-        hf_config = self.tokenizer_manager.model_config.hf_config
+        model_config = getattr(self.tokenizer_manager, "model_config", None)
+        hf_config = getattr(model_config, "hf_config", None)
         return getattr(hf_config, "model_type", None) == "kimi_k31"
 
     def _kimi_k3_thinking_efforts(self) -> tuple[str, ...]:

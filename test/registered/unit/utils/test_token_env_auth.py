@@ -187,6 +187,7 @@ class TokenEnvironmentAuthTests(unittest.TestCase):
         return SimpleNamespace(
             server_args=args,
             startup_time=0,
+            mm_processor=None,
             get_internal_state=AsyncMock(
                 return_value=[{"api_key": TOKEN, "nested": {"admin_api_key": TOKEN}}]
             ),

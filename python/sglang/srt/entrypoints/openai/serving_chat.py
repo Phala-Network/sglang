@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import logging
 import time
@@ -34,7 +33,6 @@ class ThinkingMode(str, Enum):
 import jinja2
 import orjson
 from fastapi import HTTPException, Request
-from pydantic import ValidationError
 
 try:
     from mistral_common.exceptions import MistralCommonException
@@ -60,7 +58,6 @@ from sglang.srt.entrypoints.openai import (
     encoding_dsv32,
     encoding_k3,
 )
-from sglang.srt.entrypoints.openai.kimi_token_provenance import KimiTokenProvenance
 from sglang.srt.entrypoints.openai.parallel_prompt_encode import (
     encode_prompt_segments,
     parallel_prompt_encode,
@@ -79,7 +76,6 @@ from sglang.srt.entrypoints.openai.protocol import (
     ChatCompletionTokenLogprob,
     ChatMessage,
     ChoiceLogprobs,
-    CompletionTokensDetails,
     DeltaMessage,
     ErrorResponse,
     FunctionResponse,
@@ -88,14 +84,12 @@ from sglang.srt.entrypoints.openai.protocol import (
     ResponseParserProtocol,
     ResponsesRequest,
     SglExt,
-    ThinkingParam,
     Tool,
     ToolCall,
     ToolCallConstraint,
     ToolCallProcessingResult,
     ToolChoice,
     TopLogprob,
-    UsageInfo,
 )
 from sglang.srt.entrypoints.openai.serving_base import OpenAIServingBase
 from sglang.srt.entrypoints.openai.sse_utils import build_sse_content
@@ -122,7 +116,6 @@ from sglang.srt.function_call.utils import (
     get_json_schema_constraint,
     normalize_json_schema_types,
     strip_structural_tag_excludes,
-    without_schema_identifiers,
 )
 from sglang.srt.managers.io_struct import GenerateReqInput
 from sglang.srt.parser.conversation import generate_chat_conv
@@ -330,36 +323,6 @@ def _extract_max_dynamic_patch(request: ChatCompletionRequest):
 
 KIMI_K3_IMAGE_PLACEHOLDER = "<|kimi_image_placeholder|>"
 KIMI_K3_IMAGE_PLACEHOLDER_ESCAPED = "<| kimi_image_placeholder |>"
-
-
-# K3 exposes three thinking tiers and K3.1 adds "medium". The OpenAI tiers map
-# onto the nearest one so a standard client is neither rejected nor silently
-# upgraded to the strongest tier; a float is an sglang extension K3 cannot
-# express at all.
-_KIMI_K3_EFFORT_TIERS = {
-    "minimal": "low",
-    "low": "low",
-    "medium": "high",
-    "high": "high",
-    "xhigh": "max",
-    "max": "max",
-}
-_KIMI_K31_EFFORT_TIERS = {**_KIMI_K3_EFFORT_TIERS, "medium": "medium"}
-
-
-def kimi_k3_thinking_effort(
-    reasoning_effort: Any, tiers: dict = _KIMI_K3_EFFORT_TIERS
-) -> Optional[str]:
-    """Map a request's reasoning effort onto K3's thinking_effort, or None."""
-    if reasoning_effort is None or reasoning_effort == "none":
-        return None
-    if isinstance(reasoning_effort, str) and reasoning_effort in tiers:
-        return tiers[reasoning_effort]
-    supported = ", ".join(repr(t) for t in dict.fromkeys(tiers.values()))
-    raise ValueError(
-        f"Kimi K3 supports reasoning_effort {supported} (the other OpenAI tiers "
-        f"map onto them); got {reasoning_effort!r}."
-    )
 
 
 def neutralize_kimi_k3_image_placeholder(text: str) -> str:
@@ -772,14 +735,15 @@ class OpenAIServingChat(OpenAIServingBase):
     def _request_id_prefix(self) -> str:
         return "chatcmpl-"
 
-    def _kimi_k3_effort_tiers(self) -> dict:
+    def _is_kimi_k31(self) -> bool:
+        hf_config = self.tokenizer_manager.model_config.hf_config
+        return getattr(hf_config, "model_type", None) == "kimi_k31"
+
+    def _kimi_k3_thinking_efforts(self) -> tuple[str, ...]:
         """K3.1 adds a native "medium" thinking tier on top of K3's three."""
-        model_type = getattr(
-            self.tokenizer_manager.model_config.hf_config, "model_type", None
-        )
-        if model_type == "kimi_k31":
-            return _KIMI_K31_EFFORT_TIERS
-        return _KIMI_K3_EFFORT_TIERS
+        if self._is_kimi_k31():
+            return ("low", "medium", "high", "max")
+        return ("low", "high", "max")
 
     def _all_tools(self, request: ChatCompletionRequest) -> List[Tool]:
         tools = list(getattr(request, "tools", None) or [])
@@ -1253,31 +1217,21 @@ class OpenAIServingChat(OpenAIServingBase):
             template_kwargs.pop("tokenize", None)
             template_kwargs.pop("return_dict", None)
             template_kwargs.pop("image_prompts", None)
-            template_kwargs.pop("add_generation_prompt", None)
-            for key in ("conversation", "tools"):
-                if key in template_kwargs:
-                    raise ValueError(
-                        f"chat_template_kwargs cannot set {key!r}; "
-                        "use the request fields instead."
-                    )
             if image_count:
                 template_kwargs["image_prompts"] = ["<|media_pad|>"] * image_count
 
-            tiers = self._kimi_k3_effort_tiers()
-            effort = template_kwargs.get("thinking_effort")
-            if effort is not None and effort not in tiers.values():
-                supported = ", ".join(repr(t) for t in dict.fromkeys(tiers.values()))
-                raise ValueError(
-                    f"chat_template_kwargs.thinking_effort must be one of "
-                    f"{supported}; got {effort!r}."
-                )
+            thinking_efforts = self._kimi_k3_thinking_efforts()
             if (
-                "thinking_effort" not in template_kwargs
-                and template_kwargs.get("thinking") is not False
+                request.reasoning_effort in thinking_efforts
+                and "thinking_effort" not in template_kwargs
             ):
-                effort = kimi_k3_thinking_effort(request.reasoning_effort, tiers)
-                if effort is not None:
-                    template_kwargs["thinking_effort"] = effort
+                template_kwargs["thinking_effort"] = request.reasoning_effort
+            elif request.reasoning_effort not in (None, "none", *thinking_efforts):
+                logger.warning(
+                    "Kimi K3 does not support reasoning_effort=%r; using the "
+                    "encoder default.",
+                    request.reasoning_effort,
+                )
 
             effective_tools = self._effective_tools(request)
             effective_tool_choice = self._effective_tool_choice(request)
@@ -1435,8 +1389,6 @@ class OpenAIServingChat(OpenAIServingBase):
         prompt_tokens: dict[int, int],
         reasoning_tokens: dict[int, int],
         completion_tokens: dict[int, int],
-        internal_token_ids: list[int] | None = None,
-        token_provenance: KimiTokenProvenance | None = None,
     ) -> AsyncGenerator[str, None]:
         """Generate SSE chunks for streaming content."""
         encoding_output = self._encoding_output()
@@ -1475,11 +1427,6 @@ class OpenAIServingChat(OpenAIServingBase):
         # nor duplicated across chunks; flush any leftover at the end.
         remaining_logprobs = choice_logprobs
 
-        event_internal = (
-            [{"token_ids": internal_token_ids}] if internal_token_ids else None
-        )
-        replay_chars = 0
-
         # Handle reasoning content
         if self.reasoning_parser and request.separate_reasoning:
             reasoning_text, delta = self._process_reasoning_stream(
@@ -1490,10 +1437,6 @@ class OpenAIServingChat(OpenAIServingBase):
                 request,
                 finish_reason_type,
             )
-            if token_provenance is not None:
-                replay_chars = getattr(
-                    reasoning_parser_dict[index].detector, "replayed_reasoning_chars", 0
-                )
             if reasoning_text:
                 if request.reasoning_exclude:
                     # Consume hidden reasoning so parsing and usage stay correct,
@@ -1522,36 +1465,6 @@ class OpenAIServingChat(OpenAIServingBase):
                     )
                     remaining_logprobs = None
 
-            # Emit one standalone
-            # reasoning_content="" frame as the end-of-thinking boundary, after
-            # the last non-empty reasoning delta and before the first content
-            # delta. Per-index state lives on the parser wrapper:
-            # _k3_reasoning_seen / _k3_boundary_sent. Fires once the detector
-            # has left the think channel (or the stream is finishing).
-            if self.chat_encoding_spec == "kimi_k3":
-                parser = reasoning_parser_dict.get(index)
-                if parser is not None:
-                    if reasoning_text:
-                        parser._k3_reasoning_seen = True
-                    reasoning_over = not getattr(
-                        parser.detector, "_in_reasoning", False
-                    ) or (
-                        finish_reason_type is not None and finish_reason_type != "abort"
-                    )
-                    if (
-                        getattr(parser, "_k3_reasoning_seen", False)
-                        and not getattr(parser, "_k3_boundary_sent", False)
-                        and reasoning_over
-                    ):
-                        parser._k3_boundary_sent = True
-                        yield build_sse_content(
-                            chunk_id=self._wire_id(request, content["meta_info"]["id"]),
-                            created=created,
-                            model=request.model,
-                            index=index,
-                            reasoning_content="",
-                        )
-
         # Handle tool calls
         if self._tool_call_parsing_active(request) and not self._answer_started(
             reasoning_parser_dict.get(index)
@@ -1566,9 +1479,6 @@ class OpenAIServingChat(OpenAIServingBase):
                 created=created,
                 continuous_usage_stats=continuous_usage_stats,
                 flush=finish_reason_type is not None and finish_reason_type != "abort",
-                internal_content=event_internal,
-                token_provenance=token_provenance,
-                replay_chars=replay_chars,
             ):
                 if chunk:
                     yield chunk
@@ -1577,16 +1487,9 @@ class OpenAIServingChat(OpenAIServingBase):
             if finish_reason_type is not None and index in parser_dict:
                 parser = parser_dict[index]
                 remaining_chunk = self._check_for_unstreamed_tool_args(
-                    parser,
-                    content,
-                    request,
-                    index,
-                    created=created,
-                    internal_content=event_internal,
+                    parser, content, request, index, created=created
                 )
                 if remaining_chunk:
-                    if token_provenance:
-                        raise ValueError("K3 tool flush has no token provenance")
                     yield remaining_chunk
 
         else:
@@ -1602,20 +1505,13 @@ class OpenAIServingChat(OpenAIServingBase):
                     ).model_dump()
 
                 yield build_sse_content(
-                    chunk_id=self._wire_id(request, content["meta_info"]["id"]),
+                    chunk_id=content["meta_info"]["id"],
                     created=created,
                     model=request.model,
                     index=index,
                     content=delta,
                     logprobs=remaining_logprobs,
                     usage=usage,
-                    internal_content=(
-                        token_provenance.take(
-                            delta, text=True, replay_chars=replay_chars
-                        )
-                        if token_provenance
-                        else event_internal
-                    ),
                 )
                 remaining_logprobs = None
 
@@ -1637,7 +1533,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 ).model_dump()
 
             yield build_sse_content(
-                chunk_id=self._wire_id(request, content["meta_info"]["id"]),
+                chunk_id=content["meta_info"]["id"],
                 created=created,
                 model=request.model,
                 index=index,
@@ -2583,12 +2479,10 @@ class OpenAIServingChat(OpenAIServingBase):
                     effective_tool_choice,
                     parallel_tool_calls=request.parallel_tool_calls,
                     thinking_mode=xgrammar_reasoning,
-                    # With reasoning off, the K3 encoder's generation prompt
-                    # opens the response channel, so a forced call has to close
-                    # it before the tools section.
-                    response_channel_open=(
-                        self.chat_encoding_spec == "kimi_k3" and not thinking_mode
-                    ),
+                    # With reasoning off, K3.1's generation prompt opens the
+                    # response channel, so a forced call has to close it before
+                    # the tools section.
+                    response_channel_open=self._is_kimi_k31() and not thinking_mode,
                 )
                 if (
                     tool_call_constraint is not None
@@ -3162,25 +3056,6 @@ class OpenAIServingChat(OpenAIServingBase):
             stop=stop,
         )
 
-    def _usage_headers(self, meta_info: Dict[str, Any]) -> Dict[str, str]:
-        """Usage accounting headers, named by SGLANG_USAGE_HEADER_PREFIX.
-
-        Lets clients account prompt-side tokens even when the stream drops
-        before the final usage frame. Values come from the first engine event's
-        meta_info and match the final usage (prompt-side counts are fixed after
-        prefill). Only emitted under the kimi_k3 encoding, and only when the
-        prefix is set.
-        """
-        prefix = envs.SGLANG_USAGE_HEADER_PREFIX.get()
-        if self.chat_encoding_spec != "kimi_k3" or not prefix:
-            return {}
-        prompt = self._reported_prompt_tokens(meta_info)
-        cached = meta_info.get("cached_tokens", 0) or 0
-        return {
-            f"{prefix}-Prompt-Tokens": str(prompt),
-            f"{prefix}-Cached-Tokens": str(cached),
-        }
-
     async def _handle_streaming_request(
         self,
         adapted_request: GenerateReqInput,
@@ -3188,13 +3063,7 @@ class OpenAIServingChat(OpenAIServingBase):
         raw_request: Request,
     ) -> StreamingResponse | ErrorResponse:
         """Handle streaming chat completion request"""
-        # The generator fills usage_headers before yielding its first chunk
-        # (from the first engine event's meta_info); the first chunk is awaited
-        # below, so the headers are ready when StreamingResponse is built.
-        usage_headers: Dict[str, str] = {}
-        generator = self._generate_chat_stream(
-            adapted_request, request, raw_request, usage_headers=usage_headers
-        )
+        generator = self._generate_chat_stream(adapted_request, request, raw_request)
 
         return await self._streaming_response_before_headers(
             generator, adapted_request, raw_request
@@ -3205,10 +3074,9 @@ class OpenAIServingChat(OpenAIServingBase):
         adapted_request: GenerateReqInput,
         request: ChatCompletionRequest,
         raw_request: Request,
-        usage_headers: Optional[Dict[str, str]] = None,
     ) -> AsyncGenerator[str, None]:
         """Generate streaming chat completion response"""
-        created = self._stream_created(request)
+        created = int(time.time())
 
         # Parsers for tool calls and reasoning
         parser_dict = {}
@@ -3221,16 +3089,6 @@ class OpenAIServingChat(OpenAIServingBase):
         n_prev_tokens = {}
         has_tool_calls = {}
         finish_reasons = {}
-        # Attach per-frame delta token ids when
-        # include_internal_content is set. Engine stream events already carry
-        # output_ids (a delta in incremental mode; otherwise sliced from the
-        # tail by completion_tokens count).
-        internal_content_on = bool(
-            request.stream_options
-            and getattr(request.stream_options, "include_internal_content", False)
-        )
-        internal_prev_completion: Dict[int, int] = {}
-        token_provenances: Dict[int, KimiTokenProvenance] = {}
 
         # Usage tracking
         prompt_tokens = {}
@@ -3264,9 +3122,6 @@ class OpenAIServingChat(OpenAIServingBase):
                 request.stream_options,
                 get_serving().stream_response_default_include_usage,
             )
-            # K3 allows top-level usage only in the final choices=[] summary.
-            if self.chat_encoding_spec == "kimi_k3":
-                continuous_usage_stats = False
 
             return_input_ids = self._should_return_input_ids(request)
             return_output_ids = self._should_return_output_ids(request)
@@ -3375,18 +3230,12 @@ class OpenAIServingChat(OpenAIServingBase):
                         break
                     finish_reasons[index] = finish_reason
 
-                # Fill the accounting headers as soon as the first
-                # engine event's meta_info arrives (before any byte is yielded;
-                # _handle_streaming_request awaits the first chunk).
-                if usage_headers is not None and not usage_headers:
-                    usage_headers.update(self._usage_headers(content["meta_info"]))
-
                 # First chunk with role
                 if is_firsts.get(index, True):
                     is_firsts[index] = False
                     # K2 templates require preserved thinking, including empty reasoning.
                     yield build_sse_content(
-                        chunk_id=self._wire_id(request, content["meta_info"]["id"]),
+                        chunk_id=content["meta_info"]["id"],
                         created=created,
                         model=request.model,
                         index=index,
@@ -3423,35 +3272,6 @@ class OpenAIServingChat(OpenAIServingBase):
                         )
                         content = {**content, "text": text}
 
-                # Delta token ids for this event (incremental mode
-                # events already carry the delta).
-                internal_token_ids = None
-                if internal_content_on:
-                    all_ids = content.get("output_ids") or []
-                    if get_serving().incremental_streaming_output:
-                        internal_token_ids = list(all_ids)
-                    else:
-                        # Non-incremental events carry a REFERENCE to the
-                        # cumulative output_ids, and backlog coalescing
-                        # (_coalesce) concatenates that same reference multiple
-                        # times — length-based offsets would slice garbage. Use
-                        # the completion_tokens count instead: this event added
-                        # k tokens, take the last k; the tail of a duplicated
-                        # concatenation is still the true cumulative tail.
-                        cur = content["meta_info"].get("completion_tokens", 0) or 0
-                        prev = internal_prev_completion.get(index, 0)
-                        k = cur - prev
-                        internal_token_ids = list(all_ids[-k:]) if k > 0 else []
-                        internal_prev_completion[index] = cur
-
-                token_provenance = None
-                if internal_content_on and self.chat_encoding_spec == "kimi_k3":
-                    if index not in token_provenances:
-                        token_provenances[index] = KimiTokenProvenance(
-                            self.tokenizer_manager.tokenizer
-                        )
-                    token_provenance = token_provenances[index]
-                    token_provenance.append(internal_token_ids or [])
                 # Generate streaming content (override in subclass for custom behavior)
                 async for chunk in self._generate_stream_content(
                     content=content,
@@ -3468,8 +3288,6 @@ class OpenAIServingChat(OpenAIServingBase):
                     prompt_tokens=prompt_tokens,
                     reasoning_tokens=reasoning_tokens,
                     completion_tokens=completion_tokens,
-                    internal_token_ids=internal_token_ids,
-                    token_provenance=token_provenance,
                 ):
                     yield chunk
                     if tool_progress_enabled:
@@ -3526,24 +3344,13 @@ class OpenAIServingChat(OpenAIServingBase):
                     final_finish_reason = "tool_calls"
 
                 matched_stop = finish_reason_data.get("matched")
-                # The end frame carries per-choice
-                # usage, independent of stream_options.include_usage.
-                choice_usage = None
-                if self.chat_encoding_spec == "kimi_k3":
-                    choice_usage = self._k3_usage(
-                        prompt_tokens=prompt_tokens.get(idx, 0),
-                        completion_tokens=completion_tokens.get(idx, 0),
-                        reasoning_tokens=reasoning_tokens.get(idx, 0) or 0,
-                        cached_tokens=cached_tokens.get(idx, 0) or 0,
-                    )
                 yield build_sse_content(
-                    chunk_id=self._wire_id(request, content["meta_info"]["id"]),
+                    chunk_id=content["meta_info"]["id"],
                     created=created,
                     model=request.model,
                     index=idx,
-                    finish_reason=self._wire_finish_reason(final_finish_reason),
+                    finish_reason=final_finish_reason,
                     matched_stop=matched_stop,
-                    choice_usage=choice_usage,
                 )
 
             # Send hidden states if requested
@@ -3554,7 +3361,7 @@ class OpenAIServingChat(OpenAIServingBase):
                             choice_hidden_states, request.return_hidden_states
                         )
                         hidden_states_chunk = ChatCompletionStreamResponse(
-                            id=self._wire_id(request, content["meta_info"]["id"]),
+                            id=content["meta_info"]["id"],
                             created=created,
                             choices=[
                                 ChatCompletionResponseStreamChoice(
@@ -3622,7 +3429,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 # the other sglext fields keep the plain data-chunk shape.
                 if sglext_non_ids is not None:
                     sglext_chunk = ChatCompletionStreamResponse(
-                        id=self._wire_id(request, content["meta_info"]["id"]),
+                        id=content["meta_info"]["id"],
                         created=created,
                         choices=[],
                         model=request.model,
@@ -3631,7 +3438,7 @@ class OpenAIServingChat(OpenAIServingBase):
                     yield f"data: {sglext_chunk.model_dump_json()}\n\n"
                 if sglext_ids is not None:
                     sglext_ids_chunk = ChatCompletionStreamResponse(
-                        id=self._wire_id(request, content["meta_info"]["id"]),
+                        id=content["meta_info"]["id"],
                         created=created,
                         choices=[],
                         model=request.model,
@@ -3640,7 +3447,7 @@ class OpenAIServingChat(OpenAIServingBase):
                     yield f"event: sglext_ids\ndata: {sglext_ids_chunk.model_dump_json()}\n\n"
             elif sglext_non_ids is not None or sglext_ids is not None:
                 sglext_chunk = ChatCompletionStreamResponse(
-                    id=self._wire_id(request, content["meta_info"]["id"]),
+                    id=content["meta_info"]["id"],
                     created=created,
                     choices=[],  # sglext is at response level
                     model=request.model,
@@ -3672,17 +3479,8 @@ class OpenAIServingChat(OpenAIServingBase):
                     audio_tokens=total_audio_tokens,
                     video_tokens=total_video_tokens,
                 )
-                usage = self._apply_k3_usage_details(
-                    usage,
-                    reasoning_tokens=sum(reasoning_tokens.values()),
-                    cached_tokens=sum(
-                        tok
-                        for idx, tok in cached_tokens.items()
-                        if idx % request.n == 0
-                    ),
-                )
                 usage_chunk = ChatCompletionStreamResponse(
-                    id=self._wire_id(request, content["meta_info"]["id"]),
+                    id=content["meta_info"]["id"],
                     created=created,
                     choices=[],  # Empty choices array as per OpenAI spec
                     model=request.model,
@@ -3784,11 +3582,6 @@ class OpenAIServingChat(OpenAIServingBase):
             ret,
             int(time.time()),
         )
-
-        # Non-streaming responses carry the same usage headers.
-        usage_headers = self._usage_headers(ret[0]["meta_info"])
-        if usage_headers and isinstance(response, ChatCompletionResponse):
-            return ORJSONResponse(content=response.model_dump(), headers=usage_headers)
 
         return response
 
@@ -4034,20 +3827,9 @@ class OpenAIServingChat(OpenAIServingBase):
             audio_tokens=audio_tokens,
             video_tokens=video_tokens,
         )
-        # The K3 usage rules cover every usage object, non-streaming responses included.
-        usage = self._apply_k3_usage_details(
-            usage,
-            reasoning_tokens=sum(
-                r["meta_info"].get("reasoning_tokens", 0) or 0 for r in ret
-            ),
-            cached_tokens=sum(
-                ret[i]["meta_info"].get("cached_tokens", 0) or 0
-                for i in range(0, len(ret), request.n)
-            ),
-        )
 
         return ChatCompletionResponse(
-            id=self._wire_id(request, ret[0]["meta_info"]["id"]),
+            id=ret[0]["meta_info"]["id"],
             created=created,
             model=request.model,
             choices=choices,
@@ -4132,144 +3914,16 @@ class OpenAIServingChat(OpenAIServingBase):
 
         return token_logprobs
 
-    def _stream_created(self, request: ChatCompletionRequest) -> int:
-        """Per-request streaming created timestamp (the K3 streaming format
-        requires id/object/created/model constant across frames; computing
-        int(time.time()) per frame drifts on long streams). Stored on the
-        request object and reused for every frame."""
-        created = getattr(request, "_stream_created_ts", None)
-        if created is None:
-            created = int(time.time())
-            request._stream_created_ts = created
-        return created
-
-    def _wire_id(self, request: ChatCompletionRequest, meta_id: str) -> str:
-        """Wire-level response id: chatcmpl-<24hex> under kimi_k3.
-
-        Pinned per request, not derived per frame. With n>1 the engine assigns
-        a separate rid to every sampled choice, so a per-frame derivation emits
-        a different id per candidate and breaks the constant-id contract. The
-        first event to reach here fixes the value for the whole response. Other encodings keep the raw rid so ops logs still
-        correlate.
-
-        Shaped like an ObjectId so ids sort lexicographically by creation time:
-        4 bytes of Unix seconds, then 8 bytes hashed from the rid. The rid is
-        hashed rather than filtered down to its hex characters -- filtering
-        maps distinct rids ("req-a", "req-b") onto one padded id.
-        """
-        if self.chat_encoding_spec != "kimi_k3":
-            return meta_id
-        pinned = getattr(request, "_stream_wire_id", None)
-        if pinned is not None:
-            return pinned
-        digest = hashlib.sha256(meta_id.encode("utf-8")).hexdigest()
-        wire_id = (
-            f"chatcmpl-{self._stream_created(request) & 0xFFFFFFFF:08x}{digest[:16]}"
-        )
-        request._stream_wire_id = wire_id
-        return wire_id
-
-    # "abort" is sglang's internal graceful-abort reason, not a
-    # value the K3 wire contract defines. server_interrupted is its documented
-    # K3 equivalent, so a client can tell retryable from terminal.
-    _K3_WIRE_FINISH_REASONS = {"abort": "server_interrupted"}
-
-    def _wire_finish_reason(self, finish_reason: Optional[str]) -> Optional[str]:
-        """Map an sglang finish reason onto the K3 wire vocabulary."""
-        if self.chat_encoding_spec != "kimi_k3" or finish_reason is None:
-            return finish_reason
-        return self._K3_WIRE_FINISH_REASONS.get(finish_reason, finish_reason)
-
-    def _k3_usage(
-        self,
-        *,
-        prompt_tokens: int,
-        completion_tokens: int,
-        reasoning_tokens: int,
-        cached_tokens: int,
-    ) -> Dict[str, Any]:
-        """A complete K3 usage object.
-
-        Both token-detail objects are mandatory on every K3 usage object, as
-        integers, 0 when there is nothing to report, so a client can read them
-        unconditionally instead of branching on presence.
-
-        cached_tokens deliberately ignores --enable-cache-report: the engine
-        always puts the count in meta_info and the flag only gates whether the
-        stock response surfaces it, while the usage accounting headers report
-        it unconditionally. Gating one and not the other made the header and
-        the summary frame disagree whenever a prefix-cache hit landed.
-        """
-        return self._apply_k3_usage_details(
-            UsageInfo(
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=prompt_tokens + completion_tokens,
-                reasoning_tokens=reasoning_tokens,
-            ),
-            reasoning_tokens=reasoning_tokens,
-            cached_tokens=cached_tokens,
-        ).model_dump()
-
-    def _apply_k3_usage_details(
-        self,
-        usage: UsageInfo,
-        *,
-        reasoning_tokens: int,
-        cached_tokens: int,
-    ) -> UsageInfo:
-        """Fill both mandatory K3 token-detail objects on an existing usage.
-
-        A no-op under every other encoding, so their usage keeps its shape.
-        """
-        if self.chat_encoding_spec != "kimi_k3":
-            return usage
-        usage.completion_tokens_details = CompletionTokensDetails(
-            reasoning_tokens=int(reasoning_tokens or 0)
-        )
-        if usage.prompt_tokens_details is None:
-            usage.prompt_tokens_details = PromptTokensDetails(
-                cached_tokens=int(cached_tokens or 0)
-            )
-        else:
-            usage.prompt_tokens_details.cached_tokens = int(cached_tokens or 0)
-        return usage
-
-    def create_error_response(
-        self,
-        message: str,
-        err_type: str = "BadRequestError",
-        status_code: int = 400,
-        param: Optional[str] = None,
-    ) -> ORJSONResponse:
-        """K3 clients expect OpenAI's {"error": {...}} envelope.
-
-        sglang's stock body puts message/type/param/code at the top level, so
-        a strict client sees no "error" key at all. Only the K3 surface is
-        re-shaped; every other endpoint keeps the historical body.
-        """
-        if self.chat_encoding_spec != "kimi_k3":
-            return super().create_error_response(message, err_type, status_code, param)
-        error = ErrorResponse(
-            object="error",
-            message=message,
-            type=err_type,
-            param=param,
-            code=status_code,
-        )
-        return ORJSONResponse(
-            content={"error": error.model_dump()}, status_code=status_code
-        )
-
     def _process_tool_call_id(
         self,
         call_item: ToolCallItem,
         history_tool_calls_cnt: int,
     ) -> str:
         """Process for generating a new and unique `tool_call_id`"""
+        if self.tool_call_parser == "kimi_k3":
+            return f"{call_item.name}:{history_tool_calls_cnt + call_item.tool_index}"
         if self.tool_call_parser != "kimi_k2":
-            # A UUID is sufficient except for Kimi-K2, whose template
-            # requires positional functions.<name>:<index> IDs.
+            # A simple uuid is sufficient for all models except for Kimi-K2.
             tool_call_id = f"call_{uuid.uuid4().hex[:24]}"
             return tool_call_id
         tool_call_id = (
@@ -4852,17 +4506,11 @@ class OpenAIServingChat(OpenAIServingBase):
         created: int,
         continuous_usage_stats: bool = False,
         flush: bool = False,
-        internal_content: Optional[List[Dict[str, Any]]] = None,
-        token_provenance: KimiTokenProvenance | None = None,
-        replay_chars: int = 0,
     ):
         """Process tool calls in streaming response.
 
         With flush=True (the terminal delta), the parser also drains text it
         held back waiting for a marker that can no longer arrive.
-
-        K3 token provenance follows each parser fragment's original XTML source,
-        including characters transformed into JSON syntax.
         """
         effective_tools = (
             request.tools
@@ -4941,17 +4589,10 @@ class OpenAIServingChat(OpenAIServingBase):
             choice_data = ChatCompletionResponseStreamChoice(
                 index=index,
                 delta=DeltaMessage(content=normal_text),
-                internal_content=(
-                    token_provenance.take(
-                        normal_text, text=True, replay_chars=replay_chars
-                    )
-                    if token_provenance
-                    else internal_content
-                ),
                 finish_reason=None,
             )
             chunk = ChatCompletionStreamResponse(
-                id=self._wire_id(request, content["meta_info"]["id"]),
+                id=content["meta_info"]["id"],
                 created=created,
                 choices=[choice_data],
                 model=request.model,
@@ -5011,62 +4652,40 @@ class OpenAIServingChat(OpenAIServingBase):
                 tool_call_id = None
                 function_name = None
 
-            # K3 streaming format: the first chunk only opens the slot
-            # (index+id+type+name+arguments=""); any initial arguments the
-            # parser already extracted go into an immediate continuation chunk
-            # (index + function.arguments only). A first chunk carrying data is
-            # a spec-called-out anti-pattern clients must special-case.
-            tool_call_deltas = []
-            if function_name is not None:
-                tool_call_deltas.append(
-                    ToolCall(
-                        id=tool_call_id,
-                        index=call_item.tool_index,
-                        function=FunctionResponse(name=function_name, arguments=""),
-                    )
-                )
-                if call_item.parameters:
-                    tool_call_deltas.append(
-                        ToolCall(
-                            index=call_item.tool_index,
-                            function=FunctionResponse(arguments=call_item.parameters),
-                        )
-                    )
-            else:
-                tool_call_deltas.append(
-                    ToolCall(
-                        index=call_item.tool_index,
-                        function=FunctionResponse(arguments=call_item.parameters),
-                    )
+            tool_call = ToolCall(
+                id=tool_call_id,
+                index=call_item.tool_index,
+                function=FunctionResponse(
+                    name=function_name,
+                    arguments=call_item.parameters,
+                ),
+            )
+
+            choice_data = ChatCompletionResponseStreamChoice(
+                index=index,
+                delta=DeltaMessage(tool_calls=[tool_call]),
+                finish_reason=None,
+            )
+            chunk = ChatCompletionStreamResponse(
+                id=content["meta_info"]["id"],
+                created=created,
+                choices=[choice_data],
+                model=request.model,
+            )
+
+            # Add usage stats if continuous_usage_stats is enabled
+            if continuous_usage_stats:
+                prompt_tokens = self._reported_prompt_tokens(content["meta_info"])
+                completion_tokens = content["meta_info"].get("completion_tokens", 0)
+                reasoning_tokens = content["meta_info"].get("reasoning_tokens", 0)
+                chunk.usage = UsageProcessor.calculate_token_usage(
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    reasoning_tokens=reasoning_tokens,
+                    cached_tokens=self._continuous_usage_cached_details(content),
                 )
 
-            for tool_call in tool_call_deltas:
-                choice_data = ChatCompletionResponseStreamChoice(
-                    index=index,
-                    delta=DeltaMessage(tool_calls=[tool_call]),
-                    internal_content=call_internal,
-                    finish_reason=None,
-                )
-                chunk = ChatCompletionStreamResponse(
-                    id=self._wire_id(request, content["meta_info"]["id"]),
-                    created=created,
-                    choices=[choice_data],
-                    model=request.model,
-                )
-
-                # Add usage stats if continuous_usage_stats is enabled
-                if continuous_usage_stats:
-                    prompt_tokens = self._reported_prompt_tokens(content["meta_info"])
-                    completion_tokens = content["meta_info"].get("completion_tokens", 0)
-                    reasoning_tokens = content["meta_info"].get("reasoning_tokens", 0)
-                    chunk.usage = UsageProcessor.calculate_token_usage(
-                        prompt_tokens=prompt_tokens,
-                        completion_tokens=completion_tokens,
-                        reasoning_tokens=reasoning_tokens,
-                        cached_tokens=self._continuous_usage_cached_details(content),
-                    )
-
-                yield f"data: {chunk.model_dump_json()}\n\n"
+            yield f"data: {chunk.model_dump_json()}\n\n"
 
     def _check_for_unstreamed_tool_args(
         self,
@@ -5075,7 +4694,6 @@ class OpenAIServingChat(OpenAIServingBase):
         request: ChatCompletionRequest,
         index: int,
         created: int,
-        internal_content: list[dict[str, Any]] | None = None,
     ) -> str | None:
         """
         Check for any remaining tool call arguments that need to be streamed
@@ -5101,8 +4719,6 @@ class OpenAIServingChat(OpenAIServingBase):
         # Get the last tool call that was being processed
         tool_index = len(detector.prev_tool_call_arr) - 1
         if tool_index < 0 or tool_index >= len(detector.streamed_args_for_tool):
-            return None
-        if tool_index in _incomplete_tool_call_indices(parser):
             return None
 
         allowed_names = self._allowed_tool_names(request)
@@ -5147,12 +4763,11 @@ class OpenAIServingChat(OpenAIServingBase):
             choice_data = ChatCompletionResponseStreamChoice(
                 index=index,
                 delta=DeltaMessage(tool_calls=[tool_call]),
-                internal_content=internal_content,
                 finish_reason=None,  # Don't send finish_reason with this chunk
             )
 
             chunk = ChatCompletionStreamResponse(
-                id=self._wire_id(request, content["meta_info"]["id"]),
+                id=content["meta_info"]["id"],
                 created=created,
                 choices=[choice_data],
                 model=request.model,

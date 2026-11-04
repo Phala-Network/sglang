@@ -30,6 +30,8 @@ and limitations. Do not move published tags or overwrite image versions. Source
 completion, image publication and deployment acceptance are distinct states.
 
 Official 0.5.22 uses a [scoped compatibility maintenance branch](docs/phala/SGLANG-0.5.22.md).
+The official [Kimi K3.1 developer image](docs/phala/KIMI-K31.md) likewise uses
+an explicitly approved compatibility release with its required native stack.
 Shared `main` keeps its 0.5.20 consumers; the linked complete 0.5.22 engine/tag
 and this documentation entrypoint have distinct commit identities.
 

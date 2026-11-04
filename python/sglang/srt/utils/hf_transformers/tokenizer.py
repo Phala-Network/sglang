@@ -38,6 +38,7 @@ from .common import (
     resolve_runai_obj_uri,
 )
 from .gguf_native import build_gguf_tokenizer, has_native_gguf_support
+from .kimi_k31 import is_kimi_k31_checkpoint, load_kimi_k31_tokenizer
 from .mistral_utils import (
     _MISTRAL_TOKENIZER_REDIRECTS,
     is_bare_tekken_checkpoint,
@@ -509,6 +510,15 @@ def get_tokenizer(
         return patch_tokenizer(tokenizer)
 
     tokenizer_name = _resolve_tokenizer_name(tokenizer_name, kwargs)
+
+    native_kwargs = dict(kwargs)
+    native_revision = native_kwargs.pop("revision", tokenizer_revision)
+    if is_kimi_k31_checkpoint(tokenizer_name, native_revision, **native_kwargs):
+        native_kwargs.setdefault("clean_up_tokenization_spaces", False)
+        tokenizer = load_kimi_k31_tokenizer(
+            tokenizer_name, *args, revision=native_revision, **native_kwargs
+        )
+        return _apply_post_load_fixes(tokenizer, tokenizer_name, native_revision)
 
     common_kwargs = dict(
         trust_remote_code=trust_remote_code,

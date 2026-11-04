@@ -46,6 +46,7 @@ from .common import (
     resolve_runai_obj_uri,
 )
 from .gguf_native import build_gguf_config, has_native_gguf_support
+from .kimi_k31 import load_kimi_k31_config
 from .mistral_utils import is_mistral_model, load_mistral_config
 
 # The base and revision that get_config read for each Kev LoRA checkpoint, which
@@ -221,7 +222,9 @@ class HfModelConfigParser(ModelConfigParserBase):
         revision: Optional[str] = None,
         **kwargs,
     ):
-        config = _try_load_longcat_config(model, revision, **kwargs)
+        config = load_kimi_k31_config(model, revision, **kwargs)
+        if config is None:
+            config = _try_load_longcat_config(model, revision, **kwargs)
         if config is None:
             config = _try_load_raw_mamba_config(model, revision, **kwargs)
         if config is None:

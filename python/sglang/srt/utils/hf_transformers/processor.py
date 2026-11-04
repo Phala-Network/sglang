@@ -39,6 +39,7 @@ from .common import (
     get_tokenizer_from_processor,
     resolve_runai_obj_uri,
 )
+from .kimi_k31 import load_kimi_k31_config, load_kimi_k31_processor
 from .mistral_utils import (
     is_mistral_model,
     load_mistral_config,
@@ -267,7 +268,12 @@ def get_processor(
     if model_name is not None:
         model_name = resolve_runai_obj_uri(model_name)
 
-    if is_mistral_model(tokenizer_name):
+    native_kimi_config = load_kimi_k31_config(
+        model_name or tokenizer_name, revision=revision, **kwargs
+    )
+    if native_kimi_config is not None:
+        config = native_kimi_config
+    elif is_mistral_model(tokenizer_name):
         config = load_mistral_config(
             tokenizer_name,
             trust_remote_code=trust_remote_code,
@@ -317,7 +323,15 @@ def get_processor(
         trust_remote_code = False
 
     try:
-        if config.model_type == "minimax_m3_vl":
+        if config.model_type == "kimi_k31":
+            if image_processor_backend == "torchvision":
+                raise ValueError(
+                    "Kimi-K3.1's native image processor uses the PIL backend"
+                )
+            processor = load_kimi_k31_processor(
+                tokenizer_name, *args, revision=revision, **kwargs
+            )
+        elif config.model_type == "minimax_m3_vl":
             processor = _get_minimax_m31_processor(tokenizer_name, config, revision)
         elif "InternVL3_5" in tokenizer_name:
             processor = AutoTokenizer.from_pretrained(
@@ -378,15 +392,16 @@ def get_processor(
         else:
             raise
 
-    processor = _apply_image_processor_backend(
-        processor,
-        tokenizer_name,
-        args,
-        trust_remote_code,
-        revision,
-        image_processor_backend,
-        kwargs,
-    )
+    if config.model_type != "kimi_k31":
+        processor = _apply_image_processor_backend(
+            processor,
+            tokenizer_name,
+            args,
+            trust_remote_code,
+            revision,
+            image_processor_backend,
+            kwargs,
+        )
     if (
         isinstance(processor, PreTrainedTokenizerBase)
         and getattr(config, "model_type", None) == "pixtral"

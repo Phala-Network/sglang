@@ -1,6 +1,12 @@
+import hashlib
 import inspect
 import logging
+import os
 import re
+from collections import namedtuple
+from concurrent.futures import ThreadPoolExecutor
+from functools import cache
+from math import inf
 from typing import List
 
 from sglang.srt.environ import envs
@@ -22,6 +28,11 @@ def patch_tokenizer(tokenizer):
                 f"Applying encode-piece fast path patch for Kimi tokenizer: {type(tokenizer)}"
             )
             _EncodePieceFastPathPatcher.patch(tokenizer)
+            if _ParallelEncodePatcher.applies_to(tokenizer):
+                logger.info(
+                    f"Applying parallel encode patch for Kimi tokenizer: {type(tokenizer)}"
+                )
+                _ParallelEncodePatcher.patch(tokenizer)
 
     if _needs_pad_padding_side_shim(tokenizer):
         logger.info(
@@ -48,6 +59,7 @@ def _needs_pad_padding_side_shim(tokenizer) -> bool:
 
 def unpatch_tokenizer(tokenizer):
     tokenizer = _PadPaddingSideShim.unpatch(tokenizer)
+    _ParallelEncodePatcher.unpatch(tokenizer)
     _EncodePieceFastPathPatcher.unpatch(tokenizer)
     return _SpecialTokensCachePatcher.unpatch(tokenizer)
 
@@ -280,6 +292,177 @@ class _EncodePieceFastPathPatcher:
             delattr(tokenizer, _SPECIAL_LITERAL_REGEX_ATTR)
 
         logger.info(f"Unpatched encode-piece fast path for {tokenizer_cls.__name__}")
+        return tokenizer
+
+
+_TextPiece = namedtuple("_TextPiece", "text allow_special")
+
+
+@cache
+def _encode_pool() -> ThreadPoolExecutor:
+    return ThreadPoolExecutor(max_workers=8, thread_name_prefix="k3-encode")
+
+
+# A pool's threads do not survive a fork.
+os.register_at_fork(after_in_child=_encode_pool.cache_clear)
+
+
+class _ParallelEncodePatcher:
+    """Encode long Kimi-K3 prompts on a bounded thread pool; tiktoken releases the GIL.
+
+    The ids equal the checkpoint's serial encoding because it already encodes each
+    chat segment, each 400K-char slice and each splitter output on its own, and the
+    only further cut is after a newline followed by printable ASCII. For the
+    checkpoint's ``pat_str`` a match holding a newline stops at ``[\\r\\n]*``,
+    ``[\\r\\n]+``, so no match crosses that point, and the pattern has no
+    lookbehind, so the text after it matches the same on its own. The one lookahead,
+    ``\\s+(?!\\S)``, is never tried on a whitespace run holding a newline: ``\\s*[\\r\\n]+``
+    comes first. No special token contains a newline, so none spans the cut either.
+
+    ``applies_to`` pins the tokenizer class by its source, so any other checkpoint
+    keeps the serial path.
+    """
+
+    _PATCHED_FLAG = "_sglang_parallel_encode_patched"
+    _SOURCE_SHA256 = "9c2c234cc5936cb5501097a23ffeab377650ed56d6d289502211514dccee808b"
+    # Mirror TIKTOKEN_MAX_ENCODE_CHARS and MAX_NO_WHITESPACES_CHARS in tokenization_kimi.py.
+    _MAX_ENCODE_CHARS = 400_000
+    _MAX_RUN_CHARS = 25_000
+    # Tiny segments spend their time in Python, so the pool would only add contention.
+    _POOL_MIN_CHARS = 4_096
+    _TASK_CHARS = 32_768
+    _CUT = re.compile(r"\n(?=[!-~])")
+    _SPACE = re.compile(r"\s")
+    _NON_SPACE = re.compile(r"\S")
+
+    @classmethod
+    def applies_to(cls, tokenizer) -> bool:
+        try:
+            source = inspect.getsource(type(tokenizer))
+        except (OSError, TypeError):
+            return False
+        source_sha256 = hashlib.sha256(source.encode()).hexdigest()
+        return source_sha256 == cls._SOURCE_SHA256 and not any(
+            "\n" in token for token in tokenizer.special_tokens
+        )
+
+    @classmethod
+    def _runs_may_exceed_limit(cls, text: str) -> bool:
+        # A window holding both kinds of character stops a run, so with every full
+        # window mixed a run is shorter than two windows and the splitter yields text whole.
+        window = cls._MAX_RUN_CHARS // 2
+        return any(
+            not (
+                cls._SPACE.search(text, start, start + window)
+                and cls._NON_SPACE.search(text, start, start + window)
+            )
+            for start in range(0, len(text) - window + 1, window)
+        )
+
+    @classmethod
+    def _pieces(cls, tokenizer, text: str):
+        for begin in range(0, len(text), cls._MAX_ENCODE_CHARS):
+            chunk = text[begin : begin + cls._MAX_ENCODE_CHARS]
+            if cls._runs_may_exceed_limit(chunk):
+                yield from tokenizer._split_whitespaces_or_nonwhitespaces(
+                    chunk, cls._MAX_RUN_CHARS
+                )
+                continue
+            start = 0
+            while len(chunk) - start > cls._TASK_CHARS:
+                cut = cls._CUT.search(chunk, start + cls._TASK_CHARS)
+                if cut is None:
+                    break
+                yield chunk[start : cut.end()]
+                start = cut.end()
+            yield chunk[start:]
+
+    @staticmethod
+    def _encode_piece(tokenizer, text: str, allow_special: bool) -> List[int]:
+        if allow_special:
+            return tokenizer.model.encode(text, allowed_special="all")
+        return tokenizer.model.encode(text, disallowed_special=())
+
+    @classmethod
+    def _encode(cls, tokenizer, encode_inline, segments, pool_min_chars) -> List[int]:
+        pool = _encode_pool()
+        parts, inline = [], []
+        for segment in segments:
+            text, allow_special = segment.text, segment.allow_special
+            if len(text) < pool_min_chars:
+                inline.extend(encode_inline(tokenizer, text, allow_special))
+                continue
+            parts.append(inline)
+            inline = []
+            parts.extend(
+                pool.submit(cls._encode_piece, tokenizer, piece, allow_special)
+                for piece in cls._pieces(tokenizer, text)
+            )
+        parts.append(inline)
+        ids = []
+        for part in parts:
+            ids.extend(part if isinstance(part, list) else part.result())
+        return ids
+
+    @staticmethod
+    def _worthwhile(chars: int) -> bool:
+        return (
+            envs.SGLANG_PARALLEL_PROMPT_ENCODE.get()
+            and chars >= envs.SGLANG_PARALLEL_PROMPT_ENCODE_MIN_CHARS.get()
+        )
+
+    @classmethod
+    def patch(cls, tokenizer):
+        tokenizer_cls = type(tokenizer)
+
+        if getattr(tokenizer_cls, cls._PATCHED_FLAG, False):
+            return tokenizer
+
+        original_encode_text_piece = tokenizer_cls._encode_text_piece
+        _encode_pool()
+
+        def patched_encode_chat_segments(self, segments) -> List[int]:
+            segments = list(segments)
+            chars = sum(len(segment.text) for segment in segments)
+            pool_min_chars = cls._POOL_MIN_CHARS if cls._worthwhile(chars) else inf
+            return cls._encode(
+                self, original_encode_text_piece, segments, pool_min_chars
+            )
+
+        def patched_encode_text_piece(
+            self, text: str, allow_special_tokens: bool = True
+        ) -> List[int]:
+            if len(text) < cls._POOL_MIN_CHARS or not cls._worthwhile(len(text)):
+                return original_encode_text_piece(self, text, allow_special_tokens)
+            return cls._encode(
+                self,
+                original_encode_text_piece,
+                [_TextPiece(text, allow_special_tokens)],
+                cls._POOL_MIN_CHARS,
+            )
+
+        tokenizer_cls._parallel_original_methods = (
+            tokenizer_cls._encode_chat_segments,
+            original_encode_text_piece,
+        )
+        tokenizer_cls._encode_chat_segments = patched_encode_chat_segments
+        tokenizer_cls._encode_text_piece = patched_encode_text_piece
+        setattr(tokenizer_cls, cls._PATCHED_FLAG, True)
+        return tokenizer
+
+    @classmethod
+    def unpatch(cls, tokenizer):
+        tokenizer_cls = type(tokenizer)
+
+        if not getattr(tokenizer_cls, cls._PATCHED_FLAG, False):
+            return tokenizer
+
+        (
+            tokenizer_cls._encode_chat_segments,
+            tokenizer_cls._encode_text_piece,
+        ) = tokenizer_cls._parallel_original_methods
+        del tokenizer_cls._parallel_original_methods
+        delattr(tokenizer_cls, cls._PATCHED_FLAG)
         return tokenizer
 
 

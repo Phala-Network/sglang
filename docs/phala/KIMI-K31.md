@@ -28,6 +28,9 @@ cases. The export preserves the two image1 patch files byte for byte;
 [`phala-dev-kimi-k31-1`](https://github.com/Phala-Network/sglang/releases/tag/phala-dev-kimi-k31-1)
 retains its immutable source and validation record.
 
-Image2 publication and final-image qualification are pending; its source Release
-will record the immutable image digest and installed-image results. GPU/model,
-RoCE/shared-KV and production acceptance belong to deployment receipts.
+Published image:
+`ghcr.io/phala-network/sglang:phala-dev-kimi-k31-2@sha256:edc2bb25b3c7f7d67a902e0b7e3a99f1ef8a1371e8395f950ecbb06cb9f3db62`.
+Final-image CPU qualification passes 150 tests and 11 subtests, all five HF
+cases with zero skips, the official verifier, native CPU APIs, the FSS loader
+gate and SGLang/HF CLI checks. Its source Release records the detailed receipt.
+GPU/model, RoCE/shared-KV and production acceptance belong to deployment receipts.

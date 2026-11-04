@@ -4979,6 +4979,8 @@ class MLATokenToKVPool(KVCache):
             or self.kv_scale_buffer is not None
             or self.dsa_kv_cache_store_fp8
             or self.requires_physical_write_loc
+            # Forward locations are widened ids there, not rows of this buffer.
+            or self.rows_are_dcp_collapsed
         ):
             return []
         return [self.kv_buffer]

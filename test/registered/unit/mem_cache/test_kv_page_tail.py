@@ -3,6 +3,7 @@ after its last write there are zeroed in every layer, nothing else changes, and
 only layouts with one row per token location take part."""
 
 import unittest
+from unittest import mock
 from types import SimpleNamespace
 
 import torch
@@ -142,6 +143,35 @@ class TestKvPageTail(unittest.TestCase):
         vec = _mha()
         vec.kv_cache_layout = "vectorized_5d"
         self.assertEqual(vec.page_tail_buffer_lists(), [])
+
+
+class TestKvPageTailDcp(unittest.TestCase):
+    """Under DCP a forward's locations are widened ids, so a pool whose rows are
+    collapsed must not take them as row numbers."""
+
+    def _lists(self, collapsed):
+        pool = MLATokenToKVPool.__new__(MLATokenToKVPool)
+        pool.kv_scale_buffer = None
+        pool.dsa_kv_cache_store_fp8 = False
+        pool.kv_buffer = ["layer"]
+        with (
+            mock.patch.object(
+                MLATokenToKVPool, "requires_physical_write_loc", False, create=True
+            ),
+            mock.patch.object(
+                MLATokenToKVPool,
+                "rows_are_dcp_collapsed",
+                new_callable=mock.PropertyMock,
+                return_value=collapsed,
+            ),
+        ):
+            return pool.page_tail_buffer_lists()
+
+    def test_collapsed_rows_opt_out(self):
+        self.assertEqual(self._lists(collapsed=True), [])
+
+    def test_plain_rows_opt_in(self):
+        self.assertEqual(self._lists(collapsed=False), [["layer"]])
 
 
 if __name__ == "__main__":

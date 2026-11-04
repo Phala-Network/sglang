@@ -228,6 +228,22 @@ def _byte_tokens(engine, text):
     return [token for char in text for token in engine[0].encode(char)]
 
 
+def _segment_tokens(engine, segments):
+    tokenizer = engine[0]
+    if not isinstance(tokenizer, _Tokenizer):
+        return tokenizer._encode_chat_segments(
+            [
+                SimpleNamespace(text=text, allow_special=special)
+                for text, special in segments
+            ]
+        )
+    return [
+        token
+        for text, special in segments
+        for token in (tokenizer.encode(text) if special else _byte_tokens(engine, text))
+    ]
+
+
 def _only_allowed(mask, engine):
     bit_positions = torch.arange(32)
     bits = (mask[0, :, None].bitwise_right_shift(bit_positions) & 1).flatten()
@@ -645,24 +661,34 @@ def test_shared_live_marker_schema_native_masks_and_parser_roundtrip(
     obj.enable_kimik3_required_native_boundary(
         engine[0], [engine[0].model_eos, engine[0].eos_token_id]
     )
-    text = (
-        TOOLS_OPEN + '<|open|>call tool="final_result" index="1"<|sep|>'
-        '<|open|>argument key="label" type="json-string"<|sep|>'
-        + json.dumps(expected["label"], ensure_ascii=False)
-        + ARGUMENT_CLOSE
-        + '<|open|>argument key="nested" type="object"<|sep|>'
-        + json.dumps(expected["nested"], separators=(",", ":"))
-        + ARGUMENT_CLOSE
-        + CALL_CLOSE
-        + TOOLS_CLOSE
+    segments = [
+        (
+            TOOLS_OPEN + '<|open|>call tool="final_result" index="1"<|sep|>'
+            '<|open|>argument key="label" type="json-string"<|sep|>',
+            True,
+        ),
+        (json.dumps(expected["label"], ensure_ascii=False), False),
+        (ARGUMENT_CLOSE + '<|open|>argument key="nested" type="object"<|sep|>', True),
+        (json.dumps(expected["nested"], separators=(",", ":")), False),
+        (ARGUMENT_CLOSE + CALL_CLOSE + TOOLS_CLOSE, True),
+    ]
+    text = "".join(text for text, _ in segments)
+    tokens = _segment_tokens(engine, segments)
+    assert _decoded(engine, tokens) == text
+    for text_part, special in segments:
+        if not special:
+            assert not {engine[0].eos_token_id, engine[0].model_eos}.intersection(
+                _segment_tokens(engine, [(text_part, False)])
+            )
+    unsafe_segments = list(segments)
+    unsafe_segments[0] = (
+        segments[0][0].replace('type="json-string"', 'type="string"'),
+        True,
     )
-    unsafe_raw = text.replace(
-        'type="json-string"<|sep|>' + json.dumps(expected["label"], ensure_ascii=False),
-        'type="string"<|sep|>' + expected["label"],
-        1,
-    )
-    assert unsafe_raw != text and _rejects(obj.copy(), engine, unsafe_raw)
-    _feed(obj, engine, text)
+    unsafe_segments[1] = (expected["label"], False)
+    assert "".join(text for text, _ in unsafe_segments) != text
+    assert _rejects(obj.copy(), engine, _segment_tokens(engine, unsafe_segments))
+    _feed(obj, engine, tokens)
     assert set(_only_allowed(_mask(obj, engine), engine)) == {
         engine[0].model_eos,
         engine[0].eos_token_id,
@@ -779,7 +805,9 @@ def test_manager_cache_keeps_native_state_eos_and_budget_per_request(engine):
             req.require_reasoning = reasoning
             req.grammar_wait_ct = 0
             req.finished.return_value = False
-            assert mgr.process_req_with_grammar(req)
+            queued = mgr.process_req_with_grammar(req)
+            assert queued
+            assert getattr(req.grammar, "_grammar_from_cache", False) is (index > 0)
             req.grammar.result(timeout=30)
             assert mgr.get_ready_grammar_requests() == [req]
             assert not mgr.grammar_queue

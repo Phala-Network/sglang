@@ -69,7 +69,7 @@ from sglang.srt.parser.response_template import (
     ResponseTemplateToolDetector,
 )
 from sglang.srt.parser.template_detection import ReasoningToggleConfig
-from sglang.srt.runtime_context import get_context, publish, reset_context
+from sglang.srt.runtime_context import get_context, get_parallel, publish, reset_context
 from sglang.srt.sampling.sampling_params import (
     REQUEST_REASONING_END_TOKEN_IDS_KEY,
     get_request_reasoning_in_grammar,
@@ -1126,15 +1126,25 @@ class ServingChatTestCase(CustomTestCase):
             backend, ReasoningParser("glm45"), tokenizer, enable_strict_thinking=True
         )
         self.addCleanup(reasoner.executor.shutdown)
-        manager = GrammarManager.__new__(GrammarManager)
-        manager.scheduler = SimpleNamespace(
+        self.enterContext(get_parallel().override(pp_size=1, pp_rank=0, tp_rank=0))
+        scheduler = SimpleNamespace(
+            server_args=self.tm.server_args,
+            tokenizer=tokenizer,
             model_config=SimpleNamespace(
+                vocab_size=len(vocab),
+                hf_eos_token_id={ids["<eop>"]},
+                think_end_ids=[ids["</think>"]],
                 request_selectable_think_end_id_sequences=None,
-            )
+            ),
+            dp_tp_cpu_group=None,
+            dp_tp_group=SimpleNamespace(world_size=1, first_rank=0, is_first_rank=True),
+            pp_group=None,
         )
-        manager.grammar_backend = reasoner
-        manager._enable_strict_thinking = True
-        manager.grammar_queue = []
+        with patch(
+            "sglang.srt.constrained.grammar_manager.create_grammar_backend",
+            return_value=reasoner,
+        ):
+            manager = GrammarManager(scheduler)
         tool = {
             "type": "function",
             "function": {
@@ -1188,18 +1198,26 @@ class ServingChatTestCase(CustomTestCase):
                     vocab_size=len(vocab),
                     eos_token_ids={ids["<eop>"]},
                 )
-                key = (
-                    (
-                        "full_assistant_ebnf"
-                        if scheduled.sampling_params.ebnf_full_assistant
-                        else "ebnf"
-                    ),
-                    scheduled.sampling_params.ebnf,
-                )
-                reasoner.set_cache(
-                    key, reasoner._init_value_dispatch(key, scheduled.require_reasoning)
-                )
-                self.assertFalse(manager.process_req_with_grammar(scheduled))
+                constrained = scheduled.sampling_params.ebnf is not None
+                if constrained:
+                    key = (
+                        (
+                            "full_assistant_ebnf"
+                            if scheduled.sampling_params.ebnf_full_assistant
+                            else "ebnf"
+                        ),
+                        scheduled.sampling_params.ebnf,
+                    )
+                    reasoner.set_cache(
+                        key,
+                        reasoner._init_value_dispatch(key, scheduled.require_reasoning),
+                    )
+                queued = manager.process_req_with_grammar(scheduled)
+                self.assertEqual(queued, constrained)
+                if queued:
+                    self.assertTrue(scheduled.grammar._grammar_from_cache)
+                    self.assertEqual(manager.get_ready_grammar_requests(), [scheduled])
+                    self.assertFalse(manager.grammar_queue)
                 grammar = scheduled.grammar
                 self.assertEqual(
                     isinstance(grammar, ReasonerGrammarObject),

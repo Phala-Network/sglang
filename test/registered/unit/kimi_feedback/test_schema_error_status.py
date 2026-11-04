@@ -478,7 +478,7 @@ def test_responses_synthetic_event_close_releases_engine_immediately(
         result = await serving.create_responses(
             ResponsesRequest(model="x", input="synthetic", stream=True, store=False)
         )
-        chunks = [await anext(result.body_iterator) for _ in range(event_count)]
+        chunks = [await result.body_iterator.__anext__() for _ in range(event_count)]
         assert [p["type"] for p in event_payloads(chunks)] == [
             "response.created",
             "response.in_progress",
@@ -667,7 +667,7 @@ def test_http_cleanup_failure_does_not_skip_explicit_owner():
 
     async def run():
         response = GenerationStreamingResponse(body(), generation=Owner())
-        await anext(response.body_iterator)
+        await response.body_iterator.__anext__()
         with pytest.raises(RuntimeError, match="body cleanup failure"):
             await response.aclose()
         assert closed == [True]
@@ -675,6 +675,161 @@ def test_http_cleanup_failure_does_not_skip_explicit_owner():
         assert closed == [True]
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("compiler_fault", [False, True])
+def test_native_unsatisfiable_chat_http_contract(stream, compiler_fault, monkeypatch):
+    import httpx
+    import xgrammar as xgr
+    from test_grammar_cache_budget import request as grammar_request
+
+    import sglang.srt.managers.schedule_batch as schedule_batch
+    from sglang.srt.constrained.base_grammar_backend import InvalidGrammarObject
+    from sglang.srt.constrained.grammar_manager import GrammarManager
+    from sglang.srt.constrained.xgrammar_backend import XGrammarGrammarBackend
+    from sglang.srt.entrypoints.http_server import app
+    from sglang.srt.function_call.function_call_parser import FunctionCallParser
+
+    # The real native compiler needs a vocabulary, but no tokenizer or model runs.
+    backend = object.__new__(XGrammarGrammarBackend)
+    backend.use_cache_budget = False
+    backend.grammar_compiler = xgr.GrammarCompiler(
+        xgr.TokenizerInfo(["x", "[EOS]"], stop_token_ids=1), cache_enabled=False
+    )
+    if compiler_fault:
+
+        def fail_compile(*args, **kwargs):
+            raise RuntimeError("synthetic internal compiler failure")
+
+        monkeypatch.setattr(backend, "_compile", fail_compile)
+    monkeypatch.setattr(
+        schedule_batch, "get_parallel", lambda: SimpleNamespace(tp_rank=1)
+    )
+
+    observed = {}
+    classify_error = backend._compiler_error
+
+    def record_error(exc):
+        observed["native_error"] = str(exc)
+        return classify_error(exc)
+
+    monkeypatch.setattr(backend, "_compiler_error", record_error)
+    serving = object.__new__(module.OpenAIServingChat)
+    serving.chat_encoding_spec = "kimi_k3"
+    serving.tool_call_parser = "kimi_k3"
+    serving.reasoning_parser = None
+    serving._encoding_adapter = None
+    serving.is_minimax_m3 = False
+    serving._validate_request = lambda request: None
+
+    def convert(request, raw):
+        parser = FunctionCallParser(
+            request.tools, "kimi_k3", tool_choice=request.tool_choice
+        )
+        kind, tag = parser.get_structure_constraint(
+            request.tool_choice, thinking_mode=False
+        )
+        assert kind == "structural_tag"
+        key = tag.model_dump_json() if hasattr(tag, "model_dump_json") else tag
+        return SimpleNamespace(structural_tag=key, stream=request.stream), request
+
+    serving._convert_to_internal_request = convert
+    state = SimpleNamespace(obj=SimpleNamespace(rid="native-unsatisfiable"))
+    tokenizer_manager = SimpleNamespace(
+        rid_to_state={state.obj.rid: state},
+        _release_lora_once=lambda state: None,
+        request_logger=SimpleNamespace(log_requests=False),
+        create_abort_task=lambda request: None,
+    )
+
+    async def generate(adapted, raw):
+        try:
+            result = backend.dispatch_structural_tag(adapted.structural_tag)
+            assert isinstance(result, InvalidGrammarObject)
+            req = grammar_request()
+            GrammarManager._abort_invalid_grammar(req, "structural_tag", result)
+            observed["abort"] = req.to_finish.to_json()
+            output = {
+                "text": "",
+                "meta_info": {
+                    "id": state.obj.rid,
+                    "prompt_tokens": 1,
+                    "completion_tokens": 0,
+                    "finish_reason": observed["abort"],
+                },
+            }
+            yield await TokenizerManager._handle_abort_finish_reason(
+                tokenizer_manager, output, state, adapted.stream
+            )
+        finally:
+            observed["closed"] = True
+
+    tokenizer_manager.generate_request = generate
+    serving.tokenizer_manager = tokenizer_manager
+    monkeypatch.setattr(app.state, "openai_serving_chat", serving, raising=False)
+    monkeypatch.setattr(module, "get_serving", config)
+
+    async def round_trip():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://fixture"
+        ) as client:
+            return await client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "synthetic",
+                    "messages": [{"role": "user", "content": "test"}],
+                    "stream": stream,
+                    "tool_choice": "required",
+                    "tools": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "fixture",
+                                "strict": True,
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {"x": {"type": "integer"}},
+                                    "required": ["x"],
+                                    "additionalProperties": False,
+                                    "not": {"required": ["x"]},
+                                },
+                            },
+                        }
+                    ],
+                },
+            )
+
+    response = asyncio.run(round_trip())
+    code = 500 if compiler_fault else 400
+    if not compiler_fault:
+        assert "presence_unsatisfiable" in observed["native_error"]
+    assert response.status_code == code, response.text
+    assert response.json()["code"] == code
+    assert response.json()["type"] == KINDS[code]
+    assert observed["abort"]["status_code"] == code
+    assert observed["closed"] and not tokenizer_manager.rid_to_state
+    assert "text/event-stream" not in response.headers["content-type"]
+    assert all(
+        text not in response.text
+        for text in ("/work/source", "contexts.empty", "synthetic internal")
+    )
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Compiler fault mentioning presence_unsatisfiable: no legal completion context",
+        "Check failed: (!contexts.empty()) is false: unrelated compiler failure",
+    ],
+)
+def test_internal_compiler_errors_are_not_schema_errors(message):
+    from sglang.srt.constrained.xgrammar_backend import XGrammarGrammarBackend
+
+    result = XGrammarGrammarBackend._compiler_error(RuntimeError(message))
+    assert result.status_code == 500
+    assert result.error_type == "internal_server_error"
+    assert message not in result.error_message
 
 
 if __name__ == "__main__":

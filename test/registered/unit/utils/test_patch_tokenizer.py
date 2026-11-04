@@ -3,6 +3,7 @@ import os
 import random
 import unittest
 from contextlib import contextmanager
+from unittest import mock
 
 from transformers import AutoTokenizer
 
@@ -435,6 +436,35 @@ class TestEncodePieceFastPathPatcher(CustomTestCase):
             self.assertTrue(getattr(cls, "_sglang_special_tokens_patched", False))
             self.assertFalse(getattr(cls, "_sglang_encode_piece_patched", False))
             self.assertEqual(patched.encode("hello <|im_end|> world"), expected)
+        finally:
+            unpatch_tokenizer(tokenizer)
+
+
+class TestProcessorTokenizerIsPatched(CustomTestCase):
+    def test_tokenizer_manager_patches_the_processor_tokenizer(self):
+        from sglang.srt.managers import tokenizer_manager
+
+        tokenizer = _load_k3_tokenizer()
+        manager = mock.Mock()
+        with (
+            mock.patch.object(tokenizer_manager, "get_disagg"),
+            mock.patch.object(tokenizer_manager, "get_serving") as get_serving,
+            mock.patch.object(tokenizer_manager, "import_processors"),
+            mock.patch.object(tokenizer_manager, "get_mm_processor"),
+            mock.patch.object(tokenizer_manager, "determine_tensor_transport_mode"),
+            mock.patch.object(
+                tokenizer_manager,
+                "get_processor_wrapper",
+                return_value=mock.Mock(spec=["tokenizer"], tokenizer=tokenizer),
+            ),
+        ):
+            manager.model_config.is_multimodal = True
+            get_serving.return_value.skip_tokenizer_init = False
+            tokenizer_manager.get_disagg.return_value.language_model_only = False
+            tokenizer_manager.TokenizerManager.init_tokenizer_and_processor(manager)
+        try:
+            self.assertIs(manager.tokenizer, tokenizer)
+            self.assertTrue(type(tokenizer)._sglang_encode_piece_patched)
         finally:
             unpatch_tokenizer(tokenizer)
 

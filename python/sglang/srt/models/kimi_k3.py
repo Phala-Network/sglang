@@ -175,6 +175,7 @@ from sglang.srt.runtime_context import (
 )
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 from sglang.srt.utils import is_hip, is_npu, make_pp_layers
+from sglang.srt.utils.k31_natives import require_k31_natives
 from sglang.srt.utils.common import (
     BumpAllocator,
     add_prefix,
@@ -4503,7 +4504,9 @@ class KimiK3ForConditionalGeneration(nn.Module):
 
 
 class KimiK31ForConditionalGeneration(KimiK3ForConditionalGeneration):
-    pass
+    def __init__(self, config, *args, **kwargs):
+        require_k31_natives()
+        super().__init__(config, *args, **kwargs)
 
 
 EntryClass = [

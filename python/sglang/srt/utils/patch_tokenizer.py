@@ -33,6 +33,12 @@ def patch_tokenizer(tokenizer):
                     f"Applying parallel encode patch for Kimi tokenizer: {type(tokenizer)}"
                 )
                 _ParallelEncodePatcher.patch(tokenizer)
+            else:
+                logger.warning(
+                    "Parallel encode stays off for this Kimi tokenizer: its source "
+                    "is not pinned, so long prompts encode serially: %s",
+                    type(tokenizer),
+                )
 
     if _needs_pad_padding_side_shim(tokenizer):
         logger.info(
@@ -324,7 +330,11 @@ class _ParallelEncodePatcher:
     """
 
     _PATCHED_FLAG = "_sglang_parallel_encode_patched"
-    _SOURCE_SHA256 = "9c2c234cc5936cb5501097a23ffeab377650ed56d6d289502211514dccee808b"
+    # K3, then K3.1, whose class differs only in formatting (same AST and tiktoken.model).
+    _SOURCE_SHA256 = (
+        "9c2c234cc5936cb5501097a23ffeab377650ed56d6d289502211514dccee808b",
+        "c8b53154e0d930d6a084db2c92a92ad3d294b9ee287674a2b20565eacad6c03e",
+    )
     # Mirror TIKTOKEN_MAX_ENCODE_CHARS and MAX_NO_WHITESPACES_CHARS in tokenization_kimi.py.
     _MAX_ENCODE_CHARS = 400_000
     _MAX_RUN_CHARS = 25_000
@@ -342,7 +352,7 @@ class _ParallelEncodePatcher:
         except (OSError, TypeError):
             return False
         source_sha256 = hashlib.sha256(source.encode()).hexdigest()
-        return source_sha256 == cls._SOURCE_SHA256 and not any(
+        return source_sha256 in cls._SOURCE_SHA256 and not any(
             "\n" in token for token in tokenizer.special_tokens
         )
 

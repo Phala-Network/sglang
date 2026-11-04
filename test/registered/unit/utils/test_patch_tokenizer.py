@@ -611,12 +611,34 @@ class TestParallelEncodePatcher(CustomTestCase):
     def test_another_checkpoint_or_the_gate_keeps_the_serial_path(self):
         tokenizer = _load_k3_tokenizer()
         self.assertTrue(_ParallelEncodePatcher.applies_to(tokenizer))
-        with mock.patch.object(_ParallelEncodePatcher, "_SOURCE_SHA256", "other"):
+        with mock.patch.object(_ParallelEncodePatcher, "_SOURCE_SHA256", ("other",)):
             self.assertFalse(_ParallelEncodePatcher.applies_to(tokenizer))
         with mock.patch.object(tokenizer, "special_tokens", {"a\nb": 1}):
             self.assertFalse(_ParallelEncodePatcher.applies_to(tokenizer))
         with envs.SGLANG_PARALLEL_PROMPT_ENCODE.override(False):
             self.assertFalse(_ParallelEncodePatcher._worthwhile(10**9))
+
+
+class TestK31TokenizerSource(CustomTestCase):
+    def test_k3_and_k31_sources_are_both_pinned(self):
+        self.assertEqual(
+            _ParallelEncodePatcher._SOURCE_SHA256,
+            (
+                "9c2c234cc5936cb5501097a23ffeab377650ed56d6d289502211514dccee808b",
+                "c8b53154e0d930d6a084db2c92a92ad3d294b9ee287674a2b20565eacad6c03e",
+            ),
+        )
+
+    def test_unpinned_source_warns_that_it_stays_serial(self):
+        tokenizer = _load_k3_tokenizer()
+        with (
+            mock.patch.object(_ParallelEncodePatcher, "_SOURCE_SHA256", ("other",)),
+            mock.patch.object(_ParallelEncodePatcher, "patch") as patch,
+            self.assertLogs("sglang.srt.utils.patch_tokenizer", "WARNING") as logs,
+        ):
+            patch_tokenizer(tokenizer)
+        patch.assert_not_called()
+        self.assertIn("encode serially", logs.output[0])
 
 
 def _chat_segments(tokenizer, messages):

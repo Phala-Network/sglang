@@ -15,7 +15,10 @@ if not is_cpu():
     from sglang.kernels.ops.attention.fla.fused_recurrent import (
         fused_recurrent_kda_packed_decode,
     )
-    from sglang.kernels.ops.attention.fla.kda import chunk_kda
+    from sglang.kernels.ops.attention.fla.kda import (
+        KDA_FUSED_INTRA_MAX_CTAS,
+        chunk_kda,
+    )
     from sglang.kernels.ops.attention.linear.fused_recurrent_linear_replayssm import (
         fused_recurrent_linear_replayssm_decode,
     )
@@ -33,6 +36,50 @@ class TritonKDAKernel(LinearAttnKernelBase):
     supports_packed_decode: bool = not is_cpu() and not is_npu() and not is_xpu()
     supports_fused_chain_verify: bool = not is_cpu() and not is_npu()
     supports_track_state_snapshot: bool = True
+
+    @torch.inference_mode()
+    def precompile_one_token_extend(
+        self,
+        *,
+        state: torch.Tensor,
+        qkv_dtype: torch.dtype,
+        lower_bound: float,
+        max_seqs: int,
+    ) -> None:
+        """Compile and autotune now what `extend` runs for sequences of one token,
+        keyed as it calls them (dtypes and shapes are part of the autotune key).
+
+        FlashInfer's packed prefill leaves those batches to this kernel (see
+        `effective_extend_kernel`), and every /health is one. Each autotuned kernel
+        compiles all its configs at first use: 6 of inter_solve at 6-9 s each, 36 of
+        chunk_gla_fwd_kernel_o at about 1 s, every TP rank in parallel. Both `chunk_kda`
+        grids are covered when `max_seqs` can reach the unfused one. `state` is the
+        KDA pool's [..., H, V, K] state; only its shape and dtype are used, the pool is
+        not touched.
+        """
+        H, V, K = state.shape[-3:]
+        unfused_seqs = KDA_FUSED_INTRA_MAX_CTAS // H + 1
+        for num_seqs in (1, unfused_seqs) if max_seqs >= unfused_seqs else (1,):
+            shape = (1, num_seqs, H, K)
+            q = state.new_zeros(shape, dtype=qkv_dtype)
+            self.extend(
+                q,
+                q.clone(),
+                state.new_zeros((1, num_seqs, H, V), dtype=qkv_dtype),
+                q.clone(),
+                state.new_zeros((1, num_seqs, H), dtype=qkv_dtype),
+                ssm_states=state.new_zeros((num_seqs, H, V, K)),
+                cache_indices=torch.arange(
+                    num_seqs, dtype=torch.int32, device=state.device
+                ),
+                query_start_loc=torch.arange(
+                    num_seqs + 1, dtype=torch.int32, device=state.device
+                ),
+                A_log=state.new_zeros(H, dtype=torch.float32),
+                dt_bias=state.new_zeros(H * K, dtype=torch.float32),
+                lower_bound=lower_bound,
+                beta_is_raw=True,
+            )
 
     def packed_decode(
         self,

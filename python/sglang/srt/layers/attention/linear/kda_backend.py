@@ -8,6 +8,7 @@ from sglang.kernels.ops.mamba.causal_conv1d_triton import (
     causal_conv1d_fn,
     causal_conv1d_update,
 )
+from sglang.srt.configs.model_config import is_kimi_k31
 from sglang.srt.environ import envs
 from sglang.srt.layers.attention.hybrid_linear_attn_backend import MambaAttnBackendBase
 from sglang.srt.layers.attention.linear.kda_prefill_graph import (
@@ -527,6 +528,15 @@ class KDAAttnBackend(MambaAttnBackendBase):
                 self.kernel_dispatcher.extend_kernel.precompile(
                     lower_bound, mamba_cache.temporal.dtype
                 )
+                if is_kimi_k31(model_runner.model_config.hf_config):
+                    # K3's images carry these in their Triton disk cache.
+                    self.kernel_dispatcher.triton_kernel.precompile_one_token_extend(
+                        state=mamba_cache.temporal,
+                        qkv_dtype=mamba_cache.conv[0].dtype,
+                        lower_bound=lower_bound,
+                        max_seqs=self.req_to_token_pool.size,
+                    )
+                    rank0_log("Precompiled the Kimi-K3.1 one-token KDA extend kernels.")
         # One-shot; emitted at the first fused-decode interception below.
         self._fused_override_notice = (
             "K3 fused KDA decode engaged: --linear-attn-decode-backend "

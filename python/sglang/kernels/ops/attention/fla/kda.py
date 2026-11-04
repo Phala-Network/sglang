@@ -1144,6 +1144,11 @@ def kda_gate_chunk_cumsum(
     return g if beta is None else (g, beta_out)
 
 
+# Above this many inter_solve CTAs (B * NT * H) chunk_kda_fwd leaves the fused
+# diagonal and recompute off; see the comment there.
+KDA_FUSED_INTRA_MAX_CTAS = 256
+
+
 def chunk_kda_fwd(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -1216,7 +1221,7 @@ def chunk_kda_fwd(
     )
     _H_pr = q.shape[-2]
     _B = q.shape[0]
-    _small_grid = _B * _NT_pr * _H_pr <= 256
+    _small_grid = _B * _NT_pr * _H_pr <= KDA_FUSED_INTRA_MAX_CTAS
     w, u, _, kg, Aqk, _ = chunk_kda_fwd_intra(
         q=q,
         k=k,

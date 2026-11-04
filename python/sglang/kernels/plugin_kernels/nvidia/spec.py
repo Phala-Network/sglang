@@ -5,7 +5,16 @@ from __future__ import annotations
 
 import enum
 import importlib
-from typing import TYPE_CHECKING, Any, Callable, Mapping, Optional, Protocol, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Mapping,
+    Optional,
+    Protocol,
+    Sequence,
+    runtime_checkable,
+)
 
 import msgspec
 
@@ -13,7 +22,7 @@ if TYPE_CHECKING:
     import torch
 
 # bumped on any breaking change to the contracts in this module
-MEGAKERNEL_API_VERSION = 1
+MEGAKERNEL_API_VERSION = 2
 
 # the sglang.srt.plugins entry point that registers the specs
 ENTRY_POINT = "nvidia_megakernel"
@@ -110,12 +119,34 @@ class BuiltMegakernel(Protocol):
     noise.offset once per sampled block.
 
     SGLang's runtime state reaches a build as BuildContext.binding and a covered
-    step as Step.view (sglang.srt.kernel_plugins.nvidia.binding, which also lists what else may be
-    called, written or read).
+    step as Step.view (sglang.srt.kernel_plugins.nvidia.binding, which also lists
+    what else may be called, written or read). The binding is MegakernelBinding
+    unless SGLang has one for the model's architecture.
+
+    A built object may also offer the EAGLE entries ENTRIES names (None means
+    SGLang's own path). A draft model's draft_loop and draft_extend are factories an
+    SGLang component calls once with its own buffers: like draft_sampler, they return
+    bs -> None (SGLang's code at that batch size) or the step to run there, and every
+    rank must serve the same sizes. A draft's begin_draft_round is called as it is.
+    The entries a built object offers must agree on every rank.
+
+    A built object may also offer graph_variants: None, or a mapping from a
+    graph runner GRAPH_VARIANT_RUNNERS names to an AttentionGraphVariants
+    (layers/attention/graph_variants.py), with the same runners and capture labels
+    on every rank. At each batch size whose graph runs the megakernel, that runner
+    then captures one graph per label, in order, the label readable through
+    capture_mode.get_capture_attention_variant() during the capture, and replays the
+    one select picks. select reads host state only, such as
+    ForwardBatch.attention_kv_len_lower_bound, and picks alike on every rank. Other
+    runners and batch sizes capture as they would without these variants.
     """
 
     widths: tuple[int, ...]  # the rows it built, possibly fewer than requested
     draft_sampler: Optional[Callable[..., Callable[[int], Optional[Callable]]]]
+    draft_loop: Optional[Callable]
+    draft_extend: Optional[Callable]
+    begin_draft_round: Optional[Callable]
+    graph_variants: Optional[Mapping[str, Any]]
 
     def summary(self) -> str:
         """What was built, for the startup line."""
@@ -129,6 +160,115 @@ class BuiltMegakernel(Protocol):
     def forward(self, step: Step, original: Callable, *args: Any, **kwargs: Any) -> Any:
         """Run step in place of original (the model's bound forward), taking and
         returning what it does; capturable in a CUDA graph."""
+
+
+# The optional entries of a built megakernel, beyond draft_sampler the EAGLE ones
+ENTRIES = (
+    "draft_sampler",
+    "draft_loop",
+    "draft_extend",
+    "begin_draft_round",
+)
+# The graph runners a built object's graph_variants may key: the target's verify
+# graphs, the EAGLE draft graphs and the EAGLE draft-extend graphs
+GRAPH_VARIANT_RUNNERS = ("target_verify", "draft_loop", "draft_extend")
+
+
+@runtime_checkable
+class SupportsDraftAux(Protocol):
+    """A DFlash draft spec that writes the target's context into the draft KV cache.
+
+    draft_aux issues collectives: every TP rank calls it in program order.
+    """
+
+    draft_aux_rows: tuple[int, ...]
+
+    def draft_aux(self, **kwargs: Any) -> None: ...
+
+
+@runtime_checkable
+class SupportsDraftSelectorHead(Protocol):
+    """A DFlash selector draft spec whose forward also proposes the draft block.
+
+    attach_draft_head runs once on every TP rank, before any draft forward or capture.
+    """
+
+    draft_head_requests: tuple[int, ...]
+    draft_head_sampling: bool
+
+    def attach_draft_head(self, **kwargs: Any) -> tuple: ...
+
+    def stage_draft_head_sampling(self, **kwargs: Any) -> None: ...
+
+
+@runtime_checkable
+class SupportsDraftEmbed(Protocol):
+    """A DFlash draft spec that embeds the draft block from its token ids itself.
+
+    attach_draft_embed runs once on every TP rank, before any draft forward or capture.
+    """
+
+    draft_embed_requests: tuple[int, ...]
+
+    def attach_draft_embed(self, **kwargs: Any) -> None: ...
+
+
+@runtime_checkable
+class SupportsKdaCommit(Protocol):
+    """A target spec that commits the KDA state after a chain verify in one launch.
+
+    kda_commit returns False, launching nothing, when off; SGLang then commits itself.
+    """
+
+    def kda_commit(self, **kwargs: Any) -> bool: ...
+
+
+@runtime_checkable
+class SupportsDraftAccept(Protocol):
+    """A DFlash draft spec that runs the greedy verify accept itself.
+
+    draft_accept issues a collective: every TP rank calls it in program order.
+    """
+
+    draft_accept_requests: tuple[int, ...]
+
+    def attach_draft_accept(self, **kwargs: Any) -> None: ...
+
+    def draft_accept(self, **kwargs: Any) -> None: ...
+
+
+@runtime_checkable
+class SupportsRank0Broadcast(Protocol):
+    """A target spec that broadcasts rank 0's DFLASH sampled-accept result on device.
+
+    rank0_broadcast overwrites its args in place, or returns False when off; it is a
+    collective, so every rank calls it in the same order.
+    """
+
+    def rank0_broadcast(self, accept_len: Any, bonus: Any) -> bool: ...
+
+
+@runtime_checkable
+class SupportsSampledAccept(Protocol):
+    """A target spec that runs the DFLASH sampled accept on vocab-sharded verify logits.
+
+    sampled_accept returns rank 0's decision on every rank; these are collectives, so
+    every rank calls them in the same order.
+    """
+
+    def prepare_sampled_accept(
+        self,
+        *,
+        vocab_size: int,
+        softcap: Any,
+        shard_width: int,
+        seed: int,
+        topk: int = 16,
+    ) -> bool: ...
+
+    def sampled_accept_fits(self, requests: int, logits: Any = None) -> bool: ...
+
+    def sampled_accept(self, **kwargs: Any) -> Any: ...
 
 
 class MegakernelSpec(msgspec.Struct, frozen=True):
@@ -150,6 +290,11 @@ class MegakernelSpec(msgspec.Struct, frozen=True):
     model_disable_reasons: Optional[Callable[[torch.nn.Module, Any], list[str]]] = None
     # (cfg, hf_config), before load: the checks requires cannot state
     config_disable_reasons: Optional[Callable[[Any, Any], list[str]]] = None
+    # Optional tensor entry: (weights view, deadline seconds), for a multi-token verify
+    tensor_verify_binding_kind: int = 0
+    tensor_verify_build: Optional[Callable[[Any, float], BuiltMegakernel]] = None
+    # Pool preparation after allocation and before any forward or graph capture.
+    prepare: Optional[Callable[[BuiltMegakernel, Any], None]] = None
 
 
 # HF architecture -> the "module:attribute" path of its spec

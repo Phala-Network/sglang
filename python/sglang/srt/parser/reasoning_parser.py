@@ -895,6 +895,7 @@ class KimiK3Detector(BaseReasoningFormatDetector):
         self._tools_passthrough = False
         self._stream_text = ""
         self._streamed_reasoning: list[str] = []
+        self.replayed_reasoning_chars = 0
         self._discard_delayed_think_close = False
         self._json_content_parser = (
             _KimiK3JSONContentParser(self._in_reasoning, stream_reasoning)
@@ -987,6 +988,7 @@ class KimiK3Detector(BaseReasoningFormatDetector):
         )
 
     def parse_streaming_increment(self, new_text: str) -> StreamingParseResult:
+        self.replayed_reasoning_chars = 0
         if self._json_content_parser is not None:
             return self._json_content_parser.feed(new_text)
         self._buffer += new_text
@@ -1022,6 +1024,7 @@ class KimiK3Detector(BaseReasoningFormatDetector):
                 next_channel_idx=channel_idx,
             ):
                 replay = "".join(self._streamed_reasoning)
+                self.replayed_reasoning_chars = len(replay)
                 self._streamed_reasoning.clear()
                 self._in_reasoning = False
                 self._reasoning_done = True
@@ -1078,6 +1081,7 @@ class KimiK3Detector(BaseReasoningFormatDetector):
     def finish(self) -> StreamingParseResult:
         if self._json_content_parser is not None:
             return self._json_content_parser.finish()
+        streamed_chars = sum(map(len, self._streamed_reasoning))
         self._streamed_reasoning.clear()
         if not self._force_nonempty_content:
             return super().finish()
@@ -1087,6 +1091,7 @@ class KimiK3Detector(BaseReasoningFormatDetector):
             # answer went out as reasoning; without this gate the re-emit duplicates
             # answers already streamed as content (RESPONSE_OPEN / force_reasoning=False).
             self._buffer = ""
+            self.replayed_reasoning_chars = streamed_chars
             return StreamingParseResult(normal_text=self._clean_content(text))
         if self._in_reasoning and not self.stream_reasoning and self._buffer:
             # super().finish() would emit this buffer as content under
@@ -1767,6 +1772,12 @@ class _DeepSeekV3Detector(Qwen3Detector):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.reasoning_default = "explicit_thinking"
+
+
+class _FlintDetector(Qwen3Detector):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.reasoning_default = None
 
 
 DSV4_EOS_TOKEN = "<｜end▁of▁sentence｜>"
@@ -2539,6 +2550,7 @@ class ReasoningParser:
         "gigachat35": DeepSeekR1Detector,
         "inkling": InklingDetector,
         "iquest_q1": IQuestQ1ReasoningDetector,
+        "flint": _FlintDetector,
         "cohere_command4": CohereCommand4Detector,
         "response_template": ResponseTemplateReasoningDetector,
     }

@@ -2514,7 +2514,9 @@ class DFlashWorkerV2(BaseSpecWorker):
                 append()
             current.wait_stream(stream)
             graph = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(graph, stream=stream):
+            # Captured while serving, beside other threads' CUDA calls (D2H copies, the
+            # storage backend's): in the default global mode any of them invalidates it.
+            with torch.cuda.graph(graph, stream=stream, capture_error_mode="thread_local"):
                 append()
             current.wait_stream(stream)
             entry = (static, graph)

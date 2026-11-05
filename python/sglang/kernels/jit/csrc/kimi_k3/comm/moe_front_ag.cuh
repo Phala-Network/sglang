@@ -25,7 +25,7 @@ constexpr uint32_t kVec = 16 / sizeof(float);  // 4 fp32 (16B) per thread
 
 struct Params {
   uint8_t* ws_local;      // LOCAL VA of the push workspace base (poll + reset)
-  uint8_t* ws_mc;         // multicast VA of the push workspace base (push)
+  uint8_t* ws_mc;         // multicast VA of the push workspace base (push; null: unicast plane)
   Counter* counter;       // per-block phase counters
   uint32_t num_counters;  // PushPlane::num_blocks
   uint32_t half_bytes;    // world_size * slot_bytes
@@ -34,10 +34,13 @@ struct Params {
   uint32_t local_stride;  // a multiple of kVec
   float* out;             // [M, N]
   uint32_t num_rows;
+  uint8_t* ws[device::distributed::kMaxWorldSize];  // every rank's workspace base (unicast staging)
 };
 
 // Slot layout inside a phase half: dense [world][M][N / world] fp32.
-template <uint32_t kNLocal, uint32_t kWorld, uint32_t kBlock, bool kUsePDL>
+// kMulticast = false (a push plane with no multicast mapping: GPU CC) stages
+// with one st.relaxed.sys per peer instead of the multicast store.
+template <uint32_t kNLocal, uint32_t kWorld, uint32_t kBlock, bool kUsePDL, bool kMulticast = true>
 __global__ __launch_bounds__(kBlock) void front_all_gather_kernel(const __grid_constant__ Params params) {
   using namespace device;
   constexpr uint32_t N = kNLocal * kWorld;
@@ -70,7 +73,14 @@ __global__ __launch_bounds__(kBlock) void front_all_gather_kernel(const __grid_c
     // +0.0 is the "not arrived" marker; -0.0 is numerically identical
     Lamport::clear_pos_zero(&raw);
     const uint32_t byte_off = half_off + (params.rank * local_numel + local_elem) * sizeof(float);
-    ptx::st_multimem_16B(raw, params.ws_mc + byte_off, 0);
+    if constexpr (kMulticast) {
+      ptx::st_multimem_16B(raw, params.ws_mc + byte_off, 0);
+    } else {
+#pragma unroll
+      for (uint32_t i = 0; i < kWorld; ++i) {
+        ptx::st_relaxed_16B(raw, params.ws[i] + byte_off, 0);
+      }
+    }
   }
   PDLTriggerSecondary<kUsePDL>();
 
@@ -95,12 +105,14 @@ __global__ __launch_bounds__(kBlock) void front_all_gather_kernel(const __grid_c
 
 using host::distributed::CommunicatorRef;
 
-// kBlock: threads per block, picked host side (moe_front_ag.py).
-template <uint32_t kNLocal, uint32_t kWorld, uint32_t kBlock, bool kUsePDL>
+// kBlock: threads per block, picked host side (moe_front_ag.py). kMulticast =
+// false: the unicast build for a push plane without a multicast mapping.
+template <uint32_t kNLocal, uint32_t kWorld, uint32_t kBlock, bool kUsePDL, bool kMulticast = true>
 struct K3FrontAllGather {
   using TensorView = tvm::ffi::TensorView;
   static constexpr uint32_t N = kNLocal * kWorld;
-  static constexpr auto kernel = k3_front_ag::front_all_gather_kernel<kNLocal, kWorld, kBlock, kUsePDL>;
+  static constexpr auto kernel =
+      k3_front_ag::front_all_gather_kernel<kNLocal, kWorld, kBlock, kUsePDL, kMulticast>;
 
   static void run(CommunicatorRef ref, TensorView local, TensorView out) {
     using namespace host;
@@ -122,10 +134,12 @@ struct K3FrontAllGather {
     CHECK_HOST(push.world_size == kWorld) << "the kernel is compiled for TP" << kWorld;
     CHECK_HOST(int64_t(num_tokens) * kNLocal * 4 <= push.slot_bytes)
         << "this rank's block exceeds the push slot size " << push.slot_bytes;
-    CHECK_HOST(push.mc_workspace != nullptr) << "requires a multicast-capable push plane";
+    if constexpr (kMulticast) {
+      CHECK_HOST(push.mc_workspace != nullptr) << "requires a multicast-capable push plane";
+    }
     CHECK_HOST(push.num_blocks >= 2) << "gather needs a work block and a counter-update block";
 
-    const auto params = k3_front_ag::Params{
+    auto params = k3_front_ag::Params{
         .ws_local = push.workspaces[push.rank],
         .ws_mc = push.mc_workspace,
         .counter = push.counter,
@@ -137,6 +151,9 @@ struct K3FrontAllGather {
         .out = static_cast<float*>(out.data_ptr()),
         .num_rows = num_tokens,
     };
+    for (uint32_t i = 0; i < kWorld; ++i) {
+      params.ws[i] = push.workspaces[i];  // unicast staging targets (unused by the multicast kernel)
+    }
     const auto num_vecs = num_tokens * N / k3_front_ag::kVec;
     const auto num_work_blocks = std::min(host::div_ceil(num_vecs, kBlock), push.num_blocks - 1);
     host::LaunchKernel(num_work_blocks + 1, kBlock, device.unwrap()).enable_pdl(kUsePDL)(kernel, params);

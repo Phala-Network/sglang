@@ -32,15 +32,18 @@ constexpr uint32_t kMaxSpinBlock = 1024;            // max consumer threads per 
 constexpr uint32_t kSpinVec = 16 / sizeof(bf16_t);  // 8 bf16 (16B) per consumer thread
 
 // Producer: per-rank column-slice GEMV, multicast store with Lamport markers.
+// kMulticast = false (a push plane with no multicast mapping: GPU CC) lands
+// the same pair on every peer with one st.relaxed.sys per peer instead.
 
 struct ProducerParams {
-  uint8_t* ws_mc;       // multicast VA of the push workspace base
+  uint8_t* ws_mc;       // multicast VA of the push workspace base (null: unicast plane)
   Counter* counter;     // per-block phase counters (READ only here)
   uint32_t half_bytes;  // bytes per phase half (world_size * slot_bytes)
   uint32_t rank;
+  uint8_t* ws[device::distributed::kMaxWorldSize];  // every rank's workspace base (unicast staging)
 };
 
-template <uint32_t K, uint32_t N, uint32_t kWorld, uint32_t M, uint32_t N_SPLIT, bool kUsePDL>
+template <uint32_t K, uint32_t N, uint32_t kWorld, uint32_t M, uint32_t N_SPLIT, bool kUsePDL, bool kMulticast = true>
 __global__ __launch_bounds__(K / kVecSize) void gemm_ag_gemv_kernel(
     const __grid_constant__ ProducerParams params,
     const bf16_t* __restrict__ x,         // [M, K]
@@ -115,11 +118,20 @@ __global__ __launch_bounds__(K / kVecSize) void gemm_ag_gemv_kernel(
     const uint32_t m = (2 * tx) / N_SPLIT;
     const uint32_t n = (2 * tx) % N_SPLIT;  // even column within the tile
     // bf16 index in the phase half's dense [world][M][N / world] prefix;
-    // one multicast store lands this rank's pair on EVERY peer
+    // one multicast store lands this rank's pair on EVERY peer (unicast: one
+    // store per peer)
     const uint32_t elem = (params.rank * M + m) * kNLocal + bx * N_SPLIT + n;
-    const auto base = reinterpret_cast<bf16_t*>(params.ws_mc + phase * params.half_bytes);
-    const auto dst = reinterpret_cast<uint32_t*>(base + elem);
-    ptx::multimem_store_relaxed(dst, bits);
+    if constexpr (kMulticast) {
+      const auto base = reinterpret_cast<bf16_t*>(params.ws_mc + phase * params.half_bytes);
+      const auto dst = reinterpret_cast<uint32_t*>(base + elem);
+      ptx::multimem_store_relaxed(dst, bits);
+    } else {
+#pragma unroll
+      for (uint32_t i = 0; i < kWorld; ++i) {
+        const auto base = reinterpret_cast<bf16_t*>(params.ws[i] + phase * params.half_bytes);
+        ptx::store_relaxed_sys(reinterpret_cast<uint32_t*>(base + elem), bits);
+      }
+    }
   }
   PDLTriggerSecondary<kUsePDL>();
 }
@@ -214,12 +226,13 @@ __global__ __launch_bounds__(kMaxSpinBlock) void spin_add3_kernel(const __grid_c
 
 struct GatherParams {
   ConsumerParams consumer;
-  uint8_t* ws_mc;  // multicast VA of the push workspace base
+  uint8_t* ws_mc;  // multicast VA of the push workspace base (null: unicast plane)
   uint32_t rank;
   const bf16_t* local;  // [M, N / world], this rank's slice of x @ weight.T
+  uint8_t* ws[device::distributed::kMaxWorldSize];  // every rank's workspace base (unicast staging)
 };
 
-template <uint32_t N, uint32_t kWorld, bool kHasC, bool kUsePDL>
+template <uint32_t N, uint32_t kWorld, bool kHasC, bool kUsePDL, bool kMulticast = true>
 __global__ __launch_bounds__(kMaxSpinBlock) void gather_add3_kernel(const __grid_constant__ GatherParams params) {
   using namespace device;
   constexpr uint32_t kNLocal = N / kWorld;
@@ -245,12 +258,20 @@ __global__ __launch_bounds__(kMaxSpinBlock) void gather_add3_kernel(const __grid
   const uint32_t stride = (gridDim.x - 1) * blockDim.x * kSpinVec;
   const uint32_t first = (bx * blockDim.x + tx) * kSpinVec;
   // this rank's block of the phase half's dense [world][M][N / world] prefix
-  const auto dst = params.ws_mc + phase * consumer.half_bytes +
-                   static_cast<size_t>(params.rank) * consumer.num_rows * kNLocal * sizeof(bf16_t);
+  const auto block_offset = static_cast<size_t>(phase) * consumer.half_bytes +
+                            static_cast<size_t>(params.rank) * consumer.num_rows * kNLocal * sizeof(bf16_t);
+  [[maybe_unused]] const auto dst = params.ws_mc + block_offset;  // multicast staging only
   for (uint32_t local_elem = first; local_elem < consumer.num_rows * kNLocal; local_elem += stride) {
     uint4 raw = *reinterpret_cast<const uint4*>(params.local + local_elem);
     Lamport::clear_pos_zero(&raw);  // -0.0 in the first element: never all-zero
-    ptx::st_multimem_16B(raw, dst + local_elem * sizeof(bf16_t), 0);
+    if constexpr (kMulticast) {
+      ptx::st_multimem_16B(raw, dst + local_elem * sizeof(bf16_t), 0);
+    } else {
+#pragma unroll
+      for (uint32_t i = 0; i < kWorld; ++i) {
+        ptx::st_relaxed_16B(raw, params.ws[i] + block_offset + local_elem * sizeof(bf16_t), 0);
+      }
+    }
   }
   PDLTriggerSecondary<kUsePDL>();
 
@@ -271,7 +292,9 @@ using host::distributed::CommunicatorRef;
 // (constexpr function-pointer table), then the spin consumer via PDL.
 // ``gather``: push and assemble a slice an external GEMM computed.
 
-template <uint32_t K, uint32_t N, uint32_t kWorld, uint32_t kMaxM, bool kUsePDL>
+// kMulticast = false: the unicast build for a push plane without a multicast
+// mapping (both the GEMV producer and the gather stage per peer).
+template <uint32_t K, uint32_t N, uint32_t kWorld, uint32_t kMaxM, bool kUsePDL, bool kMulticast = true>
 struct GEMMAGKernel {
   using TensorView = tvm::ffi::TensorView;
 
@@ -295,7 +318,16 @@ struct GEMMAGKernel {
   template <std::size_t... I>
   static constexpr auto make_table(std::index_sequence<I...>) {
     return std::array<GemvFn, kMaxM + 1>{
-        nullptr, gemm_ag::gemm_ag_gemv_kernel<K, N, kWorld, I + 1, N_SPLIT, kUsePDL>...};
+        nullptr, gemm_ag::gemm_ag_gemv_kernel<K, N, kWorld, I + 1, N_SPLIT, kUsePDL, kMulticast>...};
+  }
+
+  // Every rank's push workspace base, the unicast staging targets (filled in
+  // both builds; the multicast kernels ignore it).
+  static void fill_workspaces(
+      const host::distributed::PushPlaneObj& push, uint8_t* (&ws)[device::distributed::kMaxWorldSize]) {
+    for (uint32_t i = 0; i < kWorld; ++i) {
+      ws[i] = push.workspaces[i];
+    }
   }
   static constexpr auto kGemvTable = make_table(std::make_index_sequence<kMaxM>{});
 
@@ -308,7 +340,9 @@ struct GEMMAGKernel {
       TensorView out) {
     using namespace host;
     CHECK_HOST(push.world_size == kWorld) << "the kernel is compiled for TP" << kWorld;
-    CHECK_HOST(push.mc_workspace != nullptr) << "requires a multicast-capable push plane";
+    if constexpr (kMulticast) {
+      CHECK_HOST(push.mc_workspace != nullptr) << "requires a multicast-capable push plane";
+    }
     // the dense [world][M][N / world] staging prefix must fit one phase half
     CHECK_HOST(int64_t(num_tokens) * kNLocal * 2 <= push.slot_bytes)
         << "staging slice exceeds the push slot size " << push.slot_bytes;
@@ -361,12 +395,13 @@ struct GEMMAGKernel {
     const auto params = consumer_params(push, num_tokens, b, c, out);
     // producer: GEMV. Its grid is not bound to the counter array: it reads only
     // counter[0] (see gemm_ag_gemv_kernel).
-    const auto producer_params = gemm_ag::ProducerParams{
+    auto producer_params = gemm_ag::ProducerParams{
         .ws_mc = push.mc_workspace,
         .counter = push.counter,
         .half_bytes = params.half_bytes,
         .rank = push.rank,
     };
+    fill_workspaces(push, producer_params.ws);
     LaunchKernel(kNumProducerBlocks, kGemvBlock, device.unwrap())
         .enable_pdl(kUsePDL)(
             kGemvTable[num_tokens],
@@ -398,15 +433,16 @@ struct GEMMAGKernel {
     const auto num_tokens = static_cast<uint32_t>(M.unwrap());
     CHECK_HOST(num_tokens >= 1);
     CHECK_HOST(reinterpret_cast<uintptr_t>(local.data_ptr()) % 16 == 0) << "the slice is read in 16B vectors";
-    const auto params = gemm_ag::GatherParams{
+    auto params = gemm_ag::GatherParams{
         .consumer = consumer_params(push, num_tokens, b, c, out),
         .ws_mc = push.mc_workspace,
         .rank = push.rank,
         .local = static_cast<const bf16_t*>(local.data_ptr()),
     };
+    fill_workspaces(push, params.ws);
     using gemm_ag::gather_add3_kernel;
-    const auto kernel =
-        c.has_value() ? gather_add3_kernel<N, kWorld, 1, kUsePDL> : gather_add3_kernel<N, kWorld, 0, kUsePDL>;
+    const auto kernel = c.has_value() ? gather_add3_kernel<N, kWorld, 1, kUsePDL, kMulticast>
+                                      : gather_add3_kernel<N, kWorld, 0, kUsePDL, kMulticast>;
     const auto [grid, block] = consumer_shape(push, num_tokens);
     LaunchKernel(grid, block, device.unwrap()).enable_pdl(kUsePDL)(kernel, params);
   }

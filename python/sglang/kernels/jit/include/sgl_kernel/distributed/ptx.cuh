@@ -198,6 +198,13 @@ SGL_DEVICE void fence_release_sys() {
   asm volatile("fence.release.sys;" ::: "memory");
 }
 
+/// Peer-visible 4B payload store (one lamport atom). The unicast counterpart
+/// of `multimem_store_relaxed(uint32_t*)` below, for push planes with no
+/// multicast mapping (GPU confidential computing).
+SGL_DEVICE void store_relaxed_sys(uint32_t* ptr, uint32_t val) {
+  asm volatile("st.relaxed.sys.global.b32 [%0], %1;" : : "l"(ptr), "r"(val) : "memory");
+}
+
 /// Device-scope arrival counter. acq_rel so the winner of the count also
 /// observes the losers' payload writes.
 SGL_DEVICE uint32_t atomic_add_acq_rel_gpu(uint32_t* ptr, uint32_t val) {

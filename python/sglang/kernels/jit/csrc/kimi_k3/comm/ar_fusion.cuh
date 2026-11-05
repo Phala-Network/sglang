@@ -30,6 +30,17 @@
 // the attn-res prefix sum — or absent) or the RMSNorm epilogue over the
 // latent of the K3 latent|shared MoE buffer (*_norm variants).
 //
+// Unicast variant (kMulticast = false on AllReduceFusionKernel): for push
+// planes with no multicast mapping (GPU confidential computing reports
+// CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED = 0, so the symmetric-memory
+// rendezvous yields no multicast VA). Only the push family exists there: the
+// single multicast staging store becomes kWorldSize `st.relaxed.sys` stores
+// into slot `rank` of every peer's workspace -- exactly the generic 1shot_push
+// staging in distributed/custom_all_reduce.cuh -- and the poll / reduce /
+// epilogue side is unchanged. The pull family needs `multimem.ld_reduce` and
+// is not instantiated; callers route large messages elsewhere. The multicast
+// instantiation is textually the same code as before this variant existed.
+//
 #include <sgl_kernel/tensor.h>
 
 #include <sgl_kernel/math.cuh>
@@ -62,7 +73,7 @@ using Lamport = device::distributed::LamportTrait<bf16_t, 8, /*kAtom=*/4>;
 struct FusionParams {
   uint8_t* input;              // tensor pointer (in place)
   const uint8_t* residual;     // may be null (compile-time kHasResidual selects)
-  uint8_t* push_ws_mc;         // multicast VA of the push workspace base
+  uint8_t* push_ws_mc;         // multicast VA of the push workspace base (null: unicast plane)
   uint8_t* push_ws_local;      // local push workspace base (poll side)
   Counter* push_counter;       // per-block phase counters (local memory)
   int64_t push_buffer_stride;  // per-buffer bytes (2 * world_size buffers)
@@ -73,7 +84,10 @@ struct FusionParams {
   const uint8_t* norm_weight;
   float norm_eps;
   uint32_t num_norm_rows;
-  uint32_t num_push_counters;  // cluster variant only: full counter array size
+  uint32_t num_push_counters;  // cluster + unicast variants: full counter array size
+  // unicast variant only: every rank's push workspace base (symmetric memory,
+  // peer VAs), the staging targets in place of the multicast VA
+  uint8_t* push_ws[device::distributed::kMaxWorldSize];
   // finalize_push_norm only: trtllm-gen deferred-finalize inputs (kimi_k3.py
   // deferred finalize path); `input` is then output-only ([T, kNormDim])
   const uint8_t* fin_gemm2;    // [P, kNormDim] bf16, permuted rows
@@ -134,6 +148,102 @@ __global__ __launch_bounds__(1024, 1) void all_reduce_push_res_kernel(const __gr
         device::ptx::ld_relaxed_16B(vec[i], poll_ptr + i * stride_bytes, vid);
         // the producer remapped all-zero pairs, so a written atom is never 0:
         // atom == 0 <=> the slot still holds the empty marker
+        has_zero |= Lamport::has_pos_zero(vec[i].data());
+      }
+      if (!has_zero) break;
+    } while (true);
+    const auto out_vec = device::reduce_vec(vec);  // fp32 accumulation over 8(+1) inputs
+    device::ptx::st_global_16B(out_vec, params.input, vid);
+#pragma unroll
+    for (uint32_t i = 0; i < kWorldSize; ++i) {
+      device::ptx::st_global_16B(zero_vec, poll_ptr + i * stride_bytes, vid);
+    }
+  }
+
+  // epilogue: flip this block's phase
+  __syncthreads();
+  if (tx == 0) params.push_counter[bx].set(phase ^ 1);
+}
+
+// --- unicast staging ---------------------------------------------------------
+
+/// This rank's 16B vector into slot `slot_offset` (rank * stride + phase
+/// half) of EVERY peer's push workspace: kWorldSize `st.relaxed.sys` stores,
+/// the generic 1shot_push staging. The local copy goes through the same
+/// store so the poll side sees one protocol.
+template <uint32_t kWorldSize, typename V>
+SGL_DEVICE void st_unicast_16B(const V& vec, const FusionParams& params, int64_t slot_offset, int64_t vid) {
+#pragma unroll
+  for (uint32_t i = 0; i < kWorldSize; ++i) {
+    device::ptx::st_relaxed_16B(vec, params.push_ws[i] + slot_offset, vid);
+  }
+}
+
+// Unicast counterpart of all_reduce_push_res_kernel, for a push plane with no
+// multicast mapping. Stage 2 (poll, reduce, residual, marker reset) is the
+// same; stage 1 fans the data out with st_unicast_16B. The grid is `work
+// blocks + 1`: the last block is a bumper that flips every counter from the
+// first non-work index to the end of the array, so this kernel may run on a
+// handful of SMs (the side-stream shared-expert all-reduce, which the
+// multicast build serves with the low-SM NVLS pull) while the counter array
+// stays uniform with the full-grid kernels that share the plane. Work blocks
+// are indexed [0, gridDim.x - 1) and grid-stride over the vectors.
+template <uint32_t kWorldSize, bool kHasResidual, bool kUsePDL>
+__global__ __launch_bounds__(1024, 1) void all_reduce_push_res_unicast_kernel(
+    const __grid_constant__ FusionParams params) {
+  using vec_t = device::AlignedVector<bf16x2_t, 4>;
+
+  const auto tx = threadIdx.x;
+  const auto bx = blockIdx.x;
+  const auto num_work_blocks = gridDim.x - 1;
+  const auto global_tid = bx * blockDim.x + tx;
+  const auto num_threads = blockDim.x * num_work_blocks;
+  const auto num_vecs = params.num_vecs;
+
+  // prologue: the previous phase flip (counter inc) must be visible
+  device::PDLWaitPrimary<kUsePDL>();
+  const auto phase = params.push_counter[bx].get() & 1;
+
+  // bumper: flips its own counter and every one past the work blocks. Every
+  // thread reads the phase before any thread writes a counter.
+  if (bx == num_work_blocks) {
+    device::PDLTriggerSecondary<kUsePDL>();
+    __syncthreads();
+    for (uint32_t i = num_work_blocks + tx; i < params.num_push_counters; i += blockDim.x) {
+      params.push_counter[i].set(phase ^ 1);
+    }
+    return;
+  }
+
+  const auto r = params.rank;
+  const auto stride_bytes = params.push_buffer_stride;
+  const auto phase_stride_bytes = (phase * kWorldSize) * stride_bytes;
+  const auto slot_offset = r * stride_bytes + phase_stride_bytes;
+  const auto poll_ptr = params.push_ws_local + phase_stride_bytes;
+
+  // stage 1: unicast-push local data to slot r of every peer, remapping
+  // all-zero bf16x2 pairs
+  for (auto vid = global_tid; vid < num_vecs; vid += num_threads) {
+    vec_t vec;
+    device::ptx::ld_global_16B(vec, params.input, vid);
+    Lamport::clear_pos_zero(vec.data());
+    st_unicast_16B<kWorldSize>(vec, params, slot_offset, vid);
+  }
+
+  device::PDLTriggerSecondary<kUsePDL>();
+
+  // stage 2: poll all slots, reduce (+ residual), write back in place,
+  // re-establish the empty markers for the next same-phase round
+  vec_t zero_vec;
+  Lamport::fill_pos_zero(zero_vec.data());
+  for (auto vid = global_tid; vid < num_vecs; vid += num_threads) {
+    vec_t vec[kWorldSize + kHasResidual];
+    if constexpr (kHasResidual) vec[kWorldSize].load(params.residual, vid);
+    do {
+      bool has_zero = false;
+#pragma unroll
+      for (uint32_t i = 0; i < kWorldSize; ++i) {
+        device::ptx::ld_relaxed_16B(vec[i], poll_ptr + i * stride_bytes, vid);
         has_zero |= Lamport::has_pos_zero(vec[i].data());
       }
       if (!has_zero) break;
@@ -241,7 +351,14 @@ SGL_DEVICE float reduce_sqr(device::AlignedVector<T2, N>& out_vec, device::Align
 // deferred MoE finalize per vector (with FinWeight-typed routing weights)
 // instead of reading a staged input tensor; `input` is then output-only. The
 // host sets num_norm_rows to the full row count (every reduced row is normed).
-template <uint32_t kWorldSize, uint32_t kClusterSize, bool kUsePDL, typename FinWeight = void>
+// kMulticast = false stages with st_unicast_16B instead of the multicast store
+// (the only difference).
+template <
+    uint32_t kWorldSize,
+    uint32_t kClusterSize,
+    bool kUsePDL,
+    typename FinWeight = void,
+    bool kMulticast = true>
 __global__ __launch_bounds__(kNormRowVecs / kClusterSize) __cluster_dims__(kClusterSize, 1, 1)  //
     void all_reduce_push_norm_cluster_kernel(const __grid_constant__ FusionParams params) {
   namespace cg = cooperative_groups;
@@ -286,11 +403,12 @@ __global__ __launch_bounds__(kNormRowVecs / kClusterSize) __cluster_dims__(kClus
   const auto r = params.rank;
   const auto stride_bytes = params.push_buffer_stride;
   const auto phase_stride_bytes = (phase * kWorldSize) * stride_bytes;
-  const auto push_ptr = params.push_ws_mc + r * stride_bytes + phase_stride_bytes;
+  const auto slot_offset = r * stride_bytes + phase_stride_bytes;
+  [[maybe_unused]] const auto push_ptr = params.push_ws_mc + slot_offset;  // multicast staging only
   const auto poll_ptr = params.push_ws_local + phase_stride_bytes;
 
-  // stage 1: multicast staging (grid-stride); kFinalize computes each vector
-  // in place of the load
+  // stage 1: multicast (or unicast) staging (grid-stride); kFinalize computes
+  // each vector in place of the load
   for (auto vid = global_tid; vid < num_vecs; vid += num_threads) {
     vec_t vec;
     if constexpr (kFinalize) {
@@ -299,7 +417,11 @@ __global__ __launch_bounds__(kNormRowVecs / kClusterSize) __cluster_dims__(kClus
       ptx::ld_global_16B(vec, params.input, vid);
     }
     Lamport::clear_pos_zero(vec.data());
-    ptx::st_multimem_16B(vec, push_ptr, vid);
+    if constexpr (kMulticast) {
+      ptx::st_multimem_16B(vec, push_ptr, vid);
+    } else {
+      st_unicast_16B<kWorldSize>(vec, params, slot_offset, vid);
+    }
   }
 
   // stage 2: one row per cluster pass (the bumper cluster owns no rows)
@@ -597,13 +719,35 @@ inline auto choose_block_size(uint32_t num_threads) -> uint32_t {
   return 1024u;
 }
 
-template <uint32_t kWorldSize, bool kUsePDL>
+/// Block size for a unicast push on `work_blocks` blocks: enough threads per
+/// block to cover its share of the vectors in one pass where the plane's
+/// width allows, 1024 beyond (the kernel grid-strides the rest).
+inline auto choose_unicast_block_size(uint32_t num_vecs, uint32_t work_blocks) -> uint32_t {
+  const auto per_block = host::div_ceil(num_vecs, work_blocks);
+  for (const uint32_t block_size : {128u, 256u, 512u}) {
+    if (per_block <= block_size) return block_size;
+  }
+  return 1024u;
+}
+
+// kMulticast = false builds the unicast variant (see the file comment): the
+// push entry points stage with per-peer stores, `push_res_unicast` adds a
+// low-SM grid, and the pull entry points are not meant to be exported.
+template <uint32_t kWorldSize, bool kUsePDL, bool kMulticast = true>
 struct AllReduceFusionKernel {
  private:
   using TensorView = tvm::ffi::TensorView;
 
   template <bool kHasResidual>
   static constexpr auto res_push_kernel = all_reduce_push_res_kernel<kWorldSize, kHasResidual, kUsePDL>;
+
+  template <bool kHasResidual>
+  static constexpr auto res_push_unicast_kernel =
+      all_reduce_push_res_unicast_kernel<kWorldSize, kHasResidual, kUsePDL>;
+
+  template <typename FinWeight = void>
+  static constexpr auto norm_push_kernel =
+      all_reduce_push_norm_cluster_kernel<kWorldSize, /*kClusterSize=*/7, kUsePDL, FinWeight, kMulticast>;
 
   static FusionParams
   make_params(const host::distributed::CommunicatorObj& comm, TensorView input, std::optional<TensorView> residual) {
@@ -627,7 +771,11 @@ struct AllReduceFusionKernel {
     const auto num_elems = N.unwrap();
     CHECK_HOST(push.world_size == kWorldSize);
     CHECK_HOST(num_elems > 0 && num_elems % 8 == 0);
-    CHECK_HOST(push.mc_workspace != nullptr) << "the fused push needs a multicast-capable push plane";
+    if constexpr (kMulticast) {
+      CHECK_HOST(push.mc_workspace != nullptr) << "the fused push needs a multicast-capable push plane";
+    } else {
+      CHECK_HOST(push.num_blocks >= 2) << "the unicast push needs a work block and the bumper block";
+    }
     FusionParams params{};
     params.input = static_cast<uint8_t*>(input.data_ptr());
     params.residual = residual.has_value() ? static_cast<const uint8_t*>(residual.value().data_ptr()) : nullptr;
@@ -637,6 +785,10 @@ struct AllReduceFusionKernel {
     params.push_buffer_stride = push.slot_bytes;
     params.rank = push.rank;
     params.num_vecs = static_cast<uint32_t>(num_elems / 8);
+    params.num_push_counters = push.num_blocks;
+    for (uint32_t i = 0; i < kWorldSize; ++i) {
+      params.push_ws[i] = push.workspaces[i];
+    }
     return params;
   }
 
@@ -759,6 +911,26 @@ struct AllReduceFusionKernel {
         .enable_pdl(kUsePDL)(kernel, params);
   }
 
+  /// Unicast 1shot push (+ optional residual) on `num_blocks` work blocks plus
+  /// the bumper block; `num_blocks <= 0` takes the whole plane. The grid need
+  /// not agree across ranks (it only shapes this rank's counter flips), but
+  /// the message must. Needs no multicast mapping, so it is the serving path
+  /// under GPU CC; the multicast build may also call it (A/B on bare metal).
+  static void
+  push_res_unicast(CommunicatorRef ref, TensorView input, std::optional<TensorView> residual, int64_t num_blocks) {
+    const auto& push = ref.get()->get_push_obj();
+    auto params = make_params(*ref.get(), input, residual);
+    const int64_t nbytes = int64_t(params.num_vecs) * 16;
+    CHECK_HOST(nbytes <= push.slot_bytes) << "input size " << nbytes << " exceeds push slot size " << push.slot_bytes;
+    CHECK_HOST(push.num_blocks >= 2) << "the unicast push needs a work block and the bumper block";
+    const uint32_t max_work_blocks = push.num_blocks - 1;
+    const uint32_t work_blocks =
+        num_blocks <= 0 ? max_work_blocks : std::min<uint32_t>(static_cast<uint32_t>(num_blocks), max_work_blocks);
+    const auto kernel = residual.has_value() ? res_push_unicast_kernel<true> : res_push_unicast_kernel<false>;
+    host::LaunchKernel(work_blocks + 1, choose_unicast_block_size(params.num_vecs, work_blocks), input.device())
+        .enable_pdl(kUsePDL)(kernel, params);
+  }
+
   static void push_norm(CommunicatorRef ref, TensorView input, TensorView weight, float eps, int64_t num_norm_rows) {
     constexpr auto kClusterSize = 7;
     const auto& push = ref.get()->get_push_obj();
@@ -770,7 +942,7 @@ struct AllReduceFusionKernel {
     const auto num_row_clusters = std::max<uint32_t>(std::min(num_rows, kMaxClusters), 1);
     CHECK_HOST(num_row_clusters < push.num_blocks);
     host::LaunchKernel((num_row_clusters + 1) * kClusterSize, kNormRowVecs / kClusterSize, input.device())
-        .enable_pdl(kUsePDL)(all_reduce_push_norm_cluster_kernel<kWorldSize, kClusterSize, kUsePDL>, params);
+        .enable_pdl(kUsePDL)(norm_push_kernel<>, params);
   }
 
   /// Deferred MoE finalize + 1shot push all-reduce + RMSNorm over EVERY row.
@@ -819,9 +991,7 @@ struct AllReduceFusionKernel {
     constexpr uint32_t kMaxClusters = 96;
     const auto num_row_clusters = std::max<uint32_t>(std::min(num_tokens, kMaxClusters), 1);
     CHECK_HOST(num_row_clusters < push.num_blocks);
-    const auto kernel = is_type<fp32_t>(expert_weights.dtype())
-                            ? all_reduce_push_norm_cluster_kernel<kWorldSize, kClusterSize, kUsePDL, fp32_t>
-                            : all_reduce_push_norm_cluster_kernel<kWorldSize, kClusterSize, kUsePDL, bf16_t>;
+    const auto kernel = is_type<fp32_t>(expert_weights.dtype()) ? norm_push_kernel<fp32_t> : norm_push_kernel<bf16_t>;
     host::LaunchKernel((num_row_clusters + 1) * kClusterSize, kNormRowVecs / kClusterSize, out.device())
         .enable_pdl(kUsePDL)(kernel, params);
   }

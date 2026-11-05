@@ -3831,8 +3831,8 @@ class DeepseekSparseAttnBackend(
             seq_lens = metadata.cache_seqlens_int32
             out = flashinfer.prefill.trtllm_ragged_attention_deepseek(
                 query=q,
-                key=k,
-                value=v,
+                key=finite_kv(k),
+                value=finite_kv(v),
                 workspace_buffer=self.workspace_buffer,
                 seq_lens=seq_lens,
                 max_q_len=metadata.max_seq_len_q,

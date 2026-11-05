@@ -1728,7 +1728,12 @@ class KimiK3MoE(nn.Module):
         latent = buf[:latent_numel].view(num_tokens, self.moe_hidden_size)
         shared_output = buf[latent_numel:].view(num_tokens, hidden_size)
         fused_norm = False
-        if self.alt_stream is not None and k3_ar_fusion.enabled():
+        # On the shared experts' message alone: the latent stays in the push window to
+        # T=73 and the shared to T=36. Decode batches stay on the fused push path.
+        flat_large = k3_ar_fusion.enabled() and k3_ar_fusion.unicast_flat_large(
+            num_tokens * hidden_size * 2, num_tokens
+        )
+        if self.alt_stream is not None and k3_ar_fusion.enabled() and not flat_large:
             defer_finalize = (
                 self._defer_moe_finalize
                 and self.fuse_ar_norm
@@ -1798,9 +1803,15 @@ class KimiK3MoE(nn.Module):
                     prefix_sum,
                 )
         else:  # single collective over the flat [latent | shared] pair
+            if sharded:
+                router_logits, routed_input = self._sharded_front_gather(
+                    front_block, hidden_states
+                )
             self._forward_shared(gate_up, shared_output)
             self._forward_routed(hidden_states, router_logits, routed_input, latent)
-            if self.fuse_ar_norm and k3_ar_fusion.enabled():
+            if flat_large:
+                buf = self._reduce_latent_and_shared(buf)
+            elif self.fuse_ar_norm and k3_ar_fusion.enabled():
                 fused_norm = True
                 k3_ar_fusion.all_reduce_norm(
                     buf.view(-1, k3_ar_fusion.NORM_DIM),

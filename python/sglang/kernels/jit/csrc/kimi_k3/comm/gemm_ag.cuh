@@ -1,6 +1,7 @@
 #include <sgl_kernel/tensor.h>
 #include <sgl_kernel/utils.h>
 
+
 #include <sgl_kernel/type.cuh>
 #include <sgl_kernel/utils.cuh>
 #include <sgl_kernel/vec.cuh>
@@ -17,6 +18,13 @@
 #include <limits>
 #include <optional>
 #include <utility>
+
+// Peer-visible 4B payload store (one lamport atom): the unicast counterpart of
+// multimem_store_relaxed, for push planes with no multicast mapping (GPU CC). Here
+// rather than in ptx.cuh, whose wide inclusion would recompile many JIT modules.
+SGL_DEVICE void store_relaxed_sys_u32(uint32_t* ptr, uint32_t val) {
+  asm volatile("st.relaxed.sys.global.b32 [%0], %1;" : : "l"(ptr), "r"(val) : "memory");
+}
 
 namespace sglang {
 
@@ -129,7 +137,7 @@ __global__ __launch_bounds__(K / kVecSize) void gemm_ag_gemv_kernel(
 #pragma unroll
       for (uint32_t i = 0; i < kWorld; ++i) {
         const auto base = reinterpret_cast<bf16_t*>(params.ws[i] + phase * params.half_bytes);
-        ptx::store_relaxed_sys(reinterpret_cast<uint32_t*>(base + elem), bits);
+        store_relaxed_sys_u32(reinterpret_cast<uint32_t*>(base + elem), bits);
       }
     }
   }

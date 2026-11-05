@@ -56,6 +56,9 @@ def _init_state() -> Optional[_State]:
     explicit = envs.SGLANG_K3_SP_COLLECTIVE.is_set()
     if explicit and not envs.SGLANG_K3_SP_COLLECTIVE.get():
         return None
+    # Its kernels address the multicast VA, which the unicast build's buffers lack.
+    if k3_ar_fusion._unicast_requested():
+        return None
 
     from sglang.srt.distributed.device_communicators.custom_all_reduce_v2 import (
         CustomAllReduceV2,

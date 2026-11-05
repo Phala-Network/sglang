@@ -327,7 +327,7 @@ def find_mc_ptr(x: torch.Tensor) -> Optional[int]:
     """Multicast VA of ``x`` if it lies inside a named buffer, else None.
     Multicast build only: the unicast build's buffers carry no multicast VA."""
     buf = _find_buffer(x)
-    if buf is None:
+    if buf is None or not buf.mc_base:
         return None
     return buf.mc_base + (int(x.data_ptr()) - buf.base)
 
@@ -371,6 +371,21 @@ def _fallback_all_reduce_norm(
     factor = torch.rsqrt(v.pow(2).mean(-1, keepdim=True) + eps)
     rows.copy_((v * factor * weight.float()).to(rows.dtype))
     return x
+
+
+def unicast_flat_large(nbytes: int, num_tokens: int) -> bool:
+    """Whether a message this large should take one flat regular all-reduce instead
+    of the two fallback ones plus an eager norm: unicast build, above its push window,
+    a prefill-sized batch, and SGLANG_K3_UNICAST_FLAT_LARGE on. Every rank of a batch
+    sees the same arguments, so the choice of collective cannot diverge."""
+    state = _get_state()
+    return (
+        state is not None
+        and not state.multicast
+        and envs.SGLANG_K3_UNICAST_FLAT_LARGE.get()
+        and num_tokens >= envs.SGLANG_K3_UNICAST_FLAT_LARGE_MIN_TOKENS.get()
+        and nbytes > _push_max_bytes(state)
+    )
 
 
 def all_reduce(

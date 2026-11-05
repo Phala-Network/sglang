@@ -913,6 +913,10 @@ class Envs:
     # Above 1: after a ready-counts round in which no rank had HiCache work to drain,
     # every rank skips that collective for this many passes minus one
     # (mem_cache/hicache_ready_lease.py). A runtime switch. Off by default.
+    # Host RAM, in GiB per rank, a fixed-size HiCache pool may claim, instead of sampling
+    # free memory. A sample races the other ranks' allocations on the same host, so a
+    # size that fits at the first sample can be refused at a later one. 0 samples.
+    SGLANG_HICACHE_HOST_BUDGET_GIB = EnvInt(0)
     SGLANG_HICACHE_READY_COUNTS_LEASE = EnvInt(0)
     SGLANG_HICACHE_SKIP_HOST_DUPLICATE_RECLAIM = EnvBool(False)
     # Back up SWA to host only for the sliding window that ends each backup

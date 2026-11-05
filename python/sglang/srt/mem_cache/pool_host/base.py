@@ -11,6 +11,7 @@ from typing import Optional, TypeGuard
 
 import torch
 
+from sglang.srt.environ import envs
 from sglang.srt.mem_cache.host_memory import available_host_memory_bytes
 from sglang.srt.mem_cache.pool_host.common import (
     _cuda_host_unregister,
@@ -100,6 +101,10 @@ def host_memory_budget_bytes(
         if requested_bytes <= available:
             _host_memory_budget.set(available - requested_bytes)
         return available
+
+    fixed_gib = envs.SGLANG_HICACHE_HOST_BUDGET_GIB.get()
+    if fixed_gib > 0 and not auto_size:
+        return fixed_gib * 1024**3
 
     free = (
         available_host_memory_bytes(allow_cgroup_fallback=not auto_size)

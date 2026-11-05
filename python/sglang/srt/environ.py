@@ -787,6 +787,9 @@ class Envs:
     SGLANG_ENABLE_DISAGG_PREFILL_CONTINUOUS_INPUT_POLLING = EnvBool(False)
     # Override NVML Confidential Computing autodetection. None = autodetect.
     SGLANG_FORCE_CONFIDENTIAL_COMPUTE = EnvBool(None)
+    # Under Confidential Computing, stage a small `async_h2d` as a non-blocking copy from
+    # pageable memory rather than wait for the stream. Off by default.
+    SGLANG_CC_ASYNC_SMALL_H2D = EnvBool(False)
 
     # ===================================================================
     # Radix and sparse KV caches

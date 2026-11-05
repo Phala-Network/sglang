@@ -596,7 +596,16 @@ def async_h2d(args: List, *, dtype: torch.dtype, device: torch.device) -> torch.
     """A host list on ``device``; staged in pinned memory so the copy is enqueued
     on the current stream instead of synchronizing like a pageable copy."""
     pin = is_pin_memory_available(device)
-    return torch.tensor(args, dtype=dtype, pin_memory=pin).to(device, non_blocking=pin)
+    host = torch.tensor(args, dtype=dtype, pin_memory=pin)
+    # A blocking copy waits for the whole stream, so under CC, where nothing is pinned,
+    # this helper would stop at the work ahead of it. CUDA stages a pageable H2D before
+    # returning, and every caller already takes the pinned path's enqueued copy.
+    non_blocking = pin or (
+        envs.SGLANG_CC_ASYNC_SMALL_H2D.get()
+        and is_confidential_compute()
+        and host.numel() * host.element_size() <= 65536
+    )
+    return host.to(device, non_blocking=non_blocking)
 
 
 def async_h2d_stack(

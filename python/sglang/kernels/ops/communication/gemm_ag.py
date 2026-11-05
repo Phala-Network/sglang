@@ -21,7 +21,10 @@ from sglang.kernels.jit.utils import (
     load_jit,
     make_cpp_args,
 )
-from sglang.kernels.ops.communication.all_reduce_residual import _COMM_MAP
+from sglang.kernels.ops.communication.all_reduce_residual import (
+    _COMM_MAP,
+    is_multicast,
+)
 from sglang.srt.utils.custom_op import register_custom_op
 
 if TYPE_CHECKING:
@@ -41,8 +44,15 @@ GEMV_MAX_TOKENS = 12
 
 
 @cache_once
-def _jit_module(world_size: int) -> Module:
+def _jit_module(world_size: int, multicast: bool = True) -> Module:
+    # multicast: the template's kMulticast defaults to true, so the module
+    # args, and the build, are unchanged; the unicast build (a push plane with
+    # no multicast mapping) stages with per-peer stores
     args = make_cpp_args(K, N, world_size, GEMV_MAX_TOKENS, is_arch_support_pdl())
+    if not multicast:
+        args = make_cpp_args(
+            K, N, world_size, GEMV_MAX_TOKENS, is_arch_support_pdl(), False
+        )
     cls = f"GEMMAGKernel<{args}>"
     return load_jit(
         "kimi_k3_gemm_ag",
@@ -51,6 +61,13 @@ def _jit_module(world_size: int) -> Module:
         cuda_wrappers=[("run", f"{cls}::run"), ("gather", f"{cls}::gather")],
         extra_cuda_cflags=["-O3"],
     )
+
+
+def _module(world_size: int) -> Module:
+    """The build matching the plane registered with ``register_comm``."""
+    if is_multicast(world_size):
+        return _jit_module(world_size)
+    return _jit_module(world_size, False)
 
 
 @register_custom_op(mutates_args=["out"])
@@ -62,7 +79,7 @@ def _gemm_ag_op(
     c: Optional[torch.Tensor],
     out: torch.Tensor,
 ) -> None:
-    _jit_module(world_size).run(_COMM_MAP[world_size], x, weight, b, c, out)
+    _module(world_size).run(_COMM_MAP[world_size], x, weight, b, c, out)
 
 
 @register_custom_op(mutates_args=["out"])
@@ -73,7 +90,7 @@ def _gather_add3_op(
     c: Optional[torch.Tensor],
     out: torch.Tensor,
 ) -> None:
-    _jit_module(world_size).gather(_COMM_MAP[world_size], local, b, c, out)
+    _module(world_size).gather(_COMM_MAP[world_size], local, b, c, out)
 
 
 def gemm_ag_up_proj(

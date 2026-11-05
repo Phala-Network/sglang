@@ -14,6 +14,15 @@ Call-site contract when the fusion is active: ``enabled()`` was
 checked once (which initializes the state), ``x`` is bf16 and contiguous,
 and the residual is identical on every rank (a fully reduced tensor such
 as the attn-res prefix sum) or ``None``.
+
+Unicast mode (``SGLANG_K3_AR_FUSION_UNICAST=1`` on a CustomAllReduceV2 whose
+symmetric memory has no multicast mapping, i.e. GPU confidential computing;
+``SGLANG_K3_AR_FUSION_FORCE_UNICAST=1`` takes it even with multicast): the
+same call-sites and buffers, served by the unicast build of the push family
+only. Messages above the unicast push window take the regular all-reduce
+plus a separate epilogue (:func:`_fallback_all_reduce`), and the side-stream
+low-SM all-reduce becomes a push on a few work blocks. Both switches off
+leaves every path exactly as before.
 """
 
 from __future__ import annotations
@@ -53,6 +62,21 @@ class _State(NamedTuple):
     comm: CustomAllReduceV2
     world_size: int
     group_name: str
+    # False: the unicast build (no multicast VA on the plane; push family only)
+    multicast: bool = True
+
+
+def _unicast_requested() -> bool:
+    return (
+        envs.SGLANG_K3_AR_FUSION_UNICAST.get()
+        or envs.SGLANG_K3_AR_FUSION_FORCE_UNICAST.get()
+    )
+
+
+# Set when _get_state picks the unicast build: the buffers may then have no
+# multicast VA. A flag rather than a state query, so creating a buffer never
+# triggers the probe (k3_sp_collective creates buffers through this module).
+_UNICAST_ACTIVE = False
 
 
 @cache_once
@@ -93,15 +117,23 @@ def _get_state() -> Optional[_State]:
         return None
     group = get_parallel().tp_group
     comm = group.ca_comm
-    if (
-        not isinstance(comm, CustomAllReduceV2)
-        or comm.disabled
-        or not comm.has_multicast
-    ):
+    usable = isinstance(comm, CustomAllReduceV2) and not comm.disabled
+    # the unicast build serves a plane without a multicast mapping (GPU CC),
+    # and, forced, stands in for the multicast build on bare metal (A/B)
+    unicast = usable and (
+        (not comm.has_multicast and envs.SGLANG_K3_AR_FUSION_UNICAST.get())
+        or envs.SGLANG_K3_AR_FUSION_FORCE_UNICAST.get()
+    )
+    if not usable or (not comm.has_multicast and not unicast):
         if explicit:
             logger.warning(
                 "SGLANG_K3_AR_FUSION requested but CustomAllReduceV2 with multicast "
                 "is unavailable; falling back to the regular all-reduce path."
+                + (
+                    " (SGLANG_K3_AR_FUSION_UNICAST=1 would take the unicast build.)"
+                    if usable and not _unicast_requested()
+                    else ""
+                )
             )
         else:
             logger.info(
@@ -111,19 +143,60 @@ def _get_state() -> Optional[_State]:
         return None
     from sglang.kernels.ops.communication import all_reduce_residual as mod
 
-    mod.register_comm(comm.obj)
-    logger.info("K3 all-reduce fusion enabled (world_size=%d)", comm.world_size)
-    return _State(comm, comm.world_size, group.cpu_group.group_name)
+    mod.register_comm(comm.obj, multicast=not unicast)
+    if unicast:
+        global _UNICAST_ACTIVE
+        _UNICAST_ACTIVE = True
+    logger.info(
+        "K3 all-reduce fusion enabled (world_size=%d, %s)",
+        comm.world_size,
+        (
+            "multicast"
+            if not unicast
+            else "unicast push family: window %d KB, low-SM push on %d blocks, "
+            "larger messages on the regular all-reduce"
+            % (
+                _push_max_bytes_for(comm, multicast=False) // 1024,
+                envs.SGLANG_K3_AR_FUSION_UNICAST_LOW_SM_BLOCKS.get(),
+            )
+        ),
+    )
+    return _State(
+        comm, comm.world_size, group.cpu_group.group_name, multicast=not unicast
+    )
 
 
 def enabled() -> bool:
     return _get_state() is not None
 
 
+def is_multicast() -> bool:
+    """Whether the active fusion is the multicast build (False: unicast)."""
+    state = _get_state()
+    assert state is not None
+    return state.multicast
+
+
+def _push_max_bytes_for(comm: CustomAllReduceV2, *, multicast: bool) -> int:
+    """Largest message the 1shot push takes. Multicast: the measured push /
+    NVLS-pull crossover. Unicast: a knob (there is no pull to cross over to;
+    beyond it the regular all-reduce path serves), capped at the slot size."""
+    cap = (
+        _PUSH_MAX_BYTES
+        if multicast
+        else envs.SGLANG_K3_AR_FUSION_UNICAST_PUSH_MAX_KB.get() * 1024
+    )
+    return min(cap, comm.max_push_size)
+
+
+def _push_max_bytes(state: _State) -> int:
+    return _push_max_bytes_for(state.comm, multicast=state.multicast)
+
+
 class _Buffer(NamedTuple):
     region: torch.Tensor  # flat [max_rows * width]
     base: int  # local VA of region[0]
-    mc_base: int  # multicast VA of region[0]
+    mc_base: int  # multicast VA of region[0] (0 on a plane without multicast)
     max_rows: int
     width: int
 
@@ -162,7 +235,14 @@ def _create_buffer(
             group_name,
         ).view(max_rows, width)
     handle = _SymmetricMemory.rendezvous(region)
-    assert handle is not None and handle.multicast_ptr != 0
+    assert handle is not None
+    # the pull family reduces on the multicast alias, so the multicast build
+    # needs one; the unicast build never dereferences mc_base (it is 0 there).
+    # Without the unicast build active (also k3_sp_collective's buffers under
+    # SGLANG_K3_AR_FUSION=0) the requirement is what it always was.
+    assert handle.multicast_ptr != 0 or _UNICAST_ACTIVE, (
+        "K3 symm buffer has no multicast VA while the multicast kernels are active"
+    )
     buf = _Buffer(
         region=region,
         base=int(region.data_ptr()),
@@ -211,14 +291,27 @@ def symm_buffer(
     return buf.region[:rows]
 
 
-def find_mc_ptr(x: torch.Tensor) -> Optional[int]:
-    """Multicast VA of ``x`` if it lies inside a named buffer, else None."""
+def _find_buffer(x: torch.Tensor) -> Optional[_Buffer]:
     ptr = int(x.data_ptr())
     end = ptr + x.numel() * x.element_size()
     for buf in _BUFS:
         if buf.base <= ptr and end <= buf.base + buf.region.nbytes:
-            return buf.mc_base + (ptr - buf.base)
+            return buf
     return None
+
+
+def in_symm_buffer(x: torch.Tensor) -> bool:
+    """Whether ``x`` lies inside a named :func:`symm_buffer` (either build)."""
+    return _find_buffer(x) is not None
+
+
+def find_mc_ptr(x: torch.Tensor) -> Optional[int]:
+    """Multicast VA of ``x`` if it lies inside a named buffer, else None.
+    Multicast build only: the unicast build's buffers carry no multicast VA."""
+    buf = _find_buffer(x)
+    if buf is None:
+        return None
+    return buf.mc_base + (int(x.data_ptr()) - buf.base)
 
 
 def get_mc_ptr(x: torch.Tensor) -> int:
@@ -226,6 +319,40 @@ def get_mc_ptr(x: torch.Tensor) -> int:
     mc = find_mc_ptr(x)
     assert mc is not None, "K3 fused pull input is not a symm_buffer slice"
     return mc
+
+
+def _fallback_all_reduce(
+    x: torch.Tensor, residual: Optional[torch.Tensor]
+) -> torch.Tensor:
+    """Unicast build, message above the push window: the regular all-reduce
+    (CustomAllReduceV2's unicast algorithms or NCCL, as without the fusion)
+    then the residual add, in place. The add rounds the bf16 sum before the
+    residual joins, as the non-fused path does; the fused kernels accumulate
+    the 8 partials and the residual in fp32 and round once."""
+    from sglang.srt.distributed.communication_op import (
+        tensor_model_parallel_all_reduce,
+    )
+
+    out = tensor_model_parallel_all_reduce(x)
+    if out is not x:
+        x.copy_(out)
+    if residual is not None:
+        x.add_(residual)
+    return x
+
+
+def _fallback_all_reduce_norm(
+    x: torch.Tensor, weight: torch.Tensor, eps: float, num_tokens: int
+) -> torch.Tensor:
+    """Unicast build, message above the push window: regular all-reduce, then
+    the fp32 RMSNorm over the first ``num_tokens`` rows of the [rows, NORM_DIM]
+    view (the kernels' epilogue arithmetic), in place."""
+    _fallback_all_reduce(x, None)
+    rows = x.view(-1, NORM_DIM)[:num_tokens]
+    v = rows.float()
+    factor = torch.rsqrt(v.pow(2).mean(-1, keepdim=True) + eps)
+    rows.copy_((v * factor * weight.float()).to(rows.dtype))
+    return x
 
 
 def all_reduce(
@@ -240,8 +367,10 @@ def all_reduce(
     if x.shape[0] == 0:
         return x if residual is None else x + residual
     nbytes = x.numel() * 2
-    if nbytes <= min(_PUSH_MAX_BYTES, state.comm.max_push_size):
+    if nbytes <= _push_max_bytes(state):
         return mod.all_reduce_push_res(state.world_size, x, residual)
+    if not state.multicast:
+        return _fallback_all_reduce(x, residual)
     return mod.all_reduce_pull_res(
         state.world_size, x, residual, input_mc_ptr=get_mc_ptr(x)
     )
@@ -258,6 +387,13 @@ def all_reduce_low_sm(
 
     For side-stream use: push would fan out over many blocks and steal SMs from
     the GEMMs it overlaps. ``num_blocks`` / ``unroll`` default to the tuned tables.
+
+    Unicast build: there is no pull, so a message within the push window takes
+    the unicast push on SGLANG_K3_AR_FUSION_UNICAST_LOW_SM_BLOCKS work blocks
+    (the pull tuning arguments do not apply and are ignored) and a larger one
+    the regular all-reduce. The push plane is then busy on the side stream:
+    the call-site's stream joins keep every other push-plane kernel off it
+    meanwhile (kimi_k3.py's shared-expert all-reduce does).
     """
     from sglang.kernels.ops.communication import all_reduce_residual as mod
 
@@ -265,6 +401,15 @@ def all_reduce_low_sm(
     assert state is not None
     if x.shape[0] == 0:
         return x if residual is None else x + residual
+    if not state.multicast:
+        if x.numel() * 2 > _push_max_bytes(state):
+            return _fallback_all_reduce(x, residual)
+        return mod.all_reduce_push_res(
+            state.world_size,
+            x,
+            residual,
+            num_blocks=max(1, envs.SGLANG_K3_AR_FUSION_UNICAST_LOW_SM_BLOCKS.get()),
+        )
     return mod.all_reduce_pull_res(
         state.world_size,
         x,
@@ -291,7 +436,7 @@ def all_reduce_norm(
     if x.shape[0] == 0:
         return x
     nbytes = x.numel() * 2
-    if nbytes <= min(_PUSH_MAX_BYTES, state.comm.max_push_size):
+    if nbytes <= _push_max_bytes(state):
         return mod.all_reduce_push_norm(
             state.world_size,
             x,
@@ -299,6 +444,8 @@ def all_reduce_norm(
             eps,
             num_norm_rows=num_tokens,
         )
+    if not state.multicast:
+        return _fallback_all_reduce_norm(x, weight, eps, num_tokens)
     return mod.all_reduce_pull_norm(
         state.world_size,
         x,
@@ -315,7 +462,7 @@ def finalize_push_fits(num_tokens: int) -> bool:
     state = _get_state()
     assert state is not None
     nbytes = num_tokens * NORM_DIM * 2
-    return nbytes <= min(_PUSH_MAX_BYTES, state.comm.max_push_size)
+    return nbytes <= _push_max_bytes(state)
 
 
 # Largest batch where the sharded up_proj tail beats the replicated GEMM + add3,

@@ -28,6 +28,14 @@ fully reduced tensor such as the attn-res prefix sum) or absent; the
 ``norm`` input is the K3 latent|shared MoE buffer ([N, 3584] latent then
 [N, 7168] shared, contiguous — the row layout is derived and hardcoded
 C++-side).
+
+**Unicast build** (``register_comm(..., multicast=False)``): for a push plane
+whose symmetric memory has no multicast mapping (GPU confidential computing).
+The push entry points stage with ``world_size`` per-peer stores instead of one
+multicast store (same poll / reduce / epilogue, same Lamport protocol, so the
+plane is still shared with the generic ``1shot_push``); ``all_reduce_push_res``
+additionally takes ``num_blocks`` for a low-SM grid. The pull entry points are
+not built; callers route large messages elsewhere.
 """
 
 from __future__ import annotations
@@ -51,20 +59,32 @@ if TYPE_CHECKING:
 
 
 @cache_once
-def _jit_module(world_size: int) -> Module:
-    args = make_cpp_args(world_size, is_arch_support_pdl())
-    cls = f"AllReduceFusionKernel<{args}>"
-    return load_jit(
-        "kimi_k3_all_reduce",
-        *args,
-        cuda_files=["kimi_k3/comm/ar_fusion.cuh"],
-        cuda_wrappers=[
+def _jit_module(world_size: int, multicast: bool = True) -> Module:
+    if multicast:
+        # the template's kMulticast defaults to true: the module args, and so
+        # the build, are what they were before the unicast build existed
+        args = make_cpp_args(world_size, is_arch_support_pdl())
+        cls = f"AllReduceFusionKernel<{args}>"
+        wrappers = [
             ("push_res", f"{cls}::push_res"),
             ("push_norm", f"{cls}::push_norm"),
             ("pull_res", f"{cls}::pull_res"),
             ("pull_norm", f"{cls}::pull_norm"),
             ("finalize_push_norm", f"{cls}::finalize_push_norm"),
-        ],
+        ]
+    else:
+        args = make_cpp_args(world_size, is_arch_support_pdl(), False)
+        cls = f"AllReduceFusionKernel<{args}>"
+        wrappers = [
+            ("push_res", f"{cls}::push_res_unicast"),
+            ("push_norm", f"{cls}::push_norm"),
+            ("finalize_push_norm", f"{cls}::finalize_push_norm"),
+        ]
+    return load_jit(
+        "kimi_k3_all_reduce",
+        *args,
+        cuda_files=["kimi_k3/comm/ar_fusion.cuh"],
+        cuda_wrappers=wrappers,
         extra_cuda_cflags=["-O3"],
     )
 
@@ -73,14 +93,18 @@ def _jit_module(world_size: int) -> Module:
 
 
 _COMM_MAP: dict[int, Communicator] = {}
+# world_size -> whether the registered plane has a multicast mapping (selects
+# the multicast or the unicast build for every K3 kernel sharing the plane)
+_MULTICAST: dict[int, bool] = {}
 
 
-def register_comm(comm: Communicator) -> None:
+def register_comm(comm: Communicator, *, multicast: bool = True) -> None:
     """Register the CustomAllReduceV2 communication planes.
 
     The push kernels use the push plane, the pull kernels the barrier plane;
     both carry their own multicast base, so nothing else has to be threaded
-    through here.
+    through here. ``multicast=False`` selects the unicast build (no multicast
+    VA on the plane); the K3 gemm_ag and moe_front all-gathers follow it.
     """
     # world_size is the whole key, so at most one communicator per size can be
     # registered in a process. That matches how these ops are called -- the custom
@@ -95,7 +119,26 @@ def register_comm(comm: Communicator) -> None:
         f"{comm.world_size}; these ops key only on world_size, so two groups of "
         f"the same size cannot coexist in one process"
     )
+    assert prev is None or _MULTICAST[comm.world_size] == multicast, (
+        f"the communicator for world_size={comm.world_size} is already "
+        f"registered with multicast={_MULTICAST[comm.world_size]}"
+    )
     _COMM_MAP[comm.world_size] = comm
+    _MULTICAST[comm.world_size] = multicast
+
+
+def is_multicast(world_size: int) -> bool:
+    """Whether the plane registered for ``world_size`` has a multicast mapping
+    (the default when nothing says otherwise)."""
+    return _MULTICAST.get(world_size, True)
+
+
+def _module(world_size: int) -> Module:
+    """The build matching the registered plane (the multicast one under the
+    cache key callers have always used)."""
+    if is_multicast(world_size):
+        return _jit_module(world_size)
+    return _jit_module(world_size, False)
 
 
 class PullTuning(NamedTuple):
@@ -158,7 +201,20 @@ def _push_res_op(
     x: torch.Tensor,
     residual: Optional[torch.Tensor],
 ) -> None:
-    _jit_module(world_size).push_res(_COMM_MAP[world_size], x.view(-1), residual)
+    _module(world_size).push_res(_COMM_MAP[world_size], x.view(-1), residual)
+
+
+@register_custom_op(mutates_args=["x"])
+def _push_res_unicast_op(
+    world_size: int,
+    x: torch.Tensor,
+    residual: Optional[torch.Tensor],
+    num_blocks: int,
+) -> None:
+    # the unicast build exports its push_res under the same name, with the grid
+    _module(world_size).push_res(
+        _COMM_MAP[world_size], x.view(-1), residual, num_blocks
+    )
 
 
 @register_custom_op(mutates_args=["x"])
@@ -169,7 +225,7 @@ def _push_norm_op(
     eps: float,
     num_norm_rows: int,
 ) -> None:
-    _jit_module(world_size).push_norm(
+    _module(world_size).push_norm(
         _COMM_MAP[world_size], x.view(-1), weight, eps, num_norm_rows
     )
 
@@ -184,7 +240,7 @@ def _finalize_push_norm_op(
     weight: torch.Tensor,
     eps: float,
 ) -> None:
-    _jit_module(world_size).finalize_push_norm(
+    _module(world_size).finalize_push_norm(
         _COMM_MAP[world_size],
         out.view(-1),
         gemm2_out,
@@ -204,7 +260,7 @@ def _pull_res_op(
     num_blocks: int,
     unroll: int,
 ) -> None:
-    _jit_module(world_size).pull_res(
+    _module(world_size).pull_res(
         _COMM_MAP[world_size],
         x.view(-1),
         residual,
@@ -225,7 +281,7 @@ def _pull_norm_op(
     num_blocks: int,
     unroll: int,
 ) -> None:
-    _jit_module(world_size).pull_norm(
+    _module(world_size).pull_norm(
         _COMM_MAP[world_size],
         x.view(-1),
         weight,
@@ -241,14 +297,27 @@ def all_reduce_push_res(
     world_size: int,
     x: torch.Tensor,
     residual: Optional[torch.Tensor] = None,
+    *,
+    num_blocks: Optional[int] = None,
 ) -> torch.Tensor:
-    """In-place ``x = allreduce(x) [+ residual]`` via 1shot multicast push.
+    """In-place ``x = allreduce(x) [+ residual]`` via 1shot push (multicast
+    staging, or per-peer stores on a unicast plane).
 
     ``x`` may be any contiguous bf16 CUDA tensor whose byte size fits a slot
     of the registered push plane. Call :func:`register_comm` once beforehand.
+    ``num_blocks`` (unicast build only) caps the work blocks for a low-SM
+    launch; None takes the whole plane.
     """
     residual_ = residual.view(-1) if residual is not None else None
-    _push_res_op(world_size, x, residual_)
+    if is_multicast(world_size):
+        if num_blocks is not None:
+            raise ValueError(
+                "num_blocks applies to the unicast push only; the multicast "
+                "push runs on the whole plane (use the low-SM pull instead)"
+            )
+        _push_res_op(world_size, x, residual_)
+    else:
+        _push_res_unicast_op(world_size, x, residual_, num_blocks or 0)
     return x
 
 

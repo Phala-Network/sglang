@@ -19,7 +19,10 @@ from sglang.kernels.jit.utils import (
     load_jit,
     make_cpp_args,
 )
-from sglang.kernels.ops.communication.all_reduce_residual import _COMM_MAP
+from sglang.kernels.ops.communication.all_reduce_residual import (
+    _COMM_MAP,
+    is_multicast,
+)
 from sglang.srt.utils.custom_op import register_custom_op
 
 if TYPE_CHECKING:
@@ -34,8 +37,15 @@ _NARROW_BLOCK, _WIDE_BLOCK = 128, 512
 
 
 @cache_once
-def _jit_module(n_local: int, world_size: int, block: int) -> Module:
+def _jit_module(
+    n_local: int, world_size: int, block: int, multicast: bool = True
+) -> Module:
+    # multicast: the template's kMulticast defaults to true, so the module
+    # args, and the build, are unchanged; the unicast build (a push plane with
+    # no multicast mapping) stages with per-peer stores
     args = make_cpp_args(n_local, world_size, block, is_arch_support_pdl())
+    if not multicast:
+        args = make_cpp_args(n_local, world_size, block, is_arch_support_pdl(), False)
     return load_jit(
         "kimi_k3_moe_front_ag",
         *args,
@@ -49,9 +59,12 @@ def _jit_module(n_local: int, world_size: int, block: int) -> Module:
 def _moe_front_all_gather_op(
     world_size: int, local: torch.Tensor, out: torch.Tensor, block: int
 ) -> None:
-    _jit_module(local.shape[1], world_size, block).run(
-        _COMM_MAP[world_size], local, out
+    module = (
+        _jit_module(local.shape[1], world_size, block)
+        if is_multicast(world_size)
+        else _jit_module(local.shape[1], world_size, block, False)
     )
+    module.run(_COMM_MAP[world_size], local, out)
 
 
 def moe_front_all_gather(

@@ -536,8 +536,10 @@ def _o_proj_takes_output(o_proj: RowParallelLinear) -> bool:
 
 def _k3_all_reduce_add(hidden_states, residual, forward_batch):
     """o_proj's attention-TP sum with the pending residual add in K3's fused
-    all-reduce, for an output o_proj wrote into its multicast buffer."""
-    if k3_ar_fusion.find_mc_ptr(hidden_states) is None:
+    all-reduce, for an output o_proj wrote into its symmetric buffer (the
+    buffer is multicast-bound where the plane has multicast; the unicast build
+    reduces the same persistent slice through the push family)."""
+    if not k3_ar_fusion.in_symm_buffer(hidden_states):
         return None
     return k3_ar_fusion.all_reduce(hidden_states, residual)
 

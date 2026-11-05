@@ -2320,6 +2320,22 @@ class Envs:
     # either direction (the K3.1 GB switch forces it on unless set). See
     # srt/layers/communication/k3_ar_fusion.py.
     SGLANG_K3_AR_FUSION = EnvBool(SGLANG_ENABLE_NV_MEGA_RUNTIME_K31_GB_OPTIMIZATION.get)
+    # Unicast build of the K3 fused all-reduce for a CustomAllReduceV2 whose
+    # symmetric memory has no multicast mapping (GPU confidential computing:
+    # CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED = 0). The push family (attention
+    # o_proj AR + residual, latent AR + RMSNorm, deferred MoE finalize, the
+    # gemm_ag / moe_front all-gathers) stages with world_size per-peer stores
+    # instead of one multicast store; the NVLS pull family does not exist, so
+    # messages above SGLANG_K3_AR_FUSION_UNICAST_PUSH_MAX_KB take the regular
+    # all-reduce plus a separate epilogue, and the side-stream shared-expert AR
+    # runs the push on SGLANG_K3_AR_FUSION_UNICAST_LOW_SM_BLOCKS work blocks.
+    # Off by default: with multicast available nothing here is consulted, and
+    # without it the fusion stays off as before. FORCE takes the unicast build
+    # even where multicast exists (bare-metal A/B of the two builds).
+    SGLANG_K3_AR_FUSION_UNICAST = EnvBool(False)
+    SGLANG_K3_AR_FUSION_FORCE_UNICAST = EnvBool(False)
+    SGLANG_K3_AR_FUSION_UNICAST_PUSH_MAX_KB = EnvInt(512)
+    SGLANG_K3_AR_FUSION_UNICAST_LOW_SM_BLOCKS = EnvInt(8)
     # K3 SP-MoE fused residual + reduce-scatter and matching all-gather over
     # CustomAllReduceV2's MNNVL push workspace. Auto-probed for checked-in
     # TP4/TP8 GB300 and TP16 GB200/GB300 tuning; set 0/1 to override. See

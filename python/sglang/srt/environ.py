@@ -907,6 +907,10 @@ class Envs:
     # Opt-in pipelined HiCache ACK sync (L2 and L3 queues); unsupported cache/topology
     # modes stay sync.
     SGLANG_ENABLE_HICACHE_ASYNC_ACK_SYNC = EnvBool(False)
+    # Above 1: after a ready-counts round in which no rank had HiCache work to drain,
+    # every rank skips that collective for this many passes minus one
+    # (mem_cache/hicache_ready_lease.py). A runtime switch. Off by default.
+    SGLANG_HICACHE_READY_COUNTS_LEASE = EnvInt(0)
     SGLANG_HICACHE_SKIP_HOST_DUPLICATE_RECLAIM = EnvBool(False)
     # Back up SWA to host only for the sliding window that ends each backup
     # chain (an insert's end), not for every SWA page the chain carries. A host

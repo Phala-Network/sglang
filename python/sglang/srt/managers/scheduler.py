@@ -4226,7 +4226,15 @@ class Scheduler(
             or self.enable_unified_cache_external_linker
             or self.enable_lmcache
         ):
-            self.tree_cache.check_hicache_events()
+            lease = runtime_switches.get(envs.SGLANG_HICACHE_READY_COUNTS_LEASE)
+            if lease > 1:
+                from sglang.srt.mem_cache.hicache_ready_lease import (
+                    check_hicache_events_leased,
+                )
+
+                check_hicache_events_leased(self.tree_cache, lease)
+            else:
+                self.tree_cache.check_hicache_events()
             if self.enable_hicache_storage and should_retry_storage_prefetch:
                 self._process_storage_prefetch_retries()
 

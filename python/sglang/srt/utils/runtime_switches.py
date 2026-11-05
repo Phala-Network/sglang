@@ -35,6 +35,7 @@ SWITCHES: Tuple[EnvField, ...] = (
     envs.SGLANG_HICACHE_PREFETCH_POLICY_OVERRIDE,
     envs.SGLANG_PREFILL_DECODE_INTERVAL_OVERRIDE,
     envs.SGLANG_CHUNKED_PREFILL_SHORT_RESERVE,
+    envs.SGLANG_HICACHE_READY_COUNTS_LEASE,
 )
 # Mutable: plugins (ccbridge) register raw environment names of their own.
 _NAMES = set(field.name for field in SWITCHES)

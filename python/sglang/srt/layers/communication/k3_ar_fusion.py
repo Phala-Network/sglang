@@ -227,6 +227,24 @@ def _create_buffer(
     # inference tensor, and the in-place write from a no_grad path (CUDA graph
     # capture) is then rejected
     with torch.inference_mode(False):
+        if _UNICAST_ACTIVE:
+            # Nothing reads a peer's copy of this buffer; and a larger message's regular
+            # all-reduce registers it as a graph input beside cudaMalloc'd ones, while
+            # a VMM allocation here sends them all down the VMM path, which refuses those.
+            region = torch.empty(
+                (max_rows * width,),
+                dtype=dtype,
+                device=torch.device("cuda", torch.cuda.current_device()),
+            ).view(max_rows, width)
+            buf = _Buffer(
+                region=region,
+                base=int(region.data_ptr()),
+                mc_base=0,
+                max_rows=max_rows,
+                width=width,
+            )
+            _BUFS.append(buf)
+            return buf
         region = _SymmetricMemory.empty_strided_p2p(
             (max_rows * width,),
             [1],

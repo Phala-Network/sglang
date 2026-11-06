@@ -297,7 +297,10 @@ from sglang.srt.managers.utils import (
 )
 from sglang.srt.mem_cache import kv_cache_builder
 from sglang.srt.mem_cache.allocator.page_interleave import page_interleave_shard_size
-from sglang.srt.mem_cache.base_prefix_cache import CacheRequestOutcome
+from sglang.srt.mem_cache.base_prefix_cache import (
+    CacheRequestOutcome,
+    MambaCowAllocError,
+)
 from sglang.srt.mem_cache.common import (
     checkpoint_kv_cache,
     discard_kv_cache_backup,
@@ -4318,8 +4321,13 @@ class Scheduler(
             for req in ready_grammar_requests:
                 self._add_request_to_queue(req)
 
-        if self.enable_priority_preemption or self.is_hybrid_swa:
-            # Reset batch_is_full to try preemption with a prefill adder.
+        if (
+            self.enable_priority_preemption
+            or self.is_hybrid_swa
+            or (self.is_hybrid_ssm and self.tree_cache.supports_mamba())
+        ):
+            # Cache eviction can restore Mamba/attention capacity without the
+            # running batch shrinking, so a previous refusal must be retried.
             running_batch.batch_is_full = False
         if running_batch.is_empty():
             # An empty batch has no request left to leave, and only a leaving
@@ -4497,27 +4505,33 @@ class Scheduler(
                     # marks the staged span below once it is surfaced.
                     req.host_hit_is_storage = False
 
-            req.init_next_round_input(self.tree_cache)
-            if pp_full_chunk is not None:
-                chunked_prefill_size = self._pp_restore_full_chunk(
-                    req, adder, chunked_prefill_size, pp_full_chunk
-                )
-            if self.enable_hicache_storage and (
-                self._prefetch_after_device_hit_loss(req)
-            ):
-                self._revert_unadmitted_mamba(req)
-                continue
-            if self.enable_hicache_storage and buffer_pipeline is not None:
-                staging_ready = buffer_pipeline.prepare_staged_prefetch(req)
-                req.time_stats.observe_storage_staging_ready(staging_ready)
-                if not staging_ready:
+            try:
+                req.init_next_round_input(self.tree_cache)
+            except MambaCowAllocError:
+                # A matched prefix can outlive the free slot for its state copy.
+                # Keep it queued and use the existing refusal cleanup below.
+                res = AddReqResult.NO_TOKEN
+            else:
+                if pp_full_chunk is not None:
+                    chunked_prefill_size = self._pp_restore_full_chunk(
+                        req, adder, chunked_prefill_size, pp_full_chunk
+                    )
+                if self.enable_hicache_storage and (
+                    self._prefetch_after_device_hit_loss(req)
+                ):
                     self._revert_unadmitted_mamba(req)
                     continue
-            res = adder.add_one_req(
-                req,
-                has_chunked_req=(self.chunked_req is not None),
-                truncation_align_size=self.truncation_align_size,
-            )
+                if self.enable_hicache_storage and buffer_pipeline is not None:
+                    staging_ready = buffer_pipeline.prepare_staged_prefetch(req)
+                    req.time_stats.observe_storage_staging_ready(staging_ready)
+                    if not staging_ready:
+                        self._revert_unadmitted_mamba(req)
+                        continue
+                res = adder.add_one_req(
+                    req,
+                    has_chunked_req=(self.chunked_req is not None),
+                    truncation_align_size=self.truncation_align_size,
+                )
 
             if self.enable_lora:
                 running_loras.add(req.lora_id)

@@ -9,6 +9,7 @@ from sglang.kernels.ops.attention.fla.chunk_delta_h import CHUNK_SIZE as FLA_CHU
 from sglang.srt.configs.mamba_utils import Mamba2CacheParams, Mamba2StateShape
 from sglang.srt.environ import envs
 from sglang.srt.managers.schedule_batch import Req
+from sglang.srt.mem_cache import memory_pool as memory_pool_module
 from sglang.srt.mem_cache.allocator import TokenToKVPoolAllocator
 from sglang.srt.mem_cache.memory_pool import (
     HybridLinearKVPool,
@@ -583,6 +584,72 @@ class TestMamba(unittest.TestCase):
         self.assertIsNone(
             mamba_cpu_none, "mamba_cpu should be None when mamba_indices=None"
         )
+
+
+class TestMambaTemporalCopy(unittest.TestCase):
+    def test_copy_from_cpu_chunk_boundaries(self):
+        """Small CPU pools cover partial chunks and both conv-copy branches."""
+        for use_fused in (False, True):
+            for count in (0, 1, 2, 5):
+                with self.subTest(use_fused=use_fused, count=count):
+                    temporal = torch.arange(2 * 16 * 3 * 4, dtype=torch.float32).view(
+                        2, 16, 3, 4
+                    )
+                    conv = torch.arange(2 * 16 * 2, dtype=torch.bfloat16).view(2, 16, 2)
+                    src = torch.tensor([0, 0, 5, 5, 9][:count], dtype=torch.int64)
+                    dst = torch.tensor([1, 2, 4, 6, 8][:count], dtype=torch.int64)
+                    expected_temporal = temporal.clone()
+                    expected_temporal[:, dst] = temporal[:, src]
+                    expected_conv = conv.clone()
+                    expected_conv[:, dst] = conv[:, src]
+                    sibling_calls = []
+                    pool = object.__new__(MambaPool)
+                    pool.mamba_cache = SimpleNamespace(conv=[conv], temporal=temporal)
+                    pool._should_fuse_slot_ops = lambda: use_fused
+                    pool._conv_slot_desc = object()
+                    pool.replayssm_write_pos = torch.zeros(16, dtype=torch.int32)
+                    pool.replayssm_write_pos[dst] = 3
+                    pool.debug_memory_pool = True
+                    pool._slot_siblings = [
+                        SimpleNamespace(
+                            copy_slots=lambda src, dst: sibling_calls.append(
+                                (src.clone(), dst.clone())
+                            )
+                        )
+                    ]
+                    slot_bytes = temporal.element_size() * temporal.numel() // 16
+
+                    def copy_conv(_desc, src, dst):
+                        conv[:, dst] = conv[:, src]
+
+                    with (
+                        envs.SGLANG_DEBUG_MEMORY_POOL.override(True),
+                        patch.object(
+                            memory_pool_module,
+                            "_MAMBA_TEMPORAL_COPY_CHUNK_BYTES",
+                            2 * slot_bytes,
+                        ),
+                        patch(
+                            "sglang.srt.mem_cache.mamba_slot_fused.fused_copy_conv_slots",
+                            side_effect=copy_conv,
+                        ) as fused_copy,
+                    ):
+                        pool.copy_from(src, dst)
+
+                    torch.testing.assert_close(
+                        temporal, expected_temporal, rtol=0, atol=0
+                    )
+                    torch.testing.assert_close(conv, expected_conv, rtol=0, atol=0)
+                    self.assertEqual(fused_copy.call_count, int(use_fused))
+                    self.assertTrue(
+                        torch.equal(
+                            pool.replayssm_write_pos[dst],
+                            torch.zeros(count, dtype=torch.int32),
+                        )
+                    )
+                    self.assertEqual(len(sibling_calls), 1)
+                    self.assertTrue(torch.equal(sibling_calls[0][0], src))
+                    self.assertTrue(torch.equal(sibling_calls[0][1], dst))
 
 
 if __name__ == "__main__":

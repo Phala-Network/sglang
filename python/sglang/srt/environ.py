@@ -1705,6 +1705,9 @@ class Envs:
     SGLANG_IMAGE_MAX_PIXELS = EnvInt(16384 * 28 * 28)
     SGLANG_RESIZE_RESAMPLE = EnvStr("")
     SGLANG_MM_BUFFER_SIZE_MB = EnvInt(0)
+    # K3 video only: resized uint8 staging (including a duplicate) plus one
+    # source decode/resize chunk. Encoded uploads and final embeddings are extra.
+    SGLANG_K3_VIDEO_MAX_DECODE_BYTES = EnvInt(4 * 1024**3)
     SGLANG_MM_PRECOMPUTE_HASH = EnvBool(False)
     SGLANG_VIT_ENABLE_CUDA_GRAPH = EnvBool(False)
     # Use the fully-vectorized ViT position-embedding interpolation (no per-image

@@ -7,6 +7,7 @@
 #   - Full-rank KDA gate (use_full_rank_gate)
 
 import logging
+import math
 import os
 import re
 from array import array
@@ -4211,6 +4212,40 @@ class KimiK3ForConditionalGeneration(nn.Module):
                             raise ValueError(
                                 "Kimi-K3 deferred GPU preprocessing produced wrong grids"
                             )
+                    elif backend == "gpu_video":
+                        from sglang.srt.multimodal.processors.kimi_k3 import (
+                            _gpu_preprocess_k3_visual_items,
+                            _KimiK3VisualItem,
+                        )
+
+                        image_scale, image_bias = normalization_tensors(
+                            first_config.image_mean,
+                            first_config.image_std,
+                            device,
+                        )
+                        visual_items = [
+                            _KimiK3VisualItem(
+                                media_type="video",
+                                frames=tuple(item.feature.unbind(0)),
+                                source_index=index,
+                                in_patch_limit=0,
+                            )
+                            for index, item in enumerate(group_items)
+                        ]
+                        pixel_values, produced_grids = _gpu_preprocess_k3_visual_items(
+                            visual_items,
+                            [entry.resize_config for entry in group_configs],
+                            image_scale,
+                            image_bias,
+                            self.vision_tower.patch_size,
+                            first_config.transparent_bg_config,
+                        )
+                        if not torch.equal(
+                            produced_grids.cpu(), grid_thws_host[global_indices]
+                        ):
+                            raise ValueError(
+                                "Kimi-K3 temporal preprocessing produced wrong grids"
+                            )
                     elif backend == "cpu":
                         from sglang.srt.multimodal.kimi_k3_image_processing import (
                             materialize_kimi_k3_cpu_features,
@@ -4255,6 +4290,47 @@ class KimiK3ForConditionalGeneration(nn.Module):
                 features, device=device, dtype=target_dtype
             )
 
+        encode_owned = None
+        if any(
+            getattr(
+                item.model_specific_data.get(DEFERRED_PREPROCESSING_KEY),
+                "backend",
+                None,
+            )
+            == "gpu_video"
+            for item in items
+        ):
+            from sglang.srt.multimodal.mm_utils import iter_frame_bounded_image_batches
+
+            # Video-only bound: one complete temporal chunk. Every rank checks
+            # the shared grid list before owner assignment or any collective.
+            max_frames = 4
+            if any(not 1 <= int(grid[0]) <= max_frames for grid in grid_thw_list):
+                raise ValueError("A temporal item does not fit the vision frame budget")
+
+            def encode_owned(indices):
+                outputs = []
+                for group in iter_frame_bounded_image_batches(
+                    indices, grid_thw_list, max_frames
+                ):
+                    pixels = materialize_item_features(group)
+                    grids = [grid_thw_list[index] for index in group]
+                    output = self.vision_tower(
+                        pixels,
+                        grid_hw=torch.tensor(grids, device=device),
+                        grid_thw_list=grids,
+                        max_seqlen=max(math.prod(grid) for grid in grids),
+                    )
+                    # Graph replay returns static storage. Take ownership before
+                    # another group of the same shape overwrites that buffer.
+                    outputs.append(
+                        torch.cat(output, dim=0)
+                        if isinstance(output, (list, tuple))
+                        else output.clone()
+                    )
+                    del pixels
+                return outputs[0] if len(outputs) == 1 else torch.cat(outputs, dim=0)
+
         if self.use_data_parallel:
             from sglang.srt.multimodal.mm_utils import run_dp_sharded_mrope_vision_model
 
@@ -4268,11 +4344,17 @@ class KimiK3ForConditionalGeneration(nn.Module):
                 # gather length must ignore t.
                 pool_temporal_dimension=True,
                 pass_grid_thw_list=True,
-                load_local_pixel_values=materialize_item_features,
+                load_local_pixel_values=materialize_item_features
+                if encode_owned is None
+                else None,
+                encode_local_items=encode_owned,
                 pixel_values_device=device,
                 pixel_values_dtype=target_dtype,
             )
             return self.mm_projector(image_embeds)
+
+        if encode_owned is not None:
+            return self.mm_projector(encode_owned(list(range(len(items)))))
 
         pixel_values = materialize_item_features(list(range(len(items))))
         image_embeds = self.vision_tower(pixel_values, grid_thws_host.to(device))
@@ -4335,6 +4417,7 @@ class KimiK3ForConditionalGeneration(nn.Module):
             language_model=self.language_model,
             data_embedding_funcs={
                 Modality.IMAGE: self.get_image_feature,
+                Modality.VIDEO: self.get_image_feature,
             },
             positions=positions,
             pp_proxy_tensors=pp_proxy_tensors,

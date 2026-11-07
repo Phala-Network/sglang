@@ -701,7 +701,7 @@ class OpenAIServingChat(OpenAIServingBase):
         messages: list[dict[str, Any]],
         request: ChatCompletionRequest,
     ) -> tuple[list[dict[str, Any]], int, str | None]:
-        image_count = 0
+        media_count = 0
         for index, message in enumerate(messages):
             content = message.get("content")
             if isinstance(content, list):
@@ -724,7 +724,16 @@ class OpenAIServingChat(OpenAIServingBase):
                         if isinstance(image, str):
                             image = {"url": image, "detail": part.get("detail")}
                         parts.append({"type": "image_url", "image_url": image})
-                        image_count += 1
+                        media_count += 1
+                    elif part_type == "video_url":
+                        video = part.get("video_url") or {}
+                        if isinstance(video, str):
+                            video = {"url": video}
+                        # K3's chat encoder only recognizes image parts. Emit one
+                        # structural media placeholder here; the multimodal
+                        # processor expands it into timestamped video chunks.
+                        parts.append({"type": "image_url", "image_url": video})
+                        media_count += 1
                 message["content"] = parts
             elif isinstance(content, str):
                 message["content"] = neutralize_kimi_k3_image_placeholder(content)
@@ -768,7 +777,7 @@ class OpenAIServingChat(OpenAIServingBase):
             messages, assistant_prefix = self._handle_last_assistant_message(
                 messages, request
             )
-        return messages, image_count, assistant_prefix
+        return messages, media_count, assistant_prefix
 
     def _encode_messages(
         self,
@@ -792,7 +801,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 image_data=image_data,
             )
         if self.chat_encoding_spec == "kimi_k3":
-            messages, image_count, assistant_prefix = self._prepare_kimi_k3_messages(
+            messages, media_count, assistant_prefix = self._prepare_kimi_k3_messages(
                 messages, request
             )
             template_kwargs = dict(request.chat_template_kwargs or {})
@@ -806,8 +815,8 @@ class OpenAIServingChat(OpenAIServingBase):
                         f"chat_template_kwargs cannot set {key!r}; "
                         "use the request fields instead."
                     )
-            if image_count:
-                template_kwargs["image_prompts"] = ["<|media_pad|>"] * image_count
+            if media_count:
+                template_kwargs["image_prompts"] = ["<|media_pad|>"] * media_count
 
             tiers = self._kimi_k3_effort_tiers()
             effort = template_kwargs.get("thinking_effort")
@@ -891,7 +900,7 @@ class OpenAIServingChat(OpenAIServingBase):
         if not get_serving().enable_cache_report:
             return None
         return PromptTokensDetails(
-            cached_tokens=content["meta_info"].get("cached_tokens", 0)
+            cached_tokens=self._reported_cached_tokens(content["meta_info"])
         )
 
     def _reported_prompt_tokens(self, meta_info: dict[str, Any]) -> int:
@@ -901,6 +910,14 @@ class OpenAIServingChat(OpenAIServingBase):
             # reference API excludes it from billed/reported prompt tokens.
             prompt_tokens = max(0, prompt_tokens - self._KIMI_K3_GENERATION_STUB_TOKENS)
         return prompt_tokens
+
+    def _reported_cached_tokens(self, meta_info: dict[str, Any]) -> int:
+        cached_tokens = meta_info.get("cached_tokens", 0)
+        if self.chat_encoding_spec == "kimi_k3":
+            # Cache hits are a physical prefix length. Exclude only the part of
+            # K3's trailing generation stub that the cached prefix reaches.
+            cached_tokens = min(cached_tokens, self._reported_prompt_tokens(meta_info))
+        return cached_tokens
 
     @staticmethod
     def _sort_tool_message_run(
@@ -2572,7 +2589,7 @@ class OpenAIServingChat(OpenAIServingBase):
         if self.chat_encoding_spec != "kimi_k3" or not prefix:
             return {}
         prompt = self._reported_prompt_tokens(meta_info)
-        cached = meta_info.get("cached_tokens", 0) or 0
+        cached = self._reported_cached_tokens(meta_info) or 0
         return {
             f"{prefix}-Prompt-Tokens": str(prompt),
             f"{prefix}-Cached-Tokens": str(cached),
@@ -2693,7 +2710,9 @@ class OpenAIServingChat(OpenAIServingBase):
                 reasoning_tokens[index] = content["meta_info"].get(
                     "reasoning_tokens", 0
                 )
-                cached_tokens[index] = content["meta_info"].get("cached_tokens", 0)
+                cached_tokens[index] = self._reported_cached_tokens(
+                    content["meta_info"]
+                )
                 hidden_states[index] = content["meta_info"].get("hidden_states", None)
                 routed_experts[index] = content["meta_info"].get("routed_experts", None)
                 cached_tokens_details[index] = content["meta_info"].get(
@@ -3140,6 +3159,9 @@ class OpenAIServingChat(OpenAIServingBase):
                         "prompt_tokens": self._reported_prompt_tokens(
                             item["meta_info"]
                         ),
+                        "cached_tokens": self._reported_cached_tokens(
+                            item["meta_info"]
+                        ),
                     },
                 }
                 for item in ret
@@ -3524,6 +3546,7 @@ class OpenAIServingChat(OpenAIServingBase):
         """
         if self.chat_encoding_spec != "kimi_k3":
             return usage
+        cached_tokens = min(int(cached_tokens or 0), usage.prompt_tokens)
         usage.completion_tokens_details = CompletionTokensDetails(
             reasoning_tokens=int(reasoning_tokens or 0)
         )

@@ -19,7 +19,8 @@ class KimiK3DeferredPreprocessing:
     is not mirrored here.
     """
 
-    backend: Literal["gpu", "cpu"]
+    # gpu_video carries raw TCHW uint8 frames, one complete temporal grid.
+    backend: Literal["gpu", "cpu", "gpu_video"]
     image_mean: list[float]
     image_std: list[float]
     transparent_bg_config: Optional[dict]

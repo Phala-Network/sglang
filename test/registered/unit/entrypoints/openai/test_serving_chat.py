@@ -1939,7 +1939,7 @@ class ServingChatTestCase(CustomTestCase):
                     "id": "chatcmpl-kimi-k3-usage",
                     "prompt_tokens": 2075,
                     "completion_tokens": 1,
-                    "cached_tokens": 0,
+                    "cached_tokens": 2073,
                     "image_tokens": 2035,
                     "finish_reason": {"type": "stop", "matched": None},
                     "weight_version": "default",
@@ -1951,7 +1951,24 @@ class ServingChatTestCase(CustomTestCase):
 
         self.assertEqual(response.usage.prompt_tokens, 2072)
         self.assertEqual(response.usage.total_tokens, 2073)
+        self.assertEqual(response.usage.prompt_tokens_details.cached_tokens, 2072)
         self.assertEqual(response.usage.prompt_tokens_details.image_tokens, 2035)
+
+    def test_reported_cached_tokens_preserves_prefixes_and_other_encodings(self):
+        for encoding, prompt, cached, expected in (
+            ("kimi_k3", 6210, 6000, 6000),
+            ("kimi_k3", 6210, 6208, 6207),
+            ("kimi_k3", 2, 1, 0),
+            (None, 6210, 6208, 6208),
+        ):
+            with self.subTest(encoding=encoding, prompt=prompt, cached=cached):
+                self.chat.chat_encoding_spec = encoding
+                self.assertEqual(
+                    self.chat._reported_cached_tokens(
+                        {"prompt_tokens": prompt, "cached_tokens": cached}
+                    ),
+                    expected,
+                )
 
     def test_kimi_tool_call_keeps_default_reasoning(self):
         self.template_manager.reasoning_config = ReasoningToggleConfig(
@@ -2894,6 +2911,36 @@ class ServingChatTestCase(CustomTestCase):
         self.assertNotIn("schema_", call.kwargs["response_format"]["json_schema"])
         self.assertEqual(result.prompt_ids, [7, 8, 9])
         self.assertEqual(result.image_data[0].url, "image-1")
+
+    def test_kimi_k3_routes_video_through_one_structural_media_placeholder(self):
+        self.template_manager.chat_template_name = None
+        self.chat.chat_encoding_spec = "kimi_k3"
+        self.tm.model_config.is_multimodal = True
+        self.tm.tokenizer.apply_chat_template.return_value = [7, 99, 8]
+        request = ChatCompletionRequest(
+            model="x",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "video_url",
+                            "video_url": {"url": "https://example.com/video.mp4"},
+                        },
+                        {"type": "text", "text": "Describe it."},
+                    ],
+                }
+            ],
+        )
+
+        result = self.chat._process_messages(request, is_multimodal=True)
+
+        call = self.tm.tokenizer.apply_chat_template.call_args
+        self.assertEqual(call.kwargs["image_prompts"], ["<|media_pad|>"])
+        self.assertEqual(call.args[0][0]["content"][0]["type"], "image_url")
+        self.assertIsNone(result.image_data)
+        self.assertEqual(result.video_data, ["https://example.com/video.mp4"])
+        self.assertEqual(result.modalities, ["video"])
 
     def test_kimi_k3_neutralizes_text_only_assistant_history(self):
         self.template_manager.chat_template_name = None
@@ -5433,7 +5480,9 @@ class ServingChatTestCase(CustomTestCase):
                 choice_logprobs=None,
                 finish_reason_type="stop",
                 continuous_usage_stats=True,
-                prompt_tokens={0: 10},
+                prompt_tokens={
+                    0: self.chat._reported_prompt_tokens(content["meta_info"])
+                },
                 reasoning_tokens={0: 0},
                 completion_tokens={0: 2},
             ):
@@ -5456,6 +5505,16 @@ class ServingChatTestCase(CustomTestCase):
                     usages[0]["prompt_tokens_details"]["cached_tokens"],
                     cached_tokens,
                 )
+
+    def test_kimi_k3_continuous_usage_excludes_cached_generation_stub(self):
+        self.chat.chat_encoding_spec = "kimi_k3"
+        enter_override(
+            self, get_context().override_server_args(enable_cache_report=True)
+        )
+        usages = self._collect_continuous_usage(cached_tokens=8)
+        self.assertTrue(usages, "continuous_usage_stats attached no usage")
+        self.assertEqual(usages[0]["prompt_tokens"], 7)
+        self.assertEqual(usages[0]["prompt_tokens_details"]["cached_tokens"], 7)
 
     def test_continuous_usage_omits_cached_tokens_when_report_disabled(self):
         """With cache reporting off, continuous_usage_stats must not leak cached tokens."""
@@ -6660,7 +6719,11 @@ class K3StreamSpecConformanceTestCase(unittest.TestCase):
         with envs.SGLANG_USAGE_HEADER_PREFIX.override("X-Test-Usage"):
             frames = self._frames(
                 self._stream(
-                    [self._event(finish={"type": "stop", "matched": None})],
+                    [
+                        self._event(
+                            finish={"type": "stop", "matched": None}, cached_tokens=8
+                        )
+                    ],
                     req,
                     usage_headers=headers,
                 )
@@ -6675,6 +6738,9 @@ class K3StreamSpecConformanceTestCase(unittest.TestCase):
         )
         # And the reported prompt count still excludes K3's generation stub.
         self.assertEqual(usage["prompt_tokens"], 10 - self._STUB)
+        self.assertEqual(
+            usage["prompt_tokens_details"]["cached_tokens"], 10 - self._STUB
+        )
 
     def test_usage_headers_are_off_without_a_prefix(self):
         """No SGLANG_USAGE_HEADER_PREFIX: no usage headers are sent."""

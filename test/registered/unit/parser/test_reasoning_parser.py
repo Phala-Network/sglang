@@ -1019,7 +1019,7 @@ class TestStreamingChunkSizeInvariance(CustomTestCase):
 
     Speculative decoding and stream_interval > 1 deliver multiple tokens per
     step, which splits multi-character tokens like `</think>` across chunk
-    boundaries. The two `_is_chunk_dependent` tests pin known exceptions.
+    boundaries. Format-specific tool interruption exceptions remain pinned below.
     """
 
     CHUNK_SIZES = [1, 2, 3, 5, 7, 11, 23, 1000]
@@ -1090,9 +1090,8 @@ class TestStreamingChunkSizeInvariance(CustomTestCase):
                         self._feed(DeepSeekR1Detector(), text, chunk_size), expected
                     )
 
-    def test_text_before_think_token_is_chunk_dependent(self):
-        """Accepted divergence, inherited from main: text before `<think>` lands
-        in reasoning or content depending on where the chunk boundary falls."""
+    def test_text_before_think_token_stays_content_across_chunks(self):
+        """A later literal opener cannot reclassify an assistant's answer."""
         text = "lead<think>r</think>tail"
         variants = {
             self._feed(Qwen3Detector(), text, chunk_size)
@@ -1101,13 +1100,10 @@ class TestStreamingChunkSizeInvariance(CustomTestCase):
 
         self.assertEqual(
             variants,
-            {("r", "leadtail"), ("", text), ("leadr", "tail")},
+            {("", text)},
         )
-        # And the non-streaming path produces yet a fourth split.
         one_shot = Qwen3Detector().detect_and_parse(text)
-        self.assertEqual(
-            (one_shot.reasoning_text, one_shot.normal_text), ("lead<think>r", "tail")
-        )
+        self.assertEqual((one_shot.reasoning_text, one_shot.normal_text), ("", text))
 
 
 class TestGptOssDetector(CustomTestCase):

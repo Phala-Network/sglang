@@ -461,6 +461,7 @@ class Qwen3Detector(BaseReasoningFormatDetector):
         continue_final_message: bool = False,
         previous_content: str = "",
         force_nonempty_content: bool = False,
+        single_assistant_reasoning: bool = True,
     ):
         think_excluded_tokens = [
             "<tool_call>",
@@ -483,6 +484,107 @@ class Qwen3Detector(BaseReasoningFormatDetector):
             reasoning_default="enable_thinking",
             force_nonempty_content=force_nonempty_content,
         )
+        # Other model detectors inherit Qwen's delimiter vocabulary. Keep their
+        # existing policy; only Qwen's single-assistant path commits to content.
+        self._single_assistant_reasoning = (
+            type(self) is Qwen3Detector and single_assistant_reasoning
+        )
+        self._qwen_phase = "initial"
+        if self._single_assistant_reasoning:
+            # The shared constructor recognizes markers anywhere in history.
+            # Rebuild only this assistant's phase using the same initial-only
+            # transitions as new output, then discard history's pending payload.
+            self._in_reasoning = bool(force_reasoning)
+            self.stripped_think_start = False
+            if self.previous_content:
+                self._parse_streaming_increment_impl(self.previous_content)
+                self._buffer = ""
+
+    def _detect_and_parse_impl(self, text: str) -> StreamingParseResult:
+        if not self._single_assistant_reasoning:
+            return super()._detect_and_parse_impl(text)
+
+        # Use the same transitions as SSE without retaining one-shot state.
+        # Visibility fallback remains owned by detect_and_parse's outer layer.
+        detector = Qwen3Detector(
+            stream_reasoning=False,
+            force_reasoning=self.force_reasoning,
+            continue_final_message=self.continue_final_message,
+            previous_content=self.previous_content,
+        )
+        parsed = detector.parse_streaming_increment(text)
+        tail = detector.finish()
+        return StreamingParseResult(
+            reasoning_text=parsed.reasoning_text + tail.reasoning_text,
+            normal_text=parsed.normal_text + tail.normal_text,
+        )
+
+    def _strip_leading_think_start(self, text: str) -> str:
+        if self._single_assistant_reasoning:
+            # Initial control markers are consumed only by our transition path.
+            # A later buffered opener is payload, including during continuation.
+            return text
+        return super()._strip_leading_think_start(text)
+
+    def _parse_streaming_increment_impl(self, new_text: str) -> StreamingParseResult:
+        if not self._single_assistant_reasoning:
+            return super()._parse_streaming_increment_impl(new_text)
+
+        if self._qwen_phase == "content":
+            text = self._buffer + new_text
+            self._buffer = ""
+            return StreamingParseResult(normal_text=text)
+
+        if self._qwen_phase == "initial":
+            text = self._buffer + new_text
+            self._buffer = ""
+            whitespace = ""
+            while True:
+                stripped = text.lstrip()
+                if not stripped or (
+                    self.think_start_token.startswith(stripped)
+                    and stripped != self.think_start_token
+                ):
+                    # Resolve only the initial opener; an incomplete prefix is
+                    # flushed unchanged by finish() if it never becomes a tag.
+                    self._buffer = whitespace + text
+                    return StreamingParseResult()
+                if stripped.startswith(self.think_start_token):
+                    whitespace += text[: len(text) - len(stripped)]
+                    text = stripped[len(self.think_start_token) :]
+                    self._in_reasoning = True
+                    self.stripped_think_start = True
+                    continue
+                text = whitespace + text
+                if not self._in_reasoning:
+                    self._qwen_phase = "content"
+                    return StreamingParseResult(normal_text=text)
+                self._qwen_phase = "reasoning"
+                # Initial markers were handled above. Literal later openers
+                # inside reasoning must not be removed by the shared parser.
+                self.stripped_think_start = True
+                break
+        else:
+            text = new_text
+
+        pending = self._buffer + text
+        tool_idx = self._find_tool_start(pending, self._streamed_reasoning_tail)
+        end_idx = pending.find(self.think_end_token)
+        if tool_idx >= 0 and (end_idx < 0 or tool_idx < end_idx):
+            # Resolve the first actual closer. Looking at a later </think>
+            # before an earlier tool opener would make chunking change the split.
+            self._buffer = ""
+            self._in_reasoning = False
+            result = StreamingParseResult(
+                reasoning_text=pending[:tool_idx], normal_text=pending[tool_idx:]
+            )
+        else:
+            result = super()._parse_streaming_increment_impl(text)
+
+        if not self._in_reasoning:
+            # Closing reasoning commits to the answer even with an empty tail.
+            self._qwen_phase = "content"
+        return result
 
 
 class KimiDetector(BaseReasoningFormatDetector):
@@ -2349,6 +2451,11 @@ class ReasoningParser:
 
         # Only pass force_reasoning if explicitly set, let detectors use their defaults
         kwargs = {"stream_reasoning": stream_reasoning}
+        if detector_class is Qwen3Detector:
+            kwargs["single_assistant_reasoning"] = model_type.lower() in {
+                "qwen3",
+                "qwen3-thinking",
+            }
         if force_reasoning is not None:
             kwargs["force_reasoning"] = force_reasoning
 

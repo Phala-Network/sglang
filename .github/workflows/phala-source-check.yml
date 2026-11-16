@@ -1,0 +1,55 @@
+name: Phala v0.5.23 source checks
+
+on:
+  pull_request:
+    paths:
+      - 'python/sglang/**'
+      - 'test/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phala-v0523-source-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Read the fixed official base
+        run: git fetch --no-tags --depth=1 origin 297e54fd105e974cdf401e5b4d20253a22c16f90
+      - name: Check changed-source syntax and whitespace
+        shell: bash
+        run: |
+          set -eu
+          git diff --check 297e54fd105e974cdf401e5b4d20253a22c16f90 HEAD
+          python - <<'PY'
+          import ast
+          import json
+          from pathlib import Path
+          import subprocess
+
+          base = '297e54fd105e974cdf401e5b4d20253a22c16f90'
+          names = subprocess.check_output([
+              'git', 'diff', '--name-only', '--diff-filter=ACMR', '-z',
+              base, 'HEAD', '--', '*.py',
+          ]).decode().split('\0')
+          names = [name for name in names if name]
+          for name in names:
+              ast.parse(Path(name).read_text(encoding='utf-8'), filename=name)
+          print(json.dumps({'python_files': len(names), 'scope': 'source syntax only'}))
+          PY
+
+# Exact source/patch replay runs in sglang-serving-patches' version export job.
+# Real CPU/GPU/final-image checks remain separate scoped release evidence.

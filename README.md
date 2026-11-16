@@ -20,6 +20,10 @@ weights, deployment configuration and rollout acceptance remain separate.
 from its release receipt. A source tag or upstream feature list alone does not
 establish hardware/model qualification.
 
+The [official v0.5.23 version-maintenance candidate](docs/phala/SGLANG-0.5.23.md)
+uses a separate complete engine identity and a shared source-derived version stack.
+It is not a published or accepted image; this main keeps its existing runtime consumers.
+
 The officialv0.5.21 compatibility maintenance line uses separately pinned native
 interfaces; it does not replace this sharedv0.5.20 tree. Its
 [Xing native EAGLE budget release](https://github.com/Phala-Network/sglang/releases/tag/phala-v0.5.21-xing4-yarn-rc5.3)

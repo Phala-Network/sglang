@@ -1,22 +1,136 @@
+import copy
 import json
 import logging
 import re
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional, Union
 
-from sglang.srt.entrypoints.openai.protocol import Tool
-from sglang.srt.function_call.base_format_detector import BaseFormatDetector
+from sglang.srt.entrypoints.openai.protocol import Tool, ToolChoice
+from sglang.srt.environ import envs
+from sglang.srt.function_call.base_format_detector import (
+    BaseFormatDetector,
+    StructuralTag,
+)
 from sglang.srt.function_call.core_types import (
     StreamingParseResult,
     ToolCallItem,
     _GetInfoFunc,
 )
 from sglang.srt.function_call.utils import (
+    coerce_argument_to_schema,
+    get_argument_schema,
     get_schema_properties,
     infer_type_from_json_schema,
     safe_literal_eval,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _preserve_xml_parameter_schema(structural_tag: StructuralTag) -> StructuralTag:
+    """Preserve top-level XML required/empty contracts with stock XGrammar."""
+    value = structural_tag.model_dump()
+
+    def visit(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "json_schema" and node.get("style") == "qwen_xml":
+                schema = node.get("json_schema")
+                if not isinstance(schema, dict):
+                    return
+                properties = schema.get("properties") or {}
+                required = schema.get("required") or []
+                missing = [name for name in required if name not in properties]
+                if len(set(required)) > schema.get("maxProperties", float("inf")):
+                    raise ValueError("Required XML parameters exceed maxProperties")
+                if missing:
+                    if schema.get("patternProperties") or schema.get("propertyNames"):
+                        raise ValueError(
+                            "Undeclared required XML parameters have complex key constraints"
+                        )
+                    additional = schema.get(
+                        "additionalProperties",
+                        schema.get("unevaluatedProperties", True),
+                    )
+                    if additional is False:
+                        raise ValueError(
+                            "Undeclared required XML parameters are forbidden"
+                        )
+                    properties = dict(properties)
+                    for name in missing:
+                        properties[name] = (
+                            copy.deepcopy(additional)
+                            if isinstance(additional, dict)
+                            else {}
+                        )
+                    schema["properties"] = properties
+                # The Qwen XML tool serializer treats an undeclared parameter
+                # set as a no-argument function unless additionalProperties is
+                # explicitly open. This is not the default for plain JSON Schema.
+                empty = schema.get("maxProperties") == 0 or (
+                    not properties
+                    and not required
+                    and not schema.get("patternProperties")
+                    and not any(
+                        key in schema for key in ("$ref", "allOf", "anyOf", "oneOf")
+                    )
+                    and schema.get("additionalProperties", False) is False
+                )
+                if empty:
+                    if schema.get("minProperties", 0) > 0:
+                        raise ValueError(
+                            "Empty XML parameters cannot satisfy minProperties"
+                        )
+                    node.clear()
+                    node.update(type="const_string", value="")
+                return
+            for child in node.values():
+                visit(child)
+        elif isinstance(node, list):
+            for child in node:
+                visit(child)
+
+    visit(value)
+    return StructuralTag.model_validate(value)
+
+
+def _align_required_tool_call_repetition(
+    structural_tag: StructuralTag, parallel_tool_calls: bool
+) -> StructuralTag:
+    """Match Qwen's trained separator and enforce the request's call limit."""
+    value = structural_tag.model_dump()
+    repetitions = []
+
+    def visit(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("type") in ("tags_with_separator", "triggered_tags"):
+                repetitions.append(node)
+            for child in node.values():
+                visit(child)
+        elif isinstance(node, list):
+            for child in node:
+                visit(child)
+
+    visit(value)
+    if len(repetitions) != 1:
+        raise ValueError(
+            "Qwen3 Coder required structural tag must contain one repeated-tag format"
+        )
+
+    repetition = repetitions[0]
+    if repetition.get("type") == "triggered_tags":
+        if not repetition.get("at_least_one") or repetition.get("triggers") != [
+            "<tool_call>\n<function="
+        ]:
+            raise ValueError("Unexpected Qwen3 Coder required tool-call trigger")
+        tags = repetition["tags"]
+        repetition.clear()
+        repetition.update(
+            type="tags_with_separator",
+            tags=tags,
+            at_least_one=True,
+        )
+    repetition["separator"] = "\n"
+    repetition["stop_after_first"] = not parallel_tool_calls
+    return StructuralTag.model_validate(value)
 
 
 class Qwen3CoderDetector(BaseFormatDetector):
@@ -31,32 +145,15 @@ class Qwen3CoderDetector(BaseFormatDetector):
         self.parameter_prefix: str = "<parameter="
         self.parameter_end_token: str = "</parameter>"
 
-        # Regex for non-streaming fallback
+        # Only closed function bodies inside closed tool blocks are executable.
         self.tool_call_regex = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
         self.tool_call_function_regex = re.compile(
-            r"<function=(.*?)</function>|<function=(.*)$", re.DOTALL
+            r"<function=([^<>]+)>(.*?)</function>", re.DOTALL
         )
         self.tool_call_parameter_regex = re.compile(
             r"<parameter=(.*?)(?:</parameter>|(?=<parameter=)|(?=</function>)|$)",
             re.DOTALL,
         )
-
-        # Streaming State
-        # Base class already initializes _buffer, we just use it directly
-        # No need to check with hasattr - we control the lifecycle through inheritance
-
-        # Index pointing to the next character to be processed in buffer
-        self.parsed_pos: int = 0
-        # Parameter count inside the current tool being processed, used to determine whether to add comma
-        self.current_tool_param_count: int = 0
-        # Flag indicating whether current tool has already sent '{'
-        self.json_started: bool = False
-
-        # [FIX] New state flag: mark whether inside tool_call structure block
-        self.is_inside_tool_call: bool = False
-
-        # Initialize attributes that were missing in the original PR
-        self.current_func_name: Optional[str] = None
 
     def has_tool_call(self, text: str) -> bool:
         return self.tool_call_start_token in text
@@ -88,7 +185,7 @@ class Qwen3CoderDetector(BaseFormatDetector):
                     return params
                 else:
                     return {}
-        logger.warning(f"Tool '{func_name}' is not defined in the tools list.")
+        logger.warning("Tool is not defined in the tools list.")
         return {}
 
     def _get_param_type(self, param_schema: Any) -> str:
@@ -99,9 +196,40 @@ class Qwen3CoderDetector(BaseFormatDetector):
         return str(inferred_type).strip().lower()
 
     def _convert_param_value(
-        self, param_value: str, param_name: str, param_config: dict, func_name: str
+        self,
+        param_value: str,
+        param_name: str,
+        param_config: dict,
+        func_name: str,
+        tools: Optional[List[Tool]] = None,
     ) -> Any:
         """Convert parameter value based on its type in the schema."""
+        argument_schema = get_argument_schema(func_name, param_name, tools or [])
+        if argument_schema is None:
+            for tool in tools or []:
+                if tool.function.name != func_name:
+                    continue
+                schema = tool.function.parameters
+                if not isinstance(schema, dict) or schema.get("patternProperties"):
+                    break
+                if param_name in get_schema_properties(schema):
+                    break
+                additional = schema.get(
+                    "additionalProperties", schema.get("unevaluatedProperties")
+                )
+                if isinstance(additional, dict):
+                    argument_schema = dict(additional)
+                    for key in ("$defs", "definitions"):
+                        if key in schema and key not in argument_schema:
+                            argument_schema[key] = schema[key]
+                break
+        if argument_schema is not None:
+            converted, schema_valid = coerce_argument_to_schema(
+                param_value, argument_schema
+            )
+            if schema_valid:
+                return converted
+
         # Handle null value for any type
         if param_value.lower() == "null":
             return None
@@ -109,8 +237,7 @@ class Qwen3CoderDetector(BaseFormatDetector):
         if param_name not in param_config:
             if param_config != {}:
                 logger.warning(
-                    f"Parsed parameter '{param_name}' is not defined in the tool "
-                    f"parameters for tool '{func_name}', directly returning the string value."
+                    "Tool argument conversion could not use the declared type; retaining fallback semantics."
                 )
             return param_value
 
@@ -128,8 +255,7 @@ class Qwen3CoderDetector(BaseFormatDetector):
                 param_value = int(param_value)
             except Exception:
                 logger.warning(
-                    f"Parsed value '{param_value}' of parameter '{param_name}' is not an integer in tool "
-                    f"'{func_name}', degenerating to string."
+                    "Tool argument conversion could not use the declared type; retaining fallback semantics."
                 )
             return param_value
         elif param_type.startswith("num") or param_type.startswith("float"):
@@ -142,15 +268,14 @@ class Qwen3CoderDetector(BaseFormatDetector):
                     param_value = int(param_value)
             except Exception:
                 logger.warning(
-                    f"Parsed value '{param_value}' of parameter '{param_name}' is not a float in tool "
-                    f"'{func_name}', degenerating to string."
+                    "Tool argument conversion could not use the declared type; retaining fallback semantics."
                 )
             return param_value
         elif param_type in ["boolean", "bool", "binary"]:
             param_value = param_value.lower()
             if param_value not in ["true", "false"]:
                 logger.warning(
-                    f"Parsed value '{param_value}' of parameter '{param_name}' is not a boolean (`true` of `false`) in tool '{func_name}', degenerating to false."
+                    "Tool argument conversion could not use the declared type; retaining fallback semantics."
                 )
             return param_value == "true"
         else:
@@ -164,44 +289,42 @@ class Qwen3CoderDetector(BaseFormatDetector):
                     return param_value
                 except Exception:
                     logger.warning(
-                        f"Parsed value '{param_value}' of parameter '{param_name}' cannot be parsed with json.loads in tool "
-                        f"'{func_name}', will try other methods to parse it."
+                        "Tool argument conversion could not use the declared type; retaining fallback semantics."
                     )
             try:
                 param_value = safe_literal_eval(param_value)
             except Exception:
                 logger.warning(
-                    f"Parsed value '{param_value}' of parameter '{param_name}' cannot be converted via Python `ast.literal_eval()` in tool '{func_name}', degenerating to string."
+                    "Tool argument conversion could not use the declared type; retaining fallback semantics."
                 )
             return param_value
 
     def detect_and_parse(self, text: str, tools: List[Tool]) -> StreamingParseResult:
-        """One-shot parsing for non-streaming scenarios."""
-        if self.tool_call_start_token not in text:
-            return StreamingParseResult(normal_text=text)
+        """Use the streaming block boundary rules without retaining request state."""
+        detector = type(self)()
+        parsed = detector.parse_streaming_increment(text, tools)
+        tail = detector.finish(tools)
+        return StreamingParseResult(
+            normal_text=parsed.normal_text + tail.normal_text, calls=parsed.calls
+        )
 
+    def _parse_complete_block(self, text: str, tools: List[Tool]) -> List[ToolCallItem]:
+        """Parse function bodies only after the outer block has closed."""
         calls = []
         try:
-            # Simple cleanup of the text to find tool calls
-            # Note: This is a simplified regex approach consistent with vLLM
             raw_tool_calls = self.tool_call_regex.findall(text)
-            if not raw_tool_calls:
-                # Fallback: maybe the whole text is inside the tag or tags are stripped
-                if self.tool_call_prefix in text:
-                    raw_tool_calls = [text]
+            known_names = {tool.function.name for tool in tools or []}
 
             tool_idx = 0
             for tool_content in raw_tool_calls:
                 # Find function calls
                 funcs = self.tool_call_function_regex.findall(tool_content)
-                for func_match in funcs:
-                    func_body = func_match[0] or func_match[1]
-                    if ">" not in func_body:
+                for func_name, params_str in funcs:
+                    if (
+                        func_name not in known_names
+                        and not envs.SGLANG_FORWARD_UNKNOWN_TOOLS.get()
+                    ):
                         continue
-
-                    name_end = func_body.index(">")
-                    func_name = func_body[:name_end]
-                    params_str = func_body[name_end + 1 :]
 
                     param_config = self._get_arguments_config(func_name, tools)
                     parsed_params = {}
@@ -219,7 +342,7 @@ class Qwen3CoderDetector(BaseFormatDetector):
                             p_val = p_val[:-1]
 
                         parsed_params[p_name] = self._convert_param_value(
-                            p_val, p_name, param_config, func_name
+                            p_val, p_name, param_config, func_name, tools
                         )
 
                     calls.append(
@@ -231,250 +354,106 @@ class Qwen3CoderDetector(BaseFormatDetector):
                     )
                     tool_idx += 1
 
-            # Determine normal text (text before the first tool call)
-            start_idx = text.find(self.tool_call_start_token)
-            if start_idx == -1:
-                start_idx = text.find(self.tool_call_prefix)
-            normal_text = text[:start_idx] if start_idx > 0 else ""
-
-            return StreamingParseResult(normal_text=normal_text, calls=calls)
-
-        except Exception as e:
-            logger.error(f"Error in detect_and_parse: {e}")
-            return StreamingParseResult(normal_text=text)
+        except Exception:
+            logger.error("Error parsing complete Qwen tool block")
+            return []
+        return calls
 
     def parse_streaming_increment(
         self, new_text: str, tools: List[Tool]
     ) -> StreamingParseResult:
-        """
-        Robust cursor-based streaming parser.
-        """
+        """Publish complete blocks atomically; incomplete calls are never emitted."""
         self._buffer += new_text
-
-        # Guard against empty buffer
-        if not self._buffer:
-            return StreamingParseResult()
-
         calls = []
         normal_text_chunks = []
 
-        while True:
-            # Working text slice
-            current_slice = self._buffer[self.parsed_pos :]
-
-            # Optimization: If almost empty, wait for more
-            if not current_slice:
-                break
-
-            # -------------------------------------------------------
-            # 1. Priority detection: check if it's the start of Tool Call
-            # -------------------------------------------------------
-            if current_slice.startswith(self.tool_call_start_token):
-                self.parsed_pos += len(self.tool_call_start_token)
-                self.is_inside_tool_call = True
-                continue
-
-            # -------------------------------------------------------
-            # 2. Function Name: <function=name>
-            # -------------------------------------------------------
-            if current_slice.startswith(self.tool_call_prefix):
-                end_angle = current_slice.find(">")
-                if end_angle != -1:
-                    func_name = current_slice[len(self.tool_call_prefix) : end_angle]
-
-                    self.current_tool_id += 1
-                    self.current_tool_name_sent = True
-                    self.current_tool_param_count = 0
-                    self.json_started = False
-                    self.current_func_name = func_name
-
-                    calls.append(
-                        ToolCallItem(
-                            tool_index=self.current_tool_id,
-                            name=func_name,
-                            parameters="",
-                        )
-                    )
-
-                    self.parsed_pos += end_angle + 1
-                    continue
-                else:
-                    # Incomplete tag
-                    break
-
-            # -------------------------------------------------------
-            # 3. Parameter: <parameter=name>value...
-            # -------------------------------------------------------
-            if current_slice.startswith(self.parameter_prefix):
-                name_end = current_slice.find(">")
-                if name_end != -1:
-                    value_start_idx = name_end + 1
-                    rest_of_slice = current_slice[value_start_idx:]
-
-                    # A parameter can end in multiple ways:
-                    # 1. [Normal] Encounter </parameter>
-                    # 2. [Abnormal] Encounter next <parameter=
-                    # 3. [Abnormal] Encounter </function>
-                    # So we need to find the smallest one as the parameter end position.
-                    cand_end_param = rest_of_slice.find(self.parameter_end_token)
-                    cand_next_param = rest_of_slice.find(self.parameter_prefix)
-                    cand_end_func = rest_of_slice.find(self.function_end_token)
-
-                    candidates = []
-                    if cand_end_param != -1:
-                        candidates.append(
-                            (cand_end_param, len(self.parameter_end_token))
-                        )
-                    if cand_next_param != -1:
-                        candidates.append((cand_next_param, 0))
-                    if cand_end_func != -1:
-                        candidates.append((cand_end_func, 0))
-
-                    if candidates:
-                        best_cand = min(candidates, key=lambda x: x[0])
-                        end_pos = best_cand[0]
-                        end_token_len = best_cand[1]
-
-                        param_name = current_slice[
-                            len(self.parameter_prefix) : name_end
-                        ]
-                        raw_value = rest_of_slice[:end_pos]
-
-                        # Cleanup value
-                        if raw_value.startswith("\n"):
-                            raw_value = raw_value[1:]
-                        if raw_value.endswith("\n"):
-                            raw_value = raw_value[:-1]
-
-                        # JSON Construction
-                        if not self.json_started:
-                            calls.append(
-                                ToolCallItem(
-                                    tool_index=self.current_tool_id, parameters="{"
-                                )
-                            )
-                            self.json_started = True
-
-                        param_config = self._get_arguments_config(
-                            self.current_func_name, tools
-                        )
-                        converted_val = self._convert_param_value(
-                            raw_value, param_name, param_config, self.current_func_name
-                        )
-
-                        # Construct JSON fragment: "key": value
-                        # Note: We must be careful with json.dumps to ensure valid JSON streaming
-                        json_key_val = f"{json.dumps(param_name)}: {json.dumps(converted_val, ensure_ascii=False)}"
-
-                        if self.current_tool_param_count > 0:
-                            fragment = f", {json_key_val}"
-                        else:
-                            fragment = json_key_val
-
-                        calls.append(
-                            ToolCallItem(
-                                tool_index=self.current_tool_id, parameters=fragment
-                            )
-                        )
-                        self.current_tool_param_count += 1
-
-                        # Advance cursor
-                        total_len = (name_end + 1) + end_pos + end_token_len
-                        self.parsed_pos += total_len
-                        continue
-
-                # Incomplete parameter tag or value
-                break
-
-            # -------------------------------------------------------
-            # 4. Function End: </function>
-            # -------------------------------------------------------
-            if current_slice.startswith(self.function_end_token):
-                if not self.json_started:
-                    calls.append(
-                        ToolCallItem(tool_index=self.current_tool_id, parameters="{")
-                    )
-                    self.json_started = True
-
-                calls.append(
-                    ToolCallItem(tool_index=self.current_tool_id, parameters="}")
+        while self._buffer:
+            start = self._buffer.find(self.tool_call_start_token)
+            if start < 0:
+                # Retain a suffix only if it could become the opening marker.
+                keep = 0
+                for size in range(
+                    1, min(len(self._buffer), len(self.tool_call_start_token) - 1) + 1
+                ):
+                    if self.tool_call_start_token.startswith(self._buffer[-size:]):
+                        keep = size
+                normal_text_chunks.append(
+                    self._buffer[:-keep] if keep else self._buffer
                 )
-                self.parsed_pos += len(self.function_end_token)
-                self.current_func_name = None
-                continue
-
-            # -------------------------------------------------------
-            # 5. Tool Call End: </tool_call>
-            # -------------------------------------------------------
-            if current_slice.startswith(self.tool_call_end_token):
-                self.parsed_pos += len(self.tool_call_end_token)
-                self.is_inside_tool_call = False  # [FIX] Exit tool call region
-                continue
-
-            # -------------------------------------------------------
-            # 6. Handling content / whitespace / normal text
-            # -------------------------------------------------------
-            # If current position is not the start of a tag (i.e., doesn't start with <), it might be plain text,
-            # or a newline between two tags.
-            # But we need to be careful not to output truncated tags like "<fun" as text.
-
-            next_open_angle = current_slice.find("<")
-
-            if next_open_angle == -1:
-                # This entire segment is plain text
-                if not self.is_inside_tool_call:
-                    normal_text_chunks.append(current_slice)
-                # [FIX] If inside tool call, discard this text (usually \n), don't append
-                self.parsed_pos += len(current_slice)
-                continue
-
-            elif next_open_angle == 0:
-                # Looks like a Tag, but doesn't match any known Tag above
-
-                possible_tags = [
-                    self.tool_call_start_token,
-                    self.tool_call_end_token,
-                    self.tool_call_prefix,
-                    self.function_end_token,
-                    self.parameter_prefix,
-                    self.parameter_end_token,
-                ]
-
-                is_potential_tag = False
-                for tag in possible_tags:
-                    if tag.startswith(current_slice):
-                        is_potential_tag = True
-                        break
-
-                if is_potential_tag:
-                    break  # Wait for more
-                else:
-                    # Just a plain '<' symbol
-                    if not self.is_inside_tool_call:
-                        normal_text_chunks.append("<")
-                    self.parsed_pos += 1
-                    continue
-
-            else:
-                # '<' is in the middle
-                text_segment = current_slice[:next_open_angle]
-                if not self.is_inside_tool_call:
-                    normal_text_chunks.append(text_segment)
-                # [FIX] If inside tool call, discard whitespace/text before Tag
-                self.parsed_pos += next_open_angle
-                continue
-
-        # Memory Cleanup: Slice the buffer
-        # Keep unparsed part, discard parsed part
-        if self.parsed_pos > 0:
-            self._buffer = self._buffer[self.parsed_pos :]
-            self.parsed_pos = 0
+                self._buffer = self._buffer[-keep:] if keep else ""
+                break
+            if start:
+                normal_text_chunks.append(self._buffer[:start])
+                self._buffer = self._buffer[start:]
+            end = self._buffer.find(
+                self.tool_call_end_token, len(self.tool_call_start_token)
+            )
+            if end < 0:
+                break
+            boundary = end + len(self.tool_call_end_token)
+            block = self._buffer[:boundary]
+            self._buffer = self._buffer[boundary:]
+            for call in self._parse_complete_block(block, tools):
+                self.current_tool_id += 1
+                calls.append(
+                    ToolCallItem(
+                        tool_index=self.current_tool_id,
+                        name=call.name,
+                        parameters=call.parameters,
+                    )
+                )
 
         normal_text = "".join(normal_text_chunks) if normal_text_chunks else ""
         return StreamingParseResult(calls=calls, normal_text=normal_text)
 
+    def finish(self, tools: List[Tool]) -> StreamingParseResult:
+        tail = self._buffer
+        self._buffer = ""
+        if tail.startswith(self.tool_call_start_token):
+            return StreamingParseResult()
+        return StreamingParseResult(normal_text=tail)
+
     def supports_structural_tag(self) -> bool:
         return True
+
+    def get_structural_tag(
+        self,
+        tools: Union[List[Tool], None] = None,
+        tool_choice: Union[ToolChoice, Literal["auto", "required"]] = "auto",
+        thinking_mode: bool = False,
+        parallel_tool_calls: bool = True,
+    ) -> Optional[StructuralTag]:
+        # Stock XGrammar treats an absent schema as free text. In the Qwen
+        # tool API it denotes a no-argument function, like an empty schema.
+        # Copy only that tool so the request's original schema stays intact.
+        native_tools = []
+        for tool in tools or []:
+            if tool.function.parameters is None:
+                function = tool.function.model_copy(
+                    update={
+                        "parameters": {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": False,
+                        }
+                    }
+                )
+                tool = tool.model_copy(update={"function": function})
+            native_tools.append(tool)
+        structural_tag = super().get_structural_tag(
+            tools=native_tools,
+            tool_choice=tool_choice,
+            thinking_mode=thinking_mode,
+            parallel_tool_calls=parallel_tool_calls,
+        )
+        if structural_tag is None:
+            return None
+        structural_tag = _preserve_xml_parameter_schema(structural_tag)
+        if tool_choice != "required":
+            return structural_tag
+        return _align_required_tool_call_repetition(
+            structural_tag, parallel_tool_calls=parallel_tool_calls
+        )
 
     def structure_info(self) -> _GetInfoFunc:
         raise NotImplementedError

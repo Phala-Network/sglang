@@ -39,6 +39,9 @@ from sglang.srt.constrained.base_grammar_backend import (
 )
 from sglang.srt.constrained.utils import is_legacy_structural_tag
 from sglang.srt.utils import get_int_env_var
+from sglang.srt.utils.common import is_pin_memory_available
+
+from sglang.srt.utils.framework_log_privacy import safe_exception_type
 
 logger = logging.getLogger(__name__)
 _LLGUIDANCE_LOG_LEVEL = get_int_env_var("LLGUIDANCE_LOG_LEVEL", 1)
@@ -110,6 +113,14 @@ def _create_llguidance_tokenizer(
                 eos_token=(tokenizer.eos_token_id if eos_token is None else eos_token),
             )
     return from_tokenizer(tokenizer, n_vocab, eos_token=eos_token)
+
+
+def _allocate_token_bitmask(batch_size: int, vocab_size: int, device) -> torch.Tensor:
+    """Allocate a host mask suitable for a genuinely asynchronous H2D copy."""
+    vocab_mask = allocate_token_bitmask(batch_size, vocab_size)
+    if is_pin_memory_available(device):
+        vocab_mask = vocab_mask.pin_memory()
+    return vocab_mask
 
 
 class GuidanceGrammar(BaseGrammarObject):
@@ -185,7 +196,9 @@ class GuidanceGrammar(BaseGrammarObject):
     def allocate_vocab_mask(
         self, vocab_size: int, batch_size: int, device
     ) -> torch.Tensor:
-        return allocate_token_bitmask(batch_size, self.llguidance_tokenizer.vocab_size)
+        return _allocate_token_bitmask(
+            batch_size, self.llguidance_tokenizer.vocab_size, device
+        )
 
     @staticmethod
     def move_vocab_mask(vocab_mask: torch.Tensor, device) -> torch.Tensor:
@@ -230,6 +243,20 @@ class GuidanceGrammar(BaseGrammarObject):
 
 
 class GuidanceBackend(BaseGrammarBackend):
+    def allocate_vocab_mask(self, vocab_size: int, batch_size: int, device):
+        """Callbacks needed before a reasoning wrapper has compiled its grammar."""
+        return _allocate_token_bitmask(
+            batch_size, self.llguidance_tokenizer.vocab_size, device
+        )
+
+    @staticmethod
+    def move_vocab_mask(vocab_mask: torch.Tensor, device) -> torch.Tensor:
+        return GuidanceGrammar.move_vocab_mask(vocab_mask, device)
+
+    @staticmethod
+    def apply_vocab_mask(logits: torch.Tensor, vocab_mask: torch.Tensor) -> None:
+        GuidanceGrammar.apply_vocab_mask(logits, vocab_mask)
+
     def __init__(
         self,
         tokenizer,
@@ -259,8 +286,8 @@ class GuidanceBackend(BaseGrammarBackend):
         max_rows: int,
         device,
     ) -> torch.Tensor:
-        vocab_mask = allocate_token_bitmask(
-            max_rows, self.llguidance_tokenizer.vocab_size
+        vocab_mask = _allocate_token_bitmask(
+            max_rows, self.llguidance_tokenizer.vocab_size, device
         )
         return register_vocab_mask_buffer(name, vocab_mask, max_rows)
 
@@ -271,7 +298,7 @@ class GuidanceBackend(BaseGrammarBackend):
                 serialized_grammar=serialized_grammar,
             )
         except Exception as e:
-            logger.error(f"Hit invalid grammar: {serialized_grammar=}, {e=}")
+            logger.error("Invalid llguidance grammar (%s)", safe_exception_type(e))
             return InvalidGrammarObject(str(e))
 
     def dispatch_json(self, key_string: str) -> BaseGrammarObject:
@@ -284,7 +311,7 @@ class GuidanceBackend(BaseGrammarBackend):
                 },
             )
         except Exception as e:
-            logger.error(f"Hit invalid json_schema: {key_string=}, {e=}")
+            logger.error("Invalid llguidance JSON schema (%s)", safe_exception_type(e))
             return InvalidGrammarObject(str(e))
         return self._from_serialized(serialized_grammar)
 
@@ -297,7 +324,7 @@ class GuidanceBackend(BaseGrammarBackend):
             serialized_grammar = grammar_from("ebnf", key_string)
             return self._from_serialized(serialized_grammar)
         except ValueError as e:
-            logger.error(f"Hit invalid ebnf: {key_string=}, {e=}")
+            logger.error("Invalid llguidance EBNF (%s)", safe_exception_type(e))
             return InvalidGrammarObject(str(e))
 
     def dispatch_structural_tag(self, key_string: str) -> BaseGrammarObject:
@@ -326,5 +353,7 @@ class GuidanceBackend(BaseGrammarBackend):
             g = StructTag.to_grammar(tags)
             return self._from_serialized(g)
         except Exception as e:
-            logger.error(f"Hit invalid structural_tag: {key_string=}, {e=}")
+            logger.error(
+                "Invalid llguidance structural tag (%s)", safe_exception_type(e)
+            )
             return InvalidGrammarObject(str(e))

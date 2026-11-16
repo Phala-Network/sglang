@@ -494,26 +494,50 @@ class SchedulerInvariantChecker:
 def create_scheduler_watchdog(
     scheduler: Scheduler, watchdog_timeout: float, soft: bool = False
 ) -> WatchdogRaw:
-    def dump_info() -> str:
+    def dump_info() -> None:
         from sglang.srt.distributed.device_communicators.pynccl_allocator import (
             describe_registration_in_progress,
         )
 
-        parts = []
         # Checked before is_initializing: CUDA graph capture registers too, and
         # only the soft watchdog runs that early.
-        if (registration := describe_registration_in_progress()) is not None:
-            parts.append(f"symmetric-memory registration in progress: {registration}")
+        registering = describe_registration_in_progress() is not None
+        logger.error(
+            "Scheduler watchdog state: initializing=%s registering=%s forward_count=%d waiting=%d",
+            bool(scheduler.is_initializing),
+            registering,
+            int(scheduler.forward_ct),
+            len(scheduler.waiting_queue),
+        )
         if not scheduler.is_initializing:
-            _, messages = scheduler.invariant_checker._check_all_pools(
-                scheduler.pool_stats_observer.get_pool_stats(),
+            stats = scheduler.pool_stats_observer.get_pool_stats()
+            has_leak, _ = scheduler.invariant_checker._check_all_pools(stats)
+            pools = {
+                field: value
+                for field in (
+                    "full_available_size",
+                    "full_evictable_size",
+                    "full_num_used",
+                    "swa_available_size",
+                    "swa_evictable_size",
+                    "swa_num_used",
+                    "mamba_available_size",
+                    "mamba_evictable_size",
+                    "mamba_num_used",
+                )
+                if type(value := getattr(stats, field, None)) in (int, float)
+            }
+            batch = scheduler.cur_batch_for_debug
+            shapes = [
+                (len(req.origin_input_ids), len(req.output_ids))
+                for req in batch.reqs
+            ] if batch is not None else []
+            logger.error(
+                "Scheduler watchdog pools: leak=%s counters=%s request_token_shapes=%s",
+                bool(has_leak),
+                pools,
+                shapes,
             )
-            parts += [
-                f"{scheduler.cur_batch_for_debug.batch_size()=}",
-                f"{scheduler.cur_batch_for_debug.reqs=}",
-                *messages,
-            ]
-        return "\n".join(parts)
 
     return WatchdogRaw(
         debug_name="Scheduler",

@@ -26,6 +26,8 @@ from sglang.srt.function_call.utils import (
     _partial_json_loads,
 )
 
+from sglang.srt.utils.framework_log_privacy import safe_exception_type
+
 logger = logging.getLogger(__name__)
 
 
@@ -83,7 +85,7 @@ class BaseFormatDetector(ABC):
         for act in action:
             name = act.get("name")
             if not (name and name in tool_indices):
-                logger.warning(f"Model attempted to call undefined function: {name}")
+                logger.warning("Model attempted to call an undefined function")
                 if not envs.SGLANG_FORWARD_UNKNOWN_TOOLS.get():
                     continue  # Skip unknown tools (default legacy behavior)
 
@@ -340,7 +342,7 @@ class BaseFormatDetector(ABC):
             return res
 
         except Exception as e:
-            logger.error(f"Error in parse_streaming_increment: {e}")
+            logger.error("Incremental tool parsing failed (%s)", safe_exception_type(e))
             return StreamingParseResult()
 
     @abstractmethod

@@ -305,7 +305,14 @@ class ServerArgs:
         return getattr(self, "_launch_command", None)
 
     def __repr__(self) -> str:
-        hidden = {"watermark_key", "watermark_key_b", "watermark_config"}
+        hidden = {
+            "api_key",
+            "admin_api_key",
+            "ssl_keyfile_password",
+            "watermark_key",
+            "watermark_key_b",
+            "watermark_config",
+        }
         values = ", ".join(
             f"{field.name}={getattr(self, field.name)!r}"
             for field in record_fields(type(self))
@@ -331,6 +338,13 @@ class ServerArgs:
         # TODO: drop together with `--enable-dp-attention` after 2026-12-31.
         resolved["enable_dp_attention"] = resolving_view(self).attn_dp_size > 1
         return resolved
+
+    def diagnostic_dict(self) -> dict[str, Any]:
+        """Resolved configuration for diagnostics, never runtime IPC."""
+        from sglang.srt.arg_groups.token_auth import redact_auth_config
+        from sglang.srt.sampling.watermarking.core import redact_watermark_secrets
+
+        return redact_auth_config(redact_watermark_secrets(self.resolved_dict()))
 
     LANGUAGE_MODEL_ONLY_ARCHITECTURES = (
         "DeepseekV4ForCausalLM",
@@ -712,10 +726,11 @@ def prepare_server_args(argv: list[str]) -> ServerArgs:
     # the configuration was asked for. It rides along on the record so a
     # subprocess copy can answer the same question the launcher can.
     # lazy: watermark imports torch, outside server_args' top-level boundary.
+    from sglang.srt.arg_groups.token_auth import redact_auth_argv
     from sglang.srt.sampling.watermarking.core import redact_watermark_command_line
 
     server_args._launch_command = redact_watermark_command_line(
-        argv, raw_args.watermark_config
+        redact_auth_argv(argv), raw_args.watermark_config
     )
     return server_args
 

@@ -305,13 +305,7 @@ def ensure_mamba_capacity(
         return True
 
     # Count the slots HybridReqToTokenPool.alloc will allocate for each request.
-    needed = 0
-    for req in reqs:
-        if not req.kv.holds_mamba:
-            needed += 1
-
-        if req.kv.mamba_ping_pong_track_buffer is None:
-            needed += req_to_token_pool.mamba_initial_tracking_slots
+    needed = sum(req_to_token_pool.mamba_admission_slots(req.kv) for req in reqs)
 
     # Byte-coordinated for the shared allocator; plain free slots otherwise.
     allocator = req_to_token_pool.mamba_allocator

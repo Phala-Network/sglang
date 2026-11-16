@@ -141,8 +141,15 @@ class PrefillBudget:
 
     def available_chunk_tokens(self, chunk_limit: int) -> int | None:
         available = min(chunk_limit, int(self.remaining_total))
-        # Single-pool continuation must make progress to release its KV.
-        return available if available > 0 else chunk_limit
+        if available > 0:
+            return available
+        # A continuing chunk can borrow decode headroom, but only while the
+        # physical pool has space. Keep one page for page-rounded allocation;
+        # otherwise let a decode step finish or retract before retrying.
+        physical = int(self._available_and_evictable()) - self.page_size
+        if physical < self.page_size:
+            return None
+        return min(chunk_limit, physical)
 
     def fit_chunk(
         self,

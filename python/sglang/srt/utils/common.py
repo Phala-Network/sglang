@@ -110,6 +110,7 @@ from sglang.srt.runtime_context import (
     get_serving,
     get_spec,
 )
+from sglang.srt.utils.framework_log_privacy import safe_exception_type
 from sglang.srt.utils.msgspec_utils import msgspec_to_builtins
 from sglang.srt.utils.video_decoder import _BACKEND, VideoDecoderWrapper
 
@@ -735,7 +736,7 @@ def _get_device_sm_via_nvml() -> Optional[int]:
         logger.debug(
             "get_device_sm: torch.cuda._get_nvml_device_index(0) failed, "
             "using torch.cuda",
-            exc_info=True,
+            exc_info=False,
         )
         return None
     try:
@@ -748,7 +749,7 @@ def _get_device_sm_via_nvml() -> Optional[int]:
         return major * 10 + minor
     except Exception:
         logger.debug(
-            "get_device_sm: NVML query failed, using torch.cuda", exc_info=True
+            "get_device_sm: NVML query failed, using torch.cuda", exc_info=False
         )
         return None
 
@@ -1351,7 +1352,9 @@ def get_device_sm_nvidia_smi():
 
     except (subprocess.CalledProcessError, FileNotFoundError, ValueError) as e:
         # Handle cases where nvidia-smi isn't available or output is unexpected
-        logger.error("Error getting compute capability: %s", e)
+        logger.error(
+            "Error getting compute capability (type=%s)", safe_exception_type(e)
+        )
         return (0, 0)  # Default/fallback value
 
 
@@ -1794,15 +1797,11 @@ def configure_media_url_security(
 def _assert_media_url_allowed(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
-        raise ValueError(f"Invalid media URL: {url!r}")
+        raise ValueError("Invalid media URL")
 
     hostname = _normalize_media_domain(parsed.hostname)
     if _allowed_media_domains and hostname not in _allowed_media_domains:
-        raise ValueError(
-            "Media URL domain is not allowed. "
-            f"Allowed domains: {sorted(_allowed_media_domains)}; "
-            f"input domain: {hostname}"
-        )
+        raise ValueError("Media URL domain is not allowed")
 
 
 def download_remote_media(url: str, timeout: float) -> bytes:
@@ -1827,13 +1826,13 @@ def download_remote_media(url: str, timeout: float) -> bytes:
         # userinfo separators.
         prepared_url = requests.Request("GET", current_url).prepare().url
         if prepared_url is None:
-            raise ValueError(f"Invalid media URL: {current_url!r}")
+            raise ValueError("Invalid media URL")
         _assert_media_url_allowed(prepared_url)
 
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise requests.exceptions.Timeout(
-                f"Timed out while downloading media URL: {url}"
+                "Timed out while downloading remote media"
             )
 
         with session.get(
@@ -1846,7 +1845,7 @@ def download_remote_media(url: str, timeout: float) -> bytes:
             if response.status_code in _MEDIA_URL_REDIRECT_STATUS_CODES and location:
                 if redirect_count == _MAX_MEDIA_URL_REDIRECTS:
                     raise requests.exceptions.TooManyRedirects(
-                        f"Media URL exceeded {_MAX_MEDIA_URL_REDIRECTS} redirects: {url}"
+                        f"Media URL exceeded {_MAX_MEDIA_URL_REDIRECTS} redirects"
                     )
                 current_url = urljoin(response.url, location)
                 continue
@@ -1870,7 +1869,7 @@ def download_remote_media(url: str, timeout: float) -> bytes:
                     continue
                 if time.monotonic() > deadline:
                     raise requests.exceptions.Timeout(
-                        f"Timed out while downloading media URL: {url}"
+                        "Timed out while downloading remote media"
                     )
                 if max_bytes and len(content) + len(chunk) > max_bytes:
                     raise ValueError(
@@ -1962,7 +1961,8 @@ def load_audio(
             # torchcodec's bytes-buffer IO can fail on WAV files that carry
             # large trailing metadata chunks. Fall back to soundfile, which reads the PCM payload directly.
             logger.warning(
-                f"torchcodec AudioDecoder failed ({e}); falling back to soundfile + torchaudio."
+                "torchcodec AudioDecoder failed (type=%s); falling back to soundfile + torchaudio.",
+                safe_exception_type(e),
             )
 
     # Fallback: soundfile + torchaudio (ARM / no FFmpeg / torchcodec failure)
@@ -2086,7 +2086,7 @@ def is_jpeg_with_cuda(
 def _warn_fancy_jpeg_fallback(error: str) -> None:
     logger.warning(
         "High-fidelity GPU JPEG decode is unavailable; falling back to PIL. "
-        "Install the Kimi-K3 serving image or NVIDIA nvImageCodec. Error: %s",
+        "Install the Kimi-K3 serving image or NVIDIA nvImageCodec. Type: %s",
         error,
     )
 
@@ -2118,16 +2118,18 @@ def _load_image(
             return image_tensor
         except Exception as e:
             if gpu_image_decode == "nvjpeg_fancy":
-                _warn_fancy_jpeg_fallback(f"{type(e).__name__}: {e}")
+                _warn_fancy_jpeg_fallback(safe_exception_type(e))
             else:
                 logger.warning(
-                    "Failed to decode JPEG on GPU, falling back to CPU. Error: %s",
-                    e,
+                    "Failed to decode JPEG on GPU, falling back to CPU. Type: %s",
+                    safe_exception_type(e),
                 )
     try:
         image = Image.open(BytesIO(image_bytes))
     except (OSError, SyntaxError) as e:
-        raise ValueError(f"Could not decode image: {e}") from e
+        if isinstance(e, OSError) and e.errno is not None:
+            raise
+        raise ValueError("Could not decode image") from None
     return _fully_load_pil_image(image)
 
 
@@ -2136,7 +2138,11 @@ def _fully_load_pil_image(image: Image.Image) -> Image.Image:
     try:
         image.load()
     except (OSError, SyntaxError) as e:
-        raise ValueError(f"Could not decode image: {e}") from e
+        # PIL uses OSError for corrupt payloads, while errno identifies a
+        # genuine OS failure which must retain server-fault classification.
+        if isinstance(e, OSError) and e.errno is not None:
+            raise
+        raise ValueError("Could not decode image") from None
     return image
 
 
@@ -2176,7 +2182,7 @@ def load_image(
     ):  # Other formats, try to decode as base64 by default
         image = _load_image(image_file=image_file, gpu_image_decode=gpu_image_decode)
     else:
-        raise ValueError(f"Invalid image: {image_file}")
+        raise ValueError("Invalid image input")
     if image_size is not None and isinstance(image, Image.Image):
         image_size = (image.width, image.height)
     return image, image_size
@@ -2283,7 +2289,7 @@ def sample_video_frames(video, *, desired_fps: int, max_frames: int) -> list[int
 
 def encode_video(video_path, frame_count_limit=None):
     if not os.path.exists(video_path):
-        logger.error(f"Video {video_path} does not exist")
+        logger.error("Video source does not exist")
         return []
 
     if frame_count_limit == 0:
@@ -2591,7 +2597,9 @@ def set_ulimit(target_soft_limit=65535):
         try:
             resource.setrlimit(resource_type, (target_soft_limit, current_hard))
         except ValueError as e:
-            logger.warning(f"Fail to set RLIMIT_NOFILE: {e}")
+            logger.warning(
+                "Fail to set RLIMIT_NOFILE (type=%s)", safe_exception_type(e)
+            )
 
     # stack size
     resource_type = resource.RLIMIT_STACK
@@ -2603,7 +2611,7 @@ def set_ulimit(target_soft_limit=65535):
                 resource_type, (target_soft_limit_stack_size, current_hard)
             )
         except ValueError as e:
-            logger.warning(f"Fail to set RLIMIT_STACK: {e}")
+            logger.warning("Fail to set RLIMIT_STACK (type=%s)", safe_exception_type(e))
 
 
 def rank0_log(msg: str):
@@ -2616,6 +2624,8 @@ def rank0_log(msg: str):
 
 
 def configure_logger(server_args, prefix: str = ""):
+    from sglang.srt.utils.framework_log_privacy import configure_framework_log_privacy
+
     if SGLANG_LOGGING_CONFIG_PATH := os.getenv("SGLANG_LOGGING_CONFIG_PATH"):
         if not os.path.exists(SGLANG_LOGGING_CONFIG_PATH):
             raise Exception(
@@ -2624,7 +2634,7 @@ def configure_logger(server_args, prefix: str = ""):
             )
         with open(SGLANG_LOGGING_CONFIG_PATH, encoding="utf-8") as file:
             custom_config = orjson.loads(file.read())
-        logging.config.dictConfig(custom_config)
+        logging.config.dictConfig(configure_framework_log_privacy(custom_config))
         return
     maybe_ms = ".%(msecs)03d" if envs.SGLANG_LOG_MS.get() else ""
     format = f"[%(asctime)s{maybe_ms}{prefix}] %(message)s"
@@ -2638,6 +2648,7 @@ def configure_logger(server_args, prefix: str = ""):
     )
 
     configure_hf_hub_logger()
+    configure_framework_log_privacy()
 
     # Suppress noisy httpx/httpcore loggers in every process that calls
     # configure_logger (main, scheduler, detokenizer). Spawned subprocesses
@@ -2814,7 +2825,7 @@ def delete_directory(dirpath):
         # This will remove the directory and all its contents
         shutil.rmtree(dirpath)
     except OSError as e:
-        logger.warning("Failed to delete directory %s: %s", dirpath, e.strerror)
+        logger.warning("Failed to delete directory (type=%s)", safe_exception_type(e))
 
 
 # Temporary directory for prometheus multiprocess mode
@@ -3509,6 +3520,8 @@ class UvicornAccessLogFilter(logging.Filter):
 def set_uvicorn_logging_configs(server_args=None):
     from uvicorn.config import LOGGING_CONFIG
 
+    from sglang.srt.utils.framework_log_privacy import configure_framework_log_privacy
+
     LOGGING_CONFIG["formatters"]["default"]["fmt"] = (
         "[%(asctime)s] %(levelprefix)s %(message)s"
     )
@@ -3519,6 +3532,7 @@ def set_uvicorn_logging_configs(server_args=None):
     LOGGING_CONFIG["formatters"]["access"]["datefmt"] = "%Y-%m-%d %H:%M:%S"
 
     _configure_uvicorn_access_log_filter(LOGGING_CONFIG, server_args)
+    configure_framework_log_privacy(LOGGING_CONFIG)
 
 
 def _configure_uvicorn_access_log_filter(
@@ -3586,11 +3600,13 @@ def build_server_info(server_args, scheduler_info: Dict[str, Any]) -> Dict[str, 
 
     Callers add transport-specific fields and serialize the result.
     """
+    from sglang.srt.arg_groups.token_auth import redact_auth_config
+
     result = server_args.resolved_dict()
     result["launch_command"] = server_args.launch_command
     result.update(scheduler_info)
     result["kv_events"] = describe_kv_events_publisher(server_args)
-    return result
+    return redact_auth_config(result)
 
 
 def start_follower_grpc_server(server_args, scheduler_info: Dict[str, Any]):
@@ -3628,6 +3644,7 @@ def launch_dummy_health_check_server(host, port, enable_metrics):
     from fastapi import FastAPI, Response
 
     from sglang.srt.observability.trace import fastapi_telemetry_disabled_kwargs
+    from sglang.srt.utils.framework_log_privacy import configure_framework_log_privacy
     from sglang.srt.utils.network import NetworkAddress
 
     app = FastAPI(**fastapi_telemetry_disabled_kwargs())
@@ -3652,6 +3669,7 @@ def launch_dummy_health_check_server(host, port, enable_metrics):
         add_prometheus_middleware(app)
         enable_func_timer()
 
+    configure_framework_log_privacy()
     config = uvicorn.Config(
         app,
         host=host,
@@ -3669,7 +3687,10 @@ def launch_dummy_health_check_server(host, port, enable_metrics):
         try:
             asyncio.run(server.serve())
         except Exception as e:
-            logger.error(f"Dummy health check server failed to start: {e}")
+            logger.error(
+                "Dummy health check server failed to start (type=%s)",
+                safe_exception_type(e),
+            )
             raise
         finally:
             logger.info(
@@ -3796,7 +3817,9 @@ def retry(
             # NOT retry, just propagate so unittest handles it.
             raise
         except Exception as e:
-            traceback.print_exc()
+            traceback.print_exception(
+                RuntimeError("Exception details redacted"), chain=False
+            )
 
             if try_index >= max_retry:
                 raise Exception(f"retry() exceed maximum number of retries.")
@@ -3809,7 +3832,11 @@ def retry(
             )
 
             logger.warning(
-                f"retry() failed once ({try_index}th try, maximum {max_retry} retries). Will delay {delay:.2f}s and retry. Error: {e}"
+                "retry() failed once (%dth try, maximum %d retries). Will delay %.2fs and retry (type=%s)",
+                try_index,
+                max_retry,
+                delay,
+                safe_exception_type(e),
             )
 
             time.sleep(delay)
@@ -4600,9 +4627,9 @@ def apply_module_patch(target_module, target_function, wrappers):
                 and id(getattr(value, target_function)) == original_function_id
             ):
                 setattr(value, target_function, candidate)
-        except ImportError as e:
+        except ImportError:
             # Ignore some modules reporting ImportError when calling hasattr
-            logger.warning(f"Ignore {value} reports ImportError with:\n{str(e)}")
+            logger.warning("Ignore module reporting ImportError (details redacted)")
 
 
 def parse_module_path(module_path, function_name, create_dummy):
@@ -5120,9 +5147,11 @@ def is_confidential_compute() -> bool:
             cc_state = pynvml.nvmlSystemGetConfComputeState()
             cc_enabled = cc_state.ccFeature == pynvml.NVML_CC_SYSTEM_FEATURE_ENABLED
         except pynvml.NVMLError as error:
-            logger.warning(f"Error querying CC state: {error!s}")
+            logger.warning(
+                "Error querying CC state (type=%s)", safe_exception_type(error)
+            )
     except pynvml.NVMLError as error:
-        logger.warning(f"Error querying CC state: {error!s}")
+        logger.warning("Error querying CC state (type=%s)", safe_exception_type(error))
     finally:
         # Shutdown
         try:

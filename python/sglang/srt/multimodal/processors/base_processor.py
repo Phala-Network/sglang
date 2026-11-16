@@ -64,6 +64,7 @@ from sglang.srt.utils import (
     logger,
     smart_to_rgb,
 )
+from sglang.srt.utils.framework_log_privacy import safe_exception_type
 
 _is_cpu = is_cpu()
 _is_npu = is_npu()
@@ -403,7 +404,7 @@ class BaseMultimodalProcessor(ABC):
                 logger.warning(
                     "Unable to clone the multimodal processor for concurrent "
                     "workers; falling back to synchronous processing.",
-                    exc_info=True,
+                    exc_info=False,
                 )
                 self.mm_processor_worker_num = 1
         if self.mm_processor_executor is not None:
@@ -568,7 +569,7 @@ class BaseMultimodalProcessor(ABC):
         except Exception:
             logger.warning(
                 "Failed to shut down a broken multimodal CPU preprocess pool",
-                exc_info=True,
+                exc_info=False,
             )
 
     def compute_mrope_positions(self, input_ids, mm_items):
@@ -1046,16 +1047,11 @@ class BaseMultimodalProcessor(ABC):
             elif modality == Modality.AUDIO:
                 return load_audio(data, audio_sample_rate)
 
-        except CLIENT_MEDIA_EXCEPTIONS as e:
-            data_str = str(data)
-            if len(data_str) > 100:
-                data_str = data_str[:100] + "..."
-            raise ValueError(f"Error while loading data {data_str}: {e}") from e
+        except CLIENT_MEDIA_EXCEPTIONS:
+            raise ValueError("Could not load client media") from None
         except Exception as e:
-            data_str = str(data)
-            if len(data_str) > 100:
-                data_str = data_str[:100] + "..."
-            raise RuntimeError(f"Error while loading data {data_str}: {e}") from e
+            logger.error("Media loader server failure (type=%s)", safe_exception_type(e))
+            raise RuntimeError("Media loading failed due to a server error") from None
 
     @staticmethod
     def _get_preprocessed_input_format(data):
@@ -1124,10 +1120,9 @@ class BaseMultimodalProcessor(ABC):
         for idx, data in enumerate(data_list):
             logger.debug(
                 "[_submit_mm_data_loading_tasks_simple] submit load task: "
-                "modality=%s, index=%d, data_type=%s",
+                "modality=%s, index=%d",
                 modality.name,
                 idx,
-                type(data),
             )
             future = self.io_executor.submit(
                 self.__class__._load_single_item,
@@ -1413,24 +1408,26 @@ class BaseMultimodalProcessor(ABC):
                 result = await asyncio.wrap_future(future)
             except ValueError as e:
                 logger.info(
-                    "[load_mm_data(simple)] invalid %s data at index=%d: %s",
+                    "[load_mm_data(simple)] invalid %s data at index=%d (type=%s)",
                     modality.name,
                     idx,
-                    e,
+                    safe_exception_type(e),
                 )
                 raise ValueError(
                     f"An exception occurred while loading {modality.name} data "
-                    f"at index {idx}: {e}"
-                ) from e
+                    f"at index {idx}"
+                ) from None
             except Exception as e:
                 logger.exception(
-                    "[load_mm_data(simple)] error loading %s data at index=%d",
+                    "[load_mm_data(simple)] error loading %s data at index=%d (type=%s)",
                     modality.name,
                     idx,
+                    safe_exception_type(e),
+                    exc_info=False,
                 )
                 raise RuntimeError(
-                    f"An exception occurred while loading {modality.name} data at index {idx}: {e}"
-                )
+                    f"An exception occurred while loading {modality.name} data at index {idx}"
+                ) from None
 
             if modality == Modality.IMAGE:
                 images[idx] = result
@@ -1946,7 +1943,9 @@ class BaseMultimodalProcessor(ABC):
                     )
                 except Exception as e:
                     logger.warning(
-                        f"Due to {e}, falling back to decode+retokenize, which may change prompt length (token drift)."
+                        "Multimodal token expansion failed (type=%s); falling back to "
+                        "decode+retokenize, which may change prompt length (token drift).",
+                        safe_exception_type(e),
                     )
         else:
             ret = None

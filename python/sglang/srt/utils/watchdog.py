@@ -13,8 +13,27 @@ from typing import Callable, List, Optional
 import psutil
 
 from sglang.srt.utils.cudacore_pyspy_dump_utils import pyspy_dump_schedulers
+from sglang.srt.utils.framework_log_privacy import safe_exception_type
 
 logger = logging.getLogger(__name__)
+
+HARD_WATCHDOG_GRACE_SECONDS = 5.0
+
+
+def _best_effort_error(message, *args):
+    try:
+        logger.error(message, *args)
+    except Exception:
+        # A closed pipe, disk-full handler, or custom sink cannot own recovery.
+        pass
+
+
+def _best_effort_flush():
+    for stream in (sys.stderr, sys.stdout):
+        try:
+            stream.flush()
+        except Exception:
+            pass
 
 
 class Watchdog:
@@ -26,9 +45,9 @@ class Watchdog:
         test_stuck_time: float = 0,
     ) -> Watchdog:
         if watchdog_timeout is None:
-            assert test_stuck_time == 0, (
-                f"stuck tester can be enabled only if soft watchdog is enabled."
-            )
+            assert (
+                test_stuck_time == 0
+            ), f"stuck tester can be enabled only if soft watchdog is enabled."
             return _WatchdogNoop()
         return _WatchdogReal(
             debug_name=debug_name,
@@ -126,8 +145,8 @@ class WatchdogRaw:
             while True:
                 self._watchdog_once()
         except Exception as e:
-            logger.error(
-                f"{self.debug_name} watchdog thread crashed: {e}", exc_info=True
+            _best_effort_error(
+                "Watchdog thread crashed (type=%s)", safe_exception_type(e)
             )
 
     def _watchdog_once(self):
@@ -146,21 +165,104 @@ class WatchdogRaw:
                     watchdog_last_time = current
             time.sleep(self.watchdog_timeout / 2)
 
-        if self.dump_info is not None and (info_msg := self.dump_info()):
-            logger.error(f"{self.debug_name} debug info:\n{info_msg}")
+        self._handle_timeout()
 
-        pyspy_dump_schedulers()
-        logger.error(
-            f"{self.debug_name} watchdog timeout "
-            f"({self.watchdog_timeout=}, {self.soft=})"
-        )
-        print(file=sys.stderr, flush=True)
-        print(file=sys.stdout, flush=True)
+    def _run_diagnostics(self):
+        """Run best-effort diagnostics for a non-fatal soft watchdog timeout."""
+        try:
+            counter, active = self.get_counter(), self.is_active()
+        except Exception as e:
+            _best_effort_error(
+                "Soft watchdog counter snapshot failed (type=%s)",
+                safe_exception_type(e),
+            )
+        else:
+            _best_effort_error(
+                "Soft watchdog state (counter=%d, active=%s)",
+                counter if type(counter) is int else 0,
+                active if type(active) is bool else False,
+            )
+        if self.dump_info is not None:
+            try:
+                # Existing callbacks may perform diagnostics, but their opaque
+                # return values can contain requests, RIDs, or token sequences.
+                self.dump_info()
+            except Exception as e:
+                _best_effort_error(
+                    "Soft watchdog debug snapshot failed (type=%s)",
+                    safe_exception_type(e),
+                )
+            else:
+                _best_effort_error(
+                    "Soft watchdog debug snapshot completed (details redacted)"
+                )
 
-        if not self.soft:
-            # Wait for some time so that the parent process can print the error.
-            time.sleep(5)
-            self.parent_process.send_signal(signal.SIGQUIT)
+        try:
+            pyspy_dump_schedulers()
+        except Exception as e:
+            _best_effort_error(
+                "Soft watchdog scheduler stack dump failed (type=%s)",
+                safe_exception_type(e),
+            )
+
+    def _handle_timeout(self):
+        """Handle a detected timeout without letting diagnostics block recovery."""
+        if self.soft:
+            _best_effort_error(
+                "Soft watchdog timeout (timeout_seconds=%s)",
+                (
+                    self.watchdog_timeout
+                    if type(self.watchdog_timeout) in (int, float)
+                    else 0
+                ),
+            )
+            self._run_diagnostics()
+            _best_effort_flush()
+            return
+
+        # Do not touch logging, streams, disk, or diagnostic callbacks before
+        # the existing signal/wait/kill recovery sequence has been attempted.
+        outcome, failure_type = "parent exited", "none"
+        try:
+            try:
+                self.parent_process.send_signal(signal.SIGQUIT)
+            except psutil.NoSuchProcess:
+                outcome = "parent already gone"
+                return
+            except Exception as e:
+                failure_type = safe_exception_type(e)
+
+            try:
+                self.parent_process.wait(timeout=HARD_WATCHDOG_GRACE_SECONDS)
+                return
+            except psutil.NoSuchProcess:
+                outcome = "parent already gone"
+                return
+            except psutil.TimeoutExpired:
+                pass
+            except Exception as e:
+                failure_type = safe_exception_type(e)
+
+            try:
+                self.parent_process.kill()
+                outcome = "SIGKILL requested"
+            except psutil.NoSuchProcess:
+                outcome = "parent already gone"
+            except Exception as e:
+                outcome, failure_type = "SIGKILL failed", safe_exception_type(e)
+        finally:
+            _best_effort_error(
+                "Hard watchdog timeout (timeout_seconds=%s, grace_seconds=%s, outcome=%s, type=%s)",
+                (
+                    self.watchdog_timeout
+                    if type(self.watchdog_timeout) in (int, float)
+                    else 0
+                ),
+                HARD_WATCHDOG_GRACE_SECONDS,
+                outcome,
+                failure_type,
+            )
+            _best_effort_flush()
 
 
 class SubprocessWatchdog:
@@ -206,18 +308,20 @@ class SubprocessWatchdog:
                 if self._check_processes():
                     return
         except Exception as e:
-            logger.error(f"SubprocessWatchdog thread crashed: {e}", exc_info=True)
+            _best_effort_error(
+                "SubprocessWatchdog thread crashed (type=%s)", safe_exception_type(e)
+            )
 
     def _check_processes(self) -> bool:
-        for proc, name in zip(self._processes, self._names):
+        for proc, _ in zip(self._processes, self._names):
             if proc.is_alive() or proc.exitcode == 0:
                 continue
 
-            logger.error(
-                f"Subprocess {name} (pid={proc.pid}) crashed "
-                f"with exit code {proc.exitcode}. "
-                f"Triggering SIGQUIT for cleanup..."
-            )
             os.kill(os.getpid(), signal.SIGQUIT)
+            _best_effort_error(
+                "Subprocess crashed; SIGQUIT requested (pid=%d, exit_code=%d)",
+                proc.pid if type(proc.pid) is int else 0,
+                proc.exitcode if type(proc.exitcode) is int else 0,
+            )
             return True
         return False

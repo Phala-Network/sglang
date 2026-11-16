@@ -100,21 +100,10 @@ class RequestLogger:
         if not self.log_requests:
             return
 
-        max_length, skip_names, _ = self.metadata
-        headers = _extract_whitelisted_headers(request)
         if self.log_requests_format == "json":
-            log_data = {
-                "rid": obj.rid,
-                "obj": _transform_data_for_logging(obj, max_length, skip_names),
-            }
-            if headers:
-                log_data["headers"] = headers
-            log_json(self.targets, "request.received", log_data)
+            log_json(self.targets, "request.received", {"redacted": True})
         else:
-            headers_str = f", headers={headers}" if headers else ""
-            self._log(
-                f"Receive: obj={_dataclass_to_string_truncated(obj, max_length, skip_names=skip_names)}{headers_str}"
-            )
+            self._log("Receive: request details redacted")
 
         # FIXME: This is a temporary fix to get the text from the input ids.
         # We should remove this once we have a proper way.
@@ -140,27 +129,10 @@ class RequestLogger:
         request: Optional[fastapi.Request] = None,
     ) -> None:
         """Log the raw OpenAI request payload before request adaptation/tokenization."""
-        max_length, _, _ = self.metadata
-        max_length = max_length if max_length is not None else 2048
-        headers = _extract_whitelisted_headers(request)
-
-        if hasattr(obj, "model_dump"):
-            obj_to_log = obj.model_dump(exclude_none=True)
-        else:
-            obj_to_log = obj
-
         if self.log_requests_format == "json":
-            log_data = {
-                "obj": _transform_data_for_logging(obj_to_log, max_length=max_length),
-            }
-            if headers:
-                log_data["headers"] = headers
-            log_json(self.targets, "request.received.openai", log_data)
+            log_json(self.targets, "request.received.openai", {"redacted": True})
         else:
-            headers_str = f", headers={headers}" if headers else ""
-            self._log(
-                f"Receive OpenAI: obj={_dataclass_to_string_truncated(obj_to_log, max_length)}{headers_str}"
-            )
+            self._log("Receive OpenAI: request details redacted")
 
     def log_finished_request(
         self,
@@ -175,26 +147,10 @@ class RequestLogger:
         if self.log_exceeded_ms > 0 and e2e_latency_ms < self.log_exceeded_ms:
             return
 
-        max_length, skip_names, out_skip_names = self.metadata
-        headers = _extract_whitelisted_headers(request)
         if self.log_requests_format == "json":
-            log_data = {
-                "rid": obj.rid,
-                "obj": _transform_data_for_logging(obj, max_length, skip_names),
-            }
-            if headers:
-                log_data["headers"] = headers
-            log_data["out"] = _transform_data_for_logging(
-                out, max_length, out_skip_names
-            )
-            log_json(self.targets, "request.finished", log_data)
+            log_json(self.targets, "request.finished", {"redacted": True})
         else:
-            obj_str = _dataclass_to_string_truncated(
-                obj, max_length, skip_names=skip_names
-            )
-            out_str = f", out={_dataclass_to_string_truncated(out, max_length, skip_names=out_skip_names)}"
-            headers_str = f", headers={headers}" if headers else ""
-            self._log(f"Finish: obj={obj_str}{headers_str}{out_str}")
+            self._log("Finish: request and response details redacted")
 
     def _compute_metadata(
         self,

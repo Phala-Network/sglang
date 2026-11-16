@@ -56,6 +56,7 @@ class ReasonerGrammarObject(BaseGrammarObject):
         apply_vocab_mask_fn=None,
         think_starts: Sequence[str] = (),
         decode: Optional[Callable[[List[int]], str]] = None,
+        min_think_tokens: int = -1,
     ):
         super().__init__()
         self.grammar = grammar
@@ -66,6 +67,7 @@ class ReasonerGrammarObject(BaseGrammarObject):
         self.decode = decode
         self._think_end_matcher = TokenSequenceMatcher(self.think_end_ids)
         self.think_excluded_token_ids = think_excluded_token_ids
+        self.min_think_tokens = min_think_tokens
         self.max_think_tokens = max_think_tokens
         self.enable_token_filter = enable_token_filter
         self.token_filter_fn = token_filter_fn
@@ -151,6 +153,13 @@ class ReasonerGrammarObject(BaseGrammarObject):
     def _is_generation(self):
         return self.tokens_after_end >= 0
 
+    @property
+    def vocab_mask_is_unconstrained(self):
+        # Forward generation cannot re-enter thinking. Speculative DFS may
+        # still run for its state bookkeeping, but every descendant mask is
+        # also an identity mask. Re-evaluate after any explicit rollback.
+        return self.grammar is None and self._is_generation()
+
     def transfer_state(self, token: int) -> None:
         if self._is_thinking():
             previous_match = self._matched_think_end_tokens
@@ -231,6 +240,13 @@ class ReasonerGrammarObject(BaseGrammarObject):
             < self.max_think_tokens
         )
 
+    def _must_think_more(self):
+        return (
+            self.min_think_tokens >= 0
+            and self.tokens_in_think + self._matched_think_end_tokens
+            < self.min_think_tokens
+        )
+
     def _do_token_filter(
         self, vocab_mask, token_ids, idx, is_allowed=True, reset_vocab_mask=True
     ):
@@ -245,6 +261,13 @@ class ReasonerGrammarObject(BaseGrammarObject):
 
     def _filter_reasoning_in_grammar(self, vocab_mask: torch.Tensor, idx: int):
         # Budget and strict filters can narrow, but never widen, the grammar mask.
+        if self._must_think_more():
+            blocked = [self.think_end_ids[self._matched_think_end_tokens]]
+            blocked.extend(self.think_excluded_token_ids or [])
+            self._do_token_filter(
+                vocab_mask, blocked, idx, is_allowed=False, reset_vocab_mask=False
+            )
+            return
         if self._can_think_more():
             if self.think_excluded_token_ids is not None:
                 self._do_token_filter(
@@ -272,7 +295,11 @@ class ReasonerGrammarObject(BaseGrammarObject):
         if self._is_thinking():
             if not self.enable_token_filter:
                 return
-            if self._can_think_more():
+            if self._must_think_more():
+                blocked = [self.think_end_ids[self._matched_think_end_tokens]]
+                blocked.extend(self.think_excluded_token_ids or [])
+                self._do_token_filter(vocab_mask, blocked, idx, is_allowed=False)
+            elif self._can_think_more():
                 if self.think_excluded_token_ids is not None:
                     self._do_token_filter(
                         vocab_mask,
@@ -316,6 +343,7 @@ class ReasonerGrammarObject(BaseGrammarObject):
             grammar=self.grammar.copy() if self.grammar is not None else None,
             think_end_ids=self.think_end_ids,
             think_excluded_token_ids=self.think_excluded_token_ids,
+            min_think_tokens=self.min_think_tokens,
             max_think_tokens=self.max_think_tokens,
             enable_token_filter=self.enable_token_filter,
             token_filter_fn=self.token_filter_fn,

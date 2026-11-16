@@ -1,11 +1,13 @@
 """Security tests for client-supplied remote multimodal media URLs."""
 
 import http.server
+import io
 import threading
 import unittest
 from unittest.mock import patch
 
 import requests
+from PIL import Image
 
 from sglang.srt.utils.common import (
     _normalize_video_input,
@@ -13,6 +15,7 @@ from sglang.srt.utils.common import (
     download_remote_media,
     get_image_bytes,
     load_audio,
+    load_image,
 )
 from sglang.test.ci.ci_register import register_cpu_ci
 
@@ -21,6 +24,22 @@ register_cpu_ci(est_time=6, suite="base-a-test-cpu")
 
 class _MediaHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path.startswith("/image?") or self.path == "/image":
+            payload = io.BytesIO()
+            Image.new("RGB", (3, 2), color=(24, 42, 60)).save(payload, format="PNG")
+            body = payload.getvalue()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if self.path == "/image-redirect":
+            self.send_response(302)
+            self.send_header("Location", "/image?auth=SYNTHETIC_PRIVATE_IMAGE_QUERY")
+            self.end_headers()
+            return
+
         if self.path == "/media":
             payload = b"remote-media"
             self.send_response(200)
@@ -129,6 +148,14 @@ class TestMediaURLSecurity(unittest.TestCase):
             download_remote_media(self._url("/same-host-redirect"), timeout=5),
             b"remote-media",
         )
+
+    def test_actual_url_image_decode_preserves_shape_and_same_host_redirect(self):
+        configure_media_url_security(["127.0.0.1"], max_file_size_mb=1)
+        for path in ("/image?auth=SYNTHETIC_PRIVATE_IMAGE_QUERY", "/image-redirect"):
+            with self.subTest(path=path):
+                image, _ = load_image(self._url(path), gpu_image_decode=False)
+                self.assertEqual(image.size, (3, 2))
+                self.assertEqual(image.getpixel((0, 0)), (24, 42, 60))
 
     def test_redirect_count_is_bounded(self):
         configure_media_url_security(["127.0.0.1"], max_file_size_mb=64)

@@ -26,7 +26,18 @@ from collections import deque
 from contextlib import ExitStack, contextmanager, nullcontext
 from functools import partial
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Any, Deque, Dict, List, Optional, Set, Tuple, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Deque,
+    Dict,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+    cast,
+)
 
 from sglang.srt.runtime_context import (
     SpawnRanks,
@@ -99,6 +110,7 @@ from sglang.srt.disaggregation.utils import (
     ReqToMetadataIdxAllocator,
     TransferBackend,
     get_dsa_seed_metadata_dim,
+    is_unadmitted_reject,
     prepare_abort,
     unified_memory_disagg_move_gate,
 )
@@ -108,6 +120,7 @@ from sglang.srt.distributed.parallel_state import (
 )
 from sglang.srt.dllm.mixin.scheduler import SchedulerDllmMixin
 from sglang.srt.environ import envs
+from sglang.srt.managers.io_struct import matches_abort_rid
 from sglang.srt.eplb.expert_distribution import get_global_expert_distribution_recorder
 from sglang.srt.hardware_backend.mlx.runtime import use_mlx
 from sglang.srt.layers.dp_attention import get_dp_tp_group
@@ -295,13 +308,18 @@ from sglang.srt.managers.utils import (
 )
 from sglang.srt.mem_cache import kv_cache_builder
 from sglang.srt.mem_cache.allocator.page_interleave import page_interleave_shard_size
-from sglang.srt.mem_cache.base_prefix_cache import CacheRequestOutcome
+from sglang.srt.mem_cache.base_prefix_cache import (
+    BasePrefixCache,
+    CacheRequestOutcome,
+    EvictParams,
+)
 from sglang.srt.mem_cache.common import (
     checkpoint_kv_cache,
     discard_kv_cache_backup,
     release_kv_cache,
 )
 from sglang.srt.mem_cache.events import KvEventLoraNames
+from sglang.srt.mem_cache.memory_pool import HybridReqToTokenPool
 from sglang.srt.model_executor.forward_batch_info import PPProxyTensors
 from sglang.srt.model_executor.runner_utils.pool import prewarm_graph_pool_borrow
 from sglang.srt.model_loader.utils import get_resolved_model_impl
@@ -3239,6 +3257,23 @@ class Scheduler(
                 self._add_request_to_queue(req)
                 return
 
+        # Admission sees the expanded multimodal prompt and the requested
+        # output budget, before init_req_max_new_tokens can clip that budget.
+        from sglang.srt.configs.request_static_yarn import admit_request_static_yarn
+
+        try:
+            admit_request_static_yarn(
+                req,
+                getattr(self.model_config, "request_static_yarn_config", None),
+                self.model_config.context_len,
+            )
+        except ValueError as error:
+            req.set_finish_with_abort(
+                str(error), status_code=HTTPStatus.BAD_REQUEST
+            )
+            self.retire_unadmitted_request(req)
+            return
+
         # initialize before returning
         self.init_req_max_new_tokens(req)
 
@@ -3246,7 +3281,8 @@ class Scheduler(
         error_msg = validate_input_length(
             req,
             self.max_req_input_len,
-            get_serving().allow_auto_truncate,
+            get_serving().allow_auto_truncate
+            and getattr(self.model_config, "request_static_yarn_config", None) is None,
         )
         if error_msg:
             req.set_finish_with_abort(error_msg)
@@ -3478,6 +3514,13 @@ class Scheduler(
         self.output_streamer.stream_output([req], req.return_logprob)
 
     def _add_request_to_queue(self, req: Req, is_retracted: bool = False):
+        # Validation can fail before a request-static profile is assigned.
+        if (
+            getattr(self.model_config, "request_static_yarn_config", None) is not None
+            and is_unadmitted_reject(req)
+        ):
+            self.retire_unadmitted_request(req)
+            return
         if not self._set_or_validate_priority(req):
             self._release_aborted_request(req)
             return
@@ -4049,6 +4092,58 @@ class Scheduler(
 
         return res
 
+    def _ensure_mamba_admission_capacity(
+        self,
+        req: Req,
+        can_run_list: List[Req],
+    ) -> bool:
+        """Check real Mamba capacity before cache matching.
+
+        Prefix matching may allocate a live state, and request-pool allocation
+        may allocate the remaining main and ping-pong states. Gate both steps
+        on the exact outstanding demand so a temporary shortage keeps the
+        request queued instead of reaching an allocator assertion.
+        """
+        req_to_token_pool = self.req_to_token_pool
+        if not isinstance(req_to_token_pool, HybridReqToTokenPool):
+            return True
+
+        tree_cache = cast(BasePrefixCache, self.tree_cache)
+        session_kv = tree_cache.get_session_kv(req)
+        needed_slots = sum(
+            req_to_token_pool.mamba_admission_slots(candidate.kv)
+            for candidate in can_run_list
+        )
+        needed_slots += req_to_token_pool.mamba_admission_slots(session_kv or req.kv)
+        if needed_slots <= 0:
+            return True
+
+        mamba_allocator = req_to_token_pool.mamba_allocator
+        available_slots = mamba_allocator.schedulable_available_size()
+        active_slots_are_evictable = req_to_token_pool.mamba_ckpt_pool is None
+        full_cache_can_donate = hasattr(
+            self.token_to_kv_pool_allocator, "mamba_slot_full_token_cost"
+        )
+        if (
+            available_slots < needed_slots
+            and (active_slots_are_evictable or full_cache_can_donate)
+            and tree_cache.supports_mamba()
+        ):
+            tree_cache.evict_for_alloc(
+                EvictParams(num_tokens=0, mamba_num=needed_slots - available_slots)
+            )
+            available_slots = mamba_allocator.schedulable_available_size()
+
+        if available_slots >= needed_slots:
+            return True
+
+        logger.debug(
+            "Mamba admission deferred: needed_slots=%d available_slots=%d",
+            needed_slots,
+            available_slots,
+        )
+        return False
+
     def get_new_batch_prefill(self, running_batch: ScheduleBatch) -> NextBatchPlan:
         prefill_delayer_single_pass = None
         if self.prefill_delayer:
@@ -4197,7 +4292,9 @@ class Scheduler(
                 )
 
         mamba_allocator = getattr(self.req_to_token_pool, "mamba_allocator", None)
-        if mamba_allocator is not None:
+        if mamba_allocator is not None and not hasattr(
+            self.req_to_token_pool, "mamba_admission_slots"
+        ):
             mamba_allocator.alloc_group_begin(len(self.waiting_queue))
         buffer_pipeline = self.tree_cache.buffer_pipeline
         # Get requests from the waiting queue to a new prefill batch
@@ -4257,6 +4354,9 @@ class Scheduler(
                     # marks the staged span below once it is surfaced.
                     req.host_hit_is_storage = False
 
+            if not self._ensure_mamba_admission_capacity(req, adder.can_run_list):
+                continue
+
             req.init_next_round_input(self.tree_cache)
             if self.enable_hicache_storage and (
                 self._prefetch_after_device_hit_loss(req)
@@ -4299,7 +4399,9 @@ class Scheduler(
                         req.kv.mamba_pool_idx = None
                 break
 
-        if mamba_allocator is not None:
+        if mamba_allocator is not None and not hasattr(
+            self.req_to_token_pool, "mamba_admission_slots"
+        ):
             mamba_allocator.alloc_group_end()
 
         # Update waiting queue
@@ -5674,7 +5776,7 @@ class Scheduler(
 
     def abort_request(self, recv_req: AbortReq):
         if (chunked_req := self.chunked_req) is not None:
-            if recv_req.abort_all or chunked_req.rid.startswith(recv_req.rid):
+            if recv_req.abort_all or matches_abort_rid(chunked_req.rid, recv_req.rid):
                 self._pending_chunked_abort_req = chunked_req
 
         # todo hisparse, release resources for abort requests in hisparse coordinator
@@ -5685,7 +5787,7 @@ class Scheduler(
         # Delete requests in the waiting queue
         to_del = []
         for i, req in enumerate(self.waiting_queue):
-            if recv_req.abort_all or req.rid.startswith(recv_req.rid):
+            if recv_req.abort_all or matches_abort_rid(req.rid, recv_req.rid):
                 to_del.append(i)
 
         # Sort in reverse order to avoid index issues when deleting
@@ -5719,7 +5821,7 @@ class Scheduler(
                 DisaggregationMode.DECODE,
             ):
                 release_kv_cache(req, self.tree_cache, checkpoint=False)
-            logger.debug(f"Abort queued request. {req.rid=}")
+            logger.debug("Abort queued request.")
 
         if self.dllm_config is not None:
             for req in self.dllm_manager.pop_aborted_reqs(
@@ -5729,7 +5831,7 @@ class Scheduler(
                 self.send_abort_output(_make_abort_req(req), req)
                 if req.kv.holds_kv or req.kv.holds_mamba:
                     release_kv_cache(req, self.tree_cache, checkpoint=False)
-                logger.debug(f"Abort dLLM queued request. {req.rid=}")
+                logger.debug("Abort dLLM queued request.")
 
         # Delete the requests in the grammar queue
         # Abort method 2: call `set_finish_with_abort`
@@ -5741,8 +5843,8 @@ class Scheduler(
         if self.disaggregation_mode == DisaggregationMode.PREFILL:
             # Abort requests that have not yet been bootstrapped
             for req in self.disagg_prefill_bootstrap_queue.queue:
-                if recv_req.abort_all or req.rid.startswith(recv_req.rid):
-                    logger.debug(f"Abort bootstrap queue request. {req.rid=}")
+                if recv_req.abort_all or matches_abort_rid(req.rid, recv_req.rid):
+                    logger.debug("Abort bootstrap queue request.")
                     self._release_aborted_request(req)
 
                     if hasattr(req.disagg_kv_sender, "abort"):
@@ -5752,24 +5854,24 @@ class Scheduler(
 
             # Abort in-flight requests
             for req in self.disagg_prefill_inflight_queue:
-                if recv_req.abort_all or req.rid.startswith(recv_req.rid):
-                    logger.debug(f"Abort inflight queue request. {req.rid=}")
+                if recv_req.abort_all or matches_abort_rid(req.rid, recv_req.rid):
+                    logger.debug("Abort inflight queue request.")
                     if hasattr(req.disagg_kv_sender, "abort"):
                         req.disagg_kv_sender.abort()
 
         elif self.disaggregation_mode == DisaggregationMode.DECODE:
             # Abort requests that have not yet finished preallocation
             for decode_req in self.disagg_decode_prealloc_queue.queue:
-                if recv_req.abort_all or decode_req.req.rid.startswith(recv_req.rid):
-                    logger.debug(f"Abort prealloc queue request. {decode_req.req.rid=}")
+                if recv_req.abort_all or matches_abort_rid(decode_req.req.rid, recv_req.rid):
+                    logger.debug("Abort prealloc queue request.")
                     decode_req.kv_receiver.abort()
                     if get_parallel().pp_size > 1:
                         prepare_abort(decode_req.req, "Aborted by AbortReq.")
 
             # Abort requests waiting for kvcache to release tree cache
             for decode_req in self.disagg_decode_transfer_queue.queue:
-                if recv_req.abort_all or decode_req.req.rid.startswith(recv_req.rid):
-                    logger.debug(f"Abort transfer queue request. {decode_req.req.rid=}")
+                if recv_req.abort_all or matches_abort_rid(decode_req.req.rid, recv_req.rid):
+                    logger.debug("Abort transfer queue request.")
                     if decode_req.host_staged:
                         # Keep the host destination alive until prefill stops writing.
                         prepare_abort(decode_req.req, "Aborted by AbortReq.")
@@ -5783,7 +5885,7 @@ class Scheduler(
             if self.disagg_decode_prealloc_queue.retracted_queue:
                 remaining_retracted = []
                 for decode_req in self.disagg_decode_prealloc_queue.retracted_queue:
-                    if recv_req.abort_all or decode_req.rid.startswith(recv_req.rid):
+                    if recv_req.abort_all or matches_abort_rid(decode_req.rid, recv_req.rid):
                         discard_kv_cache_backup(
                             decode_req,
                             self.tree_cache,
@@ -5797,12 +5899,12 @@ class Scheduler(
         # Delete requests in the running batch
         for req in self.collect_inflight_reqs():
             if not req.finished() and (
-                recv_req.abort_all or req.rid.startswith(recv_req.rid)
+                recv_req.abort_all or matches_abort_rid(req.rid, recv_req.rid)
             ):
                 # Abort method 3: set `to_finish`
                 # The request will still run one decode forward pass.
                 # Then we reuse all existing code to clean up the KV cache allocation.
-                logger.debug(f"Abort running request. {req.rid=}")
+                logger.debug("Abort running request.")
                 if recv_req.abort_message:
                     # Timeout aborts carry an SLA message + 503 for the client.
                     req.to_finish = FINISH_ABORT(

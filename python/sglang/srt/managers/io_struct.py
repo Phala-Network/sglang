@@ -83,6 +83,23 @@ else:
 logger = logging.getLogger(__name__)
 
 
+def matches_abort_rid(req_rid: str, abort_rid: str) -> bool:
+    """Target an exact request or a decimal-index child, never a raw prefix.
+
+    Adapted from SGLang PR43476, commit
+    2494e57d545007e3733a3d2e66556a558700b060 (Apache-2.0).
+    """
+    if not abort_rid:
+        return False
+    if req_rid == abort_rid:
+        return True
+    prefix = abort_rid + "_"
+    if not req_rid.startswith(prefix):
+        return False
+    suffix = req_rid[len(prefix):]
+    return bool(suffix) and suffix.isascii() and suffix.isdecimal()
+
+
 class BaseReq(msgspec.Struct, tag=True, kw_only=True, array_like=True):
     """Base for single-request IPC payloads."""
 
@@ -315,8 +332,8 @@ class GenerateReqInput:
     background: bool = False
     # Require reasoning for the request (hybrid reasoning model only)
     require_reasoning: bool = False
-    # Per-request thinking budget. Requires strict thinking so the runtime can
-    # enforce the limit rather than silently treating it as metadata.
+    # Per-request thinking bounds require strict thinking for enforcement.
+    min_thinking_tokens: Optional[int] = None
     max_thinking_tokens: Optional[int] = None
 
     # Priority for the request
@@ -1035,6 +1052,7 @@ class GenerateReqInput:
             conversation_id=self.conversation_id,
             http_worker_ipc=self.http_worker_ipc,
             require_reasoning=self.require_reasoning,
+            min_thinking_tokens=self.min_thinking_tokens,
             max_thinking_tokens=self.max_thinking_tokens,
             priority=self.priority,
             extra_key=self.extra_key[i] if self.extra_key is not None else None,

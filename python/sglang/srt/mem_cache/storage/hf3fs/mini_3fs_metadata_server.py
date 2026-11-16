@@ -330,6 +330,11 @@ class Hf3fsMetadataServer:
         else:
             logging.info("Persistence is DISABLED.")
 
+        from sglang.srt.utils.framework_log_privacy import (
+            configure_framework_log_privacy,
+        )
+
+        configure_framework_log_privacy()
         uvicorn.run(self.app, host=host, port=port)
 
 

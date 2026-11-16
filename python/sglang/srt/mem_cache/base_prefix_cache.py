@@ -264,6 +264,8 @@ class InitLoadBackParams:
     host_hit_length: int
     mem_quota: Optional[int] = None
     req: Optional[Req] = None
+    # Outstanding live/request-buffer slots for the entire selected batch.
+    mamba_slots_to_reserve: int = 0
 
 
 class MatchResult(NamedTuple):
@@ -718,6 +720,10 @@ class BasePrefixCache(ABC, PrefixCacheTrait):
 
     def supports_mamba(self) -> bool:
         return False
+
+    def get_session_kv(self, req: Req) -> Optional[ReqKvInfo]:
+        """Return KV already owned by a resumable session, if any."""
+        return None
 
     def release_session(self, session_id: str) -> None:
         pass

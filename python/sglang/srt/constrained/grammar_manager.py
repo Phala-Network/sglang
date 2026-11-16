@@ -14,6 +14,7 @@ from sglang.srt.constrained.base_grammar_backend import (
 from sglang.srt.constrained.reasoner_grammar_backend import ReasonerGrammarObject
 from sglang.srt.distributed.communication_tags import P2PTag
 from sglang.srt.environ import envs
+from sglang.srt.managers.io_struct import matches_abort_rid
 from sglang.srt.runtime_context import get_parallel, get_serving
 from sglang.srt.sampling.sampling_params import (
     get_request_reasoning_end_token_ids,
@@ -24,6 +25,8 @@ if TYPE_CHECKING:
     from sglang.srt.managers.io_struct import AbortReq
     from sglang.srt.managers.schedule_batch import Req
     from sglang.srt.managers.scheduler import Scheduler
+
+from sglang.srt.utils.framework_log_privacy import safe_exception_type
 
 logger = logging.getLogger(__name__)
 
@@ -113,8 +116,8 @@ class GrammarManager:
 
     def abort_requests(self, recv_req: AbortReq):
         for req in self.grammar_queue:
-            if recv_req.abort_all or req.rid.startswith(recv_req.rid):
-                logger.debug(f"Abort grammar queue request. {req.rid=}")
+            if recv_req.abort_all or matches_abort_rid(req.rid, recv_req.rid):
+                logger.debug("Abort grammar queue request")
                 if isinstance(req.grammar, futures.Future) and req.grammar:
                     req.grammar.cancel()
                 req.set_finish_with_abort("Aborted by AbortReq.")
@@ -124,7 +127,7 @@ class GrammarManager:
         if not isinstance(custom_params, dict):
             return None
         thinking_budget = custom_params.get("thinking_budget")
-        return thinking_budget if isinstance(thinking_budget, int) else None
+        return thinking_budget if type(thinking_budget) is int else None
 
     def _apply_request_reasoning_config(self, req: Req) -> None:
         if not isinstance(req.grammar, ReasonerGrammarObject):
@@ -141,6 +144,14 @@ class GrammarManager:
             req.grammar.set_request_think_end_ids(think_end_ids)
         if get_request_reasoning_in_grammar(req.sampling_params.custom_params):
             req.grammar.set_reasoning_in_grammar()
+        custom_params = req.sampling_params.custom_params
+        min_budget = (
+            custom_params.get("min_thinking_budget")
+            if isinstance(custom_params, dict)
+            else None
+        )
+        if type(min_budget) is int:
+            req.grammar.min_think_tokens = min_budget
         thinking_budget = self._get_request_thinking_budget(req)
         if thinking_budget is not None:
             req.grammar.max_think_tokens = thinking_budget
@@ -305,10 +316,7 @@ class GrammarManager:
             try:
                 req.grammar = req.grammar.result()
             except Exception as e:
-                logger.error(
-                    f"Grammar compilation raised an exception: {e}, "
-                    f"grammar_key={req.grammar_key}"
-                )
+                logger.error("Grammar compilation failed (%s)", safe_exception_type(e))
                 req.grammar = InvalidGrammarObject(f"Grammar compilation failed: {e}")
             self.grammar_backend.set_cache(req.grammar_key, req.grammar.copy())
             self._apply_request_reasoning_config(req)

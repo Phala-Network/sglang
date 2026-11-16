@@ -373,5 +373,40 @@ class TestFixedPrefillMemoryBudget(unittest.TestCase):
         self.assertFalse(allocator.verify_byte_accounting())
 
 
+class TestStarvedChunkedPrefill(CustomTestCase):
+    """Continuing chunks cannot allocate beyond the physical token pool.
+
+    Adapted from SGLang PR #45685, head
+    44b592c2c0a2ad77a2b8c92518e13a8fe276cbce (Apache-2.0).
+    """
+
+    def test_continuing_chunk_never_exceeds_physical_tokens(self):
+        with published_topology():
+            allocator = TokenToKVPoolAllocator(2048, torch.bfloat16, "cpu", None, False)
+            cache = RadixCache.create_simulated(mock_allocator=allocator)
+            budget = allocator.create_prefill_budget(cache)
+            self.assertIsNotNone(allocator.alloc(2048 - 100))
+            self.assertEqual(budget.available_chunk_tokens(8192), 100)
+
+            budget.total_offset += 500
+            self.assertLess(budget.remaining_total, 0)
+            self.assertEqual(budget.available_chunk_tokens(8192), 99)
+
+            self.assertIsNotNone(allocator.alloc(100))
+            self.assertIsNone(budget.available_chunk_tokens(8192))
+
+    def test_continuing_chunk_retains_a_page_of_slack(self):
+        with published_topology():
+            allocator = TokenToKVPoolAllocator(16, torch.bfloat16, "cpu", None, False)
+            cache = RadixCache.create_simulated(mock_allocator=allocator)
+            budget = allocator.create_prefill_budget(cache)
+            budget.page_size = 4
+            budget.total_offset = 100
+            self.assertIsNotNone(allocator.alloc(8))
+            self.assertEqual(budget.available_chunk_tokens(8192), 4)
+            self.assertIsNotNone(allocator.alloc(4))
+            self.assertIsNone(budget.available_chunk_tokens(8192))
+
+
 if __name__ == "__main__":
     unittest.main()

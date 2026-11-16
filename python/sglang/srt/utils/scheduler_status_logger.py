@@ -49,7 +49,7 @@ class SchedulerStatusLogger:
             "scheduler.status",
             {
                 "rank": self.rank,
-                "running_rids": [r.rid for r in running_batch.reqs],
-                "queued_rids": [r.rid for r in waiting_queue],
+                "running_count": len(running_batch.reqs),
+                "queued_count": len(waiting_queue),
             },
         )

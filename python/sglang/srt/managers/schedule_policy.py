@@ -71,6 +71,7 @@ from sglang.srt.mem_cache.base_prefix_cache import (
     zero_match_result,
 )
 from sglang.srt.mem_cache.common import match_kv_cache, touch_waiting_prefix
+from sglang.srt.mem_cache.memory_pool import HybridReqToTokenPool
 from sglang.srt.mem_cache.radix_cache import RadixCache, RadixKey, TreeNode
 from sglang.srt.mem_cache.unified_cache.components import (
     CacheTransferPhase,
@@ -228,7 +229,7 @@ class SchedulePolicy:
             for r in waiting_queue:
                 match_kv_cache(r, self.tree_cache)
 
-        if self.policy == CacheAgnosticPolicy.FCFS:
+        if policy == CacheAgnosticPolicy.FCFS:
             if self.enable_priority_scheduling:
                 SchedulePolicy._sort_by_priority_and_fcfs(
                     waiting_queue, self.priority_sign
@@ -245,7 +246,10 @@ class SchedulePolicy:
                 SchedulePolicy._sort_by_dfs_weight(waiting_queue, self.tree_cache)
             elif policy == CacheAwarePolicy.HRRN:
                 SchedulePolicy._sort_by_hrrn(
-                    waiting_queue, temporary_deprioritized, processed_tokens
+                    waiting_queue,
+                    temporary_deprioritized,
+                    processed_tokens,
+                    self.priority_sign if self.enable_priority_scheduling else 0,
                 )
             elif policy == CacheAwarePolicy.SHORTEST_PREFILL_FIRST:
                 SchedulePolicy._sort_by_shortest_prefill(
@@ -461,8 +465,13 @@ class SchedulePolicy:
         waiting_queue: List[Req],
         temporary_deprioritized: Set[int],
         processed_tokens: int,
+        priority_sign: int = 0,
     ) -> None:
         """Highest Response Ratio Next, with token-based aging.
+
+        With priority scheduling (`priority_sign` is +1 or -1), requests are
+        ordered by priority first and by response ratio within a priority;
+        `priority_sign` 0 (priority scheduling off) keeps the pure HRRN order.
 
         Equivalence with classic HRRN when throughput is constant:
             ratio = 1 + wait_sec / est_prefill_time
@@ -480,15 +489,16 @@ class SchedulePolicy:
 
         def _key(r: Req):
             rid = r.rid
+            tier = (r.priority or 0) * priority_sign if priority_sign else 0
             if rid in temporary_deprioritized:
-                return (float("inf"), rid)
+                return (tier, float("inf"), rid)
             uncached = SchedulePolicy._uncached_len(r)
             if uncached <= 0:
                 # No prefill work; drain immediately.
-                return (-float("inf"), rid)
+                return (tier, -float("inf"), rid)
             waited_tokens = max(0, processed_tokens - r.arrival_processed_tokens)
             ratio_delta = waited_tokens / uncached
-            return (-ratio_delta, rid)
+            return (tier, -ratio_delta, rid)
 
         waiting_queue.sort(key=_key)
 
@@ -838,11 +848,17 @@ class PrefillAdder:
         Admission includes the host checkpoint before load-back binds the
         request slot. Continuing chunks only need the request-state budget;
         their host-hit metadata may still describe an already consumed hit.
-        Tracking buffers and radix CoW headroom are not included here.
+        Initial tracking buffers count with the main state. Optional later
+        checkpoints retain their own pressure fallback.
         """
         if not self._mamba_slot_cost:
             return 0
-        slots = int(not req.kv.holds_mamba)
+        req_pool = self.tree_cache.req_to_token_pool
+        slots = (
+            req_pool.mamba_admission_slots(req.kv)
+            if isinstance(req_pool, HybridReqToTokenPool)
+            else int(not req.kv.holds_mamba)
+        )
         if include_host_hit:
             slots += req.mamba_host_hit_length
         return slots * self._mamba_slot_cost
@@ -1519,6 +1535,19 @@ class PrefillAdder:
                             best_match_node=req.best_match_node,
                             host_hit_length=req.host_hit_length,
                             req=req,
+                            mamba_slots_to_reserve=(
+                                sum(
+                                    self.tree_cache.req_to_token_pool.mamba_admission_slots(
+                                        candidate.kv
+                                    )
+                                    for candidate in [*self.can_run_list, req]
+                                )
+                                if isinstance(
+                                    self.tree_cache.req_to_token_pool,
+                                    HybridReqToTokenPool,
+                                )
+                                else 0
+                            ),
                         )
                     )
                 if loaded is None:

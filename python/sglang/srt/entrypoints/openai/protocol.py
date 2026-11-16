@@ -873,6 +873,42 @@ class ToolChoice(BaseModel):
     type: Literal["function"] = Field(default="function", examples=["function"])
 
 
+class AllowedToolChoiceFunction(BaseModel):
+    """A function reference inside an allowed-tools choice."""
+
+    name: str = Field(min_length=1)
+
+
+class AllowedToolChoiceTool(BaseModel):
+    """A typed tool reference inside an allowed-tools choice."""
+
+    type: Literal["function"] = Field(default="function", examples=["function"])
+    function: AllowedToolChoiceFunction
+
+
+class AllowedToolsConfig(BaseModel):
+    """The mode and subset selected by an allowed-tools choice."""
+
+    mode: Literal["auto", "required"]
+    tools: List[AllowedToolChoiceTool] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_unique_tool_names(self) -> AllowedToolsConfig:
+        names = [tool.function.name for tool in self.tools]
+        if len(names) != len(set(names)):
+            raise ValueError("allowed_tools contains duplicate function names")
+        return self
+
+
+class AllowedToolsChoice(BaseModel):
+    """Restrict auto or required tool choice to a named subset."""
+
+    type: Literal["allowed_tools"] = Field(
+        default="allowed_tools", examples=["allowed_tools"]
+    )
+    allowed_tools: AllowedToolsConfig
+
+
 # OpenAI-spec string tiers for reasoning effort (current Responses/Chat API):
 # none/minimal/low/medium/high/xhigh/max, plus DeepSeek's ultra. Used as-is by
 # /v1/responses.
@@ -950,7 +986,9 @@ class ChatCompletionRequest(PDRoutingFields):
     # renders these, while ``tools`` (flattened to ``<namespace>.<function>``) still
     # drives tool-call parsing.
     _template_tools: Optional[List[Dict[str, Any]]] = PrivateAttr(default=None)
-    tool_choice: Union[ToolChoice, Literal["auto", "required", "none"]] = Field(
+    tool_choice: Union[
+        ToolChoice, AllowedToolsChoice, Literal["auto", "required", "none"]
+    ] = Field(
         default="auto", examples=["none"]
     )  # noqa
     parallel_tool_calls: bool = True
@@ -983,6 +1021,21 @@ class ChatCompletionRequest(PDRoutingFields):
         "'max' is an sglang extension to the OpenAI schema for "
         "models that expose a maximum-effort tier above 'high'; models that don't "
         "support it treat it the same as 'high'.",
+    )
+    include_reasoning: Optional[StrictBool] = Field(
+        default=None,
+        description="Legacy OpenRouter-compatible control for returning reasoning. "
+        "False is equivalent to reasoning.exclude=true. True preserves reasoning "
+        "visibility and, when no explicit reasoning control is present, enables "
+        "the model's default reasoning mode for backward compatibility.",
+    )
+    # Response-only policy; do not expose normalized controls as wire extensions.
+    reasoning_exclude: bool = Field(default=False, exclude=True, repr=False)
+    reasoning_max_tokens: Optional[int] = Field(
+        default=None,
+        ge=1,
+        exclude=True,
+        description="Maximum reasoning tokens normalized from reasoning.max_tokens.",
     )
     thinking: Optional[Any] = Field(
         default=None,
@@ -1084,6 +1137,14 @@ class ChatCompletionRequest(PDRoutingFields):
                 values["tool_choice"] = "auto"
         return values
 
+    def effective_tool_choice(
+        self,
+    ) -> Union[ToolChoice, Literal["auto", "required", "none"]]:
+        """Reduce allowed-tools to the mode understood by format detectors."""
+        if isinstance(self.tool_choice, AllowedToolsChoice):
+            return self.tool_choice.allowed_tools.mode
+        return self.tool_choice
+
     @field_validator("reasoning_effort", mode="before")
     @classmethod
     def validate_reasoning_effort_type(cls, value):
@@ -1096,8 +1157,22 @@ class ChatCompletionRequest(PDRoutingFields):
     def normalize_reasoning_inputs(cls, values: Dict):
         r = values.get("reasoning")
         thinking = None
+        include_reasoning = values.get("include_reasoning")
+        if include_reasoning is not None and not isinstance(include_reasoning, bool):
+            raise ValueError("include_reasoning must be a boolean")
+        if isinstance(r, dict) and "exclude" in r:
+            if not isinstance(r["exclude"], bool):
+                raise ValueError("reasoning.exclude must be a boolean")
+            values["reasoning_exclude"] = r["exclude"]
+        else:
+            values["reasoning_exclude"] = include_reasoning is False
 
         if r is not None and isinstance(r, dict):
+            if "max_tokens" in r:
+                max_tokens = r["max_tokens"]
+                if type(max_tokens) is not int or max_tokens < 1:
+                    raise ValueError("reasoning.max_tokens must be a positive integer")
+                values["reasoning_max_tokens"] = max_tokens
             effort = r.get("effort")
             if effort is None:
                 effort = r.get("reasoning_effort")
@@ -1124,15 +1199,17 @@ class ChatCompletionRequest(PDRoutingFields):
             elif effort is not None:
                 raise ValueError(f"invalid reasoning effort: {effort!r}")
 
-            enabled = (
-                r.get("enabled")
-                if r.get("enabled") is not None
-                else r.get("enable", False)
-            )
-            if isinstance(enabled, str):
-                enabled = enabled.strip().lower() in {"1", "true", "yes", "y", "on"}
-            if enabled:
-                thinking = True
+            enabled = r.get("enabled")
+            if enabled is None:
+                enabled = r.get("enable")
+            if enabled is not None:
+                if isinstance(enabled, str):
+                    enabled = enabled.strip().lower() in {"1", "true", "yes", "y", "on"}
+                thinking = bool(enabled)
+
+        # Visibility controls never disable generation by themselves.
+        if thinking is None and include_reasoning is True:
+            thinking = True
 
         effort = values.get("reasoning_effort")
         if effort is not None:
@@ -1262,8 +1339,8 @@ class ChatCompletionRequest(PDRoutingFields):
 
         if tool_call_constraint and has_existing_constraints:
             if tool_call_constraint[0] != "full_assistant_ebnf" and (
-                self.tool_choice == "required"
-                or isinstance(self.tool_choice, ToolChoice)
+                self.effective_tool_choice() == "required"
+                or isinstance(self.effective_tool_choice(), ToolChoice)
             ):
                 raise ValueError(
                     "tool_choice 'required' or a named tool cannot be combined with "
@@ -1750,9 +1827,9 @@ class TokenizeRequest(BaseModel):
     prompt: Optional[Union[str, List[str]]] = None
     messages: Optional[List[ChatCompletionMessageParam]] = None
     tools: Optional[List[Tool]] = Field(default=None, examples=[None])
-    tool_choice: Optional[Union[ToolChoice, Literal["auto", "required", "none"]]] = (
-        Field(default=None, examples=["auto"])
-    )
+    tool_choice: Optional[
+        Union[ToolChoice, AllowedToolsChoice, Literal["auto", "required", "none"]]
+    ] = Field(default=None, examples=["auto"])
     reasoning_effort: ReasoningEffortType = None
     continue_final_message: bool = False
     chat_template_kwargs: Optional[Dict] = None

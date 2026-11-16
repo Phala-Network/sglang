@@ -1,13 +1,15 @@
 """Bitwise parity tests for llguidance's regular-decode batched mask fill."""
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import torch
 from llguidance import LLTokenizer, grammar_from
 
-from sglang.srt.constrained.base_grammar_backend import GrammarRow
+from sglang.srt.constrained.base_grammar_backend import GrammarRow, InvalidGrammarObject
 from sglang.srt.constrained.llguidance_backend import GuidanceBackend, GuidanceGrammar
+from sglang.srt.constrained import llguidance_backend
+from sglang.srt.constrained.xgrammar_backend import XGrammarGrammarBackend
 from sglang.srt.runtime_context import get_resources
 from sglang.test.ci.ci_register import register_cpu_ci
 
@@ -24,8 +26,52 @@ class TestLLGuidanceBatchedMask(unittest.TestCase):
             serialized_grammar=grammar_from("regex", _REGEX),
         )
 
+    def test_invalid_schema_diagnostics_omit_client_schema(self):
+        secret = "privacy_fixture_do_not_log"
+        for backend_type, logger_name in (
+            (GuidanceBackend, "sglang.srt.constrained.llguidance_backend"),
+            (XGrammarGrammarBackend, "sglang.srt.constrained.xgrammar_backend"),
+        ):
+            backend = object.__new__(backend_type)
+            backend.any_whitespace = True
+            backend.whitespace_pattern = None
+            with self.assertLogs(logger_name, level="ERROR") as logs:
+                result = backend.dispatch_json("{" + secret)
+            self.assertIsInstance(result, InvalidGrammarObject)
+            self.assertNotIn(secret, "\n".join(logs.output))
+
     def _fresh(self, n):
         return [self.template.copy() for _ in range(n)]
+
+    def test_reasoning_backend_exposes_mask_callbacks(self):
+        backend = object.__new__(GuidanceBackend)
+        backend.llguidance_tokenizer = self.template.llguidance_tokenizer
+        mask = backend.allocate_vocab_mask(256, 2, "cpu")
+        self.assertEqual(mask.shape[0], 2)
+        self.assertIs(backend.move_vocab_mask(mask, "cpu"), mask)
+        logits = object()
+        with patch.object(GuidanceGrammar, "apply_vocab_mask") as apply:
+            backend.apply_vocab_mask(logits, mask)
+        apply.assert_called_once_with(logits, mask)
+
+    def test_host_mask_pins_only_when_supported(self):
+        for supported in (False, True):
+            with self.subTest(supported=supported):
+                raw = MagicMock()
+                with patch.object(
+                    llguidance_backend, "allocate_token_bitmask", return_value=raw
+                ), patch.object(
+                    llguidance_backend,
+                    "is_pin_memory_available",
+                    return_value=supported,
+                ):
+                    actual = llguidance_backend._allocate_token_bitmask(2, 256, "cpu")
+                if supported:
+                    raw.pin_memory.assert_called_once_with()
+                    self.assertIs(actual, raw.pin_memory.return_value)
+                else:
+                    raw.pin_memory.assert_not_called()
+                    self.assertIs(actual, raw)
 
     def _allocate(self, grammars):
         return grammars[0].allocate_vocab_mask(

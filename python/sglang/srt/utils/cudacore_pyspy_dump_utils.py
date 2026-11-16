@@ -26,7 +26,19 @@ from typing import List
 
 import psutil
 
+from sglang.srt.utils.framework_log_privacy import safe_exception_type
+
 logger = logging.getLogger(__name__)
+
+PYSPY_DUMP_TIMEOUT_SECONDS = 10
+
+
+def _best_effort_error(message, *args):
+    try:
+        logger.error(message, *args)
+    except Exception:
+        # Diagnostic output failure must not abort later recovery or targets.
+        pass
 
 
 def _resolve_cuda_coredump_pipe_path(proc: psutil.Process) -> Path:
@@ -72,30 +84,62 @@ def pyspy_dump_schedulers(scheduler_only=False):
     if scheduler_only:
         procs = collect_scheduler_processes()
         if not procs:
-            logger.error("No sglang scheduler processes found for py-spy dump.")
+            _best_effort_error("No sglang scheduler processes found for py-spy dump.")
             return
         pids = [proc.pid for proc in procs]
     else:
         pids = [psutil.Process().pid]
     for pid in pids:
-        for attempt, native_flag in enumerate(["--native", ""]):
+        for attempt, native in enumerate((True, False)):
             try:
-                cmd = f"py-spy dump {native_flag} --pid {pid}".strip()
-                result = subprocess.run(
-                    cmd, shell=True, capture_output=True, text=True, check=True
+                cmd = ["py-spy", "dump"]
+                if native:
+                    cmd.append("--native")
+                cmd.extend(("--pid", str(pid)))
+                subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=PYSPY_DUMP_TIMEOUT_SECONDS,
                 )
-                logger.error(f"Pyspy dump for PID {pid} ({cmd}):\n{result.stdout}")
+                # py-spy stdout/stderr may contain argv and customer data.
+                # Capture them so the child cannot inherit the service sinks,
+                # but never render or persist either stream in diagnostics.
+                _best_effort_error(
+                    "Py-spy dump completed (pid=%s, native=%s, output redacted)",
+                    pid,
+                    native,
+                )
                 break
-            except subprocess.CalledProcessError as e:
-                logger.error(f"Pyspy failed ({cmd}). Error: {e.stderr}")
+            except subprocess.TimeoutExpired:
+                _best_effort_error(
+                    "Py-spy timed out (timeout_seconds=%s, pid=%s)",
+                    PYSPY_DUMP_TIMEOUT_SECONDS,
+                    pid,
+                )
                 if attempt == 1:
-                    logger.error(f"All pyspy dump attempts failed for PID {pid}.")
+                    _best_effort_error("All py-spy dump attempts failed (pid=%s)", pid)
+            except subprocess.CalledProcessError:
+                _best_effort_error(
+                    "Py-spy command failed (pid=%s, type=CalledProcessError)", pid
+                )
+                if attempt == 1:
+                    _best_effort_error("All py-spy dump attempts failed (pid=%s)", pid)
+            except OSError as e:
+                _best_effort_error(
+                    "Py-spy could not start (pid=%s, type=%s)",
+                    pid,
+                    safe_exception_type(e),
+                )
+                if attempt == 1:
+                    _best_effort_error("All py-spy dump attempts failed (pid=%s)", pid)
 
 
 def trigger_cuda_user_coredump(scheduler_only=False):
     """Trigger CUDA user-induced GPU core dumps by writing to coredump pipes."""
     if os.environ.get("CUDA_ENABLE_USER_TRIGGERED_COREDUMP") != "1":
-        logger.error(
+        _best_effort_error(
             "CUDA user-triggered coredump is not enabled. Set "
             "CUDA_ENABLE_USER_TRIGGERED_COREDUMP=1 before CUDA initialization."
         )
@@ -103,42 +147,44 @@ def trigger_cuda_user_coredump(scheduler_only=False):
     if scheduler_only:
         procs = collect_scheduler_processes()
         if not procs:
-            logger.error("No sglang scheduler processes found for CUDA coredump.")
+            _best_effort_error("No sglang scheduler processes found for CUDA coredump.")
             return
     else:
         procs = [psutil.Process()]
 
     for proc in procs:
-        pipe_path = _resolve_cuda_coredump_pipe_path(proc)
         try:
+            pipe_path = _resolve_cuda_coredump_pipe_path(proc)
             fd = os.open(pipe_path, os.O_WRONLY | os.O_NONBLOCK)
             try:
                 os.write(fd, b"1")
             finally:
                 os.close(fd)
-            logger.error(
-                "Triggered CUDA user coredump for PID %s via %s",
+            _best_effort_error(
+                "Triggered CUDA user coredump (pid=%s)",
                 proc.pid,
-                pipe_path,
             )
         except FileNotFoundError:
-            logger.error(
-                "CUDA coredump pipe not found for PID %s: %s. Ensure "
+            _best_effort_error(
+                "CUDA coredump pipe not found (pid=%s). Ensure "
                 "CUDA_ENABLE_USER_TRIGGERED_COREDUMP=1 was set before this "
                 "process initialized CUDA.",
                 proc.pid,
-                pipe_path,
             )
         except OSError as e:
             if e.errno == ENXIO:
-                logger.error(
-                    "CUDA coredump pipe has no reader for PID %s: %s",
+                _best_effort_error(
+                    "CUDA coredump pipe has no reader (pid=%s)",
                     proc.pid,
-                    pipe_path,
                 )
             else:
-                logger.exception(
-                    "Failed to trigger CUDA user coredump for PID %s via %s",
+                _best_effort_error(
+                    "Failed to trigger CUDA user coredump (pid=%s, type=%s)",
                     proc.pid,
-                    pipe_path,
+                    safe_exception_type(e),
                 )
+        except psutil.Error as e:
+            _best_effort_error(
+                "Failed to resolve CUDA coredump target (type=%s)",
+                safe_exception_type(e),
+            )

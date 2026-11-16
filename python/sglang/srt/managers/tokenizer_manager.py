@@ -29,7 +29,7 @@ import threading
 import time
 from array import array
 from collections import deque
-from contextlib import nullcontext
+from contextlib import aclosing, nullcontext
 from datetime import datetime
 from enum import Enum
 from functools import lru_cache
@@ -69,6 +69,7 @@ from sglang.srt.elastic_ep.topology import (
     physical_ep_size_to_dp_size,
 )
 from sglang.srt.environ import envs
+from sglang.srt.entrypoints.request_disconnect import response_disconnect_watched
 from sglang.srt.layers.joint_schema_head import (
     max_joint_prompt_tokens,
     parse_decision_layout,
@@ -191,6 +192,7 @@ from sglang.srt.utils.cudacore_pyspy_dump_utils import (
     pyspy_dump_schedulers,
     trigger_cuda_user_coredump,
 )
+from sglang.srt.utils.framework_log_privacy import safe_exception_type
 from sglang.srt.utils.hf_transformers_utils import (
     get_processor,
     get_tokenizer,
@@ -280,9 +282,13 @@ class ReqState:
 
     dispatched: bool = False
     abort_sent: bool = False
+    # A delayed disconnect task must not abort another request reusing this RID.
+    request_owner: Optional[Union[GenerateReqInput, EmbeddingReqInput]] = None
 
     # Prevent duplicate releases after completion or ownership transfer.
     lora_released: bool = False
+    # Logical parents own all samples until references move to registered children.
+    lora_release_count: int = 1
 
     # For streaming output
     last_output_offset: int = 0
@@ -902,15 +908,25 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         # Normalize the request
         obj.normalize_batch_and_arguments()
         self._set_default_priority(obj)
-        if (
-            isinstance(obj, GenerateReqInput)
-            and obj.max_thinking_tokens is not None
-            and not get_serving().enable_strict_thinking
-        ):
-            raise ValueError(
-                "max_thinking_tokens requires the server to be launched with "
-                "--enable-strict-thinking"
-            )
+        has_thinking_bounds = isinstance(obj, GenerateReqInput) and (
+            obj.min_thinking_tokens is not None or obj.max_thinking_tokens is not None
+        )
+        if has_thinking_bounds and not get_serving().enable_strict_thinking:
+            raise ValueError("thinking token bounds require --enable-strict-thinking")
+        if has_thinking_bounds:
+            for bound in (obj.min_thinking_tokens, obj.max_thinking_tokens):
+                if bound is not None and (type(bound) is not int or bound < 0):
+                    raise ValueError(
+                        "thinking token bounds must be non-negative integers"
+                    )
+            if (
+                obj.min_thinking_tokens is not None
+                and obj.max_thinking_tokens is not None
+                and obj.min_thinking_tokens > obj.max_thinking_tokens
+            ):
+                raise ValueError(
+                    "min_thinking_tokens must not exceed max_thinking_tokens"
+                )
 
         if isinstance(obj, GenerateReqInput) and obj.routed_dp_rank is not None:
             num_dp_ranks = self.elastic_worker_count
@@ -923,11 +939,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     f"routed_dp_rank={obj.routed_dp_rank} out of range [0, {num_dp_ranks})"
                 )
 
-        self._init_req_state(obj, request)
-        request_states = {
-            rid: self.rid_to_state[rid]
-            for rid in ([obj.rid] if obj.is_single else obj.rid)
-        }
+        request_states = self._init_req_state(obj, request)
         try:
             if get_disagg().language_only:
                 self._handle_epd_disaggregation_encode_request(obj)
@@ -948,12 +960,13 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     if obj.return_prompt_token_ids:
                         state.prompt_token_ids = list(tokenized_obj.input_ids)
                     await self._send_one_request(tokenized_obj)
-                    async for response in self._wait_one_response(obj, request):
-                        yield response
+                    responses = self._wait_one_response(obj, request)
                 else:
-                    async for response in self._handle_batch_request(
+                    responses = self._handle_batch_request(
                         obj, request, request_states
-                    ):
+                    )
+                async with aclosing(responses):
+                    async for response in responses:
                         yield response
         except BaseException:
             # _init_req_state created a rid_to_state entry per (sub-)request up
@@ -1160,6 +1173,12 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             contains_mm_input or is_mossvl
         )
 
+        # The text alone can exceed the existing context budget. Reject before
+        # media decoding; post-MM validation still owns expanded-token limits.
+        # Auto-truncation must wait for the processor's complete token sequence.
+        if should_run_mm_processor and not self.allow_auto_truncate:
+            self._validate_token_budget(obj, input_ids)
+
         if should_run_mm_processor:
             if obj.image_data is not None and not isinstance(obj.image_data, list):
                 obj.image_data = [obj.image_data]
@@ -1304,7 +1323,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             normalized.append(provided or embedded)
         obj.mm_content_hashes = normalized
 
-    def _validate_one_request(
+    def _validate_token_budget(
         self, obj: Union[GenerateReqInput, EmbeddingReqInput], input_ids: List[int]
     ) -> None:
         """Validates that the input token count and the requested token count doesn't exceed the model's context length."""
@@ -1331,12 +1350,16 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         # truncation below could cut the prompt.
         self._validate_joint_schema_request(obj, input_ids)
         _max_req_len = self.context_len
+        allow_auto_truncate = (
+            self.allow_auto_truncate
+            and getattr(self.model_config, "request_static_yarn_config", None) is None
+        )
         input_token_num = len(input_ids) if input_ids is not None else 0
         input_token_num += self.num_reserved_tokens
 
         # Validate input length
         if input_token_num >= self.context_len:
-            if self.allow_auto_truncate:
+            if allow_auto_truncate:
                 logger.warning(
                     f"The input ({input_token_num} tokens) is longer than the "
                     f"model's context length ({self.context_len} tokens). "
@@ -1357,7 +1380,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             and max_new_tokens is not None
             and (max_new_tokens + input_token_num) > _max_req_len
         ):
-            if self.allow_auto_truncate:
+            if allow_auto_truncate:
                 logger.warning(
                     f"Requested token count ({input_token_num} input + {max_new_tokens} new) "
                     f"exceeds the model's context length ({self.context_len} tokens). "
@@ -1376,6 +1399,12 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     f"of tokens in the input messages or the completion to fit within the limit."
                 )
                 raise ValueError(error_msg)
+
+    def _validate_one_request(
+        self, obj: Union[GenerateReqInput, EmbeddingReqInput], input_ids: List[int]
+    ) -> None:
+        """Validate a fully tokenized request before scheduler dispatch."""
+        self._validate_token_budget(obj, input_ids)
 
         # Validate embedding requests
         if isinstance(obj, EmbeddingReqInput) and self.is_generation:
@@ -1557,10 +1586,15 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     "inside sampling_params, not both"
                 )
             sampling_kwargs["watermark"] = obj.watermark
-        if isinstance(obj, GenerateReqInput) and obj.max_thinking_tokens is not None:
+        if isinstance(obj, GenerateReqInput) and (
+            obj.min_thinking_tokens is not None or obj.max_thinking_tokens is not None
+        ):
             sampling_kwargs = dict(sampling_kwargs)
             custom_params = dict(sampling_kwargs.get("custom_params") or {})
-            custom_params["thinking_budget"] = obj.max_thinking_tokens
+            if obj.min_thinking_tokens is not None:
+                custom_params["min_thinking_budget"] = obj.min_thinking_tokens
+            if obj.max_thinking_tokens is not None:
+                custom_params["thinking_budget"] = obj.max_thinking_tokens
             sampling_kwargs["custom_params"] = custom_params
         sampling_params = self.sampling_params_class(**sampling_kwargs)
         sampling_params.normalize(self.tokenizer)
@@ -1569,6 +1603,21 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
 
         # Build return object
         if isinstance(obj, GenerateReqInput):
+            if (
+                getattr(self.model_config, "request_static_yarn_config", None)
+                is not None
+            ):
+                if obj.session_id is not None or obj.session_params:
+                    raise ValueError(
+                        "Request-static YaRN does not support session continuation"
+                    )
+                if (
+                    self.server_args.enable_lmcache
+                    or self.server_args.disaggregation_mode != "null"
+                ):
+                    raise ValueError(
+                        "Request-static YaRN does not support LMCache or disaggregated serving"
+                    )
             session_params = (
                 SessionParams(**obj.session_params) if obj.session_params else None
             )
@@ -1928,7 +1977,15 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         if not (self.enable_lora and state.obj.lora_path):
             return None
         state.lora_released = True
-        task = asyncio.create_task(self.lora_registry.release(state.obj.lora_id))
+        if state.lora_release_count == 0 or state.obj.lora_id is None:
+            return None
+        release_ids = (
+            state.obj.lora_id
+            if state.lora_release_count == 1
+            else [state.obj.lora_id] * state.lora_release_count
+        )
+        state.lora_release_count = 0
+        task = asyncio.create_task(self.lora_registry.release(release_ids))
         self._lora_release_tasks.add(task)
         task.add_done_callback(self._lora_release_tasks.discard)
         return task
@@ -1964,6 +2021,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 if (
                     request is not None
                     and not obj.background
+                    and not response_disconnect_watched(request)
                     and await request.is_disconnected()
                 ):
                     # Abort the request for disconnected requests (non-streaming, waiting queue)
@@ -2062,6 +2120,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 if (
                     request is not None
                     and not obj.background
+                    and not response_disconnect_watched(request)
                     and await request.is_disconnected()
                 ):
                     # Abort the request for disconnected requests (non-streaming, running)
@@ -2145,23 +2204,14 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 tokenized_obj.sampling_params = copy.copy(tokenized_obj.sampling_params)
                 tokenized_obj.sampling_params.max_new_tokens = 0
                 tokenized_obj.stream = False
-                self._init_req_state(tmp_obj)
-                request_states[tmp_obj.rid] = self.rid_to_state[tmp_obj.rid]
+                request_states.update(self._init_req_state(tmp_obj))
                 await self._send_one_request(tokenized_obj)
-                await self._wait_one_response(tmp_obj, request).__anext__()
-
-            # Retain initial states until all warmups succeed so errors can
-            # release their LoRA references. Sampling requests take ownership below.
-            initial_req_states = {}
-            for initial_rid in obj.rid if isinstance(obj.rid, list) else [obj.rid]:
-                initial_state = request_states[initial_rid]
-                if self.rid_to_state.get(initial_rid) is initial_state:
-                    del self.rid_to_state[initial_rid]
-                    initial_state.lora_released = True
-                    initial_req_states[initial_rid] = initial_state
+                async with aclosing(self._wait_one_response(tmp_obj, request)) as warmup:
+                    await warmup.__anext__()
 
             # Expand requests, assign new rids for them, and send them
             for i in range(batch_size):
+                initial_state = request_states[objs[i].rid]
                 for _ in range(obj.parallel_sample_num):
                     tmp_obj = copy.copy(objs[i])
                     tokenized_obj = copy.copy(tokenized_objs[i])
@@ -2172,9 +2222,14 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                             copy.copy(item) for item in tokenized_obj.mm_inputs.mm_items
                         ]
                     tokenized_obj.rid = tmp_obj.regenerate_rid()
-                    self._init_req_state(tmp_obj)
+                    request_states.update(self._init_req_state(tmp_obj))
                     state = self.rid_to_state[tmp_obj.rid]
-                    request_states[tmp_obj.rid] = state
+                    # Transfer one acquired reference only after its child has
+                    # been registered. An exception/cancellation at the next
+                    # await leaves every remaining reference with the parent.
+                    initial_state.lora_release_count -= 1
+                    if initial_state.lora_release_count == 0:
+                        initial_state.lora_released = True
                     tokenized_obj.time_stats = state.time_stats
                     if tmp_obj.return_prompt_token_ids:
                         state.prompt_token_ids = list(tokenized_objs[i].input_ids)
@@ -2182,8 +2237,9 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     generators.append(self._wait_one_response(tmp_obj, request))
                     rids.append(tmp_obj.rid)
 
-                if objs[i].rid in initial_req_states:
-                    initial_req_states[objs[i].rid].time_stats.set_finished_time()
+                if self.rid_to_state.get(objs[i].rid) is initial_state:
+                    del self.rid_to_state[objs[i].rid]
+                    initial_state.time_stats.set_finished_time()
 
         # Wait for all requests
         is_stream = hasattr(obj, "stream") and obj.stream
@@ -2343,17 +2399,17 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         part that cannot be reconstructed afterwards.
         """
         try:
-            return redact_watermark_secrets(
+            from sglang.srt.arg_groups.token_auth import redact_auth_config
+
+            return redact_auth_config(redact_watermark_secrets(
                 self.resolved_config_dict(self.server_args.resolved_dict())
-            )
-        except Exception as e:
-            logger.error(f"Failed to snapshot the resolved config for the dump: {e!r}")
+            ))
+        except Exception:
+            logger.error("Failed to snapshot the resolved config for the dump")
             return None
 
     def _server_args_for_dump(self) -> Union[ServerArgs, Dict[str, Any]]:
-        if not get_exec().features.enable_watermark:
-            return self.server_args
-        return redact_watermark_secrets(self.server_args.resolved_dict())
+        return self.server_args.diagnostic_dict()
 
     def resolved_config_dict(self, base: Dict[str, Any]) -> Dict[str, Any]:
         """``base`` (a serialized ``ServerArgs``) with the control-plane changes on top."""
@@ -2428,9 +2484,25 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         # Abort the request if the client is disconnected.
         async def abort_request():
             await asyncio.sleep(2)
-            rids = [obj.rid] if obj.is_single else obj.rid
+            if not hasattr(obj, "is_single"):
+                return
+            if obj.is_single:
+                rids = [obj.rid]
+            else:
+                batch_size = getattr(obj, "batch_size", None)
+                if (
+                    type(batch_size) is not int
+                    or batch_size < 1
+                    or not isinstance(obj.rid, list)
+                    or len(obj.rid) < batch_size
+                ):
+                    return
+                rids = obj.rid[:batch_size]
             for rid in rids:
-                if rid in self.rid_to_state:
+                if not isinstance(rid, str) or not rid:
+                    continue
+                state = self.rid_to_state.get(rid)
+                if state is not None and state.request_owner is obj:
                     self.abort_request(rid)
 
         background_tasks = BackgroundTasks()
@@ -2830,6 +2902,9 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
     ) -> None:
         """Accumulate metadata; subclasses may use finish_reason for terminal data."""
         for key, values in customized_info.items():
+            if key == "yarn_profile":
+                meta_info[key] = values[index]
+                continue
             self._accumulate_request_meta_info(
                 meta_info,
                 state,
@@ -3444,17 +3519,18 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 )
                 os.makedirs(os.path.dirname(filename), exist_ok=True)
 
-                # Write the data to the file
+                # Keep only operational counts; diagnostics must not persist
+                # customer prompts, responses, RIDs, media, or ciphertext.
+                from sglang.srt.arg_groups.token_auth import redact_auth_config
+
                 data_to_dump_with_server_args = {
                     "server_args": self._server_args_for_dump(),
-                    "config_updates": redact_watermark_secrets(
+                    "config_updates": redact_auth_config(redact_watermark_secrets(
                         get_context().overrides_log()
-                    ),
+                    )),
                     "resolved_config": self._dump_config_snapshot(),
-                    "requests": redact_watermark_secrets(data_to_dump),
-                    "launch_command": redact_watermark_command_line(
-                        sys.argv, self.server_args.watermark_config
-                    ),
+                    "requests": {"redacted": True, "request_count": len(data_to_dump)},
+                    "launch_command": self.server_args.launch_command,
                 }
                 with open(filename, "wb") as f:
                     try:
@@ -3788,7 +3864,27 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 )
 
         # Look up the LoRA ID from the registry and start tracking ongoing LoRA requests.
-        obj.lora_id = await self.lora_registry.acquire(obj.lora_path)
+        acquisition = asyncio.create_task(self.lora_registry.acquire(obj.lora_path))
+        try:
+            obj.lora_id = await asyncio.shield(acquisition)
+        except asyncio.CancelledError:
+            # List acquisition increments references in child tasks. Complete
+            # that operation before returning every reference if cancellation
+            # wins the handoff to obj.lora_id and its registered owners.
+            async def release_interrupted_acquisition():
+                try:
+                    acquired_ids = await acquisition
+                    await self.lora_registry.release(acquired_ids)
+                except Exception as error:
+                    logger.error(
+                        "Interrupted LoRA acquisition cleanup failed (type=%s)",
+                        safe_exception_type(error),
+                    )
+
+            cleanup = asyncio.create_task(release_interrupted_acquisition())
+            self._lora_release_tasks.add(cleanup)
+            cleanup.add_done_callback(self._lora_release_tasks.discard)
+            raise
         # Propagate lora_id to any sub-objects already cached by __getitem__.
         for i, sub_obj in obj.__dict__.get("_sub_obj_cache", {}).items():
             sub_obj.lora_id = (
@@ -3799,7 +3895,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         self,
         obj: Union[GenerateReqInput, EmbeddingReqInput],
         request: Optional[fastapi.Request] = None,
-    ):
+    ) -> Dict[str, ReqState]:
         created_time = obj.received_time
 
         external_trace_header = None
@@ -3813,7 +3909,8 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 external_trace_header = extract_trace_headers(request.headers)
                 obj.external_trace_header = external_trace_header
 
-        # Normalize single/batch into a uniform list of (rid, sub_obj, bootstrap_room)
+        # Register only logical parents. Parallel sampling expands RID fields,
+        # but creates its warmup and sample states separately during fan-out.
         if not hasattr(obj, "is_single") or obj.is_single:
             items = [(obj.rid, obj, getattr(obj, "bootstrap_room", None))]
         else:
@@ -3827,7 +3924,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                         else None
                     ),
                 )
-                for i in range(len(obj.rid))
+                for i in range(obj.batch_size)
             ]
 
         rids = set()
@@ -3840,12 +3937,16 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         for rid, sub_obj, bootstrap_room in items:
             time_stats = APIServerReqTimeStats(disagg_mode=self.disaggregation_mode)
             state = ReqState([], False, asyncio.Event(), sub_obj, time_stats)
+            state.request_owner = obj
+            if isinstance(obj, GenerateReqInput) and not getattr(obj, "is_single", True):
+                state.lora_release_count = obj.parallel_sample_num
             if self.enable_trace:
                 time_stats.init_trace_ctx(rid, bootstrap_room, external_trace_header)
             time_stats.set_created_time(created_time)
             new_states[rid] = state
 
         self.rid_to_state.update(new_states)
+        return new_states
 
     def _release_req_states_on_failure(self, request_states: Dict[str, ReqState]):
         """Release rid_to_state entries created for a failed handler.
@@ -3855,20 +3956,20 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         """
         for rid, state in request_states.items():
             current_state = self.rid_to_state.get(rid)
-            if current_state is not None:
-                # A completed request's rid may already belong to a newer request.
-                if current_state is not state:
-                    continue
-                if state.dispatched:
-                    try:
-                        self.abort_request(rid)
-                    except Exception:
-                        logger.exception(
-                            "Failed to abort request %s during cleanup", rid
-                        )
-                else:
-                    del self.rid_to_state[rid]
-                    self._release_lora_once(state)
+            # Missing or reused RIDs no longer identify this handler's state.
+            if current_state is not state:
+                continue
+            if state.dispatched:
+                try:
+                    self.abort_request(rid)
+                except Exception as error:
+                    logger.error(
+                        "Failed to abort request during cleanup (type=%s)",
+                        safe_exception_type(error),
+                    )
+            else:
+                del self.rid_to_state[rid]
+                self._release_lora_once(state)
             dispatch_ready = self.encoder_dispatch_ready.pop(rid, None)
             if dispatch_ready is not None:
                 dispatch_ready.set()

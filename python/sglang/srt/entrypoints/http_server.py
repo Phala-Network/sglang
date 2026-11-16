@@ -28,7 +28,7 @@ import tempfile
 import threading
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from functools import partial
 from http import HTTPStatus
 from typing import (
@@ -69,6 +69,7 @@ from fastapi.routing import APIRoute
 from uvicorn.supervisors.multiprocess import Multiprocess
 
 from sglang.srt.arg_groups.overrides import resolving_view
+from sglang.srt.arg_groups.token_auth import redact_auth_config
 from sglang.srt.configs.embedding_model_spec import resolved_embedding_plan
 from sglang.srt.configs.model_config import load_joint_head_config, load_pointer_head
 from sglang.srt.constants import HEALTH_CHECK_RID_PREFIX
@@ -108,6 +109,7 @@ from sglang.srt.entrypoints.openai.protocol import (
     TokenizeRequest,
     V1RerankReqInput,
 )
+from sglang.srt.entrypoints.openai.serving_base import GenerationStreamingResponse
 from sglang.srt.entrypoints.openai.serving_classify import OpenAIServingClassify
 from sglang.srt.entrypoints.openai.serving_completions import OpenAIServingCompletion
 from sglang.srt.entrypoints.openai.serving_decisions import OpenAIServingDecisions
@@ -121,6 +123,7 @@ from sglang.srt.entrypoints.openai.serving_tokenize import (
 from sglang.srt.entrypoints.openai.serving_transcription import (
     OpenAIServingTranscription,
 )
+from sglang.srt.entrypoints.request_disconnect import await_response_or_disconnect
 from sglang.srt.entrypoints.request_headers import apply_header_overrides
 from sglang.srt.entrypoints.sidecar import rust_server_sidecar
 from sglang.srt.entrypoints.systemone.protocol import SystemOneRequest
@@ -200,6 +203,7 @@ from sglang.srt.utils import (
     set_uvicorn_logging_configs,
 )
 from sglang.srt.utils.auth import AuthLevel, app_has_admin_force_endpoints, auth_level
+from sglang.srt.utils.framework_log_privacy import safe_exception_type
 from sglang.srt.utils.json_response import (
     SGLangORJSONResponse,
     dumps_json,
@@ -208,7 +212,6 @@ from sglang.srt.utils.json_response import (
 )
 from sglang.srt.utils.msgspec_utils import msgspec_to_builtins
 from sglang.srt.utils.watchdog import SubprocessWatchdog
-from sglang.utils import get_exception_traceback
 from sglang.version import __version__
 
 logger = logging.getLogger(__name__)
@@ -404,15 +407,10 @@ async def lifespan(fast_api_app: FastAPI):
             tool_server=tool_server,
         )
     except Exception as e:
-        # Optional endpoint; a load failure (e.g. the gpt-oss harmony vocab
-        # download) must not look like a fatal error. One-line WARNING, full
-        # traceback at DEBUG.
+        # Optional endpoint; keep failure visibility without model/download data.
         logger.warning(
-            f"OpenAI Responses API (/v1/responses) disabled: "
-            f"OpenAIServingResponses init failed ({type(e).__name__}: {e})"
-        )
-        logger.debug(
-            f"OpenAIServingResponses init traceback:\n{get_exception_traceback()}"
+            "OpenAI Responses API (/v1/responses) disabled: init failed (type=%s)",
+            safe_exception_type(e),
         )
 
     # Execute custom warmups
@@ -460,7 +458,7 @@ async def lifespan(fast_api_app: FastAPI):
             try:
                 sidecar.stop()
             except Exception:
-                logger.exception("Failed to stop sidecar")
+                logger.exception("Failed to stop sidecar", exc_info=False)
         _shutdown_native_grpc_server(grpc_handle)
         if tool_server is not None and hasattr(tool_server, "aclose"):
             await tool_server.aclose()
@@ -769,34 +767,58 @@ async def health_generate(request: Request) -> Response:
         )
 
     async def gen():
-        async for _ in _global_state.tokenizer_manager.generate_request(gri, request):
-            break
+        try:
+            async with aclosing(
+                _global_state.tokenizer_manager.generate_request(gri, request)
+            ) as responses:
+                async for _ in responses:
+                    break
+        except ValueError as exc:
+            # Only this probe's known disconnects are benign.
+            expected = {
+                "Request is disconnected from the client side "
+                f"(type {kind}). Abort request obj.rid={rid!r}"
+                for kind in (1, 3)
+            }
+            if str(exc) not in expected:
+                raise
+            logger.debug("Health probe client disconnected.")
 
     task = asyncio.create_task(gen())
 
-    # As long as we receive any response from the detokenizer/scheduler, we consider the server is healthy.
     tic = time.time()
-    while time.time() < tic + HEALTH_CHECK_TIMEOUT:
-        await asyncio.sleep(1)
-        if _global_state.tokenizer_manager.last_receive_tstamp > tic:
-            task.cancel()
-            _global_state.tokenizer_manager.rid_to_state.pop(rid, None)
-            _global_state.tokenizer_manager.server_status = ServerStatus.Up
-            return Response(status_code=200)
+    try:
+        while time.time() < tic + HEALTH_CHECK_TIMEOUT:
+            await asyncio.sleep(1)
+            if task.done() and not task.cancelled():
+                task.result()
+            if _global_state.tokenizer_manager.last_receive_tstamp > tic:
+                _global_state.tokenizer_manager.server_status = ServerStatus.Up
+                return Response(status_code=200)
 
-    task.cancel()
-    tic_time = time.strftime("%H:%M:%S", time.localtime(tic))
-    last_receive_time = time.strftime(
-        "%H:%M:%S", time.localtime(_global_state.tokenizer_manager.last_receive_tstamp)
-    )
-    logger.error(
-        f"Health check failed. Server couldn't get a response from detokenizer for last "
-        f"{HEALTH_CHECK_TIMEOUT} seconds. tic start time: {tic_time}. "
-        f"last_heartbeat time: {last_receive_time}"
-    )
-    _global_state.tokenizer_manager.rid_to_state.pop(rid, None)
-    _global_state.tokenizer_manager.server_status = ServerStatus.UnHealthy
-    return Response(status_code=503)
+        tic_time = time.strftime("%H:%M:%S", time.localtime(tic))
+        last_receive_time = time.strftime(
+            "%H:%M:%S",
+            time.localtime(_global_state.tokenizer_manager.last_receive_tstamp),
+        )
+        logger.error(
+            f"Health check failed. Server couldn't get a response from detokenizer for last "
+            f"{HEALTH_CHECK_TIMEOUT} seconds. tic start time: {tic_time}. "
+            f"last_heartbeat time: {last_receive_time}"
+        )
+        _global_state.tokenizer_manager.server_status = ServerStatus.UnHealthy
+        return Response(status_code=503)
+    finally:
+        if not task.done():
+            task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        finally:
+            # Abort while ownership state exists, then drop only this health RID.
+            _global_state.tokenizer_manager.abort_request(rid)
+            _global_state.tokenizer_manager.rid_to_state.pop(rid, None)
 
 
 @app.get("/get_model_info")
@@ -880,14 +902,16 @@ async def server_info():
     server_args = _global_state.tokenizer_manager.server_args
 
     return msgspec_to_builtins(
-        redact_watermark_secrets(
-            {
-                **build_server_info(server_args, _global_state.scheduler_info),
-                "startup_time": _global_state.tokenizer_manager.startup_time,
-                "internal_states": internal_states,
-                "version": __version__,
-                "frontend": "python",
-            }
+        redact_auth_config(
+            redact_watermark_secrets(
+                {
+                    **build_server_info(server_args, _global_state.scheduler_info),
+                    "startup_time": _global_state.tokenizer_manager.startup_time,
+                    "internal_states": internal_states,
+                    "version": __version__,
+                    "frontend": "python",
+                }
+            )
         )
     )
 
@@ -947,20 +971,20 @@ async def serve_generate_request(obj: GenerateReqInput, request: Request):
     if envs.SGLANG_ENABLE_REQUEST_HEADER_OVERRIDES.get():
         apply_header_overrides(obj, request.headers)
     if obj.stream:
+        generation = _global_state.tokenizer_manager.generate_request(obj, request)
 
         async def stream_results() -> AsyncIterator[bytes]:
             try:
-                async for out in _global_state.tokenizer_manager.generate_request(
-                    obj, request
-                ):
-                    yield b"data: " + dumps_json(out) + b"\n\n"
+                async with aclosing(generation):
+                    async for out in generation:
+                        yield b"data: " + dumps_json(out) + b"\n\n"
             except ValueError as e:
                 # A client disconnect also surfaces here. It's a client-side
                 # cancellation, not a server error or bad input -- log it and
                 # stop (the request was already aborted upstream) instead of
                 # emitting a 400.
                 if request is not None and await request.is_disconnected():
-                    logger.info(f"[http_server] Client disconnected: {e}")
+                    logger.info("[http_server] Client disconnected")
                     return
                 out = {
                     "error": {
@@ -970,23 +994,31 @@ async def serve_generate_request(obj: GenerateReqInput, request: Request):
                         "retryable": False,
                     }
                 }
-                logger.error(f"[http_server] Error: {e}")
+                logger.error(
+                    "[http_server] Request rejected (type=%s)", safe_exception_type(e)
+                )
                 yield b"data: " + dumps_json(out) + b"\n\n"
             yield b"data: [DONE]\n\n"
 
-        return StreamingResponse(
+        return GenerationStreamingResponse(
             stream_results(),
+            generation=generation,
             media_type="text/event-stream",
             background=_global_state.tokenizer_manager.create_abort_task(obj),
         )
     else:
         try:
-            ret = await _global_state.tokenizer_manager.generate_request(
-                obj, request
-            ).__anext__()
+            async with aclosing(
+                _global_state.tokenizer_manager.generate_request(obj, request)
+            ) as generation:
+                ret = await await_response_or_disconnect(
+                    generation.__anext__(), request, background=obj.background
+                )
             return orjson_response(ret)
         except ValueError as e:
-            logger.error(f"[http_server] Error: {e}")
+            logger.error(
+                "[http_server] Request rejected (type=%s)", safe_exception_type(e)
+            )
             return _create_error_response(e)
 
 
@@ -1393,7 +1425,11 @@ async def remote_instance_transfer_engine_info(rank: int = None):
         if resp.status_code == 200:
             return resp.json()
     except (requests.exceptions.RequestException, ValueError) as e:
-        logger.warning(f"Failed to get transfer engine info for rank {rank}: {e}")
+        logger.warning(
+            "Failed to get transfer engine info for rank %d (type=%s)",
+            rank,
+            safe_exception_type(e),
+        )
 
     return ORJSONResponse(
         {"error": {"message": f"Failed to get transfer engine info for rank {rank}"}},
@@ -2377,11 +2413,10 @@ def _execute_server_warmup(server_args: ServerArgs):
             success = True
             break
         except (AssertionError, requests.exceptions.RequestException):
-            last_traceback = get_exception_traceback()
             pass
 
     if not success:
-        logger.error(f"Initialization failed. warmup error: {last_traceback}")
+        logger.error("Initialization failed during warmup (details redacted)")
         kill_process_tree(os.getpid())
         return success
 
@@ -2529,8 +2564,7 @@ def _execute_server_warmup(server_args: ServerArgs):
             )
 
     except Exception:
-        last_traceback = get_exception_traceback()
-        logger.error(f"Initialization failed. warmup error: {last_traceback}")
+        logger.error("Initialization failed during warmup (details redacted)")
         kill_process_tree(os.getpid())
         return False
 
@@ -2566,7 +2600,7 @@ def _freeze_gc_after_server_warmup(server_args: ServerArgs):
         )
         res.raise_for_status()
     except requests.exceptions.RequestException:
-        logger.warning("post-warmup freeze_gc failed", exc_info=True)
+        logger.warning("post-warmup freeze_gc failed", exc_info=False)
 
 
 def _wait_and_warmup(
@@ -2785,6 +2819,8 @@ def _run_granian_server(
     from granian.http import HTTP2Settings
     from granian.server.embed import Server as GranianEmbeddedServer
 
+    from sglang.srt.utils.framework_log_privacy import configure_granian_log_privacy
+
     Server = GranianEmbeddedServer if tokenizer_worker_num == 1 else Granian
     target = (
         app if tokenizer_worker_num == 1 else envs.SGLANG_HTTP_SERVER_APP_PATH.get()
@@ -2801,6 +2837,7 @@ def _run_granian_server(
             max_concurrent_streams=http2_max_concurrent_streams,
         ),
         log_level=log_level,
+        log_dictconfig=configure_granian_log_privacy(),
         ssl_cert=ssl_certfile,
         ssl_key=ssl_keyfile,
         ssl_key_password=ssl_keyfile_password,
@@ -3119,7 +3156,9 @@ def _shutdown_native_grpc_server(grpc_handle) -> None:
     try:
         grpc_handle.shutdown()
     except Exception as e:
-        logger.warning(f"Failed to shut down native gRPC server: {e}")
+        logger.warning(
+            "Failed to shut down native gRPC server (type=%s)", safe_exception_type(e)
+        )
 
 
 def launch_server(

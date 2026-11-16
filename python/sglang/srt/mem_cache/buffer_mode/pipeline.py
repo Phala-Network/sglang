@@ -1799,7 +1799,12 @@ class BufferModePipeline:
                 )
 
         state, failure_pool = self._allocate_and_queue_load_back(
-            req, f, plan, load_back_id, load_xfers
+            req,
+            f,
+            plan,
+            load_back_id,
+            load_xfers,
+            mamba_slots_to_reserve=params.mamba_slots_to_reserve,
         )
         if state is None:
             # load() allocates all pools atomically before queueing H2D, so the
@@ -1899,28 +1904,44 @@ class BufferModePipeline:
         plan: StagedPrefetchPlan,
         load_back_id: int,
         load_xfers: list[PoolTransfer],
+        *,
+        mamba_slots_to_reserve: int = 0,
     ) -> tuple[Optional[_OngoingBufferLoadBack], str]:
         if not self._ensure_full_capacity(plan.full_tokens):
             return None, "full"
         cache = self._cache
         load_contexts: list[BufferLoadBackContext] = []
-        for component in cache.components.values():
-            load_context = component.prepare_buffer_load_back(req, f.aux_xfers)
-            if load_context is None:
-                for prepared in load_contexts:
-                    prepared.finalize_allocation(success=False)
-                return None, component.component_type.name.lower()
-            load_contexts.append(load_context)
-            # Not staging, so these stay out of the aux_xfers the ack frees.
-            load_xfers.extend(load_context.load_xfers)
-        trim_tokens = plan.device_prefix_len - f.matched_len
-        device_indices = cache.cache_controller.load(
-            host_indices=f.host_indices[trim_tokens:],
-            node_id=load_back_id,
-            extra_pools=load_xfers or None,
-        )
-        for load_context in load_contexts:
-            load_context.finalize_allocation(success=device_indices is not None)
+        held_mamba = req.kv.holds_mamba
+        reserved_mamba = None
+        device_indices = None
+        try:
+            for component in cache.components.values():
+                load_context = component.prepare_buffer_load_back(req, f.aux_xfers)
+                if load_context is None:
+                    return None, component.component_type.name.lower()
+                load_contexts.append(load_context)
+                # Not staging, so these stay out of the aux_xfers the ack frees.
+                load_xfers.extend(load_context.load_xfers)
+            # Preparing the restore can own the current request's main state.
+            # Keep every remaining live/tracking slot promised to this batch
+            # unavailable to the node-checkpoint allocation inside cc.load.
+            prepared_main = int(not held_mamba and req.kv.holds_mamba)
+            reserve = max(0, mamba_slots_to_reserve - prepared_main)
+            if reserve:
+                reserved_mamba = cache.req_to_token_pool.mamba_allocator.alloc(reserve)
+                if reserved_mamba is None:
+                    return None, "mamba"
+            trim_tokens = plan.device_prefix_len - f.matched_len
+            device_indices = cache.cache_controller.load(
+                host_indices=f.host_indices[trim_tokens:],
+                node_id=load_back_id,
+                extra_pools=load_xfers or None,
+            )
+        finally:
+            if reserved_mamba is not None:
+                cache.req_to_token_pool.mamba_allocator.free(reserved_mamba)
+            for load_context in load_contexts:
+                load_context.finalize_allocation(success=device_indices is not None)
         if device_indices is None:
             return None, "full_or_aux"
         return (

@@ -356,14 +356,19 @@ class TestEngineResponseWait(unittest.IsolatedAsyncioTestCase):
 
     async def test_http_timeout_still_checks_disconnection(self):
         request = Mock()
+        request.state = SimpleNamespace(sglang_response_disconnect_watched=False)
         request.is_disconnected = AsyncMock(return_value=True)
         self.tm.abort_request = Mock()
         stream = self.tm._wait_one_response(self.state.obj, request)
-        with patch(
-            "sglang.srt.managers.tokenizer_manager._REQUEST_STATE_WAIT_TIMEOUT", 0.001
-        ):
-            with self.assertRaisesRegex(ValueError, "disconnected"):
-                await anext(stream)
+        try:
+            async with asyncio.timeout(1):
+                with patch(
+                    "sglang.srt.managers.tokenizer_manager._REQUEST_STATE_WAIT_TIMEOUT", 0.001
+                ):
+                    with self.assertRaisesRegex(ValueError, "disconnected"):
+                        await anext(stream)
+        finally:
+            await stream.aclose()
         request.is_disconnected.assert_awaited_once()
         self.tm.abort_request.assert_called_once_with(self.state.obj.rid)
 
@@ -923,9 +928,12 @@ def _make_generate_obj(rid, is_single):
     obj.received_time = 0.0
     obj.external_trace_header = None
     obj.bootstrap_room = None
+    obj.min_thinking_tokens = None
     obj.max_thinking_tokens = None
     obj.normalize_batch_and_arguments = Mock()
     if not is_single:
+        obj.batch_size = len(rid)
+        obj.parallel_sample_num = 1
         obj.__getitem__.side_effect = lambda i: Mock()
     return obj
 
@@ -1404,6 +1412,286 @@ class TestLoRARequestLifecycle(CustomTestCase):
     def test_second_parallel_warmup_failure_releases_all_references(self):
         """A failed warmup must return references even after earlier warmups finish."""
         asyncio.run(self._drive_parallel_request(fail_second_warmup=True))
+
+
+class TestParallelSamplingOwnerTransfer(CustomTestCase):
+    def test_only_logical_parents_are_atomically_registered(self):
+        for prompts in (1, 2):
+            for rid_kind in ("none", "string", "list"):
+                with self.subTest(prompts=prompts, rid_kind=rid_kind):
+                    tm = _make_tokenizer_manager(self)
+                    rid = {
+                        "none": None,
+                        "string": "parent",
+                        "list": [f"parent-{i}" for i in range(prompts)],
+                    }[rid_kind]
+                    obj = GenerateReqInput(
+                        text="one" if prompts == 1 else ["one", "two"],
+                        rid=rid,
+                        sampling_params={"n": 3},
+                    )
+                    obj.normalize_batch_and_arguments()
+                    owned = tm._init_req_state(obj)
+                    self.assertEqual(set(owned), set(obj.rid[:prompts]))
+                    self.assertEqual(len(tm.rid_to_state), prompts)
+                    for state in owned.values():
+                        self.assertIs(state.request_owner, obj)
+                        self.assertEqual(state.lora_release_count, 3)
+
+    async def _drive(self, *, child_index=None, fault=None, dispatched=False,
+                     prompts=2, samples=3, stream=False):
+        tm = _make_tm_for_generate(self, enable_lora=True)
+        tm._dispatch_to_scheduler = Mock()
+        obj = GenerateReqInput(
+            text="one" if prompts == 1 else ["one", "two"],
+            lora_path="adapter",
+            sampling_params={"n": samples, "max_new_tokens": 4},
+            stream=stream,
+        )
+        tm._tokenize_one_request = AsyncMock(
+            side_effect=lambda req: SimpleNamespace(
+                rid=req.rid,
+                lora_id=req.lora_id,
+                input_ids=[1],
+                mm_inputs=None,
+                sampling_params=SimpleNamespace(max_new_tokens=4),
+            )
+        )
+        sent = asyncio.Queue()
+        blocked = asyncio.Event()
+        children = 0
+
+        async def send(tokenized):
+            nonlocal children
+            if tokenized.sampling_params.max_new_tokens != 0:
+                children += 1
+                if children == child_index:
+                    if dispatched:
+                        tm._mark_state_dispatched(tokenized.rid)
+                    if fault == "error":
+                        raise RuntimeError("synthetic child dispatch failure")
+                    blocked.set()
+                    await asyncio.Event().wait()
+            tm._mark_state_dispatched(tokenized.rid)
+            sent.put_nowait(tokenized)
+
+        tm._send_one_request = send
+
+        async def consume():
+            return [response async for response in tm.generate_request(obj)]
+
+        consumer = asyncio.create_task(consume())
+        try:
+            # Use actual output handling to complete each shared-prefix warmup.
+            for _ in range(prompts):
+                warmup = await asyncio.wait_for(sent.get(), timeout=1)
+                self.assertEqual(warmup.sampling_params.max_new_tokens, 0)
+                self.assertEqual(warmup.lora_id, "adapter")
+                await tm._handle_batch_output(_make_batch_str_output(warmup.rid))
+            self.assertEqual(tm.lora_registry._counters["adapter"].value(),
+                             prompts * samples)
+
+            if fault:
+                if fault == "cancel":
+                    await asyncio.wait_for(blocked.wait(), timeout=1)
+                    consumer.cancel()
+                    expected = asyncio.CancelledError
+                else:
+                    expected = RuntimeError
+                with self.assertRaises(expected):
+                    await consumer
+                await asyncio.gather(*tm._lora_release_tasks)
+                live = dict(tm.rid_to_state)
+                self.assertEqual(len(live), child_index - 1 + int(dispatched))
+                self.assertTrue(all(state.dispatched for state in live.values()))
+                self.assertEqual(tm.lora_registry._counters["adapter"].value(), len(live))
+                aborts = [call.args[0] for call in tm._dispatch_to_scheduler.call_args_list]
+                self.assertEqual({abort.rid for abort in aborts}, set(live))
+                for rid in live:
+                    await tm._handle_batch_output(_make_batch_str_output(rid))
+            else:
+                for _ in range(prompts * samples):
+                    child = await asyncio.wait_for(sent.get(), timeout=1)
+                    self.assertEqual(child.sampling_params.max_new_tokens, 4)
+                    await tm._handle_batch_output(_make_batch_str_output(child.rid))
+                outputs = await consumer
+                self.assertEqual(len(outputs), prompts * samples if stream else 1)
+                if not stream:
+                    self.assertEqual(len(outputs[0]), prompts * samples)
+
+            await asyncio.gather(*tm._lora_release_tasks)
+            self.assertEqual(tm.lora_registry._counters["adapter"].value(), 0)
+            self.assertFalse(tm.rid_to_state)
+        finally:
+            consumer.cancel()
+            await asyncio.gather(consumer, return_exceptions=True)
+
+    def test_child_dispatch_errors_and_cancellation_preserve_reference_ownership(self):
+        for index in (1, 4):
+            for fault in ("error", "cancel"):
+                for dispatched in (False, True):
+                    with self.subTest(index=index, fault=fault, dispatched=dispatched):
+                        asyncio.run(self._drive(child_index=index, fault=fault,
+                                                dispatched=dispatched))
+
+    def test_successful_streaming_and_nonstreaming_fanout_releases_all_references(self):
+        for prompts in (1, 2):
+            for samples in (2, 3):
+                for stream in (False, True):
+                    with self.subTest(prompts=prompts, samples=samples, stream=stream):
+                        asyncio.run(self._drive(prompts=prompts, samples=samples,
+                                                stream=stream))
+
+    def test_expanded_unowned_rid_survives_parent_handler_failure(self):
+        tm = _make_tm_for_generate(self)
+        unrelated = _make_req_state("job_1")
+        unrelated.dispatched = True
+        gate = asyncio.Event()
+        tm.rid_to_state["job_1"] = unrelated
+        tm.encoder_dispatch_ready["job_1"] = gate
+        tm.abort_request = Mock()
+        tm.context_len = 4
+        tm.num_reserved_tokens = 0
+        tm.validate_total_tokens = True
+        tm.model_config = SimpleNamespace(joint_head_config=None,
+                                          pointer_head=None,
+                                          request_static_yarn_config=None)
+
+        async def tokenize(req):
+            tm._validate_token_budget(req, [1, 2, 3, 4, 5])
+
+        tm._tokenize_one_request = tokenize
+        obj = GenerateReqInput(text="one", rid="job", sampling_params={"n": 2})
+        with patch("sglang.srt.managers.tokenizer_manager.get_exec",
+                   return_value=SimpleNamespace(features=SimpleNamespace(
+                       enable_encoder_swa_bounded_replay=False))), self.assertRaisesRegex(ValueError, "context length"):
+            asyncio.run(tm.generate_request(obj).__anext__())
+        self.assertEqual(obj.rid, ["job_0", "job_1"])
+        self.assertEqual(tm.rid_to_state, {"job_1": unrelated})
+        self.assertIs(tm.encoder_dispatch_ready["job_1"], gate)
+        self.assertFalse(gate.is_set())
+        tm.abort_request.assert_not_called()
+
+    def test_native_generate_send_failure_closes_real_parallel_sampling_owner(self):
+        from sglang.srt.entrypoints import http_server
+
+        async def drive():
+            tm = _make_tm_for_generate(self, enable_lora=True)
+            tm._dispatch_to_scheduler = Mock()
+            tm._tokenize_one_request = AsyncMock(side_effect=lambda req: SimpleNamespace(
+                rid=req.rid, lora_id=req.lora_id, input_ids=[1], mm_inputs=None,
+                sampling_params=SimpleNamespace(max_new_tokens=4)))
+            sent = asyncio.Queue()
+
+            async def dispatch(tokenized):
+                tm._mark_state_dispatched(tokenized.rid)
+                sent.put_nowait(tokenized)
+
+            tm._send_one_request = dispatch
+            obj = GenerateReqInput(text="one", lora_path="adapter", stream=True,
+                                   sampling_params={"n": 2, "max_new_tokens": 4})
+            with patch.object(http_server, "_global_state", SimpleNamespace(tokenizer_manager=tm)):
+                response = await http_server.serve_generate_request(obj, None)
+
+            async def receive():
+                await asyncio.Event().wait()
+
+            async def send(message):
+                if message["type"] == "http.response.body":
+                    raise OSError("synthetic native send failure")
+
+            task = asyncio.create_task(response({"type": "http", "asgi": {"spec_version": "2.4"}}, receive, send))
+            warmup = await asyncio.wait_for(sent.get(), timeout=1)
+            await tm._handle_batch_output(_make_batch_str_output(warmup.rid))
+            children = [await asyncio.wait_for(sent.get(), timeout=1) for _ in range(2)]
+            await tm._handle_batch_output(_make_batch_str_output(children[0].rid, _NOT_FINISHED))
+            with self.assertRaises(Exception):
+                await task
+            live = set(tm.rid_to_state)
+            self.assertEqual(live, {child.rid for child in children})
+            self.assertEqual({call.args[0].rid for call in tm._dispatch_to_scheduler.call_args_list}, live)
+            for rid in live:
+                await tm._handle_batch_output(_make_batch_str_output(rid))
+            await asyncio.gather(*tm._lora_release_tasks)
+            self.assertEqual(tm.lora_registry._counters["adapter"].value(), 0)
+            self.assertFalse(tm.rid_to_state)
+
+        asyncio.run(drive())
+
+    def test_cancellation_during_registry_list_acquisition_releases_every_reference(self):
+        async def drive():
+            tm = _make_tm_for_generate(self, enable_lora=True)
+            obj = GenerateReqInput(text=["one", "two"], lora_path="adapter",
+                                   sampling_params={"n": 3})
+            counter = tm.lora_registry._counters["adapter"]
+            original_increment = counter.increment
+            all_incremented = asyncio.Event()
+            release_increment = asyncio.Event()
+            increments = 0
+
+            async def increment(**kwargs):
+                nonlocal increments
+                await original_increment(**kwargs)
+                increments += 1
+                if increments == 6:
+                    all_incremented.set()
+                await release_increment.wait()
+
+            with patch.object(counter, "increment", side_effect=increment):
+                task = asyncio.create_task(tm.generate_request(obj).__anext__())
+                await asyncio.wait_for(all_incremented.wait(), timeout=1)
+                self.assertEqual(counter.value(), 6)
+                self.assertIsNone(obj.lora_id)
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                release_increment.set()
+                await asyncio.wait_for(asyncio.gather(*tm._lora_release_tasks), timeout=1)
+            self.assertEqual(counter.value(), 0)
+            self.assertFalse(tm.rid_to_state)
+
+        asyncio.run(drive())
+
+    def test_parallel_tokenization_failure_releases_all_acquired_sample_references(self):
+        async def drive():
+            tm = _make_tm_for_generate(self, enable_lora=True)
+            tm._tokenize_one_request = AsyncMock(side_effect=ValueError("token budget"))
+            obj = GenerateReqInput(text=["one", "two"], lora_path="adapter",
+                                   sampling_params={"n": 3})
+            with self.assertRaisesRegex(ValueError, "token budget"):
+                await tm.generate_request(obj).__anext__()
+            await asyncio.gather(*tm._lora_release_tasks)
+            self.assertEqual(tm.lora_registry._counters["adapter"].value(), 0)
+            self.assertFalse(tm.rid_to_state)
+
+        asyncio.run(drive())
+
+    def test_delayed_background_abort_cannot_touch_a_reused_rid(self):
+        tm = _make_tokenizer_manager(self)
+        tm.abort_request = Mock()
+        original = GenerateReqInput(text="old", rid="reused")
+        original.normalize_batch_and_arguments()
+        background = tm.create_abort_task(original)
+        replacement = GenerateReqInput(text="new", rid="reused")
+        replacement.normalize_batch_and_arguments()
+        tm._init_req_state(replacement)
+        with patch("sglang.srt.managers.tokenizer_manager.asyncio.sleep", new=AsyncMock()):
+            asyncio.run(background())
+        tm.abort_request.assert_not_called()
+
+    def test_background_abort_uses_parent_count_and_ignores_unnormalized_requests(self):
+        tm = _make_tokenizer_manager(self)
+        tm.abort_request = Mock()
+        obj = GenerateReqInput(text=["one", "two"], rid="parent",
+                               sampling_params={"n": 3})
+        with patch("sglang.srt.managers.tokenizer_manager.asyncio.sleep", new=AsyncMock()):
+            asyncio.run(tm.create_abort_task(obj)())
+            tm.abort_request.assert_not_called()
+            obj.normalize_batch_and_arguments()
+            tm._init_req_state(obj)
+            asyncio.run(tm.create_abort_task(obj)())
+        self.assertEqual([call.args[0] for call in tm.abort_request.call_args_list],
+                         obj.rid[:obj.batch_size])
 
 
 class TestPriorityRange(CustomTestCase):

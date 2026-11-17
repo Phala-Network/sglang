@@ -228,6 +228,22 @@ class Qwen3CoderDetector(BaseFormatDetector):
                 param_value, argument_schema
             )
             if schema_valid:
+                # Qwen XML's unquoted null sentinel must be resolved before
+                # the generic mixed-union string preference. Keep quoted text
+                # and schemas that reject null on their existing path.
+                if param_value.lower() == "null" and isinstance(converted, str):
+                    null_schema = {
+                        **argument_schema,
+                        "allOf": [
+                            *argument_schema.get("allOf", []),
+                            {"type": "null"},
+                        ],
+                    }
+                    null_value, null_valid = coerce_argument_to_schema(
+                        param_value, null_schema
+                    )
+                    if null_valid:
+                        return null_value
                 return converted
 
         # Handle null value for any type

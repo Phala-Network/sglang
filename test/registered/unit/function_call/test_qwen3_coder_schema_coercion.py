@@ -205,3 +205,113 @@ def test_top_level_oneof_parameter_lookup_preserves_local_defs():
     )
 
     assert json.loads(result.calls[0].parameters) == {"payload": 7}
+
+
+@pytest.mark.parametrize(
+    "room_schema",
+    [
+        {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        {"anyOf": [{"type": "null"}, {"type": "string"}]},
+        {"type": ["string", "null"]},
+        {"type": ["null", "string"]},
+        {"allOf": [{"anyOf": [{"type": "string"}, {"type": "null"}]}]},
+    ],
+)
+@pytest.mark.parametrize(
+    "native_value,expected", [("null", None), ('"null"', "null")]
+)
+def test_nullable_null_sentinel_and_quoted_string_stay_distinct(
+    room_schema, native_value, expected
+):
+    tool = _tool(
+        "schedule_meeting",
+        {"room": room_schema},
+        required=["room"],
+        additionalProperties=False,
+    )
+    text = _call("schedule_meeting", ("room", native_value))
+    want = {"room": expected}
+    parsed = Qwen3CoderDetector().detect_and_parse(text, [tool])
+    assert json.loads(parsed.calls[0].parameters) == want
+    for chunk_size in (1, 7, 64):
+        calls = _stream(Qwen3CoderDetector(), text, [tool], chunk_size)
+        assert len(calls) == 1
+        assert json.loads(calls[0]["parameters"]) == want
+
+
+@pytest.mark.parametrize(
+    "room_schema,native_value,expected",
+    [
+        ({"type": "string"}, "null", "null"),
+        ({"enum": ["null"]}, "null", "null"),
+        ({"type": ["string", "null"], "const": "null"}, "null", "null"),
+        (
+            {"anyOf": [{"type": "string"}, {"type": "null"}], "enum": ["null"]},
+            "null",
+            "null",
+        ),
+        ({"type": ["string", "null"]}, " null ", " null "),
+    ],
+)
+def test_null_sentinel_does_not_override_string_constraints_or_payload(
+    room_schema, native_value, expected
+):
+    tool = _tool("schedule_meeting", {"room": room_schema})
+    text = _call("schedule_meeting", ("room", native_value))
+    parsed = Qwen3CoderDetector().detect_and_parse(text, [tool])
+    assert json.loads(parsed.calls[0].parameters) == {"room": expected}
+    for chunk_size in (1, 7, 64):
+        calls = _stream(Qwen3CoderDetector(), text, [tool], chunk_size)
+        assert len(calls) == 1
+        assert json.loads(calls[0]["parameters"]) == {"room": expected}
+
+
+def test_nullable_null_sentinel_preserves_local_reference_scope():
+    tool = _tool(
+        "schedule_meeting",
+        {"room": {"$ref": "#/$defs/Room"}},
+        **{"$defs": {"Room": {"type": ["string", "null"]}}},
+    )
+    text = _call("schedule_meeting", ("room", "null"))
+    parsed = Qwen3CoderDetector().detect_and_parse(text, [tool])
+    assert json.loads(parsed.calls[0].parameters) == {"room": None}
+    for chunk_size in (1, 7, 64):
+        calls = _stream(Qwen3CoderDetector(), text, [tool], chunk_size)
+        assert len(calls) == 1
+        assert json.loads(calls[0]["parameters"]) == {"room": None}
+
+
+def test_nullable_room_preserves_the_complete_meeting_arguments():
+    tool = _tool(
+        "schedule_meeting",
+        {
+            "title": {"type": "string"},
+            "attendees": {"type": "array", "items": {"type": "string"}},
+            "start_time": {"type": "string"},
+            "duration_minutes": {"type": "integer"},
+            "room": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        },
+        required=["title", "attendees", "start_time", "duration_minutes", "room"],
+        additionalProperties=False,
+    )
+    text = _call(
+        "schedule_meeting",
+        ("attendees", '["ana@example.com", "bo@example.com"]'),
+        ("duration_minutes", "45"),
+        ("room", "null"),
+        ("start_time", "2026-08-07T09:30:00Z"),
+        ("title", "Architecture review"),
+    )
+    want = {
+        "title": "Architecture review",
+        "attendees": ["ana@example.com", "bo@example.com"],
+        "start_time": "2026-08-07T09:30:00Z",
+        "duration_minutes": 45,
+        "room": None,
+    }
+    parsed = Qwen3CoderDetector().detect_and_parse(text, [tool])
+    assert json.loads(parsed.calls[0].parameters) == want
+    for chunk_size in (1, 7, 64):
+        calls = _stream(Qwen3CoderDetector(), text, [tool], chunk_size)
+        assert len(calls) == 1
+        assert json.loads(calls[0]["parameters"]) == want

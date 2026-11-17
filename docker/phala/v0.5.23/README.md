@@ -10,6 +10,20 @@ The engine version-line commit, serving-patches main commit and recipe main comm
 are separate identities. Record all three; this main recipe/documentation commit
 must never be presented as the complete v0.5.23 engine source.
 
+The current nullable-tool correctness successor pins complete engine
+`35f00f8cfaaa56fa3f13edb9e81ae0ae1d4504ed` and serving-patches
+`bf8d7c92d4046d06129b97d2951c3d0b51a65a3e`. The exact affected source and tests
+passed isolated same-dependency CPU red 7 failed/18 passed, then green 25 passed.
+This is development evidence; a successor image and its model acceptance remain
+separate. Preserve prior image and performance receipts under their original identities.
+
+For the selected Qwen service, the deployment recipe also uses the existing
+`--constrained-json-max-whitespace-cnt 16` option. It bounds whitespace between
+JSON schema tokens while preserving whitespace inside JSON strings; it is not
+a changed source default or an unconstrained-sampling setting. Native xgrammar
+0.2.7 CPU checks cover the finite boundary and ordinary pretty-printed layouts;
+the original strict-schema requests still require live final-image acceptance.
+
 Use Python 3.12+, Git and the authorized fixed Linux builder. First verify the
 complete ordered source export using the existing patch repository tool:
 

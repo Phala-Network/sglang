@@ -414,6 +414,10 @@ def validate_deepseek_v41_features(server_args: ServerArgs) -> None:
                 )
             ),
         ),
+        # Late layers run over each request's last window rows, but the LoRA batch
+        # info still segments every extend row: the adapter kernels would read and
+        # write past the tail tensors.
+        ("LoRA", bool(cfg.enable_lora or cfg.lora_paths)),
     )
     if cfg.enable_decoder_swa_bounded_replay:
         for feature, unsupported in incompatible:

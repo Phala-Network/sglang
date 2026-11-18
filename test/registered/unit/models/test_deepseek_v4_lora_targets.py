@@ -19,6 +19,34 @@ from sglang.test.test_utils import CustomTestCase
 
 register_cpu_ci(est_time=5, suite="base-a-test-cpu")
 
+ADAPTER = ["adapter=/path/to/adapter"]
+# Ways to request LoRA: --lora-paths alone becomes --enable-lora only later,
+# in check_lora_server_args, so every guard must also catch it.
+LORA_REQUESTS = {
+    "enable_lora": {"enable_lora": True},
+    "lora_paths": {"lora_paths": ADAPTER},
+    "both": {"enable_lora": True, "lora_paths": ADAPTER},
+}
+# --enable-lora false with paths keeps LoRA off (the paths are ignored).
+LORA_DISABLED = {"enable_lora": False, "lora_paths": ADAPTER}
+
+
+def _server_args(**server_args):
+    args = ServerArgs(
+        model_path="local-deepseek-v41",
+        attention_backend="dsv4",
+        # Bounded replay needs eager or breakable prefill; use eager.
+        cuda_graph_config=CudaGraphConfig(
+            prefill=PhaseConfig(backend=Backend.DISABLED)
+        ),
+        **server_args,
+    )
+    args._model_config = SimpleNamespace(
+        hf_config=SimpleNamespace(model_type="deepseek_v41")
+    )
+    return args
+
+
 # DeepSeek-V4.1-Flash text config
 CONFIG = SimpleNamespace(
     hidden_size=5120,
@@ -87,18 +115,7 @@ class TestDecoderReplayUnderLoRA(CustomTestCase):
     which the LoRA batch info does not describe, so LoRA turns it off."""
 
     def _validate(self, **server_args):
-        args = ServerArgs(
-            model_path="local-deepseek-v41",
-            attention_backend="dsv4",
-            # Bounded replay needs eager or breakable prefill; use eager.
-            cuda_graph_config=CudaGraphConfig(
-                prefill=PhaseConfig(backend=Backend.DISABLED)
-            ),
-            **server_args,
-        )
-        args._model_config = SimpleNamespace(
-            hf_config=SimpleNamespace(model_type="deepseek_v41")
-        )
+        args = _server_args(**server_args)
         with patch(
             "sglang.srt.layers.attention.dsv4.unified_kv_gate.is_unified_kv_triton",
             return_value=False,
@@ -109,13 +126,69 @@ class TestDecoderReplayUnderLoRA(CustomTestCase):
     @override_platform(is_cuda=True, is_hip=False)
     def test_lora_resolves_replay_off(self):
         self.assertTrue(self._validate())
-        self.assertFalse(self._validate(enable_lora=True))
-        self.assertFalse(self._validate(lora_paths=["adapter=/path/to/adapter"]))
+        self.assertTrue(self._validate(**LORA_DISABLED))
+        for name, lora in LORA_REQUESTS.items():
+            with self.subTest(name):
+                self.assertFalse(self._validate(**lora))
 
     @override_platform(is_cuda=True, is_hip=False)
     def test_explicit_replay_with_lora_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "LoRA"):
-            self._validate(enable_lora=True, enable_decoder_swa_bounded_replay=True)
+        for name, lora in LORA_REQUESTS.items():
+            with self.subTest(name), self.assertRaisesRegex(ValueError, "LoRA"):
+                self._validate(enable_decoder_swa_bounded_replay=True, **lora)
+
+
+class TestMegaAttentionUnderLoRA(CustomTestCase):
+    """MegaAttention reads wq_b/wo_a directly, bypassing LoRA wrappers."""
+
+    def _default_backend(self, **server_args):
+        args = _server_args(
+            device="cuda", tp_size=1, kv_cache_dtype="fp8_e4m3", **server_args
+        )
+        with patch("sglang.srt.utils.common.is_sm100_supported", return_value=True):
+            return deepseek_v4_hook._default_dsv4_attention_backend(args)
+
+    def test_lora_never_defaults_to_mega(self):
+        self.assertEqual(self._default_backend(), "flashmla_mega")
+        self.assertEqual(self._default_backend(**LORA_DISABLED), "flashmla_mega")
+        for name, lora in LORA_REQUESTS.items():
+            with self.subTest(name):
+                self.assertEqual(self._default_backend(**lora), "flashmla")
+
+    def test_explicit_mega_with_lora_raises_value_error(self):
+        for name, lora in LORA_REQUESTS.items():
+            args = _server_args(
+                device="cuda", tp_size=1, dsv4_attn_backend="flashmla_mega", **lora
+            )
+            with (
+                self.subTest(name),
+                patch("sglang.srt.utils.common.is_sm100_supported", return_value=True),
+                # only the backend checks are under test, not the KV dtype pass
+                patch.object(deepseek_v4_hook, "run_post_process_pass"),
+                self.assertRaisesRegex(
+                    ValueError, "flashmla_mega does not support LoRA"
+                ),
+            ):
+                deepseek_v4_hook.apply_deepseek_v4_defaults(
+                    args, "DeepseekV4ForCausalLM"
+                )
+
+
+class TestCpDecodeAttnTpUnderLoRA(CustomTestCase):
+    """Decode attention TP slices the raw linears, not a LoRA wrapper."""
+
+    def test_rejected_for_every_lora_request(self):
+        deepseek_v4_hook.validate_deepseek_v4_cp(
+            _server_args(enable_cp_decode_attn_tp=True, **LORA_DISABLED)
+        )
+        for name, lora in LORA_REQUESTS.items():
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(ValueError, "does not support LoRA"),
+            ):
+                deepseek_v4_hook.validate_deepseek_v4_cp(
+                    _server_args(enable_cp_decode_attn_tp=True, **lora)
+                )
 
 
 if __name__ == "__main__":

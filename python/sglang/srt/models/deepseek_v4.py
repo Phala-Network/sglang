@@ -1004,6 +1004,15 @@ bcg_deepseek_v4_exit_late_layer_tail = eager_on_graph(True)(
 )
 
 
+def _fuse_wqa_wkv(requested: Optional[bool] = None) -> bool:
+    """Whether wq_a and wkv share one GEMM; LoRA adapts them one by one.
+
+    The attention constructor and the weight loader must agree, so both ask here.
+    """
+    fuse = envs.SGLANG_OPT_FUSE_WQA_WKV.get() if requested is None else requested
+    return fuse and not (get_lora().enable_lora or get_lora().lora_paths)
+
+
 class MqaAttentionBase(nn.Module):
     # Class-level default for subclasses that read it without running __init__.
     wo_a_fp8: bool = False
@@ -1062,9 +1071,7 @@ class MqaAttentionBase(nn.Module):
         assert self.head_dim == config.head_dim
         assert config.num_key_value_heads == 1
 
-        fuse: bool = (
-            envs.SGLANG_OPT_FUSE_WQA_WKV.get() if fuse_wqa_wkv is None else fuse_wqa_wkv
-        )
+        fuse: bool = _fuse_wqa_wkv(fuse_wqa_wkv)
         fp8: bool = (
             wo_a_fp8_gemm_enabled(quant_config) if wo_a_fp8 is None else wo_a_fp8
         )
@@ -5353,7 +5360,7 @@ class DeepseekV4ForCausalLM(nn.Module):
         cache_compressor_weight = {}
         COMPRESSOR_PART = ".compressor.w"
 
-        fuse_wqa_wkv = envs.SGLANG_OPT_FUSE_WQA_WKV.get()
+        fuse_wqa_wkv = _fuse_wqa_wkv()
         cache_wqkv_a_weight: dict[str, dict[str, torch.Tensor]] = {}
         skipped_by_group: dict[str, int] = {}
         # V4 checkpoints must load every compressor / indexer tensor.

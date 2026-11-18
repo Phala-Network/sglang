@@ -2,16 +2,18 @@
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from sglang.srt.arg_groups import deepseek_v4_hook
 from sglang.srt.arg_groups.overrides import resolving_view
+from sglang.srt.lora.layers import ColumnParallelLinearWithLoRA
 from sglang.srt.model_executor.cuda_graph_config import (
     Backend,
     CudaGraphConfig,
     PhaseConfig,
 )
 from sglang.srt.models.deepseek_v4 import DeepseekV4ForCausalLM as Model
+from sglang.srt.models.deepseek_v4 import MQALayer
 from sglang.srt.runtime_context import override_platform
 from sglang.srt.server_args import ServerArgs
 from sglang.test.ci.ci_register import register_cpu_ci
@@ -189,6 +191,17 @@ class TestCpDecodeAttnTpUnderLoRA(CustomTestCase):
                 deepseek_v4_hook.validate_deepseek_v4_cp(
                     _server_args(enable_cp_decode_attn_tp=True, **lora)
                 )
+
+
+class TestWoAFusedQuantUnderLoRA(CustomTestCase):
+    def test_wrapped_wo_a_never_takes_the_fused_quant(self):
+        layer = SimpleNamespace(wo_a=MagicMock(spec=ColumnParallelLinearWithLoRA))
+        batch = SimpleNamespace(
+            forward_mode=SimpleNamespace(
+                is_decode=lambda: True, is_target_verify=lambda: False
+            )
+        )
+        self.assertIsNone(MQALayer._wo_a_quant_freqs(layer, batch, MagicMock()))
 
 
 if __name__ == "__main__":

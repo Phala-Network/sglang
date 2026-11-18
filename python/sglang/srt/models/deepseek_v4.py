@@ -1277,6 +1277,9 @@ class MqaAttentionBase(nn.Module):
     ) -> Optional[torch.Tensor]:
         """Rope table when the fp8 unified_kv decode (aiter FlyDSL) should also
         do the inverse RoPE and the wo_a mxfp8 quant; else None."""
+        # the fused quant leaves no wo_a input for a LoRA wrapper's grouped delta
+        if isinstance(self.wo_a, ColumnParallelLinearWithLoRA):
+            return None
         mode = forward_batch.forward_mode
         if q_rope is None or not (mode.is_decode() or mode.is_target_verify()):
             return None

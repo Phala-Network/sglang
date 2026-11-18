@@ -42,6 +42,11 @@ def _attention_is_tensor_parallel(cfg) -> bool:
     return attn_tp_size > 1
 
 
+def _lora_requested(cfg) -> bool:
+    # --lora-paths becomes enable_lora only later, in check_lora_server_args
+    return bool(cfg.enable_lora) or (cfg.enable_lora is None and bool(cfg.lora_paths))
+
+
 def _default_dsv4_attention_backend(server_args: ServerArgs) -> str:
     from sglang.srt.utils.common import is_sm100_supported
 
@@ -55,6 +60,8 @@ def _default_dsv4_attention_backend(server_args: ServerArgs) -> str:
         # MegaAttention pads each rank to a 64-head tile under attention TP.
         or (cfg.disaggregation_mode == "null" and _attention_is_tensor_parallel(cfg))
         or (layout.is_set() and layout.get().lower() not in ("auto", "v41", "v41_new"))
+        # MegaAttention reads wq_b/wo_a weights directly, bypassing LoRA wrappers.
+        or _lora_requested(cfg)
     ):
         return "flashmla"
     return "flashmla_mega"
@@ -97,6 +104,11 @@ def apply_deepseek_v4_defaults(server_args: ServerArgs, model_arch: str) -> None
             and cfg.device == "cuda"
             and is_sm100_supported()
         ), "--dsv4-attn-backend flashmla_mega requires DeepSeek-V4.1 on SM100/SM103."
+        if _lora_requested(cfg):
+            raise ValueError(
+                "--dsv4-attn-backend flashmla_mega does not support LoRA: it reads the "
+                "wq_b/wo_a weights directly and feeds wo_b MXFP8. Use flashmla."
+            )
 
     if cfg.dsv4_attn_backend == "trtllm":
         from sglang.srt.utils.common import is_sm100_supported
@@ -161,6 +173,11 @@ def apply_deepseek_v4_defaults(server_args: ServerArgs, model_arch: str) -> None
 def validate_deepseek_v4_cp(server_args: ServerArgs) -> None:
     """Validate DeepSeek V4 context-parallel configuration."""
     cfg = resolving_view(server_args)
+    if cfg.enable_cp_decode_attn_tp and _lora_requested(cfg):
+        # decode attention TP slices the raw attention linears, not a LoRA wrapper or its A/B
+        raise ValueError(
+            "DeepSeekV4 --enable-cp-decode-attn-tp does not support LoRA yet."
+        )
     if not cfg.enable_prefill_cp:
         return
 
@@ -402,6 +419,10 @@ def validate_deepseek_v41_features(server_args: ServerArgs) -> None:
                 )
             ),
         ),
+        # Late layers run over each request's last window rows, but the LoRA batch
+        # info still segments every extend row: the adapter kernels would read and
+        # write past the tail tensors.
+        ("LoRA", _lora_requested(cfg)),
     )
     if cfg.enable_decoder_swa_bounded_replay:
         for feature, unsupported in incompatible:

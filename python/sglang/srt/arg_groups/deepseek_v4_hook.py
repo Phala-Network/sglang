@@ -55,6 +55,9 @@ def _default_dsv4_attention_backend(server_args: ServerArgs) -> str:
         # MegaAttention pads each rank to a 64-head tile under attention TP.
         or (cfg.disaggregation_mode == "null" and _attention_is_tensor_parallel(cfg))
         or (layout.is_set() and layout.get().lower() not in ("auto", "v41", "v41_new"))
+        # MegaAttention reads wq_b/wo_a weights directly, bypassing LoRA wrappers.
+        or cfg.enable_lora
+        or cfg.lora_paths
     ):
         return "flashmla"
     return "flashmla_mega"
@@ -97,6 +100,10 @@ def apply_deepseek_v4_defaults(server_args: ServerArgs, model_arch: str) -> None
             and cfg.device == "cuda"
             and is_sm100_supported()
         ), "--dsv4-attn-backend flashmla_mega requires DeepSeek-V4.1 on SM100/SM103."
+        assert not (cfg.enable_lora or cfg.lora_paths), (
+            "--dsv4-attn-backend flashmla_mega does not support LoRA: it reads the "
+            "wq_b/wo_a weights directly and feeds wo_b MXFP8. Use flashmla."
+        )
 
     if cfg.dsv4_attn_backend == "trtllm":
         from sglang.srt.utils.common import is_sm100_supported

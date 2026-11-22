@@ -14,6 +14,7 @@ Sliding window and attention sink features are supported.
 
 import logging
 from dataclasses import dataclass
+from importlib.metadata import version
 from typing import TYPE_CHECKING, Optional
 
 import torch
@@ -263,6 +264,23 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
                 "with XQA on SM90/SM120."
             )
         self.uses_trtllm_gen_native_fp4 = self.is_nvfp4_kvcache and not self.is_xqa_impl
+        self._mixed_q_generation = (
+            self.data_type == torch.float8_e4m3fn
+            and model_runner.kv_cache_dtype_str == "fp8_e4m3"
+            and self.q_data_type == torch.bfloat16
+            and self.page_size == 64
+            and get_parallel().attn_dcp_size == 1
+            and torch.device(self.device).type == "cuda"
+            and torch.cuda.get_device_capability(self.device) == (10, 3)
+            and not envs.SGLANG_SKIP_SOFTMAX_DECODE_THRESHOLD_SCALE_FACTOR.get()
+        )
+        if self._mixed_q_generation:
+            if version("flashinfer-python") != "0.7.2":
+                raise RuntimeError("Development mixed Q requires FlashInfer 0.7.2")
+            from flashinfer.artifacts import ArtifactPath
+
+            if ArtifactPath.TRTLLM_GEN_FMHA != "2d6a5a029eefcc388ec0ceb87efb55d8bcce5c3c/fmha/trtllm-gen/":
+                raise RuntimeError("Development mixed Q requires the pinned FMHA cubins")
 
         # Speculative decoding
         # Only support topk <= 1 for now.
@@ -1589,6 +1607,18 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
             kv_cache_block_scales = (k_scale, v_scale)
         return kv_cache, kv_cache_block_scales
 
+    def _use_bf16_generation_q(self, q, layer, query_width: int) -> bool:
+        return (
+            self._mixed_q_generation
+            and q.dtype == torch.bfloat16
+            and query_width in (1, 4)
+            and layer.attn_type == AttentionType.DECODER
+            and layer.sliding_window_size == -1
+            and layer.tp_q_head_num == 24
+            and layer.tp_k_head_num == layer.tp_v_head_num == 4
+            and layer.head_dim == layer.v_head_dim == 256
+        )
+
     def forward_decode(
         self,
         q: torch.Tensor,
@@ -1604,7 +1634,12 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
         use_fused_fp8_path = self._should_use_fused_fp8_path(
             save_kv_cache, k, forward_batch
         )
-        use_fused_qkv = use_fused_fp8_path and not self.is_xqa_impl
+        use_bf16_generation_q = (
+            not is_cp_active(forward_batch) and self._use_bf16_generation_q(q, layer, 1)
+        )
+        use_fused_qkv = (
+            use_fused_fp8_path and not self.is_xqa_impl and not use_bf16_generation_q
+        )
         pool = self.token_to_kv_pool
 
         if use_fused_fp8_path:
@@ -1628,8 +1663,7 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
                     *self._kv_write_scales(layer),
                 )
 
-        # For XQA, q_dtype should be bf16. For trtllm-gen,
-        # q_dtype should be FP8 when KV is in FP8.
+        # TRTLLM generation can use BF16 Q with E4M3 KV on the guarded path.
         q_scale = 1.0
         if self.decode_uses_native_fp4 and not self.is_xqa_impl:
             # SM100 TRT-LLM GenMHA requires FP8 Q for native NVFP4 KV.
@@ -1638,6 +1672,7 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
             self.data_type == torch.float8_e4m3fn
             and not self.is_xqa_impl
             and not use_fused_qkv
+            and not use_bf16_generation_q
         ):
             q = q.to(torch.float8_e4m3fn)
         if self.is_xqa_impl:
@@ -1712,7 +1747,27 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
         use_fused_fp8_path = self._should_use_fused_fp8_path(
             save_kv_cache, k, forward_batch
         )
-        use_fused_qkv = use_fused_fp8_path and not self.is_xqa_impl
+        uses_decode_kernel = (
+            forward_batch.forward_mode.is_target_verify()
+            or forward_batch.forward_mode.is_draft_extend_v2()
+        )
+        use_bf16_generation_q = (
+            uses_decode_kernel
+            and not cp_active
+            and not self.forward_metadata.is_ragged_verify
+            and self._use_bf16_generation_q(q, layer, self.forward_metadata.max_seq_len_q)
+        )
+        mixed_tail_q = None
+        if (
+            not uses_decode_kernel
+            and not cp_active
+            and self.forward_metadata.mixed_prefill_reqs >= 0
+            and self._use_bf16_generation_q(q, layer, 1)
+        ):
+            mixed_tail_q = q.reshape(-1, layer.tp_q_head_num, layer.head_dim)
+        use_fused_qkv = (
+            use_fused_fp8_path and not self.is_xqa_impl and not use_bf16_generation_q
+        )
 
         if use_fused_fp8_path:
             fused_q = self._fused_fp8_qkv_kv_cache(
@@ -1746,11 +1801,6 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
                         *self._kv_write_scales(layer),
                     )
 
-        uses_decode_kernel = (
-            forward_batch.forward_mode.is_target_verify()
-            or forward_batch.forward_mode.is_draft_extend_v2()
-        )
-
         q_scale = 1.0
         if uses_native_fp4:
             q = q.to(torch.float8_e4m3fn)
@@ -1758,6 +1808,7 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
             self.data_type == torch.float8_e4m3fn
             and (not self.is_xqa_impl or not uses_decode_kernel)
             and not use_fused_qkv
+            and not use_bf16_generation_q
         ):
             q = q.to(torch.float8_e4m3fn)
         if self.use_fmha_v2:
@@ -1980,8 +2031,8 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
                     out = out.view_as(q)
                 prefix_reqs = self.forward_metadata.mixed_prefill_reqs
                 prefix_tokens = self.forward_metadata.mixed_prefill_tokens
-                # FMHA-v2 platforms (SM90/SM120) never get here, so the FP8 tail
-                # runs on trtllm-gen only and never hands an FP8 Q to XQA.
+                # The context prefix uses E4M3 Q when KV is E4M3.
+                # The decode tail can use the original BF16 Q slice.
                 if (
                     prefix_reqs >= 0
                     and self.data_type
@@ -2008,8 +2059,9 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
                     tail_end = prefix_tokens + (
                         self.forward_metadata.cache_seqlens_int32.shape[0] - prefix_reqs
                     )
+                    tail_q = q if mixed_tail_q is None else mixed_tail_q
                     self._run_fixed_q_len_decode(
-                        q[prefix_tokens:tail_end],
+                        tail_q[prefix_tokens:tail_end],
                         kv_cache,
                         page_table[prefix_reqs:],
                         self.forward_metadata.cache_seqlens_int32[prefix_reqs:],

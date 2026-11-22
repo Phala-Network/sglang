@@ -52,35 +52,38 @@ jobs:
           PY
 
   release-bf16-q:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/tags/phala-v0.5.23-2'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/v0.5.23-bf16-q-publish-recovery'
     needs: source-static
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     permissions:
       contents: read
-      packages: write
     env:
+      RELEASE_TAG: phala-v0.5.23-2
+      ENGINE_SHA: 1c9a64c947af8fd05cf2a813111d919e3e682146
       BASE_IMAGE: ghcr.io/phala-network/sglang:phala-v0.5.23-1@sha256:fdf817319f25ec54ce6e84113337117f24f2dbf694b8e519e017bcbed86bc9e6
       IMAGE: ghcr.io/phala-network/sglang:phala-v0.5.23-2
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+          ref: refs/tags/phala-v0.5.23-2
       - name: Verify source release and patch inputs
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -eu
-          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object.sha')" = "$GITHUB_SHA"
-          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,tagName |
-            jq -e --arg tag "$GITHUB_REF_NAME" '.tagName == $tag and (.isDraft or .isPrerelease | not)'
+          test "$(git rev-parse HEAD)" = "$ENGINE_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha')" = "$ENGINE_SHA"
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,tagName |
+            jq -e --arg tag "$RELEASE_TAG" '.tagName == $tag and (.isDraft or .isPrerelease | not)'
           inputs="$RUNNER_TEMP/source-inputs.json"
-          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern source-inputs.json --output "$inputs"
-          jq -e --arg engine "$GITHUB_SHA" '.engine_commit == $engine' "$inputs"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern source-inputs.json --output "$inputs"
+          jq -e --arg engine "$ENGINE_SHA" '.engine_commit == $engine' "$inputs"
           patches_commit=$(jq -er '.serving_patches_commit | select(test("^[0-9a-f]{40}$"))' "$inputs")
           gh api "repos/Phala-Network/sglang-serving-patches/contents/versions/v0.5.23/stack.json?ref=$patches_commit" --jq '.content | @base64d' |
-            jq -e --arg engine "$GITHUB_SHA" '.engine.commit == $engine'
+            jq -e --arg engine "$ENGINE_SHA" '.engine.commit == $engine'
           printf 'PATCHES_COMMIT=%s\n' "$patches_commit" >> "$GITHUB_ENV"
       - name: Make room for the pinned CUDA base
         run: |
@@ -93,7 +96,7 @@ jobs:
           docker pull "$BASE_IMAGE"
           docker build --pull=false --network=none \
             --file docker/phala/v0.5.23/Dockerfile.bf16-q \
-            --build-arg "ENGINE_REVISION=$GITHUB_SHA" \
+            --build-arg "ENGINE_REVISION=$ENGINE_SHA" \
             --build-arg "PATCHES_REVISION=$PATCHES_COMMIT" \
             --iidfile "$RUNNER_TEMP/image-id" --tag "$IMAGE" .
       - name: Verify installed image and executable interfaces
@@ -131,43 +134,50 @@ jobs:
           print(json.dumps({"backend_sha256": digest, "flashinfer": "0.7.2", "generation_abi": "pass"}))
           PY
           echo 'hf help, hf download help and sglang serve help passed.'
-      - name: Publish and verify the same image
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Export verified image config and the single added layer
         shell: bash
         run: |
           set -euo pipefail
-          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object.sha')" = "$GITHUB_SHA"
-          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft,tagName |
-            jq -e --arg tag "$GITHUB_REF_NAME" '.tagName == $tag and (.isDraft | not)'
-          python - <<'PY'
+          export IMAGE_ID=$(cat "$RUNNER_TEMP/image-id")
+          export OUTPUT_DIR="$RUNNER_TEMP/bf16-q-image-delta"
+          docker image save "$IMAGE" | python3 -c '
+          import gzip
+          import hashlib
           import json
-          from urllib.error import HTTPError
-          from urllib.request import Request, urlopen
+          import os
+          from pathlib import Path
+          import sys
+          import tarfile
 
-          registry = "https://ghcr.io"
-          repo = "phala-network/sglang"
-          with urlopen(f"{registry}/token?scope=repository:{repo}:pull", timeout=20) as response:
-              token = json.load(response)["token"]
-          request = Request(f"{registry}/v2/{repo}/manifests/phala-v0.5.23-2", headers={
-              "Authorization": f"Bearer {token}",
-              "Accept": "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json",
-          })
-          try:
-              with urlopen(request, timeout=20):
-                  raise RuntimeError("The immutable image tag already exists")
-          except HTTPError as error:
-              if error.code != 404:
-                  raise
-          PY
-          export DOCKER_CONFIG="$RUNNER_TEMP/bf16-q-docker-auth"
-          trap 'docker logout ghcr.io > /dev/null 2>&1 || true' EXIT
-          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          docker push "$IMAGE" | tee "$RUNNER_TEMP/push.log"
-          digest=$(sed -n 's/.*digest: \(sha256:[a-f0-9]\{64\}\) size:.*/\1/p' "$RUNNER_TEMP/push.log")
-          test -n "$digest"
-          docker pull "$IMAGE@$digest"
-          test "$(docker image inspect --format '{{.Id}}' "$IMAGE@$digest")" = "$(cat "$RUNNER_TEMP/image-id")"
-          printf 'Phala release image %s@%s\n' "$IMAGE" "$digest" | tee -a "$GITHUB_STEP_SUMMARY"
+          def digest(data):
+              return "sha256:" + hashlib.sha256(data).hexdigest()
 
-# Exact source replay runs in sglang-serving-patches' version export job.
+          archive_files = {}
+          with tarfile.open(fileobj=sys.stdin.buffer, mode="r|*") as archive:
+              for member in archive:
+                  if member.isfile() and member.size <= 2 * 1024**2:
+                      archive_files[member.name.removeprefix("./")] = archive.extractfile(member).read()
+          manifest, = json.loads(archive_files["manifest.json"])
+          assert manifest["RepoTags"] == [os.environ["IMAGE"]], manifest["RepoTags"]
+          image_config = archive_files[manifest["Config"]]
+          assert digest(image_config) == os.environ["IMAGE_ID"]
+          config = json.loads(image_config)
+          layers = config["rootfs"]["diff_ids"]
+          assert len(layers) == len(manifest["Layers"]) == 72
+          layer = archive_files[manifest["Layers"][-1]]
+          if layer.startswith(bytes((31, 139))):
+              layer = gzip.decompress(layer)
+          assert digest(layer) == layers[-1]
+          assert config["config"]["Labels"]["org.opencontainers.image.revision"] == os.environ["ENGINE_SHA"]
+          output = Path(os.environ["OUTPUT_DIR"])
+          output.mkdir()
+          (output / "config.json").write_bytes(image_config)
+          (output / "layer.tar.gz").write_bytes(gzip.compress(layer, mtime=0))
+          print(json.dumps({"tested_image_config": digest(image_config), "layer_diff_id": layers[-1]}))
+          '
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: phala-v0.5.23-2-image-delta
+          path: ${{ runner.temp }}/bf16-q-image-delta/
+          if-no-files-found: error
+          retention-days: 1

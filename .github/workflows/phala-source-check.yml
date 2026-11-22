@@ -51,5 +51,123 @@ jobs:
           print(json.dumps({'python_files': len(names), 'scope': 'source syntax only'}))
           PY
 
-# Exact source/patch replay runs in sglang-serving-patches' version export job.
-# Real CPU/GPU/final-image checks remain separate scoped release evidence.
+  release-bf16-q:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/tags/phala-v0.5.23-2'
+    needs: source-static
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      BASE_IMAGE: ghcr.io/phala-network/sglang:phala-v0.5.23-1@sha256:fdf817319f25ec54ce6e84113337117f24f2dbf694b8e519e017bcbed86bc9e6
+      IMAGE: ghcr.io/phala-network/sglang:phala-v0.5.23-2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Verify source release and patch inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -eu
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object.sha')" = "$GITHUB_SHA"
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,tagName |
+            jq -e --arg tag "$GITHUB_REF_NAME" '.tagName == $tag and (.isDraft or .isPrerelease | not)'
+          inputs="$RUNNER_TEMP/source-inputs.json"
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern source-inputs.json --output "$inputs"
+          jq -e --arg engine "$GITHUB_SHA" '.engine_commit == $engine' "$inputs"
+          patches_commit=$(jq -er '.serving_patches_commit | select(test("^[0-9a-f]{40}$"))' "$inputs")
+          gh api "repos/Phala-Network/sglang-serving-patches/contents/versions/v0.5.23/stack.json?ref=$patches_commit" --jq '.content | @base64d' |
+            jq -e --arg engine "$GITHUB_SHA" '.engine.commit == $engine'
+          printf 'PATCHES_COMMIT=%s\n' "$patches_commit" >> "$GITHUB_ENV"
+      - name: Make room for the pinned CUDA base
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Build the release image
+        shell: bash
+        run: |
+          set -eu
+          docker pull "$BASE_IMAGE"
+          docker build --pull=false --network=none \
+            --file docker/phala/v0.5.23/Dockerfile.bf16-q \
+            --build-arg "ENGINE_REVISION=$GITHUB_SHA" \
+            --build-arg "PATCHES_REVISION=$PATCHES_COMMIT" \
+            --iidfile "$RUNNER_TEMP/image-id" --tag "$IMAGE" .
+      - name: Verify installed image and executable interfaces
+        shell: bash
+        run: |
+          set -eu
+          image_id=$(cat "$RUNNER_TEMP/image-id")
+          run=(docker run --rm --pull=never --network=none --env NVIDIA_VISIBLE_DEVICES=none)
+          "${run[@]}" --entrypoint hf "$image_id" --help > /dev/null
+          "${run[@]}" --entrypoint hf "$image_id" download --help > /dev/null
+          "${run[@]}" --entrypoint sglang "$image_id" serve --help > /dev/null
+          "${run[@]}" -i --entrypoint python "$image_id" - <<'PY'
+          import hashlib
+          import importlib.metadata
+          import importlib.util
+          import inspect
+          import json
+          from pathlib import Path
+
+          from flashinfer.artifacts import ArtifactPath
+          from flashinfer.decode import trtllm_batch_decode_with_kv_cache
+
+          sglang = importlib.util.find_spec("sglang")
+          path = Path(sglang.origin).parent / "srt/layers/attention/trtllm_mha_backend.py"
+          assert str(path) == "/sgl-workspace/sglang/python/sglang/srt/layers/attention/trtllm_mha_backend.py"
+          source = path.read_bytes()
+          digest = hashlib.sha256(source).hexdigest()
+          assert digest == "26fd601f715d768a1c49b2202779d93ea47cd46cf22f17fbd9689696870905b8"
+          compile(source, str(path), "exec")
+          assert importlib.metadata.version("sglang") == "0.5.23"
+          assert importlib.metadata.version("flashinfer-python") == "0.7.2"
+          assert ArtifactPath.TRTLLM_GEN_FMHA == "2d6a5a029eefcc388ec0ceb87efb55d8bcce5c3c/fmha/trtllm-gen/"
+          params = inspect.signature(trtllm_batch_decode_with_kv_cache).parameters
+          assert {"query", "kv_cache", "bmm1_scale", "bmm2_scale", "out", "q_len_per_req", "bf16q_fp8kv_transform_mode", "multi_ctas_kv_counter_buffer"} <= params.keys()
+          print(json.dumps({"backend_sha256": digest, "flashinfer": "0.7.2", "generation_abi": "pass"}))
+          PY
+          echo 'hf help, hf download help and sglang serve help passed.'
+      - name: Publish and verify the same image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object.sha')" = "$GITHUB_SHA"
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft,tagName |
+            jq -e --arg tag "$GITHUB_REF_NAME" '.tagName == $tag and (.isDraft | not)'
+          python - <<'PY'
+          import json
+          from urllib.error import HTTPError
+          from urllib.request import Request, urlopen
+
+          registry = "https://ghcr.io"
+          repo = "phala-network/sglang"
+          with urlopen(f"{registry}/token?scope=repository:{repo}:pull", timeout=20) as response:
+              token = json.load(response)["token"]
+          request = Request(f"{registry}/v2/{repo}/manifests/phala-v0.5.23-2", headers={
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json",
+          })
+          try:
+              with urlopen(request, timeout=20):
+                  raise RuntimeError("The immutable image tag already exists")
+          except HTTPError as error:
+              if error.code != 404:
+                  raise
+          PY
+          export DOCKER_CONFIG="$RUNNER_TEMP/bf16-q-docker-auth"
+          trap 'docker logout ghcr.io > /dev/null 2>&1 || true' EXIT
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE" | tee "$RUNNER_TEMP/push.log"
+          digest=$(sed -n 's/.*digest: \(sha256:[a-f0-9]\{64\}\) size:.*/\1/p' "$RUNNER_TEMP/push.log")
+          test -n "$digest"
+          docker pull "$IMAGE@$digest"
+          test "$(docker image inspect --format '{{.Id}}' "$IMAGE@$digest")" = "$(cat "$RUNNER_TEMP/image-id")"
+          printf 'Phala release image %s@%s\n' "$IMAGE" "$digest" | tee -a "$GITHUB_STEP_SUMMARY"
+
+# Exact source replay runs in sglang-serving-patches' version export job.

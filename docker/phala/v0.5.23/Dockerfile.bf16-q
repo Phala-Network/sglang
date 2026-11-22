@@ -1,0 +1,29 @@
+# syntax=docker/dockerfile:1
+FROM ghcr.io/phala-network/sglang:phala-v0.5.23-1@sha256:fdf817319f25ec54ce6e84113337117f24f2dbf694b8e519e017bcbed86bc9e6
+
+ARG ENGINE_REVISION
+ARG PATCHES_REVISION
+LABEL org.opencontainers.image.source="https://github.com/Phala-Network/sglang" \
+      org.opencontainers.image.revision="$ENGINE_REVISION" \
+      org.opencontainers.image.version="phala-v0.5.23-2" \
+      org.phala.serving-patches.revision="$PATCHES_REVISION" \
+      org.phala.recipe.revision="$ENGINE_REVISION"
+
+RUN --mount=type=bind,source=python/sglang/srt/layers/attention/trtllm_mha_backend.py,target=/tmp/phala-trtllm-mha.py \
+    python - <<'PY'
+from hashlib import sha256
+from pathlib import Path
+
+backend = Path("/sgl-workspace/sglang/python/sglang/srt/layers/attention/trtllm_mha_backend.py")
+previous = "1bd701fe800f4b03cb895803446ac2803b02ac77b59a778a35e00da3cef86862"
+expected = "26fd601f715d768a1c49b2202779d93ea47cd46cf22f17fbd9689696870905b8"
+candidate = Path("/tmp/phala-trtllm-mha.py").read_bytes()
+if sha256(backend.read_bytes()).hexdigest() != previous:
+    raise RuntimeError("Unexpected backend in the pinned base image")
+if sha256(candidate).hexdigest() != expected:
+    raise RuntimeError("Unexpected BF16 Q backend source")
+compile(candidate, str(backend), "exec")
+backend.write_bytes(candidate)
+for cache in (backend.parent / "__pycache__").glob(f"{backend.stem}.*.pyc"):
+    cache.unlink()
+PY

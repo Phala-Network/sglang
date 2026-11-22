@@ -347,7 +347,13 @@ class LoRAMemoryPool:
         # commit to allocating 4D per-expert LoRA buffers.
         from sglang.srt.layers.moe.fused_moe_triton.layer import FusedMoE
 
-        return any(isinstance(m, FusedMoE) for m in base_model.modules())
+        # experts the model keeps out of LoRA are never wrapped, so they get no buffers
+        should_apply_lora = getattr(base_model, "should_apply_lora", None)
+        return any(
+            isinstance(module, FusedMoE)
+            and (should_apply_lora is None or should_apply_lora(name))
+            for name, module in base_model.named_modules()
+        )
 
     def _get_num_local_experts(self, base_model: torch.nn.Module) -> int:
         """Resident factor count; new MoE LoRA providers use EP-local factors."""

@@ -303,6 +303,22 @@ def test_streaming_reasoning_off_drops_unrequested_think_close(
     assert content == "I should list them. Respond only.1,2,3"
 
 
+@pytest.mark.parametrize("chunk_size", [1, 3, 7, 1000])
+def test_streaming_reasoning_off_keeps_later_quoted_think_close(
+    chunk_size: int,
+) -> None:
+    """Only the first think-close is the model's own. One the answer quotes
+    afterwards is answer text."""
+    detector = KimiK3Detector(force_reasoning=False)
+    text = f"Respond only.{THINK_CLOSE}The marker is {THINK_CLOSE} here."
+    reasoning, content = _stream(detector, _chunks(text, chunk_size))
+    tail = detector.finish()
+    reasoning += tail.reasoning_text
+    content += tail.normal_text
+    assert reasoning == ""
+    assert content == f"Respond only.The marker is {THINK_CLOSE} here."
+
+
 def test_reasoning_parser_registration() -> None:
     assert isinstance(ReasoningParser("kimi_k3").detector, KimiK3Detector)
 

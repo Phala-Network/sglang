@@ -1003,6 +1003,10 @@ class KimiK3Detector(BaseReasoningFormatDetector):
                 return StreamingParseResult()
             else:
                 self._reasoning_done = True
+                # With reasoning off the model can still reason and then close
+                # the think channel. The text before it has streamed as content
+                # by then, but the marker itself must not follow it there.
+                self._discard_delayed_think_close = True
 
         if self._in_reasoning:
             buf = self._buffer

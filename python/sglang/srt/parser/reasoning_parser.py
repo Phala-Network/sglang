@@ -896,6 +896,7 @@ class KimiK3Detector(BaseReasoningFormatDetector):
         self._stream_text = ""
         self._streamed_reasoning: list[str] = []
         self._discard_delayed_think_close = False
+        self._unrequested_think_close_pending = False
         self._json_content_parser = (
             _KimiK3JSONContentParser(self._in_reasoning, stream_reasoning)
             if structured_json
@@ -1003,6 +1004,11 @@ class KimiK3Detector(BaseReasoningFormatDetector):
                 return StreamingParseResult()
             else:
                 self._reasoning_done = True
+                # With reasoning off the model can still reason and then close
+                # the think channel. The text before it has streamed as content
+                # by then, but the marker itself must not follow it there.
+                self._discard_delayed_think_close = True
+                self._unrequested_think_close_pending = True
 
         if self._in_reasoning:
             buf = self._buffer
@@ -1073,6 +1079,15 @@ class KimiK3Detector(BaseReasoningFormatDetector):
             self._streamed_reasoning.append(emit)
             return StreamingParseResult(reasoning_text=emit)
 
+        if (
+            self._unrequested_think_close_pending
+            and self.think_end_token in self._buffer
+        ):
+            # Only the first close is the model's own; a later one is answer
+            # text quoting the marker and stays.
+            self._buffer = self._buffer.replace(self.think_end_token, "", 1)
+            self._unrequested_think_close_pending = False
+            self._discard_delayed_think_close = False
         return StreamingParseResult(normal_text=self._drain_content())
 
     def finish(self) -> StreamingParseResult:
